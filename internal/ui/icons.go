@@ -26,6 +26,8 @@ var (
 	icLock     = icons.ActionLock
 	icLaptop   = icons.CommunicationForum
 	icStarred  = icons.ToggleStarBorder
+	icBack     = icons.NavigationArrowBack
+	icRefresh  = icons.NavigationRefresh
 )
 
 // doodleIcons decorate the chat wallpaper.

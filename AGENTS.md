@@ -47,6 +47,10 @@ Gotchas already found in the pinned version (v0.10.x):
   same alpha in CSS. For subtle tints (wallpaper doodles), pre-mix an opaque sRGB color.
 - `widget.Icon` caches only its last size and color. Use the `iconCache` in `internal/ui`
   instead of sharing one `widget.Icon` across call sites.
+- If a dependency fails to compile in a way upstream can't (e.g. an import cycle), run
+  `go mod verify`. The module cache was once modified locally (probably by an IDE
+  auto-import); delete that module version from `GOMODCACHE`, re-download it, and
+  `go clean -cache`.
 - Text rendering supports bitmap color-emoji fonts (CBDT/sbix) but not COLR fonts such as
   Windows' Segoe UI Emoji, which renders monochrome.
 
@@ -56,18 +60,27 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 ## Layout
 
 ```
-cmd/wazzap/        desktop app entry point
+cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
-internal/ui/       Gio UI: theme, icons, nav rail, chat list, conversation, composer
-internal/mock/     fake chats/messages used until the WhatsApp backend is wired in
+internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
+internal/ui/       Gio UI: login/QR, nav rail, chat list, conversation, composer
+internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
+internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 ```
 
 ## Conventions
 
 - Keep the UI immediate-mode: state lives in plain structs, and every frame is rebuilt
   from that state. Don't cache widget trees.
-- Keep UI code free of protocol types. The UI reads `internal/mock` style models; a future
-  `internal/wa` package will adapt hypermeow events into those models.
+- Keep UI code free of protocol types. The UI only sees `internal/model`; `internal/wa`
+  converts hypermeow events into model events. The UI drains them with `Backend.Poll` on
+  the window goroutine, so UI state never needs locks.
+- hypermeow stores keys and sessions, not messages. `internal/wa/store.go` keeps chats and
+  messages in `wz_*` tables of the same SQLite file (`%AppData%\WazzapClients\wazzap.db`).
+- Never call into hypermeow's device store inside a `wz_*` write transaction. It writes
+  to the same SQLite file and would block until the busy timeout (see `onHistory`).
+- One-to-one chats are keyed by LID when a mapping is known (`canonical`), because
+  hypermeow treats the LID as the stable identity.
 - Sizes are in `unit.Dp` / `unit.Sp`, never raw pixels. Convert with `gtx.Dp` / `gtx.Sp`.
 - Colors live in `internal/ui/theme.go` (light and dark palettes). Don't hard-code colors
   in widgets.
@@ -77,7 +90,8 @@ internal/mock/     fake chats/messages used until the WhatsApp backend is wired 
 ## Commands
 
 ```sh
-go run ./cmd/wazzap            # run the app
+go run ./cmd/wazzap            # run the app (links to WhatsApp via QR code)
+go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
 go vet ./... && go build ./...
 ```

@@ -15,13 +15,14 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
-	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 type rowKind int
 
 const (
 	rowDate rowKind = iota
+	rowEncryption
 	rowMessage
 )
 
@@ -29,32 +30,31 @@ const (
 type convRow struct {
 	kind rowKind
 	date string
-	msg  *mock.Message
+	msg  *model.Message
 	// first marks the first message of a run from the same sender. It gets
 	// the bubble tail and extra space above.
 	first bool
 }
 
-// rows rebuilds the flattened message list when the chat changes.
-func (u *UI) rows(c *mock.Chat) []convRow {
-	if u.conv.rowsFor == c && u.conv.rowsLen == len(c.Messages) {
+// rows rebuilds the flattened message list when the loaded messages change.
+func (u *UI) rows(c *model.Chat) []convRow {
+	if u.conv.rowsFor == c && u.conv.rowsVer == u.msgsVer {
 		return u.conv.rows
 	}
 	now := u.now()
-	var rows []convRow
-	var prev *mock.Message
-	for _, m := range c.Messages {
+	rows := []convRow{{kind: rowEncryption}}
+	var prev *model.Message
+	for _, m := range u.msgs {
 		newDay := prev == nil || !sameDay(prev.Time, m.Time)
-		if newDay && m.Kind != mock.KindEncryption {
+		if newDay {
 			rows = append(rows, convRow{kind: rowDate, date: dateChip(m.Time, now)})
 		}
-		first := newDay || prev == nil || prev.Kind == mock.KindEncryption ||
-			prev.FromMe != m.FromMe || prev.Sender != m.Sender ||
+		first := newDay || prev.FromMe != m.FromMe || prev.Sender != m.Sender ||
 			m.Time.Sub(prev.Time) > 10*time.Minute
 		rows = append(rows, convRow{kind: rowMessage, msg: m, first: first})
 		prev = m
 	}
-	u.conv.rows, u.conv.rowsFor, u.conv.rowsLen = rows, c, len(c.Messages)
+	u.conv.rows, u.conv.rowsFor, u.conv.rowsVer = rows, c, u.msgsVer
 	return rows
 }
 
@@ -74,7 +74,7 @@ func (u *UI) layoutConversation(gtx C) D {
 	)
 }
 
-func (u *UI) layoutConvHeader(gtx C, c *mock.Chat) D {
+func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 	p := u.pal
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return background(gtx, p.Header, 0, func(gtx C) D {
@@ -118,7 +118,7 @@ func (u *UI) layoutConvHeader(gtx C, c *mock.Chat) D {
 	})
 }
 
-func (u *UI) layoutMessages(gtx C, c *mock.Chat) D {
+func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	rows := u.rows(c)
 	width := gtx.Constraints.Max.X
 	margin := max(gtx.Dp(16), min(width*6/100, gtx.Dp(64)))
@@ -135,7 +135,7 @@ func (u *UI) layoutMessages(gtx C, c *mock.Chat) D {
 		r := rows[i]
 		in := layout.Inset{Left: unit.Dp(float32(margin) / gtx.Metric.PxPerDp), Right: unit.Dp(float32(margin) / gtx.Metric.PxPerDp)}
 		switch {
-		case r.kind == rowDate:
+		case r.kind == rowDate, r.kind == rowEncryption:
 			in.Top, in.Bottom = 10, 6
 		case r.first:
 			in.Top = 8
@@ -153,7 +153,7 @@ func (u *UI) layoutMessages(gtx C, c *mock.Chat) D {
 			switch {
 			case r.kind == rowDate:
 				return layout.N.Layout(gtx, func(gtx C) D { return u.systemChip(gtx, r.date) })
-			case r.msg.Kind == mock.KindEncryption:
+			case r.kind == rowEncryption:
 				return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
 			case r.msg.FromMe:
 				return layout.NE.Layout(gtx, func(gtx C) D { return u.layoutBubble(gtx, c, r.msg, r.first, maxBubble) })
@@ -236,14 +236,14 @@ func (u *UI) measureNBSP(gtx C, size unit.Sp) float32 {
 	return float32(w) / n
 }
 
-func (u *UI) layoutMeta(gtx C, m *mock.Message, col color.NRGBA, tickCol *color.NRGBA) D {
+func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color.NRGBA) D {
 	gtx.Constraints.Min = image.Point{}
 	children := []layout.FlexChild{
 		layout.Rigid(u.label(11, m.Time.Format("15:04"), col).Layout),
 	}
 	if m.FromMe {
 		data, tc := receiptIcon(m.Receipt, u.pal)
-		if tickCol != nil && m.Receipt != mock.Read {
+		if tickCol != nil && m.Receipt != model.Read {
 			tc = *tickCol
 		}
 		children = append(children,
@@ -272,7 +272,7 @@ func (p part) at(gtx C, x, y int) {
 }
 
 // layoutBubble draws one message bubble, sized to its content.
-func (u *UI) layoutBubble(gtx C, c *mock.Chat, m *mock.Message, tail bool, maxW int) D {
+func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, maxW int) D {
 	p := u.pal
 	out := m.FromMe
 	bg := p.BubbleIn
@@ -280,7 +280,7 @@ func (u *UI) layoutBubble(gtx C, c *mock.Chat, m *mock.Message, tail bool, maxW 
 	if out {
 		bg, quoteBg = p.BubbleOut, p.QuoteOut
 	}
-	isImg := m.Kind == mock.KindImage
+	isImg := m.Kind == model.KindImage
 
 	padL, padR, padT, padB := gtx.Dp(9), gtx.Dp(7), gtx.Dp(6), gtx.Dp(8)
 	if isImg {
@@ -315,12 +315,20 @@ func (u *UI) layoutBubble(gtx C, c *mock.Chat, m *mock.Message, tail bool, maxW 
 	if isImg {
 		imgW = min(inner, gtx.Dp(330))
 		imgH = imgW * 3 / 4
+		if t := u.thumb(m); t.ok {
+			ratio := float32(t.size.Y) / float32(t.size.X)
+			imgH = int(float32(imgW) * min(max(ratio, 0.5), 1.3))
+		}
 		contentW = max(contentW, imgW)
 		textInset = gtx.Dp(6)
 	}
 
 	const textSize = unit.Sp(14.5)
-	if m.Text != "" {
+	text, textCol := m.Text, p.Text
+	if m.Kind == model.KindDeleted {
+		text, textCol = "🚫 This message was deleted", p.TextSecondary
+	}
+	if text != "" {
 		n := int(float32(meta.size.X+gtx.Dp(8))/u.nbspWidth(gtx, textSize)) + 1
 		spacer := make([]rune, n)
 		for i := range spacer {
@@ -330,7 +338,7 @@ func (u *UI) layoutBubble(gtx C, c *mock.Chat, m *mock.Message, tail bool, maxW 
 		if isImg {
 			tgtx.Constraints.Max.X = imgW - 2*textInset
 		}
-		l := u.label(textSize, m.Text+" "+string(spacer), p.Text)
+		l := u.label(textSize, text+" "+string(spacer), textCol)
 		l.MaxLines = 0
 		l.LineHeight = 19
 		body = record(tgtx, l.Layout)
@@ -364,7 +372,7 @@ func (u *UI) layoutBubble(gtx C, c *mock.Chat, m *mock.Message, tail bool, maxW 
 		y += quote.size.Y + gtx.Dp(4)
 	}
 	if isImg {
-		u.gradientImage(gtx, image.Rect(0, y, imgW, y+imgH), m.ImageA, m.ImageB)
+		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m)
 		y += imgH
 		if metaOnImage {
 			meta.at(gtx, imgW-meta.size.X-gtx.Dp(7), y-meta.size.Y-gtx.Dp(5))
@@ -372,7 +380,7 @@ func (u *UI) layoutBubble(gtx C, c *mock.Chat, m *mock.Message, tail bool, maxW 
 			y += gtx.Dp(5)
 		}
 	}
-	if m.Text != "" {
+	if text != "" {
 		body.at(gtx, textInset, y)
 		y += body.size.Y
 		meta.at(gtx, contentW-meta.size.X-textInset, y-meta.size.Y+gtx.Dp(4))
@@ -453,7 +461,7 @@ func (u *UI) paintBubble(gtx C, w, h int, bg color.NRGBA, out, tail bool) {
 	paint.FillShape(gtx.Ops, bg, clip.Outline{Path: path.End()}.Op())
 }
 
-func (u *UI) layoutQuote(gtx C, q *mock.Quote, bg color.NRGBA, width int) D {
+func (u *UI) layoutQuote(gtx C, q *model.Quote, bg color.NRGBA, width int) D {
 	col := rgb(senderColors[hashIndex(q.Sender, len(senderColors))])
 	name := q.Sender
 	if name == "" {

@@ -11,7 +11,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // layoutSidebar draws the chat list column: header, search, filter chips
@@ -23,6 +23,7 @@ func (u *UI) layoutSidebar(gtx C) D {
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(u.layoutSidebarHeader),
+		layout.Rigid(u.layoutBanner),
 		layout.Rigid(u.layoutSearch),
 		layout.Rigid(u.layoutChips),
 		layout.Flexed(1, u.layoutChatList),
@@ -30,6 +31,15 @@ func (u *UI) layoutSidebar(gtx C) D {
 }
 
 func (u *UI) layoutSidebarHeader(gtx C) D {
+	if u.sidebar.showArchived {
+		return layout.Inset{Left: 10, Right: 10, Top: 10, Bottom: 6}.Layout(gtx, func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.sidebar.back, icBack, u.pal.Icon, false) }),
+				layout.Rigid(layout.Spacer{Width: 12}.Layout),
+				layout.Flexed(1, u.label(19, "Archived", u.pal.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+			)
+		})
+	}
 	return layout.Inset{Left: 20, Right: 10, Top: 10, Bottom: 6}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 			layout.Flexed(1, u.label(22, "Chats", u.pal.Text, labelOpts{weight: font.Bold, maxLines: 1}).Layout),
@@ -94,10 +104,13 @@ func (u *UI) layoutChips(gtx C) D {
 	})
 }
 
-func (u *UI) filteredChats() []*mock.Chat {
+func (u *UI) filteredChats() []*model.Chat {
 	q := strings.ToLower(trimSpace(u.sidebar.search.Text()))
-	var out []*mock.Chat
+	var out []*model.Chat
 	for _, c := range u.chats {
+		if c.Archived != u.sidebar.showArchived {
+			continue
+		}
 		switch u.sidebar.filter {
 		case filterUnread:
 			if c.Unread == 0 && c != u.selected {
@@ -122,7 +135,14 @@ func (u *UI) filteredChats() []*mock.Chat {
 
 func (u *UI) layoutChatList(gtx C) D {
 	chats := u.sidebar.visible
-	showArchived := u.sidebar.filter == filterAll && trimSpace(u.sidebar.search.Text()) == ""
+	archived := 0
+	for _, c := range u.chats {
+		if c.Archived {
+			archived++
+		}
+	}
+	showArchived := archived > 0 && !u.sidebar.showArchived &&
+		u.sidebar.filter == filterAll && trimSpace(u.sidebar.search.Text()) == ""
 	n := len(chats)
 	if showArchived {
 		n++
@@ -135,7 +155,7 @@ func (u *UI) layoutChatList(gtx C) D {
 	return l.Layout(gtx, n, func(gtx C, i int) D {
 		if showArchived {
 			if i == 0 {
-				return u.layoutArchivedRow(gtx)
+				return u.layoutArchivedRow(gtx, archived)
 			}
 			i--
 		}
@@ -143,7 +163,7 @@ func (u *UI) layoutChatList(gtx C) D {
 	})
 }
 
-func (u *UI) layoutArchivedRow(gtx C) D {
+func (u *UI) layoutArchivedRow(gtx C, n int) D {
 	p := u.pal
 	c := &u.sidebar.archived
 	return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
@@ -163,7 +183,7 @@ func (u *UI) layoutArchivedRow(gtx C) D {
 						}),
 						layout.Rigid(layout.Spacer{Width: 15}.Layout),
 						layout.Flexed(1, u.label(16, "Archived", p.Text).Layout),
-						layout.Rigid(u.label(12, "3", p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
+						layout.Rigid(u.label(12, itoa(n), p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
 					)
 				})
 			})
@@ -171,19 +191,19 @@ func (u *UI) layoutArchivedRow(gtx C) D {
 	})
 }
 
-func (u *UI) rowClick(c *mock.Chat) *widget.Clickable {
-	cl, ok := u.sidebar.rows[c]
+func (u *UI) rowClick(c *model.Chat) *widget.Clickable {
+	cl, ok := u.sidebar.rows[c.ID]
 	if !ok {
 		cl = new(widget.Clickable)
-		u.sidebar.rows[c] = cl
+		u.sidebar.rows[c.ID] = cl
 	}
 	return cl
 }
 
-func (u *UI) layoutChatRow(gtx C, c *mock.Chat) D {
+func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 	p := u.pal
 	click := u.rowClick(c)
-	last := c.Last()
+	last := c.Last
 	now := u.now()
 
 	return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
@@ -191,7 +211,7 @@ func (u *UI) layoutChatRow(gtx C, c *mock.Chat) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			bg := p.Panel
 			switch {
-			case c == u.selected:
+			case u.selected != nil && c.ID == u.selected.ID:
 				bg = p.RowSelected
 			case click.Hovered():
 				bg = p.RowHover
@@ -232,7 +252,7 @@ func (u *UI) layoutChatRow(gtx C, c *mock.Chat) D {
 
 // layoutRowPreview draws the second line of a chat row: last message preview
 // followed by muted / pinned / unread indicators.
-func (u *UI) layoutRowPreview(gtx C, c *mock.Chat, last *mock.Message) D {
+func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message) D {
 	p := u.pal
 	var children []layout.FlexChild
 	icon := func(data []byte, col color.NRGBA, size unit.Dp) layout.FlexChild {
@@ -256,7 +276,7 @@ func (u *UI) layoutRowPreview(gtx C, c *mock.Chat, last *mock.Message) D {
 			children = append(children, icon(data, col, 18))
 		}
 		txt := last.Text
-		if last.Kind == mock.KindImage {
+		if last.Kind == model.KindImage {
 			children = append(children, icon(icCamera, p.TextSecondary, 16))
 			if txt == "" {
 				txt = "Photo"
@@ -287,15 +307,39 @@ func (u *UI) layoutRowPreview(gtx C, c *mock.Chat, last *mock.Message) D {
 	return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
 }
 
-func receiptIcon(r mock.Receipt, p *Palette) ([]byte, color.NRGBA) {
+func receiptIcon(r model.Receipt, p *Palette) ([]byte, color.NRGBA) {
 	switch r {
-	case mock.Pending:
+	case model.Pending:
 		return icClock, p.Meta
-	case mock.Sent:
+	case model.Sent:
 		return icTick, p.Meta
-	case mock.Delivered:
+	case model.Delivered:
 		return icTicks, p.Meta
 	default:
 		return icTicks, p.TickRead
 	}
+}
+
+// layoutBanner shows connection and sync status above the chat list, like
+// WhatsApp's yellow "Computer not connected" notice.
+func (u *UI) layoutBanner(gtx C) D {
+	var msg string
+	switch {
+	case u.conn.State == model.StateConnecting:
+		msg = "Connecting…"
+	case u.conn.State == model.StateOffline:
+		msg = "Computer not connected. Reconnecting…"
+	case u.syncPct >= 0:
+		msg = "Syncing chats… " + itoa(u.syncPct) + "%"
+	default:
+		return D{}
+	}
+	p := u.pal
+	return layout.Inset{Left: 12, Right: 12, Bottom: 8}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return background(gtx, p.Banner, 10, func(gtx C) D {
+			return layout.Inset{Left: 14, Right: 14, Top: 10, Bottom: 10}.Layout(gtx,
+				u.label(13.5, msg, p.BannerText, labelOpts{maxLines: 2}).Layout)
+		})
+	})
 }

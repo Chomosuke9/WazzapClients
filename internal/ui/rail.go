@@ -60,7 +60,7 @@ func (u *UI) layoutRail(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				return layout.N.Layout(gtx, func(gtx C) D {
 					return clickable(gtx, &u.rail.profile, func(gtx C) D {
-						return u.avatar(gtx, "Me Myself", false, 32)
+						return u.avatar(gtx, u.meName(), false, 32)
 					})
 				})
 			})
@@ -120,4 +120,11 @@ func (u *UI) smallBadge(gtx C, n int) D {
 	call.Add(gtx.Ops)
 	t.Pop()
 	return D{Size: image.Pt(w, h)}
+}
+
+func (u *UI) meName() string {
+	if u.me == "" {
+		return "Me"
+	}
+	return u.me
 }

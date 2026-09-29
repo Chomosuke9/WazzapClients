@@ -32,6 +32,7 @@ type Palette struct {
 	Composer, Input, InputHint    color.NRGBA
 	Hover                         color.NRGBA
 	EmptyBg, EmptyText, EmptyLine color.NRGBA
+	Banner, BannerText, QRFg      color.NRGBA
 }
 
 func rgb(c uint32) color.NRGBA {
@@ -67,6 +68,7 @@ var lightPalette = Palette{
 	Composer: rgb(0xf0f2f5), Input: rgb(0xffffff), InputHint: rgb(0x667781),
 	Hover:   argb(0x0b141a, 0x10),
 	EmptyBg: rgb(0xf0f2f5), EmptyText: rgb(0x667781), EmptyLine: rgb(0x25d366),
+	Banner: rgb(0xfff4c5), BannerText: rgb(0x54656f), QRFg: rgb(0x122e31),
 }
 
 var darkPalette = Palette{
@@ -92,6 +94,7 @@ var darkPalette = Palette{
 	Composer: rgb(0x202c33), Input: rgb(0x2a3942), InputHint: rgb(0x8696a0),
 	Hover:   argb(0xffffff, 0x10),
 	EmptyBg: rgb(0x222e35), EmptyText: rgb(0x8696a0), EmptyLine: rgb(0x00a884),
+	Banner: rgb(0x3b3a2a), BannerText: rgb(0xe9edef), QRFg: rgb(0x122e31),
 }
 
 // senderColors tint group sender names, like WhatsApp does.

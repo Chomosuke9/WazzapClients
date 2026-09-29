@@ -1,0 +1,672 @@
+// Package wa is the WhatsApp backend, built on hypermeow
+// (github.com/polymorfa/hypermeow, a whatsmeow fork).
+package wa
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/polymorfa/hypermeow"
+	"github.com/polymorfa/hypermeow/proto/waCompanionReg"
+	"github.com/polymorfa/hypermeow/proto/waE2E"
+	"github.com/polymorfa/hypermeow/proto/waHistorySync"
+	"github.com/polymorfa/hypermeow/store"
+	"github.com/polymorfa/hypermeow/store/sqlstore"
+	"github.com/polymorfa/hypermeow/types"
+	"github.com/polymorfa/hypermeow/types/events"
+	waLog "github.com/polymorfa/hypermeow/util/log"
+	"google.golang.org/protobuf/proto"
+	_ "modernc.org/sqlite" // pure-Go SQLite driver, registers "sqlite"
+
+	"github.com/chomosuke9/wazzapclients/internal/model"
+)
+
+// Backend implements model.Backend on top of a hypermeow client.
+type Backend struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	log    waLog.Logger
+	logf   *os.File
+
+	db        *sql.DB
+	store     msgStore
+	container *sqlstore.Container
+
+	cliMu sync.Mutex
+	cli   *whatsmeow.Client
+
+	mu     sync.Mutex
+	events []model.Event
+	notify func()
+
+	names     nameCache
+	syncTimer *time.Timer
+}
+
+var _ model.Backend = (*Backend)(nil)
+
+// Open opens (or creates) the session database in dataDir.
+func Open(dataDir string, debug bool) (*Backend, error) {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, err
+	}
+	logf, err := os.OpenFile(filepath.Join(dataDir, "wazzap.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	b := &Backend{log: newLogger(logf, debug), logf: logf}
+	b.ctx, b.cancel = context.WithCancel(context.Background())
+
+	dsn := "file:" + filepath.ToSlash(filepath.Join(dataDir, "wazzap.db")) +
+		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)"
+	b.db, err = sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	b.container = sqlstore.NewWithDB(b.db, "sqlite", b.log.Sub("DB"))
+	if err := b.container.Upgrade(b.ctx); err != nil {
+		b.db.Close()
+		return nil, fmt.Errorf("upgrade session database: %w", err)
+	}
+	b.store = msgStore{db: b.db}
+	if err := b.store.init(b.ctx); err != nil {
+		b.db.Close()
+		return nil, fmt.Errorf("init message store: %w", err)
+	}
+
+	// How this client shows up under "Linked devices" on the phone.
+	store.SetOSInfo("WazzapClients", [3]uint32{0, 1, 0})
+	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
+	return b, nil
+}
+
+func (b *Backend) client() *whatsmeow.Client {
+	b.cliMu.Lock()
+	defer b.cliMu.Unlock()
+	return b.cli
+}
+
+func (b *Backend) emit(e model.Event) {
+	b.mu.Lock()
+	b.events = append(b.events, e)
+	notify := b.notify
+	b.mu.Unlock()
+	if notify != nil {
+		notify()
+	}
+}
+
+func (b *Backend) Poll() []model.Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ev := b.events
+	b.events = nil
+	return ev
+}
+
+func (b *Backend) Start(notify func()) {
+	b.mu.Lock()
+	b.notify = notify
+	b.mu.Unlock()
+	go b.run()
+}
+
+func (b *Backend) run() {
+	device, err := b.container.GetFirstDevice(b.ctx)
+	if err != nil {
+		b.fail("Couldn't open the session database: %v", err)
+		return
+	}
+	b.useDevice(device)
+	if device.ID == nil {
+		b.pair()
+	} else {
+		b.connect()
+	}
+}
+
+func (b *Backend) useDevice(device *store.Device) {
+	cli := whatsmeow.NewClient(device, b.log.Sub("Client"))
+	cli.EnableAutoReconnect = true
+	cli.AddEventHandler(b.handle)
+	b.cliMu.Lock()
+	b.cli = cli
+	b.cliMu.Unlock()
+}
+
+func (b *Backend) fail(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	b.log.Errorf("%s", msg)
+	b.emit(model.ConnEvent{State: model.StateError, Err: msg})
+}
+
+func (b *Backend) connect() {
+	b.emit(model.ConnEvent{State: model.StateConnecting, Me: b.client().Store.PushName})
+	if err := b.client().Connect(); err != nil {
+		b.log.Warnf("connect: %v", err)
+		b.emit(model.ConnEvent{State: model.StateOffline})
+	}
+}
+
+// pair shows QR codes until the phone links this device or the codes run out.
+func (b *Backend) pair() {
+	cli := b.client()
+	b.emit(model.ConnEvent{State: model.StateStarting})
+	ch, err := cli.GetQRChannel(b.ctx)
+	if err != nil {
+		b.fail("Couldn't start linking: %v", err)
+		return
+	}
+	if err := cli.Connect(); err != nil {
+		b.fail("Couldn't connect to WhatsApp: %v", err)
+		return
+	}
+	for item := range ch {
+		switch item.Event {
+		case whatsmeow.QRChannelEventCode:
+			b.emit(model.ConnEvent{State: model.StateQR, QR: item.Code})
+		case whatsmeow.QRChannelSuccess.Event:
+			b.emit(model.ConnEvent{State: model.StateConnecting})
+			b.emit(model.SyncEvent{Percent: 0})
+		case whatsmeow.QRChannelTimeout.Event:
+			b.emit(model.ConnEvent{State: model.StateQRExpired})
+		case whatsmeow.QRChannelEventPasskeyRequest:
+			cli.Disconnect()
+			b.fail("Your phone asked for passkey verification, which WazzapClients doesn't support yet.")
+		case whatsmeow.QRChannelEventError:
+			b.fail("Linking failed: %v", item.Error)
+		default:
+			b.fail("Linking failed (%s).", item.Event)
+		}
+	}
+}
+
+// Retry restarts linking after the QR codes expired, or reconnects an
+// existing session after an error.
+func (b *Backend) Retry() {
+	go func() {
+		cli := b.client()
+		cli.Disconnect()
+		if cli.Store.ID == nil {
+			b.pair()
+		} else {
+			b.connect()
+		}
+	}()
+}
+
+func (b *Backend) Close() {
+	if cli := b.client(); cli != nil {
+		cli.Disconnect()
+	}
+	b.cancel()
+	b.db.Close()
+	b.logf.Close()
+}
+
+// resetSession wipes local data after the phone unlinked this device and
+// starts linking again.
+func (b *Backend) resetSession() {
+	b.client().Disconnect()
+	if err := b.store.wipe(b.ctx); err != nil {
+		b.log.Errorf("wipe message store: %v", err)
+	}
+	b.names.clear()
+	b.emit(model.ChatsEvent{})
+	b.useDevice(b.container.NewDevice())
+	b.pair()
+}
+
+func (b *Backend) Chats() []*model.Chat {
+	chats, err := b.store.chats(b.ctx)
+	if err != nil {
+		b.log.Errorf("load chats: %v", err)
+	}
+	return chats
+}
+
+func (b *Backend) Messages(chatID string, limit int) []*model.Message {
+	msgs, err := b.store.messages(b.ctx, chatID, limit)
+	if err != nil {
+		b.log.Errorf("load messages for %s: %v", chatID, err)
+	}
+	return msgs
+}
+
+// Open marks a chat read and subscribes to the contact's presence.
+func (b *Backend) Open(chatID string) {
+	go func() {
+		ctx := b.ctx
+		jid, err := types.ParseJID(chatID)
+		if err != nil {
+			return
+		}
+		c := b.store.chat(ctx, chatID)
+		if c == nil {
+			return
+		}
+		cli := b.client()
+		if c.Unread > 0 {
+			ids, senders, err := b.store.unreadIncoming(ctx, chatID, min(c.Unread, 100))
+			if err == nil && cli.IsConnected() {
+				bySender := map[string][]types.MessageID{}
+				for i, id := range ids {
+					bySender[senders[i]] = append(bySender[senders[i]], id)
+				}
+				for s, ids := range bySender {
+					sender, _ := types.ParseJID(s)
+					if err := cli.MarkRead(ctx, ids, time.Now(), jid, sender); err != nil {
+						b.log.Warnf("mark read in %s: %v", chatID, err)
+					}
+				}
+			}
+			_ = b.store.setField(ctx, chatID, "unread", 0)
+		}
+		if !c.IsGroup && cli.IsConnected() {
+			if err := cli.SubscribePresence(ctx, jid); err != nil {
+				b.log.Debugf("subscribe presence %s: %v", chatID, err)
+			}
+		}
+	}()
+}
+
+// Send stores the message as pending, returns it, and sends it in the background.
+func (b *Backend) Send(chatID, text string) *model.Message {
+	jid, err := types.ParseJID(chatID)
+	cli := b.client()
+	if err != nil || cli == nil {
+		return nil
+	}
+	m := &model.Message{
+		ID:      cli.GenerateMessageID(),
+		ChatID:  chatID,
+		FromMe:  true,
+		Text:    text,
+		Time:    time.Now(),
+		Receipt: model.Pending,
+	}
+	if err := b.store.putMessage(b.ctx, b.db, storedMsg{Message: m}); err != nil {
+		b.log.Errorf("store outgoing message: %v", err)
+	}
+	if c := b.store.chat(b.ctx, chatID); c != nil {
+		b.emit(model.ChatEvent{Chat: c})
+	}
+	go func() {
+		_, err := cli.SendMessage(b.ctx, jid, &waE2E.Message{Conversation: proto.String(text)},
+			whatsmeow.SendRequestExtra{ID: m.ID})
+		if err != nil {
+			b.log.Errorf("send to %s: %v", chatID, err)
+			return
+		}
+		_ = b.store.setReceipt(b.ctx, chatID, []string{m.ID}, model.Sent)
+		b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{m.ID}, Receipt: model.Sent})
+	}()
+	cp := *m
+	return &cp
+}
+
+func (b *Backend) emitChat(jid string) {
+	if c := b.store.chat(b.ctx, jid); c != nil {
+		b.emit(model.ChatEvent{Chat: c})
+	}
+}
+
+func (b *Backend) emitAllChats() {
+	b.emit(model.ChatsEvent{Chats: b.Chats()})
+}
+
+// handle runs on hypermeow's event goroutine.
+func (b *Backend) handle(evt any) {
+	ctx := b.ctx
+	switch e := evt.(type) {
+	case *events.Connected:
+		cli := b.client()
+		b.emit(model.ConnEvent{State: model.StateOnline, Me: cli.Store.PushName})
+		go func() {
+			// Being "available" is what makes WhatsApp send typing notifications.
+			if err := cli.SendPresence(ctx, types.PresenceAvailable); err != nil {
+				b.log.Debugf("send presence: %v", err)
+			}
+			b.refreshGroupNames()
+		}()
+	case *events.Disconnected, *events.KeepAliveTimeout:
+		b.emit(model.ConnEvent{State: model.StateOffline})
+	case *events.KeepAliveRestored:
+		b.emit(model.ConnEvent{State: model.StateOnline})
+	case *events.LoggedOut:
+		go b.resetSession()
+	case *events.StreamReplaced:
+		b.fail("WhatsApp is open on another computer with this session.")
+	case *events.TemporaryBan:
+		b.fail("%s", e.String())
+	case *events.ClientOutdated:
+		b.fail("WhatsApp says this client is outdated. Update hypermeow and try again.")
+	case *events.ConnectFailure:
+		b.fail("Couldn't connect: %s", e.PermanentDisconnectDescription())
+	case *events.PairSuccess:
+		b.log.Infof("paired as %s (%s)", e.ID, e.Platform)
+
+	case *events.HistorySync:
+		b.onHistory(e)
+	case *events.Message:
+		b.onMessage(e)
+	case *events.Receipt:
+		b.onReceipt(e)
+
+	case *events.ChatPresence:
+		chat := b.canonical(ctx, e.Chat)
+		who := ""
+		if e.IsGroup {
+			who = b.senderName(ctx, e.Sender, "")
+		}
+		b.emit(model.TypingEvent{ChatID: chat.String(), Who: who, Typing: e.State == types.ChatPresenceComposing})
+	case *events.Presence:
+		text := "online"
+		if e.Unavailable {
+			text = ""
+			if !e.LastSeen.IsZero() {
+				text = "last seen " + lastSeen(e.LastSeen, time.Now())
+			}
+		}
+		b.emit(model.PresenceEvent{ChatID: b.canonical(ctx, e.From).String(), Text: text})
+
+	case *events.Pin:
+		var ts int64
+		if e.Action.GetPinned() {
+			ts = e.Timestamp.Unix()
+		}
+		b.updateChat(e.JID, "pinned", ts)
+	case *events.Mute:
+		var until int64
+		if e.Action.GetMuted() {
+			until = e.Action.GetMuteEndTimestamp() / 1000 // milliseconds
+			if e.Action.GetMuteEndTimestamp() < 0 {
+				until = -1
+			}
+		}
+		b.updateChat(e.JID, "muted_until", until)
+	case *events.Archive:
+		b.updateChat(e.JID, "archived", boolInt(e.Action.GetArchived()))
+	case *events.MarkChatAsRead:
+		if e.Action.GetRead() {
+			b.updateChat(e.JID, "unread", 0)
+		}
+
+	case *events.PushName, *events.Contact, *events.BusinessName:
+		b.names.clear()
+	case *events.AppStateSyncComplete:
+		// Contact names arrive through app state; re-title chats once they're in.
+		b.names.clear()
+		b.refreshChatNames()
+	case *events.GroupInfo:
+		if e.Name != nil {
+			jid := e.JID.String()
+			_ = b.store.setName(ctx, jid, e.Name.Name)
+			b.emitChat(jid)
+		}
+	case *events.JoinedGroup:
+		jid := e.JID.String()
+		_ = b.store.ensureChat(ctx, b.db, jid, true, e.Name)
+		_ = b.store.setField(ctx, jid, "last_ts", time.Now().Unix())
+		b.emitChat(jid)
+	}
+}
+
+func (b *Backend) updateChat(j types.JID, field string, v any) {
+	jid := b.canonical(b.ctx, j).String()
+	if err := b.store.setField(b.ctx, jid, field, v); err != nil {
+		b.log.Warnf("update %s of %s: %v", field, jid, err)
+	}
+	b.emitChat(jid)
+}
+
+func (b *Backend) onMessage(e *events.Message) {
+	ctx := b.ctx
+	p, ok := b.parse(ctx, e)
+	if !ok {
+		return
+	}
+	chat := p.chat.String()
+	switch {
+	case p.reaction != "" || (p.target != "" && !p.revoke && p.edit == ""):
+		_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
+	case p.revoke:
+		_ = b.store.markDeleted(ctx, chat, p.target)
+	case p.edit != "":
+		_ = b.store.editText(ctx, chat, p.target, p.edit)
+	default:
+		name := ""
+		if !e.Info.IsGroup {
+			name = b.chatName(ctx, p.chat)
+		}
+		isNew := b.store.chat(ctx, chat) == nil
+		if err := b.store.ensureChat(ctx, b.db, chat, e.Info.IsGroup, name); err != nil {
+			b.log.Errorf("store chat %s: %v", chat, err)
+			return
+		}
+		if err := b.store.putMessage(ctx, b.db, p.msg); err != nil {
+			b.log.Errorf("store message %s: %v", p.msg.ID, err)
+			return
+		}
+		if !p.msg.FromMe {
+			_ = b.store.addUnread(ctx, chat)
+		}
+		if isNew && e.Info.IsGroup {
+			go b.fetchGroupName(p.chat)
+		}
+		b.emit(model.MessageEvent{Msg: p.msg.Message})
+		b.emitChat(chat)
+		return
+	}
+	if m := b.store.message(ctx, chat, p.target); m != nil {
+		b.emit(model.MessageEvent{Msg: m})
+		b.emitChat(chat)
+	}
+}
+
+func (b *Backend) onReceipt(e *events.Receipt) {
+	ctx := b.ctx
+	chat := b.canonical(ctx, e.Chat).String()
+	var r model.Receipt
+	switch e.Type {
+	case types.ReceiptTypeReadSelf:
+		b.updateChat(e.Chat, "unread", 0)
+		return
+	case types.ReceiptTypeDelivered:
+		r = model.Delivered
+	case types.ReceiptTypeRead, types.ReceiptTypePlayed:
+		r = model.Read
+	default:
+		return
+	}
+	if e.IsFromMe {
+		return // our own other device reading/receiving someone else's message
+	}
+	ids := make([]string, len(e.MessageIDs))
+	for i, id := range e.MessageIDs {
+		ids[i] = string(id)
+	}
+	if err := b.store.setReceipt(ctx, chat, ids, r); err != nil {
+		b.log.Warnf("store receipt: %v", err)
+	}
+	b.emit(model.ReceiptEvent{ChatID: chat, IDs: ids, Receipt: r})
+}
+
+// onHistory stores a history sync chunk. All device-store lookups (message
+// parsing, names) happen before the write transaction starts: hypermeow may
+// write to the same SQLite file while parsing, and doing that inside our
+// transaction would deadlock until the busy timeout.
+func (b *Backend) onHistory(e *events.HistorySync) {
+	ctx := b.ctx
+	cli := b.client()
+	data := e.Data
+
+	type convData struct {
+		jid     types.JID
+		isGroup bool
+		name    string
+		meta    chatMeta
+		msgs    []storedMsg
+		edits   []parsed
+	}
+	var convs []convData
+	for _, conv := range data.GetConversations() {
+		raw, err := types.ParseJID(conv.GetID())
+		if err != nil {
+			continue
+		}
+		jid := b.canonical(ctx, raw)
+		if lid, err := types.ParseJID(conv.GetLidJID()); err == nil && lid.Server == types.HiddenUserServer {
+			jid = lid
+		}
+		if skipChat(jid) {
+			continue
+		}
+		cd := convData{jid: jid, isGroup: jid.Server == types.GroupServer}
+		if cd.isGroup {
+			cd.name = first(conv.GetName(), conv.GetDisplayName())
+		} else {
+			cd.name = b.chatName(ctx, jid)
+		}
+		mute := int64(conv.GetMuteEndTime())
+		if conv.GetMuteEndTime() == ^uint64(0) {
+			mute = -1
+		} else if mute > 1e11 {
+			mute /= 1000 // milliseconds
+		}
+		cd.meta = chatMeta{
+			pinned:     int64(conv.GetPinned()),
+			mutedUntil: mute,
+			archived:   conv.GetArchived(),
+			unread:     int(conv.GetUnreadCount()),
+			lastTS:     int64(max(conv.GetConversationTimestamp(), conv.GetLastMsgTimestamp())),
+		}
+		for _, hm := range conv.GetMessages() {
+			evt, err := cli.ParseWebMessage(raw, hm.GetMessage())
+			if err != nil {
+				continue
+			}
+			p, ok := b.parse(ctx, evt)
+			if !ok {
+				continue
+			}
+			p.chat = jid
+			if p.target != "" {
+				cd.edits = append(cd.edits, p)
+				continue
+			}
+			p.msg.ChatID = jid.String()
+			cd.msgs = append(cd.msgs, p.msg)
+		}
+		convs = append(convs, cd)
+	}
+
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		b.log.Errorf("history sync: begin: %v", err)
+		return
+	}
+	for _, cd := range convs {
+		jid := cd.jid.String()
+		if err := b.store.ensureChat(ctx, tx, jid, cd.isGroup, cd.name); err != nil {
+			b.log.Errorf("history sync: chat %s: %v", jid, err)
+			continue
+		}
+		_ = b.store.setMeta(ctx, tx, jid, cd.meta)
+		for _, m := range cd.msgs {
+			if err := b.store.putMessage(ctx, tx, m); err != nil {
+				b.log.Warnf("history sync: message %s: %v", m.ID, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		b.log.Errorf("history sync: commit: %v", err)
+		return
+	}
+	for _, cd := range convs {
+		for _, p := range cd.edits {
+			chat := cd.jid.String()
+			switch {
+			case p.revoke:
+				_ = b.store.markDeleted(ctx, chat, p.target)
+			case p.edit != "":
+				_ = b.store.editText(ctx, chat, p.target, p.edit)
+			default:
+				_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
+			}
+		}
+	}
+	b.log.Infof("history sync %s: %d conversations, progress %d%%",
+		data.GetSyncType(), len(convs), data.GetProgress())
+	b.emitAllChats()
+
+	switch data.GetSyncType() {
+	case waHistorySync.HistorySync_INITIAL_BOOTSTRAP, waHistorySync.HistorySync_RECENT, waHistorySync.HistorySync_FULL:
+		b.emit(model.SyncEvent{Percent: int(min(data.GetProgress(), 99))})
+		// WhatsApp doesn't reliably send a final 100%; call it done once chunks stop.
+		b.mu.Lock()
+		if b.syncTimer != nil {
+			b.syncTimer.Stop()
+		}
+		b.syncTimer = time.AfterFunc(20*time.Second, func() { b.emit(model.SyncEvent{Percent: 100}) })
+		b.mu.Unlock()
+	}
+}
+
+// refreshChatNames re-resolves one-to-one chat titles from the contact store.
+func (b *Backend) refreshChatNames() {
+	ctx := b.ctx
+	jids, err := b.store.chatJIDs(ctx, false)
+	if err != nil {
+		return
+	}
+	for _, s := range jids {
+		j, err := types.ParseJID(s)
+		if err != nil {
+			continue
+		}
+		_ = b.store.setName(ctx, s, b.chatName(ctx, j))
+	}
+	b.emitAllChats()
+}
+
+func (b *Backend) refreshGroupNames() {
+	groups, err := b.client().GetJoinedGroups(b.ctx)
+	if err != nil {
+		b.log.Warnf("get joined groups: %v", err)
+		return
+	}
+	for _, g := range groups {
+		if g.Name != "" {
+			_ = b.store.setName(b.ctx, g.JID.String(), g.Name)
+		}
+	}
+	b.emitAllChats()
+}
+
+func (b *Backend) fetchGroupName(j types.JID) {
+	info, err := b.client().GetGroupInfo(b.ctx, j)
+	if err != nil || info.Name == "" {
+		return
+	}
+	_ = b.store.setName(b.ctx, j.String(), info.Name)
+	b.emitChat(j.String())
+}
+
+func lastSeen(t, now time.Time) string {
+	y1, m1, d1 := t.Date()
+	y2, m2, d2 := now.Date()
+	switch {
+	case y1 == y2 && m1 == m2 && d1 == d2:
+		return "today at " + t.Format("15:04")
+	case now.Sub(t) < 48*time.Hour && d2-d1 == 1:
+		return "yesterday at " + t.Format("15:04")
+	default:
+		return t.Format("02/01/2006") + " at " + t.Format("15:04")
+	}
+}

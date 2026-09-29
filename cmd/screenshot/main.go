@@ -16,6 +16,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui"
 )
 
@@ -30,17 +32,26 @@ func main() {
 		log.Fatal(err)
 	}
 	shots := []struct {
-		name string
-		dark bool
-		chat int
+		name  string
+		dark  bool
+		chat  int
+		login bool
 	}{
-		{"preview-light.png", false, 0},
-		{"preview-dark.png", true, 0},
-		{"preview-group.png", false, 1},
-		{"preview-empty.png", false, -1},
+		{"preview-light.png", false, 0, false},
+		{"preview-dark.png", true, 0, false},
+		{"preview-group.png", false, 1, false},
+		{"preview-empty.png", false, -1, false},
+		{"preview-login.png", false, -1, true},
 	}
 	for _, s := range shots {
-		u := ui.New()
+		u := ui.New(mock.New())
+		if s.login {
+			// A made-up pairing payload of realistic length.
+			u.SetConn(model.ConnEvent{State: model.StateQR,
+				QR: "2@Qm9ndXNQYWlyaW5nUmVmZXJlbmNlRm9yU2NyZWVuc2hvdHNPbmx5X19fX19fX19fX19f,ZmFrZU5vaXNlS2V5X19fX19fX19fX19fX19fX19fXw==,ZmFrZUlkZW50aXR5S2V5X19fX19fX19fX19fX19fXw==,ZmFrZUFkdlNlY3JldF9fX19fX19fX19fX19fX19fXw==,1"})
+		} else {
+			u.Start(func() {})
+		}
 		u.SetDark(s.dark)
 		u.Select(s.chat)
 		path := filepath.Join(*out, s.name)
