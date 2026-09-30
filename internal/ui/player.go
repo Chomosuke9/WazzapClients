@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/op/paint"
@@ -11,9 +12,14 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
 
-// maxPlayers caps how many animated stickers play at once. Each one keeps
-// about 2 MB of frames; the rest show their first frame.
-const maxPlayers = 6
+// maxPlayers caps how many animated stickers play at once, and
+// playerBudget the memory they may hold together: a normal 512x512 sticker
+// takes about 2.5 MB, but a sticker's canvas can be up to 4096x4096. The
+// rest show their first frame.
+const (
+	maxPlayers   = 6
+	playerBudget = 24 << 20
+)
 
 // stickerPlayer plays an animated sticker. A goroutine renders each frame
 // ahead of time into one of three buffers, so it never writes the one the
@@ -32,6 +38,7 @@ type stickerPlayer struct {
 type players struct {
 	m     map[string]*stickerPlayer
 	frame int64
+	bytes atomic.Int64 // held by the running players, against playerBudget
 }
 
 // stickerFrame returns the current frame of an animated sticker, starting
@@ -49,7 +56,7 @@ func (u *UI) stickerFrame(key string, maxSide int, load func() []byte) (paint.Im
 		}
 		p = &stickerPlayer{ready: -1, shown: -1, stop: make(chan struct{})}
 		ps.m[key] = p
-		go p.run(load, maxSide, u.images.invalidate)
+		go p.run(load, maxSide, &ps.bytes, u.images.invalidate)
 	}
 	p.used = ps.frame
 	p.mu.Lock()
@@ -73,7 +80,7 @@ func (ps *players) endFrame() {
 	ps.frame++
 }
 
-func (p *stickerPlayer) run(load func() []byte, maxSide int, invalidate func()) {
+func (p *stickerPlayer) run(load func() []byte, maxSide int, held *atomic.Int64, invalidate func()) {
 	a, err := webpanim.Parse(load())
 	if err != nil {
 		return // the still first frame stays
@@ -82,6 +89,14 @@ func (p *stickerPlayer) run(load func() []byte, maxSide int, invalidate func()) 
 	if s := max(w, h); s > maxSide {
 		w, h = max(1, w*maxSide/s), max(1, h*maxSide/s)
 	}
+	// The canvas, a decoded frame (up to the canvas's size) and the three
+	// buffers.
+	cost := int64(a.Width)*int64(a.Height)*8 + 3*int64(w)*int64(h)*4
+	if held.Add(cost) > playerBudget {
+		held.Add(-cost)
+		return
+	}
+	defer held.Add(-cost)
 	due := time.Now()
 	for n := 0; ; n++ {
 		canvas, delay, err := a.Next()
