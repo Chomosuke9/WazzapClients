@@ -1,24 +1,32 @@
 // Command screenshot renders the UI off-screen and saves PNG previews.
+//
+// With -compare it instead renders the reference demo account at the size
+// and scale of a WhatsApp Desktop screenshot and writes both side by side.
 package main
 
 import (
 	"flag"
 	"fmt"
 	"image"
+	"image/draw"
 	"image/png"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	_ "golang.org/x/image/webp"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui"
+	"github.com/chomosuke9/wazzapclients/internal/wa"
 )
 
 func main() {
@@ -26,7 +34,36 @@ func main() {
 	width := flag.Int("w", 1280, "width in dp")
 	height := flag.Int("h", 800, "height in dp")
 	scale := flag.Float64("scale", 1.5, "pixels per dp")
+	compare := flag.String("compare", "", "WhatsApp screenshot to compare against")
+	crop := flag.String("crop", "1002,0,2000,1250", "window rectangle within -compare (x0,y0,x1,y1)")
+	chat := flag.String("chat", "test@g.us", "chat to open in -compare mode")
+	memprofile := flag.String("memprofile", "", "write a heap profile after rendering")
+	data := flag.String("data", "", "in -compare mode, render this session's stored chats (no network)")
+	chatName := flag.String("chatname", "", "in -compare mode with -data, open the chat with this name")
 	flag.Parse()
+	if *memprofile != "" {
+		defer func() {
+			runtime.GC()
+			f, err := os.Create(*memprofile)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer f.Close()
+			if err := pprof.WriteHeapProfile(f); err != nil {
+				log.Fatal(err)
+			}
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			fmt.Printf("heap in use: %.1f MB, sys: %.1f MB\n", float64(ms.HeapInuse)/1e6, float64(ms.Sys)/1e6)
+		}()
+	}
+
+	if *compare != "" {
+		if err := compareShot(*compare, *crop, *chat, *chatName, *data, *out, float32(*scale)); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		log.Fatal(err)
@@ -34,17 +71,24 @@ func main() {
 	shots := []struct {
 		name  string
 		dark  bool
-		chat  int
+		chat  string
 		login bool
+		ref   bool
 	}{
-		{"preview-light.png", false, 0, false},
-		{"preview-dark.png", true, 0, false},
-		{"preview-group.png", false, 1, false},
-		{"preview-empty.png", false, -1, false},
-		{"preview-login.png", false, -1, true},
+		{"preview-dark.png", true, "test@g.us", false, true},
+		{"preview-light.png", false, "rina", false, false},
+		{"preview-group.png", false, "family", false, false},
+		{"preview-empty.png", true, "", false, true},
+		{"preview-login.png", true, "", true, false},
 	}
 	for _, s := range shots {
-		u := ui.New(mock.New())
+		var b *mock.Backend
+		if s.ref {
+			b = mock.NewReference()
+		} else {
+			b = mock.New()
+		}
+		u := ui.New(b)
 		if s.login {
 			// A made-up pairing payload of realistic length.
 			u.SetConn(model.ConnEvent{State: model.StateQR,
@@ -53,26 +97,84 @@ func main() {
 			u.Start(func() {})
 		}
 		u.SetDark(s.dark)
-		u.Select(s.chat)
-		path := filepath.Join(*out, s.name)
-		if err := render(u, path, *width, *height, float32(*scale)); err != nil {
+		if s.chat != "" {
+			u.SelectID(s.chat)
+		}
+		img, err := render(u, int(float32(*width)*float32(*scale)), int(float32(*height)*float32(*scale)), float32(*scale))
+		if err != nil {
 			log.Fatalf("%s: %v", s.name, err)
+		}
+		path := filepath.Join(*out, s.name)
+		if err := writePNG(path, img); err != nil {
+			log.Fatal(err)
 		}
 		fmt.Println("wrote", path)
 	}
 }
 
-func render(u *ui.UI, path string, wDp, hDp int, scale float32) error {
-	w, h := int(float32(wDp)*scale), int(float32(hDp)*scale)
-	win, err := headless.NewWindow(w, h)
+func compareShot(path, crop, chat, chatName, data, outDir string, scale float32) error {
+	f, err := os.Open(path)
 	if err != nil {
 		return err
+	}
+	ref, _, err := image.Decode(f)
+	f.Close()
+	if err != nil {
+		return err
+	}
+	var r image.Rectangle
+	if _, err := fmt.Sscanf(crop, "%d,%d,%d,%d", &r.Min.X, &r.Min.Y, &r.Max.X, &r.Max.Y); err != nil {
+		return fmt.Errorf("bad -crop: %w", err)
+	}
+	var u *ui.UI
+	if data != "" {
+		b, err := wa.Open(data, false)
+		if err != nil {
+			return err
+		}
+		defer b.Close()
+		u = ui.New(b)
+		u.Preview()
+		u.SelectName(chatName)
+	} else {
+		u = ui.New(mock.NewReference())
+		u.Start(func() {})
+		u.SelectID(chat)
+	}
+	u.SetDark(true)
+	ours, err := render(u, r.Dx(), r.Dy(), scale)
+	if err != nil {
+		return err
+	}
+	gap := 12
+	out := image.NewRGBA(image.Rect(0, 0, 2*r.Dx()+gap, r.Dy()))
+	draw.Draw(out, out.Bounds(), image.White, image.Point{}, draw.Src)
+	draw.Draw(out, image.Rect(0, 0, r.Dx(), r.Dy()), ours, image.Point{}, draw.Src)
+	draw.Draw(out, image.Rect(r.Dx()+gap, 0, 2*r.Dx()+gap, r.Dy()), ref, r.Min, draw.Src)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+	for name, img := range map[string]image.Image{"compare.png": out, "ours.png": ours} {
+		p := filepath.Join(outDir, name)
+		if err := writePNG(p, img); err != nil {
+			return err
+		}
+		fmt.Println("wrote", p)
+	}
+	return nil
+}
+
+func render(u *ui.UI, w, h int, scale float32) (*image.RGBA, error) {
+	win, err := headless.NewWindow(w, h)
+	if err != nil {
+		return nil, err
 	}
 	defer win.Release()
 
 	var ops op.Ops
-	// Lay out twice: lists settle their scroll position on the first pass.
-	for i := 0; i < 2; i++ {
+	// Lay out a few times: lists settle their scroll position on the first
+	// pass, and images decode in the background.
+	for i := 0; i < 6; i++ {
 		ops.Reset()
 		gtx := layout.Context{
 			Ops:         &ops,
@@ -81,14 +183,19 @@ func render(u *ui.UI, path string, wDp, hDp int, scale float32) error {
 			Constraints: layout.Exact(image.Pt(w, h)),
 		}
 		u.Layout(gtx)
+		time.Sleep(150 * time.Millisecond)
 	}
 	if err := win.Frame(&ops); err != nil {
-		return err
+		return nil, err
 	}
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	if err := win.Screenshot(img); err != nil {
-		return err
+		return nil, err
 	}
+	return img, nil
+}
+
+func writePNG(path string, img image.Image) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err

@@ -1,40 +1,47 @@
 package ui
 
-import "golang.org/x/exp/shiny/materialdesign/icons"
+import "github.com/chomosuke9/wazzapclients/internal/ui/icon"
 
-// Material icons standing in for WhatsApp's own glyphs. Status and Channels
-// have no close Material equivalent and are drawn by hand in draw.go.
+// Material Symbols Rounded standing in for WhatsApp's glyphs. Status and
+// Channels have no close equivalent and are drawn by hand in draw.go.
 var (
-	icChats    = icons.CommunicationChat
-	icGroup    = icons.SocialGroup
-	icSettings = icons.ActionSettings
-	icNewChat  = icons.ContentCreate
-	icMenu     = icons.NavigationMoreVert
-	icSearch   = icons.ActionSearch
-	icArchive  = icons.ContentArchive
-	icMuted    = icons.AVVolumeOff
-	icTick     = icons.ActionDone
-	icTicks    = icons.ActionDoneAll
-	icClock    = icons.ActionSchedule
-	icCamera   = icons.ImagePhotoCamera
-	icVideo    = icons.AVVideocam
-	icCall     = icons.CommunicationCall
-	icAttach   = icons.ContentAdd
-	icEmoji    = icons.EditorInsertEmoticon
-	icMic      = icons.AVMic
-	icSend     = icons.ContentSend
-	icLock     = icons.ActionLock
-	icLaptop   = icons.CommunicationForum
-	icStarred  = icons.ToggleStarBorder
-	icBack     = icons.NavigationArrowBack
-	icRefresh  = icons.NavigationRefresh
+	icChats      = icon.Chat
+	icChatsFill  = icon.ChatFill
+	icCall       = icon.Call
+	icGroups     = icon.Groups
+	icGroupsFill = icon.GroupsFill
+	icArchive    = icon.Archive
+	icArchiveOn  = icon.ArchiveFill
+	icMedia      = icon.PhotoLibrary
+	icNewChat    = icon.AddCommentFill
+	icMenu       = icon.MoreVert
+	icSearch     = icon.Search
+	icVideo      = icon.Videocam
+	icDropDown   = icon.ArrowDropDown
+	icAttach     = icon.AttachFile
+	icEmoji      = icon.SentimentSatisfied
+	icMic        = icon.Mic
+	icSend       = icon.SendFill
+	icMuted      = icon.NotificationsOff
+	icPin        = icon.Keep
+	icTick       = icon.Check
+	icTicks      = icon.DoneAll
+	icClock      = icon.Schedule
+	icImage      = icon.Image
+	icLock       = icon.LockFill
+	icBack       = icon.ArrowBack
+	icRefresh    = icon.Refresh
+	icBlock      = icon.Block
+	icGroup      = icon.GroupFill
+	icPerson     = icon.PersonFill
+	icChevron    = icon.KeyboardArrowDown
+	icDocument   = icon.Description
+	icLocation   = icon.LocationOn
+	icSticker    = icon.StickyNote2
+	icContact    = icon.Person
+	icHeadphones = icon.Headphones
+	icLightMode  = icon.LightMode
+	icDarkMode   = icon.DarkMode
+	icLogout     = icon.Logout
+	icBubble     = icon.ChatBubble
 )
-
-// doodleIcons decorate the chat wallpaper.
-var doodleIcons = [][]byte{
-	icons.CommunicationChatBubbleOutline, icons.ImagePhotoCamera, icons.ActionFavoriteBorder,
-	icons.ImageMusicNote, icons.ToggleStarBorder, icons.CommunicationCall, icons.AVMic,
-	icons.EditorInsertEmoticon, icons.SocialCake, icons.MapsLocalCafe, icons.ImageWBSunny,
-	icons.ActionPets, icons.MapsDirectionsBike, icons.ImagePalette, icons.ActionHome,
-	icons.SocialPublic, icons.HardwareHeadset, icons.MapsLocalFlorist,
-}

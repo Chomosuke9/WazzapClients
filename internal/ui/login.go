@@ -29,10 +29,7 @@ func (u *UI) updateLogin(gtx C) {
 // layoutLogin is the device-linking screen shown while there is no session.
 func (u *UI) layoutLogin(gtx C) D {
 	p := u.pal
-	bg := p.Rail
-	if u.dark {
-		bg = p.Panel
-	}
+	bg := p.Frame
 	dims := fill(gtx, bg)
 	gtx.Constraints.Min = gtx.Constraints.Max
 
@@ -43,9 +40,9 @@ func (u *UI) layoutLogin(gtx C) D {
 			layout.Rigid(layout.Spacer{Height: 28}.Layout),
 			layout.Rigid(func(gtx C) D {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx C) D { return u.icons.layout(gtx, icLock, 13, p.EmptyText) }),
+					layout.Rigid(func(gtx C) D { return drawIcon(gtx, icLock, 14, p.TextSecondary) }),
 					layout.Rigid(layout.Spacer{Width: 5}.Layout),
-					layout.Rigid(u.label(13, "Your personal messages are end-to-end encrypted", p.EmptyText).Layout),
+					layout.Rigid(u.label(13, "Your personal messages are end-to-end encrypted", p.TextSecondary).Layout),
 				)
 			}),
 		)
@@ -83,7 +80,7 @@ func (u *UI) layoutLoginCard(gtx C) D {
 	})
 	call := m.Stop()
 	r := gtx.Dp(20)
-	fillRRect(gtx, image.Rectangle{Max: dims.Size}.Inset(-1), r+1, p.Divider)
+	fillRRect(gtx, image.Rectangle{Max: dims.Size}.Inset(-1), r+1, p.PanelBorder)
 	fillRRect(gtx, image.Rectangle{Max: dims.Size}, r, p.Panel)
 	call.Add(gtx.Ops)
 	return dims
@@ -125,10 +122,10 @@ func (u *UI) layoutQR(gtx C) D {
 				return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx C) D {
 						b := gtx.Dp(84)
-						fillCircle(gtx, image.Pt(b/2, b/2), b/2, p.Badge)
+						fillCircle(gtx, image.Pt(b/2, b/2), b/2, p.Green)
 						off := (b - gtx.Dp(36)) / 2
 						t := op.Offset(image.Pt(off, off)).Push(gtx.Ops)
-						u.icons.layout(gtx, icRefresh, 36, rgb(0xffffff))
+						drawIcon(gtx, icRefresh, 36, rgb(0xffffff))
 						t.Pop()
 						return D{Size: image.Pt(b, b)}
 					}),
@@ -142,7 +139,7 @@ func (u *UI) layoutQR(gtx C) D {
 		layout.Center.Layout(gtx, func(gtx C) D {
 			gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(48), gtx.Dp(48)))
 			l := material.Loader(u.th)
-			l.Color = p.Badge
+			l.Color = p.Green
 			return l.Layout(gtx)
 		})
 	}

@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 // hypermeow (like whatsmeow) only stores keys and session state, not
 // messages. msgStore keeps chats and messages in the same SQLite file so the
 // app can show history after a restart.
+//
+// Display names are not stored with messages: contact and push names often
+// arrive after the messages themselves (history sync stores them in the
+// background), so they are resolved whenever messages are loaded.
 type msgStore struct {
 	db *sql.DB
 }
@@ -48,15 +53,81 @@ CREATE TABLE IF NOT EXISTS wz_messages (
 	PRIMARY KEY (chat, id)
 );
 CREATE INDEX IF NOT EXISTS wz_messages_chat_ts ON wz_messages (chat, ts);
+CREATE TABLE IF NOT EXISTS wz_meta (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 `
 
+// migrations add columns to databases created by older versions.
+var migrations = []string{
+	`ALTER TABLE wz_messages ADD COLUMN sender_push TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wz_messages ADD COLUMN media INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_messages ADD COLUMN media_blob BLOB`,
+	`ALTER TABLE wz_messages ADD COLUMN duration INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wz_messages ADD COLUMN quote_media INTEGER NOT NULL DEFAULT 0`,
+}
+
 func (s *msgStore) init(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, schema)
-	return err
+	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	for _, m := range migrations {
+		if _, err := s.db.ExecContext(ctx, m); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
+	return s.migrateLegacyMedia(ctx)
+}
+
+// migrateLegacyMedia converts media rows written by the first version,
+// which stored attachments as emoji-prefixed text ("📄 file.pdf"), into
+// typed media so they render with proper icons.
+func (s *msgStore) migrateLegacyMedia(ctx context.Context) error {
+	const key = "legacy_media_migrated"
+	if s.meta(ctx, key) != "" {
+		return nil
+	}
+	m := func(media model.Media) int { return int(media) }
+	stmts := []struct {
+		q    string
+		args []any
+	}{
+		{`UPDATE wz_messages SET media = ?, text = '' WHERE media = 0 AND kind = 0 AND text = 'Sticker'`, []any{m(model.MediaSticker)}},
+		{`UPDATE wz_messages SET media = ?, text = substr(text, 3) WHERE media = 0 AND text LIKE '📄 %'`, []any{m(model.MediaDocument)}},
+		{`UPDATE wz_messages SET media = ?, text = '' WHERE media = 0 AND text LIKE '🎤 Voice message%'`, []any{m(model.MediaVoice)}},
+		{`UPDATE wz_messages SET media = ?, text = '' WHERE media = 0 AND text = '🎵 Audio'`, []any{m(model.MediaAudio)}},
+		{`UPDATE wz_messages SET media = ?, text = CASE WHEN text = '🎥 Video' THEN '' ELSE substr(text, 3) END
+			WHERE media = 0 AND text LIKE '🎥 %'`, []any{m(model.MediaVideo)}},
+		{`UPDATE wz_messages SET media = ?, text = CASE WHEN text = '📍 Location' THEN '' ELSE substr(text, 3) END
+			WHERE media = 0 AND text LIKE '📍 %'`, []any{m(model.MediaLocation)}},
+		{`UPDATE wz_messages SET media = ?, text = substr(text, 3) WHERE media = 0 AND text LIKE '👤 %'`, []any{m(model.MediaContact)}},
+		{`UPDATE wz_messages SET media = ?, text = substr(text, 3) WHERE media = 0 AND text LIKE '📊 %'`, []any{m(model.MediaPoll)}},
+		{`UPDATE wz_messages SET media = ? WHERE media = 0 AND kind = ?`, []any{m(model.MediaImage), int(model.KindImage)}},
+	}
+	for _, st := range stmts {
+		if _, err := s.db.ExecContext(ctx, st.q, st.args...); err != nil {
+			return fmt.Errorf("migrate legacy media: %w", err)
+		}
+	}
+	return s.setMetaValue(ctx, key, time.Now().Format(time.RFC3339))
 }
 
 func (s *msgStore) wipe(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats;`)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats; DELETE FROM wz_meta;`)
+	return err
+}
+
+func (s *msgStore) meta(ctx context.Context, key string) string {
+	var v string
+	_ = s.db.QueryRowContext(ctx, `SELECT value FROM wz_meta WHERE key = ?`, key).Scan(&v)
+	return v
+}
+
+func (s *msgStore) setMetaValue(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO wz_meta (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
 
@@ -108,27 +179,37 @@ func (s *msgStore) addUnread(ctx context.Context, jid string) error {
 	return err
 }
 
-// storedMsg is a message plus the raw sender JID needed for read receipts.
+// storedMsg is a message plus the raw data names are resolved from at load
+// time, and what's needed to download its media later.
 type storedMsg struct {
 	*model.Message
-	senderJID string
+	senderJID  string
+	senderPush string
+	quoteJID   string // author of the quoted message
+	mentions   []string
+	mediaBlob  []byte // marshaled waE2E media message
 }
 
 func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error {
-	var qs, qt string
+	var qt string
+	var qm int
 	if m.Quote != nil {
-		qs, qt = m.Quote.Sender, m.Quote.Text
+		qt, qm = m.Quote.Text, int(m.Quote.Media)
 	}
 	_, err := x.ExecContext(ctx, `
-		INSERT INTO wz_messages (chat, id, sender_jid, sender_name, from_me, ts, kind, text, receipt, quote_sender, quote_text, thumb)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, duration, text,
+			receipt, quote_sender, quote_text, quote_media, mentions, thumb, media_blob)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
-			sender_name = excluded.sender_name, kind = excluded.kind, text = excluded.text,
+			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
+			duration = excluded.duration, text = excluded.text,
 			receipt = MAX(wz_messages.receipt, excluded.receipt),
 			quote_sender = excluded.quote_sender, quote_text = excluded.quote_text,
-			thumb = COALESCE(excluded.thumb, wz_messages.thumb)`,
-		m.ChatID, m.ID, m.senderJID, m.Sender, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), m.Text,
-		int(m.Receipt), qs, qt, m.Thumb)
+			quote_media = excluded.quote_media, mentions = excluded.mentions,
+			thumb = COALESCE(excluded.thumb, wz_messages.thumb),
+			media_blob = COALESCE(excluded.media_blob, wz_messages.media_blob)`,
+		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
+		m.Duration, m.Text, int(m.Receipt), m.quoteJID, qt, qm, strings.Join(m.mentions, ","), m.Thumb, m.mediaBlob)
 	if err != nil {
 		return err
 	}
@@ -160,8 +241,8 @@ func (s *msgStore) setReaction(ctx context.Context, chat, id, emoji string) erro
 }
 
 func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?, text = '', thumb = NULL, quote_sender = '', quote_text = ''
-		WHERE chat = ? AND id = ?`, int(model.KindDeleted), chat, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?, media = 0, text = '', thumb = NULL, media_blob = NULL,
+		quote_sender = '', quote_text = '', quote_media = 0 WHERE chat = ? AND id = ?`, int(model.KindDeleted), chat, id)
 	return err
 }
 
@@ -170,48 +251,64 @@ func (s *msgStore) editText(ctx context.Context, chat, id, text string) error {
 	return err
 }
 
-const msgColumns = `chat, id, sender_name, from_me, ts, kind, text, receipt, quote_sender, quote_text, reaction, thumb`
+func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.Media, blob []byte, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT media, media_blob FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
+		Scan(&media, &blob)
+	return
+}
+
+// rawMsg is a loaded message before names are resolved. legacyName is the
+// sender name stored by versions that resolved names at insert time.
+type rawMsg struct {
+	*model.Message
+	senderJID, senderPush, legacyName, quoteJID, mentions string
+}
+
+const msgColumns = `chat, id, sender_jid, sender_push, sender_name, from_me, ts, kind, media, duration, text, receipt,
+	quote_sender, quote_text, quote_media, mentions, reaction, thumb`
 
 type scanner interface{ Scan(dest ...any) error }
 
-func scanMessage(sc scanner) (*model.Message, error) {
+func scanMessage(sc scanner) (rawMsg, error) {
 	var (
-		m        model.Message
-		fromMe   int
-		ts       int64
-		kind     int
-		receipt  int
-		qs, qt   string
-		thumb    []byte
-		reaction string
+		m                   model.Message
+		r                   rawMsg
+		fromMe, kind, media int
+		receipt             int
+		ts                  int64
+		quoteText           string
+		quoteMedia          int
+		thumb               []byte
+		reaction            string
 	)
-	err := sc.Scan(&m.ChatID, &m.ID, &m.Sender, &fromMe, &ts, &kind, &m.Text, &receipt, &qs, &qt, &reaction, &thumb)
+	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &r.legacyName, &fromMe, &ts, &kind, &media, &m.Duration,
+		&m.Text, &receipt, &r.quoteJID, &quoteText, &quoteMedia, &r.mentions, &reaction, &thumb)
 	if err != nil {
-		return nil, err
+		return r, err
 	}
 	m.FromMe = fromMe != 0
 	m.Time = time.Unix(ts, 0)
 	m.Kind = model.Kind(kind)
+	m.Media = model.Media(media)
 	m.Receipt = model.Receipt(receipt)
 	m.Reaction = reaction
 	m.Thumb = thumb
-	if qs != "" || qt != "" {
-		m.Quote = &model.Quote{Sender: qs, Text: qt}
+	m.SenderID = r.senderJID
+	if quoteText != "" || r.quoteJID != "" || quoteMedia != 0 {
+		m.Quote = &model.Quote{Text: quoteText, Media: model.Media(quoteMedia)}
 	}
-	return &m, nil
+	r.Message = &m
+	return r, nil
 }
 
-func (s *msgStore) message(ctx context.Context, chat, id string) *model.Message {
+func (s *msgStore) message(ctx context.Context, chat, id string) (rawMsg, bool) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+msgColumns+` FROM wz_messages WHERE chat = ? AND id = ?`, chat, id)
 	m, err := scanMessage(row)
-	if err != nil {
-		return nil
-	}
-	return m
+	return m, err == nil
 }
 
 // messages returns the newest limit messages of a chat, oldest first.
-func (s *msgStore) messages(ctx context.Context, chat string, limit int) ([]*model.Message, error) {
+func (s *msgStore) messages(ctx context.Context, chat string, limit int) ([]rawMsg, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+msgColumns+` FROM (
 		SELECT *, rowid AS rid FROM wz_messages WHERE chat = ? ORDER BY ts DESC, rid DESC LIMIT ?
 	) ORDER BY ts, rid`, chat, limit)
@@ -219,7 +316,7 @@ func (s *msgStore) messages(ctx context.Context, chat string, limit int) ([]*mod
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*model.Message
+	var out []rawMsg
 	for rows.Next() {
 		m, err := scanMessage(rows)
 		if err != nil {
@@ -230,28 +327,34 @@ func (s *msgStore) messages(ctx context.Context, chat string, limit int) ([]*mod
 	return out, rows.Err()
 }
 
+// rawChat is a loaded chat before names are resolved.
+type rawChat struct {
+	*model.Chat
+	last *rawMsg
+}
+
 const chatQuery = `
 	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts,
-		m.chat, m.id, m.sender_name, m.from_me, m.ts, m.kind, m.text, m.receipt, m.quote_sender, m.quote_text, m.reaction, NULL
+		m.id, m.sender_jid, m.sender_push, m.sender_name, m.from_me, m.ts, m.kind, m.media, m.duration, m.text, m.receipt, m.mentions
 	FROM wz_chats c
 	LEFT JOIN wz_messages m ON m.rowid = (
 		SELECT rowid FROM wz_messages WHERE chat = c.jid ORDER BY ts DESC, rowid DESC LIMIT 1
 	)`
 
-func scanChat(sc scanner, now time.Time) (*model.Chat, error) {
+func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	var (
-		c                             model.Chat
-		isGroup, archived, unread     int
-		pinned, mutedUntil, lastTS    int64
-		mChat, mID, mSender, mText    sql.NullString
-		mQS, mQT, mReaction           sql.NullString
-		mFromMe, mTS, mKind, mReceipt sql.NullInt64
-		thumb                         []byte
+		c                                 model.Chat
+		isGroup, archived, unread         int
+		pinned, mutedUntil, lastTS        int64
+		mID, mSender, mPush, mText, mMent sql.NullString
+		mLegacy                           sql.NullString
+		mFromMe, mTS, mKind, mMedia, mDur sql.NullInt64
+		mReceipt                          sql.NullInt64
 	)
 	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS,
-		&mChat, &mID, &mSender, &mFromMe, &mTS, &mKind, &mText, &mReceipt, &mQS, &mQT, &mReaction, &thumb)
+		&mID, &mSender, &mPush, &mLegacy, &mFromMe, &mTS, &mKind, &mMedia, &mDur, &mText, &mReceipt, &mMent)
 	if err != nil {
-		return nil, err
+		return rawChat{}, err
 	}
 	c.IsGroup = isGroup != 0
 	c.Pinned = pinned > 0
@@ -259,21 +362,25 @@ func scanChat(sc scanner, now time.Time) (*model.Chat, error) {
 	c.Archived = archived != 0
 	c.Unread = unread
 	c.Time = time.Unix(lastTS, 0)
+	rc := rawChat{Chat: &c}
 	if mID.Valid {
-		c.Last = &model.Message{
-			ID: mID.String, ChatID: c.ID, Sender: mSender.String, FromMe: mFromMe.Int64 != 0,
-			Time: time.Unix(mTS.Int64, 0), Kind: model.Kind(mKind.Int64), Text: mText.String,
-			Receipt: model.Receipt(mReceipt.Int64), Reaction: mReaction.String,
+		m := &model.Message{
+			ID: mID.String, ChatID: c.ID, SenderID: mSender.String, FromMe: mFromMe.Int64 != 0,
+			Time: time.Unix(mTS.Int64, 0), Kind: model.Kind(mKind.Int64), Media: model.Media(mMedia.Int64),
+			Duration: int(mDur.Int64), Text: mText.String, Receipt: model.Receipt(mReceipt.Int64),
 		}
-		if c.Last.Time.After(c.Time) {
-			c.Time = c.Last.Time
+		c.Last = m
+		rc.last = &rawMsg{Message: m, senderJID: mSender.String, senderPush: mPush.String,
+			legacyName: mLegacy.String, mentions: mMent.String}
+		if m.Time.After(c.Time) {
+			c.Time = m.Time
 		}
 	}
-	return &c, nil
+	return rc, nil
 }
 
 // chats lists chats that have any activity, newest first.
-func (s *msgStore) chats(ctx context.Context) ([]*model.Chat, error) {
+func (s *msgStore) chats(ctx context.Context) ([]rawChat, error) {
 	rows, err := s.db.QueryContext(ctx, chatQuery+` WHERE c.last_ts > 0 OR m.id IS NOT NULL
 		ORDER BY c.pinned DESC, MAX(c.last_ts, COALESCE(m.ts, 0)) DESC`)
 	if err != nil {
@@ -281,7 +388,7 @@ func (s *msgStore) chats(ctx context.Context) ([]*model.Chat, error) {
 	}
 	defer rows.Close()
 	now := time.Now()
-	var out []*model.Chat
+	var out []rawChat
 	for rows.Next() {
 		c, err := scanChat(rows, now)
 		if err != nil {
@@ -292,12 +399,9 @@ func (s *msgStore) chats(ctx context.Context) ([]*model.Chat, error) {
 	return out, rows.Err()
 }
 
-func (s *msgStore) chat(ctx context.Context, jid string) *model.Chat {
+func (s *msgStore) chat(ctx context.Context, jid string) (rawChat, bool) {
 	c, err := scanChat(s.db.QueryRowContext(ctx, chatQuery+` WHERE c.jid = ?`, jid), time.Now())
-	if err != nil {
-		return nil
-	}
-	return c
+	return c, err == nil
 }
 
 func (s *msgStore) chatJIDs(ctx context.Context, groups bool) ([]string, error) {

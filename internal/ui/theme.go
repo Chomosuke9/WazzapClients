@@ -1,38 +1,45 @@
 package ui
 
 import (
+	_ "embed"
 	"image/color"
 
 	"gioui.org/font"
 	"gioui.org/font/gofont"
+	"gioui.org/font/opentype"
 	"gioui.org/text"
 	"gioui.org/widget/material"
 )
 
-// Palette holds every color the UI uses. Values follow WhatsApp Desktop.
+// Palette holds every color the UI uses. The dark values were sampled from
+// WhatsApp Desktop (2025 design); the light ones follow the same structure.
 type Palette struct {
-	Rail, RailBorder, RailIcon, RailActive, RailActiveBg color.NRGBA
+	Frame, FrameText                             color.NRGBA // title bar and rail
+	PanelBorder, Divider                         color.NRGBA
+	Panel, ChatBg                                color.NRGBA
+	Hover, Selected, Search                      color.NRGBA
+	Chip, ChipBorder, ChipText                   color.NRGBA
+	ChipActive, ChipActiveBorder, ChipActiveText color.NRGBA
 
-	Panel, Divider, Title    color.NRGBA
-	Search, SearchHint       color.NRGBA
-	Chip, ChipText           color.NRGBA
-	ChipActive, ChipActiveFg color.NRGBA
-	RowHover, RowSelected    color.NRGBA
+	Text, TextSecondary, Icon, IconActive color.NRGBA
+	IconStrong                            color.NRGBA // header, composer and menu buttons
+	Green, OnGreen                        color.NRGBA
+	RailActive, RailSeparator             color.NRGBA
 
-	Text, TextSecondary, Icon color.NRGBA
-	Green, Badge, BadgeText   color.NRGBA
-
-	Header                        color.NRGBA
-	ChatBg, Doodle                color.NRGBA
-	BubbleIn, BubbleOut, Shadow   color.NRGBA
-	Meta, TickRead                color.NRGBA
-	QuoteIn, QuoteOut             color.NRGBA
-	SystemChip, SystemChipText    color.NRGBA
-	Encryption, EncryptionText    color.NRGBA
-	Composer, Input, InputHint    color.NRGBA
-	Hover                         color.NRGBA
-	EmptyBg, EmptyText, EmptyLine color.NRGBA
-	Banner, BannerText, QRFg      color.NRGBA
+	Doodle                       color.NRGBA
+	BubbleIn, BubbleOut          color.NRGBA
+	MetaIn, MetaOut, TickRead    color.NRGBA
+	TextOut, SecondaryOut        color.NRGBA
+	QuoteIn, QuoteOut            color.NRGBA
+	DateChip, DateChipText       color.NRGBA
+	Encryption, EncryptionText   color.NRGBA
+	Composer, ComposerHint       color.NRGBA
+	GroupAvatar, GroupAvatarIcon color.NRGBA
+	UserAvatar, UserAvatarIcon   color.NRGBA
+	Banner, BannerText, QRFg     color.NRGBA
+	Menu, MenuHover, Shadow      color.NRGBA
+	CloseHover                   color.NRGBA
+	Senders                      []color.NRGBA
 }
 
 func rgb(c uint32) color.NRGBA {
@@ -45,66 +52,70 @@ func argb(c uint32, a uint8) color.NRGBA {
 	return col
 }
 
-var lightPalette = Palette{
-	Rail: rgb(0xf7f5f3), RailBorder: rgb(0xe9edef), RailIcon: rgb(0x54656f),
-	RailActive: rgb(0x111b21), RailActiveBg: argb(0x0b141a, 0x1a),
-
-	Panel: rgb(0xffffff), Divider: rgb(0xe9edef), Title: rgb(0x1daa61),
-	Search: rgb(0xf6f5f4), SearchHint: rgb(0x667781),
-	Chip: rgb(0xf6f5f4), ChipText: rgb(0x54656f),
-	ChipActive: rgb(0xd9fdd3), ChipActiveFg: rgb(0x15603e),
-	RowHover: rgb(0xf6f5f4), RowSelected: rgb(0xf0f2f5),
-
-	Text: rgb(0x111b21), TextSecondary: rgb(0x667781), Icon: rgb(0x54656f),
-	Green: rgb(0x1daa61), Badge: rgb(0x25d366), BadgeText: rgb(0xffffff),
-
-	Header: rgb(0xf0f2f5),
-	ChatBg: rgb(0xefeae2), Doodle: rgb(0xe7e1d8),
-	BubbleIn: rgb(0xffffff), BubbleOut: rgb(0xd9fdd3), Shadow: argb(0x0b141a, 0x21),
-	Meta: rgb(0x667781), TickRead: rgb(0x53bdeb),
-	QuoteIn: rgb(0xf5f6f6), QuoteOut: rgb(0xd1f4cc),
-	SystemChip: rgb(0xffffff), SystemChipText: rgb(0x54656f),
-	Encryption: rgb(0xffeecd), EncryptionText: rgb(0x54656f),
-	Composer: rgb(0xf0f2f5), Input: rgb(0xffffff), InputHint: rgb(0x667781),
-	Hover:   argb(0x0b141a, 0x10),
-	EmptyBg: rgb(0xf0f2f5), EmptyText: rgb(0x667781), EmptyLine: rgb(0x25d366),
-	Banner: rgb(0xfff4c5), BannerText: rgb(0x54656f), QRFg: rgb(0x122e31),
+func rgbs(cs ...uint32) []color.NRGBA {
+	out := make([]color.NRGBA, len(cs))
+	for i, c := range cs {
+		out[i] = rgb(c)
+	}
+	return out
 }
 
 var darkPalette = Palette{
-	Rail: rgb(0x202c33), RailBorder: rgb(0x2a3942), RailIcon: rgb(0xaebac1),
-	RailActive: rgb(0xe9edef), RailActiveBg: argb(0xffffff, 0x1a),
+	Frame: rgb(0x1d1f1e), FrameText: rgb(0xfafafa),
+	PanelBorder: rgb(0x2c2c2c), Divider: rgb(0x282828),
+	Panel: rgb(0x171717), ChatBg: rgb(0x171717),
+	Hover: rgb(0x2e2f2f), Selected: rgb(0x2e2f2f), Search: rgb(0x2e2f2f),
+	Chip: rgb(0x171717), ChipBorder: rgb(0x2e2f2f), ChipText: rgb(0xa5a7a9),
+	ChipActive: rgb(0x1a342b), ChipActiveBorder: rgb(0x2c4a3d), ChipActiveText: rgb(0xd9fdd3),
 
-	Panel: rgb(0x111b21), Divider: rgb(0x222d34), Title: rgb(0xe9edef),
-	Search: rgb(0x202c33), SearchHint: rgb(0x8696a0),
-	Chip: rgb(0x202c33), ChipText: rgb(0x8696a0),
-	ChipActive: rgb(0x0a332c), ChipActiveFg: rgb(0x00a884),
-	RowHover: rgb(0x202c33), RowSelected: rgb(0x2a3942),
+	Text: rgb(0xfafafa), TextSecondary: rgb(0xa5a7a8), Icon: rgb(0xaaacab), IconActive: rgb(0xfafafa),
+	IconStrong: rgb(0xffffff),
+	Green:      rgb(0x5dbf6e), OnGreen: rgb(0x0a1a0e),
+	RailActive: rgb(0x333535), RailSeparator: rgb(0x2f3131),
 
-	Text: rgb(0xe9edef), TextSecondary: rgb(0x8696a0), Icon: rgb(0xaebac1),
-	Green: rgb(0x00a884), Badge: rgb(0x00a884), BadgeText: rgb(0x111b21),
-
-	Header: rgb(0x202c33),
-	ChatBg: rgb(0x0b141a), Doodle: rgb(0x142027),
-	BubbleIn: rgb(0x202c33), BubbleOut: rgb(0x005c4b), Shadow: argb(0x000000, 0x30),
-	Meta: argb(0xffffff, 0x99), TickRead: rgb(0x53bdeb),
-	QuoteIn: rgb(0x1d282f), QuoteOut: rgb(0x025144),
-	SystemChip: rgb(0x182229), SystemChipText: rgb(0x8696a0),
-	Encryption: rgb(0x182229), EncryptionText: rgb(0xffd279),
-	Composer: rgb(0x202c33), Input: rgb(0x2a3942), InputHint: rgb(0x8696a0),
-	Hover:   argb(0xffffff, 0x10),
-	EmptyBg: rgb(0x222e35), EmptyText: rgb(0x8696a0), EmptyLine: rgb(0x00a884),
-	Banner: rgb(0x3b3a2a), BannerText: rgb(0xe9edef), QRFg: rgb(0x122e31),
+	Doodle:   rgb(0x292c2b),
+	BubbleIn: rgb(0x242626), BubbleOut: rgb(0x254d39),
+	MetaIn: rgb(0xaaacab), MetaOut: rgb(0xa3c0b0), TickRead: rgb(0x53bdeb),
+	TextOut: rgb(0xfafafa), SecondaryOut: rgb(0xa6c2b4),
+	QuoteIn: rgb(0x1d1f1f), QuoteOut: rgb(0x1f4232),
+	DateChip: rgb(0x1d1f1e), DateChipText: rgb(0xa6a8a8),
+	Encryption: rgb(0x1d1f1e), EncryptionText: rgb(0xe3c77b),
+	Composer: rgb(0x242626), ComposerHint: rgb(0xabadac),
+	GroupAvatar: rgb(0x102540), GroupAvatarIcon: rgb(0x70adff),
+	UserAvatar: rgb(0x303434), UserAvatarIcon: rgb(0xa6abad),
+	Banner: rgb(0x2e2f2f), BannerText: rgb(0xd0d2d2), QRFg: rgb(0x122e31),
+	Menu: rgb(0x242626), MenuHover: rgb(0x2e2f2f), Shadow: argb(0x000000, 0x60),
+	CloseHover: rgb(0xc42b1c),
+	Senders:    rgbs(0xcca48f, 0x8fb8e8, 0xe6a1b8, 0x86c9a8, 0xdcc27a, 0xb1a3e6, 0xe89b7f, 0x7fc3d6, 0xc7b7a0),
 }
 
-// senderColors tint group sender names, like WhatsApp does.
-var senderColors = []uint32{
-	0x1f7aec, 0xe542a3, 0x02a698, 0xc85a00, 0x7f66ff, 0xd62f45, 0x029d00, 0x0e8a94, 0xa4661f,
-}
+var lightPalette = Palette{
+	Frame: rgb(0xf7f5f3), FrameText: rgb(0x0a0a0a),
+	PanelBorder: rgb(0xe3e0dc), Divider: rgb(0xe9edef),
+	Panel: rgb(0xffffff), ChatBg: rgb(0xf5f1eb),
+	Hover: rgb(0xf5f6f6), Selected: rgb(0xf0f2f5), Search: rgb(0xf6f5f4),
+	Chip: rgb(0xffffff), ChipBorder: rgb(0xe3e0dc), ChipText: rgb(0x5e6468),
+	ChipActive: rgb(0xd9fdd3), ChipActiveBorder: rgb(0xc3eebc), ChipActiveText: rgb(0x15603e),
 
-// avatarColors are backgrounds for initials avatars.
-var avatarColors = []uint32{
-	0x6bcbef, 0xffbc38, 0xe542a3, 0x91ab01, 0x35cd96, 0x7f66ff, 0xfe7c7f, 0x53a6fd, 0xba5ae8,
+	Text: rgb(0x0a0a0a), TextSecondary: rgb(0x667781), Icon: rgb(0x54656f), IconActive: rgb(0x0a0a0a),
+	IconStrong: rgb(0x0a0a0a),
+	Green:      rgb(0x1daa61), OnGreen: rgb(0xffffff),
+	RailActive: rgb(0xe8e6e3), RailSeparator: rgb(0xe3e0dc),
+
+	Doodle:   rgb(0xe8e1d8),
+	BubbleIn: rgb(0xffffff), BubbleOut: rgb(0xd9fdd3),
+	MetaIn: rgb(0x667781), MetaOut: rgb(0x5b7a66), TickRead: rgb(0x53bdeb),
+	TextOut: rgb(0x0a0a0a), SecondaryOut: rgb(0x587a64),
+	QuoteIn: rgb(0xf5f6f6), QuoteOut: rgb(0xd1f4cc),
+	DateChip: rgb(0xffffff), DateChipText: rgb(0x54656f),
+	Encryption: rgb(0xffeecd), EncryptionText: rgb(0x54656f),
+	Composer: rgb(0xffffff), ComposerHint: rgb(0x667781),
+	GroupAvatar: rgb(0xdbe7fb), GroupAvatarIcon: rgb(0x3778e5),
+	UserAvatar: rgb(0xe8ebed), UserAvatarIcon: rgb(0x8a9499),
+	Banner: rgb(0xfff4c5), BannerText: rgb(0x54656f), QRFg: rgb(0x122e31),
+	Menu: rgb(0xffffff), MenuHover: rgb(0xf5f6f6), Shadow: argb(0x0b141a, 0x30),
+	CloseHover: rgb(0xc42b1c),
+	Senders:    rgbs(0x1f7aec, 0xe542a3, 0x02a698, 0xc85a00, 0x7f66ff, 0xd62f45, 0x029d00, 0x0e8a94, 0xa4661f),
 }
 
 func hashIndex(s string, n int) int {
@@ -116,14 +127,24 @@ func hashIndex(s string, n int) int {
 	return int(h % uint32(n))
 }
 
-// Typeface prefers Segoe UI (what WhatsApp Desktop uses on Windows), then
-// common system UI fonts, then the bundled Go fonts.
-const typeface font.Typeface = "Segoe UI, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
+// NotoColorEmoji is a bitmap (CBDT) color emoji font. Gio can't draw the COLR
+// glyphs of Windows' Segoe UI Emoji in color, so it's bundled.
+//
+//go:embed fonts/NotoColorEmoji.ttf
+var notoColorEmoji []byte
+
+// Typeface prefers Segoe UI (what WhatsApp Desktop uses on Windows), color
+// emoji from Noto, then common system UI fonts and the bundled Go fonts.
+const typeface font.Typeface = "Segoe UI, Noto Color Emoji, Segoe UI Symbol, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
 
 func newTheme() *material.Theme {
 	th := material.NewTheme()
-	// System fonts are enabled by default; gofont is the last-resort fallback.
-	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	faces := gofont.Collection()
+	if emoji, err := opentype.ParseCollection(notoColorEmoji); err == nil {
+		faces = append(faces, emoji...)
+	}
+	// System fonts are enabled by default and cover other scripts.
+	th.Shaper = text.NewShaper(text.WithCollection(faces))
 	th.Face = typeface
 	th.TextSize = 14
 	return th

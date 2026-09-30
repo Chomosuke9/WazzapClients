@@ -4,8 +4,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"strings"
-	"unicode"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -18,44 +16,14 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
 type (
 	C = layout.Context
 	D = layout.Dimensions
 )
-
-// iconCache keeps one rasterized widget.Icon per (icon, size, color). A single
-// widget.Icon only caches its last size/color, so sharing one between call
-// sites with different colors would re-rasterize every frame.
-type iconCache struct {
-	m map[iconKey]*widget.Icon
-}
-
-type iconKey struct {
-	data *byte
-	size int
-	col  color.NRGBA
-}
-
-func (ic *iconCache) layout(gtx C, data []byte, size unit.Dp, col color.NRGBA) D {
-	px := gtx.Dp(size)
-	k := iconKey{&data[0], px, col}
-	if ic.m == nil {
-		ic.m = make(map[iconKey]*widget.Icon)
-	}
-	w, ok := ic.m[k]
-	if !ok {
-		var err error
-		w, err = widget.NewIcon(data)
-		if err != nil {
-			panic(err)
-		}
-		ic.m[k] = w
-	}
-	gtx.Constraints = layout.Exact(image.Pt(px, px))
-	return w.Layout(gtx, col)
-}
 
 func fillRect(gtx C, r image.Rectangle, col color.NRGBA) {
 	paint.FillShape(gtx.Ops, col, clip.Rect(r).Op())
@@ -68,6 +36,12 @@ func fillRRect(gtx C, r image.Rectangle, radius int, col color.NRGBA) {
 func fillCircle(gtx C, center image.Point, radius int, col color.NRGBA) {
 	r := image.Rect(center.X-radius, center.Y-radius, center.X+radius, center.Y+radius)
 	paint.FillShape(gtx.Ops, col, clip.Ellipse(r).Op(gtx.Ops))
+}
+
+// borderRRect draws a rounded rectangle with a 1px border.
+func borderRRect(gtx C, r image.Rectangle, radius int, bg, border color.NRGBA) {
+	fillRRect(gtx, r, radius, border)
+	fillRRect(gtx, r.Inset(1), max(radius-1, 0), bg)
 }
 
 // background paints col behind w, filling at least the incoming minimum size.
@@ -90,6 +64,7 @@ type labelOpts struct {
 	weight   font.Weight
 	maxLines int
 	align    text.Alignment
+	italic   bool
 }
 
 func (u *UI) label(size unit.Sp, txt string, col color.NRGBA, o ...labelOpts) material.LabelStyle {
@@ -100,8 +75,40 @@ func (u *UI) label(size unit.Sp, txt string, col color.NRGBA, o ...labelOpts) ma
 		l.Font.Weight = o[0].weight
 		l.MaxLines = o[0].maxLines
 		l.Alignment = o[0].align
+		if o[0].italic {
+			l.Font.Style = font.Italic
+		}
 	}
 	return l
+}
+
+// drawIcon paints ic at size dp at the current offset.
+func drawIcon(gtx C, ic *icon.Icon, size unit.Dp, col color.NRGBA) D {
+	return ic.Layout(gtx, size, col)
+}
+
+// iconW adapts drawIcon to a layout.Widget.
+func iconW(ic *icon.Icon, size unit.Dp, col color.NRGBA) layout.Widget {
+	return func(gtx C) D { return ic.Layout(gtx, size, col) }
+}
+
+// vcenter lays out w vertically centered in a box at least h px tall,
+// keeping the incoming minimum width. Flex passes its cross-axis minimum to
+// every child, so giving a row a minimum height would stretch its labels
+// and pin their text to the top; this is the way to make a row taller.
+func vcenter(gtx C, h int, w layout.Widget) D {
+	minX := gtx.Constraints.Min.X
+	gtx.Constraints.Min.Y = max(gtx.Constraints.Min.Y, h)
+	return layout.W.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min = image.Pt(minX, 0)
+		return w(gtx)
+	})
+}
+
+// centerIn draws w centered in a box of size×size px.
+func centerIn(gtx C, size int, w layout.Widget) D {
+	gtx.Constraints = layout.Exact(image.Pt(size, size))
+	return layout.Center.Layout(gtx, w)
 }
 
 // clickable wraps w in a Clickable and shows the hand cursor over it.
@@ -114,80 +121,29 @@ func clickable(gtx C, c *widget.Clickable, w layout.Widget) D {
 	})
 }
 
-// iconButton is a round, hover-highlighted icon button.
-func (u *UI) iconButton(gtx C, c *widget.Clickable, data []byte, col color.NRGBA, active bool) D {
+// iconButton is a round, hover-highlighted icon button of size box dp.
+func (u *UI) iconButton(gtx C, c *widget.Clickable, ic *icon.Icon, box, size unit.Dp, col color.NRGBA) D {
 	return clickable(gtx, c, func(gtx C) D {
-		sz := gtx.Dp(40)
-		if active || c.Hovered() {
-			bg := u.pal.Hover
-			if active {
-				bg = u.pal.RailActiveBg
-			}
-			fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, bg)
+		sz := gtx.Dp(box)
+		if c.Hovered() {
+			fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, u.pal.Hover)
 		}
-		off := (sz - gtx.Dp(24)) / 2
-		t := op.Offset(image.Pt(off, off)).Push(gtx.Ops)
-		u.icons.layout(gtx, data, 24, col)
-		t.Pop()
-		return D{Size: image.Pt(sz, sz)}
+		return centerIn(gtx, sz, iconW(ic, size, col))
 	})
 }
 
-// avatar draws a round avatar with the contact's initials, or a group glyph.
-func (u *UI) avatar(gtx C, name string, group bool, size unit.Dp) D {
-	px := gtx.Dp(size)
-	dims := D{Size: image.Pt(px, px)}
-	if group {
-		bg := rgb(0xdfe5e7)
-		fg := rgb(0xffffff)
-		if u.dark {
-			bg, fg = rgb(0x6a7175), rgb(0xcfd4d6)
-		}
-		fillCircle(gtx, image.Pt(px/2, px/2), px/2, bg)
-		isz := size * 0.6
-		off := (px - gtx.Dp(isz)) / 2
-		defer op.Offset(image.Pt(off, off)).Push(gtx.Ops).Pop()
-		u.icons.layout(gtx, icGroup, isz, fg)
-		return dims
-	}
-	col := rgb(avatarColors[hashIndex(name, len(avatarColors))])
-	fillCircle(gtx, image.Pt(px/2, px/2), px/2, col)
-	l := u.label(unit.Sp(float32(size)*0.38), initials(name), rgb(0xffffff), labelOpts{weight: font.SemiBold, maxLines: 1})
-	gtx.Constraints = layout.Exact(dims.Size)
-	layout.Center.Layout(gtx, l.Layout)
-	return dims
-}
-
-func initials(name string) string {
-	var out []rune
-	for _, f := range strings.Fields(name) {
-		r := []rune(f)[0]
-		if unicode.IsLetter(r) {
-			out = append(out, unicode.ToUpper(r))
-		}
-		if len(out) == 2 {
-			break
-		}
-	}
-	if len(out) == 0 {
-		return "#"
-	}
-	return string(out)
-}
-
-// badge draws a green pill with a count.
-func (u *UI) badge(gtx C, n int, bg color.NRGBA) D {
-	txt := itoa(n)
-	h := gtx.Dp(20)
-	macro := op.Record(gtx.Ops)
+// badge draws the unread-count pill.
+func (u *UI) badge(gtx C, n int) D {
+	h := gtx.Dp(21)
 	gtx.Constraints.Min = image.Point{}
-	l := u.label(12, txt, u.pal.BadgeText, labelOpts{weight: font.SemiBold, maxLines: 1})
-	ld := l.Layout(gtx)
-	call := macro.Stop()
+	m := op.Record(gtx.Ops)
+	ld := u.label(12, itoa(n), u.pal.OnGreen, labelOpts{weight: font.Bold, maxLines: 1}).Layout(gtx)
+	call := m.Stop()
 	w := max(h, ld.Size.X+gtx.Dp(12))
-	fillRRect(gtx, image.Rect(0, 0, w, h), h/2, bg)
-	defer op.Offset(image.Pt((w-ld.Size.X)/2, (h-ld.Size.Y)/2)).Push(gtx.Ops).Pop()
+	fillRRect(gtx, image.Rect(0, 0, w, h), h/2, u.pal.Green)
+	t := op.Offset(image.Pt((w-ld.Size.X)/2, (h-ld.Size.Y)/2)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
+	t.Pop()
 	return D{Size: image.Pt(w, h)}
 }
 
@@ -212,45 +168,72 @@ func strokeArc(gtx C, c f32.Point, r, start, sweep, width float32, col color.NRG
 	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: width}.Op())
 }
 
-// statusIcon is WhatsApp's "Status" glyph: a broken ring with a dot inside.
+// statusIcon is the "Status" glyph: a ring inside a ring broken into four arcs.
 func statusIcon(gtx C, size unit.Dp, col color.NRGBA) D {
 	px := float32(gtx.Dp(size))
 	c := f32.Pt(px/2, px/2)
-	w := px * 0.085
-	r := px*0.5 - w*1.5
+	w := px * 0.09
+	const gap = 0.42 // radians
 	for i := 0; i < 4; i++ {
-		start := float32(-math.Pi/2) + float32(i)*math.Pi/2 + 0.22
-		strokeArc(gtx, c, r, start, math.Pi/2-0.44, w, col)
+		start := float32(i)*math.Pi/2 - math.Pi/4 + gap/2
+		strokeArc(gtx, c, px*0.42, start, math.Pi/2-gap, w, col)
 	}
-	fillCircle(gtx, image.Pt(int(c.X), int(c.Y)), int(px*0.2), col)
+	strokeArc(gtx, c, px*0.22, 0, 2*math.Pi, w, col)
 	return D{Size: image.Pt(int(px), int(px))}
 }
 
-// channelsIcon approximates WhatsApp's "Channels" glyph: a dot with
-// broadcast waves on both sides.
+// channelsIcon is the "Channels" glyph: a round speech bubble with a
+// broadcast symbol inside.
 func channelsIcon(gtx C, size unit.Dp, col color.NRGBA) D {
 	px := float32(gtx.Dp(size))
-	c := f32.Pt(px/2, px/2)
+	c := f32.Pt(px*0.52, px*0.47)
+	r := px * 0.38
 	w := px * 0.085
-	fillCircle(gtx, image.Pt(int(c.X), int(c.Y)), int(px*0.12), col)
-	for _, r := range []float32{px * 0.26, px * 0.42} {
-		strokeArc(gtx, c, r, -math.Pi/4, math.Pi/2, w, col)
-		strokeArc(gtx, c, r, math.Pi*3/4, math.Pi/2, w, col)
+	pt := func(deg float64) f32.Point {
+		a := deg * math.Pi / 180
+		return f32.Pt(c.X+r*float32(math.Cos(a)), c.Y+r*float32(math.Sin(a)))
 	}
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(pt(150))
+	p.ArcTo(c, c, float32(310*math.Pi/180))
+	p.LineTo(f32.Pt(px*0.1, px*0.9))
+	p.Close()
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: w}.Op())
+	fillCircle(gtx, image.Pt(int(c.X), int(c.Y)), int(px*0.06), col)
+	strokeArc(gtx, c, px*0.18, -math.Pi/4, math.Pi/2, w, col)
+	strokeArc(gtx, c, px*0.18, math.Pi*3/4, math.Pi/2, w, col)
 	return D{Size: image.Pt(int(px), int(px))}
 }
 
-// pinIcon draws a small thumbtack, tilted like WhatsApp's pinned-chat glyph.
-func pinIcon(gtx C, size unit.Dp, col color.NRGBA) D {
+// chatsIcon is the filled "Chats" glyph: a message box with its tail at the
+// top left and two text lines cut out.
+func chatsIcon(gtx C, size unit.Dp, col, bg color.NRGBA) D {
 	px := float32(gtx.Dp(size))
-	defer op.Affine(f32.Affine2D{}.Rotate(f32.Pt(px/2, px/2), math.Pi/4)).Push(gtx.Ops).Pop()
-	u := px / 16
-	r := func(x0, y0, x1, y1 float32) image.Rectangle {
-		return image.Rect(int(x0*u), int(y0*u), int(x1*u), int(y1*u))
+	u := px / 24
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(f32.Pt(1.2*u, 4*u))
+	p.LineTo(f32.Pt(19*u, 4*u))
+	p.QuadTo(f32.Pt(22*u, 4*u), f32.Pt(22*u, 7*u))
+	p.LineTo(f32.Pt(22*u, 17*u))
+	p.QuadTo(f32.Pt(22*u, 20*u), f32.Pt(19*u, 20*u))
+	p.LineTo(f32.Pt(8*u, 20*u))
+	p.QuadTo(f32.Pt(5*u, 20*u), f32.Pt(5*u, 17*u))
+	p.LineTo(f32.Pt(5*u, 8*u))
+	p.Close()
+	paint.FillShape(gtx.Ops, col, clip.Outline{Path: p.End()}.Op())
+	line := func(x0, x1, y float32) {
+		fillRRect(gtx, image.Rect(int(x0*u), int((y-1)*u), int(x1*u), int((y+1)*u)), int(u), bg)
 	}
-	fillRRect(gtx, r(5, 1, 11, 3), int(u), col)      // head
-	fillRect(gtx, r(6, 3, 10, 8), col)               // body
-	fillRRect(gtx, r(3.5, 8, 12.5, 10), int(u), col) // collar
-	fillRect(gtx, r(7.4, 10, 8.6, 15), col)          // needle
+	line(9, 18, 10.5)
+	line(9, 16, 14.5)
 	return D{Size: image.Pt(int(px), int(px))}
+}
+
+// rotated draws w rotated by angle radians around the center of a size×size box.
+func rotated(gtx C, size int, angle float32, w layout.Widget) D {
+	c := f32.Pt(float32(size)/2, float32(size)/2)
+	defer op.Affine(f32.AffineId().Rotate(c, angle)).Push(gtx.Ops).Pop()
+	return centerIn(gtx, size, w)
 }

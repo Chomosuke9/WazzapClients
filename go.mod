@@ -14,6 +14,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	gioui.org/shader v1.0.9 // indirect
+	gioui.org/x v0.10.3 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect

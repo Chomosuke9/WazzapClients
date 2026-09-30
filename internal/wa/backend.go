@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 
 	"github.com/polymorfa/hypermeow"
+	"github.com/polymorfa/hypermeow/appstate"
 	"github.com/polymorfa/hypermeow/proto/waCompanionReg"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waHistorySync"
@@ -28,10 +30,11 @@ import (
 
 // Backend implements model.Backend on top of a hypermeow client.
 type Backend struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	log    waLog.Logger
-	logf   *os.File
+	dataDir string
+	ctx     context.Context
+	cancel  context.CancelFunc
+	log     waLog.Logger
+	logf    *os.File
 
 	db        *sql.DB
 	store     msgStore
@@ -46,6 +49,12 @@ type Backend struct {
 
 	names     nameCache
 	syncTimer *time.Timer
+
+	avatars   *fetcher
+	downloads *fetcher
+
+	subMu     sync.Mutex
+	subtitles map[string]string // group JID → participant list
 }
 
 var _ model.Backend = (*Backend)(nil)
@@ -55,11 +64,22 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, err
 	}
-	logf, err := os.OpenFile(filepath.Join(dataDir, "wazzap.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	logPath := filepath.Join(dataDir, "wazzap.log")
+	if st, err := os.Stat(logPath); err == nil && st.Size() > 4<<20 {
+		_ = os.Truncate(logPath, 0)
+	}
+	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	b := &Backend{log: newLogger(logf, debug), logf: logf}
+	b := &Backend{
+		dataDir:   dataDir,
+		log:       newLogger(logf, debug),
+		logf:      logf,
+		avatars:   newFetcher(),
+		downloads: newFetcher(),
+		subtitles: make(map[string]string),
+	}
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 
 	dsn := "file:" + filepath.ToSlash(filepath.Join(dataDir, "wazzap.db")) +
@@ -82,6 +102,15 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 	// How this client shows up under "Linked devices" on the phone.
 	store.SetOSInfo("WazzapClients", [3]uint32{0, 1, 0})
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
+
+	// Create the client now (without connecting) so stored chats can be
+	// shown, with names, before the connection is up.
+	device, err := b.container.GetFirstDevice(b.ctx)
+	if err != nil {
+		b.db.Close()
+		return nil, fmt.Errorf("open session: %w", err)
+	}
+	b.useDevice(device)
 	return b, nil
 }
 
@@ -114,16 +143,13 @@ func (b *Backend) Start(notify func()) {
 	b.notify = notify
 	b.mu.Unlock()
 	go b.run()
+	// WhatsApp rate-limits profile picture queries, so space them out.
+	go b.avatars.run(b.ctx, 250*time.Millisecond)
+	go b.downloads.run(b.ctx, 50*time.Millisecond)
 }
 
 func (b *Backend) run() {
-	device, err := b.container.GetFirstDevice(b.ctx)
-	if err != nil {
-		b.fail("Couldn't open the session database: %v", err)
-		return
-	}
-	b.useDevice(device)
-	if device.ID == nil {
+	if b.client().Store.ID == nil {
 		b.pair()
 	} else {
 		b.connect()
@@ -133,6 +159,9 @@ func (b *Backend) run() {
 func (b *Backend) useDevice(device *store.Device) {
 	cli := whatsmeow.NewClient(device, b.log.Sub("Client"))
 	cli.EnableAutoReconnect = true
+	// Pins, mutes and archives only arrive through app state; the initial
+	// full sync must emit them too.
+	cli.EmitAppStateEventsOnFullSync = true
 	cli.AddEventHandler(b.handle)
 	b.cliMu.Lock()
 	b.cli = cli
@@ -200,6 +229,20 @@ func (b *Backend) Retry() {
 	}()
 }
 
+// Logout unlinks this device on the phone and starts linking again.
+func (b *Backend) Logout() {
+	go func() {
+		cli := b.client()
+		if cli.Store.ID == nil {
+			return
+		}
+		if err := cli.Logout(b.ctx); err != nil {
+			b.log.Warnf("logout: %v", err)
+		}
+		b.resetSession()
+	}()
+}
+
 func (b *Backend) Close() {
 	if cli := b.client(); cli != nil {
 		cli.Disconnect()
@@ -223,17 +266,37 @@ func (b *Backend) resetSession() {
 }
 
 func (b *Backend) Chats() []*model.Chat {
-	chats, err := b.store.chats(b.ctx)
+	raw, err := b.store.chats(b.ctx)
 	if err != nil {
 		b.log.Errorf("load chats: %v", err)
+	}
+	chats := make([]*model.Chat, len(raw))
+	for i, rc := range raw {
+		chats[i] = b.resolveChat(b.ctx, rc)
 	}
 	return chats
 }
 
+func (b *Backend) chat(jid string) *model.Chat {
+	rc, ok := b.store.chat(b.ctx, jid)
+	if !ok {
+		return nil
+	}
+	return b.resolveChat(b.ctx, rc)
+}
+
 func (b *Backend) Messages(chatID string, limit int) []*model.Message {
-	msgs, err := b.store.messages(b.ctx, chatID, limit)
+	raw, err := b.store.messages(b.ctx, chatID, limit)
 	if err != nil {
 		b.log.Errorf("load messages for %s: %v", chatID, err)
+	}
+	isGroup := false
+	if j, err := types.ParseJID(chatID); err == nil {
+		isGroup = j.Server == types.GroupServer
+	}
+	msgs := make([]*model.Message, len(raw))
+	for i, r := range raw {
+		msgs[i] = b.resolve(b.ctx, r, isGroup)
 	}
 	return msgs
 }
@@ -246,7 +309,7 @@ func (b *Backend) Open(chatID string) {
 		if err != nil {
 			return
 		}
-		c := b.store.chat(ctx, chatID)
+		c := b.chat(chatID)
 		if c == nil {
 			return
 		}
@@ -267,7 +330,25 @@ func (b *Backend) Open(chatID string) {
 			}
 			_ = b.store.setField(ctx, chatID, "unread", 0)
 		}
-		if !c.IsGroup && cli.IsConnected() {
+		switch {
+		case !cli.IsConnected():
+		case c.IsGroup:
+			b.subMu.Lock()
+			sub, ok := b.subtitles[chatID]
+			b.subMu.Unlock()
+			if !ok {
+				info, err := cli.GetGroupInfo(ctx, jid)
+				if err != nil {
+					b.log.Debugf("group info %s: %v", chatID, err)
+					return
+				}
+				sub = b.groupSubtitle(ctx, info)
+				b.subMu.Lock()
+				b.subtitles[chatID] = sub
+				b.subMu.Unlock()
+			}
+			b.emit(model.PresenceEvent{ChatID: chatID, Text: sub})
+		default:
 			if err := cli.SubscribePresence(ctx, jid); err != nil {
 				b.log.Debugf("subscribe presence %s: %v", chatID, err)
 			}
@@ -293,9 +374,7 @@ func (b *Backend) Send(chatID, text string) *model.Message {
 	if err := b.store.putMessage(b.ctx, b.db, storedMsg{Message: m}); err != nil {
 		b.log.Errorf("store outgoing message: %v", err)
 	}
-	if c := b.store.chat(b.ctx, chatID); c != nil {
-		b.emit(model.ChatEvent{Chat: c})
-	}
+	b.emitChat(chatID)
 	go func() {
 		_, err := cli.SendMessage(b.ctx, jid, &waE2E.Message{Conversation: proto.String(text)},
 			whatsmeow.SendRequestExtra{ID: m.ID})
@@ -311,7 +390,7 @@ func (b *Backend) Send(chatID, text string) *model.Message {
 }
 
 func (b *Backend) emitChat(jid string) {
-	if c := b.store.chat(b.ctx, jid); c != nil {
+	if c := b.chat(jid); c != nil {
 		b.emit(model.ChatEvent{Chat: c})
 	}
 }
@@ -326,13 +405,18 @@ func (b *Backend) handle(evt any) {
 	switch e := evt.(type) {
 	case *events.Connected:
 		cli := b.client()
-		b.emit(model.ConnEvent{State: model.StateOnline, Me: cli.Store.PushName})
+		var meID string
+		if cli.Store.ID != nil {
+			meID = cli.Store.ID.ToNonAD().String()
+		}
+		b.emit(model.ConnEvent{State: model.StateOnline, Me: cli.Store.PushName, MeID: meID})
 		go func() {
 			// Being "available" is what makes WhatsApp send typing notifications.
 			if err := cli.SendPresence(ctx, types.PresenceAvailable); err != nil {
 				b.log.Debugf("send presence: %v", err)
 			}
 			b.refreshGroupNames()
+			b.resyncAppStateOnce()
 		}()
 	case *events.Disconnected, *events.KeepAliveTimeout:
 		b.emit(model.ConnEvent{State: model.StateOffline})
@@ -362,7 +446,7 @@ func (b *Backend) handle(evt any) {
 		chat := b.canonical(ctx, e.Chat)
 		who := ""
 		if e.IsGroup {
-			who = b.senderName(ctx, e.Sender, "")
+			who = b.senderName(ctx, e.Sender, "", "")
 		}
 		b.emit(model.TypingEvent{ChatID: chat.String(), Who: who, Typing: e.State == types.ChatPresenceComposing})
 	case *events.Presence:
@@ -380,7 +464,7 @@ func (b *Backend) handle(evt any) {
 		if e.Action.GetPinned() {
 			ts = e.Timestamp.Unix()
 		}
-		b.updateChat(e.JID, "pinned", ts)
+		b.updateChat(e.JID, "pinned", ts, e.FromFullSync)
 	case *events.Mute:
 		var until int64
 		if e.Action.GetMuted() {
@@ -389,12 +473,12 @@ func (b *Backend) handle(evt any) {
 				until = -1
 			}
 		}
-		b.updateChat(e.JID, "muted_until", until)
+		b.updateChat(e.JID, "muted_until", until, e.FromFullSync)
 	case *events.Archive:
-		b.updateChat(e.JID, "archived", boolInt(e.Action.GetArchived()))
+		b.updateChat(e.JID, "archived", boolInt(e.Action.GetArchived()), e.FromFullSync)
 	case *events.MarkChatAsRead:
 		if e.Action.GetRead() {
-			b.updateChat(e.JID, "unread", 0)
+			b.updateChat(e.JID, "unread", 0, e.FromFullSync)
 		}
 
 	case *events.PushName, *events.Contact, *events.BusinessName:
@@ -417,12 +501,37 @@ func (b *Backend) handle(evt any) {
 	}
 }
 
-func (b *Backend) updateChat(j types.JID, field string, v any) {
+// updateChat stores one chat setting. During a full app state sync there are
+// thousands of these, so they're applied quietly and the chat list is
+// refreshed once when the sync completes.
+func (b *Backend) updateChat(j types.JID, field string, v any, quiet bool) {
 	jid := b.canonical(b.ctx, j).String()
 	if err := b.store.setField(b.ctx, jid, field, v); err != nil {
 		b.log.Warnf("update %s of %s: %v", field, jid, err)
 	}
-	b.emitChat(jid)
+	if !quiet {
+		b.emitChat(jid)
+	}
+}
+
+// resyncAppStateOnce refetches all app state (pins, mutes, archives,
+// contacts) once per session database. Sessions linked before app state
+// events were enabled never received their pins and mutes.
+func (b *Backend) resyncAppStateOnce() {
+	const key = "appstate_resynced"
+	if b.store.meta(b.ctx, key) != "" {
+		return
+	}
+	cli := b.client()
+	for _, name := range appstate.AllPatchNames {
+		if err := cli.FetchAppState(b.ctx, name, true, false); err != nil {
+			b.log.Warnf("resync app state %s: %v", name, err)
+			return
+		}
+	}
+	_ = b.store.setMetaValue(b.ctx, key, time.Now().Format(time.RFC3339))
+	b.names.clear()
+	b.refreshChatNames()
 }
 
 func (b *Backend) onMessage(e *events.Message) {
@@ -431,20 +540,21 @@ func (b *Backend) onMessage(e *events.Message) {
 	if !ok {
 		return
 	}
-	chat := p.chat.String()
+	chat := p.msg.ChatID
 	switch {
-	case p.reaction != "" || (p.target != "" && !p.revoke && p.edit == ""):
-		_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
 	case p.revoke:
 		_ = b.store.markDeleted(ctx, chat, p.target)
 	case p.edit != "":
 		_ = b.store.editText(ctx, chat, p.target, p.edit)
+	case p.target != "":
+		_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
 	default:
 		name := ""
+		chatJID, _ := types.ParseJID(chat)
 		if !e.Info.IsGroup {
-			name = b.chatName(ctx, p.chat)
+			name = b.chatName(ctx, chatJID)
 		}
-		isNew := b.store.chat(ctx, chat) == nil
+		_, exists := b.store.chat(ctx, chat)
 		if err := b.store.ensureChat(ctx, b.db, chat, e.Info.IsGroup, name); err != nil {
 			b.log.Errorf("store chat %s: %v", chat, err)
 			return
@@ -456,15 +566,13 @@ func (b *Backend) onMessage(e *events.Message) {
 		if !p.msg.FromMe {
 			_ = b.store.addUnread(ctx, chat)
 		}
-		if isNew && e.Info.IsGroup {
-			go b.fetchGroupName(p.chat)
+		if !exists && e.Info.IsGroup {
+			go b.fetchGroupName(chatJID)
 		}
-		b.emit(model.MessageEvent{Msg: p.msg.Message})
-		b.emitChat(chat)
-		return
+		p.target = p.msg.ID
 	}
-	if m := b.store.message(ctx, chat, p.target); m != nil {
-		b.emit(model.MessageEvent{Msg: m})
+	if r, ok := b.store.message(ctx, chat, p.target); ok {
+		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, e.Info.IsGroup)})
 		b.emitChat(chat)
 	}
 }
@@ -475,7 +583,7 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 	var r model.Receipt
 	switch e.Type {
 	case types.ReceiptTypeReadSelf:
-		b.updateChat(e.Chat, "unread", 0)
+		b.updateChat(e.Chat, "unread", 0, false)
 		return
 	case types.ReceiptTypeDelivered:
 		r = model.Delivered
@@ -555,12 +663,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			if !ok {
 				continue
 			}
-			p.chat = jid
+			p.msg.ChatID = jid.String()
 			if p.target != "" {
 				cd.edits = append(cd.edits, p)
 				continue
 			}
-			p.msg.ChatID = jid.String()
 			cd.msgs = append(cd.msgs, p.msg)
 		}
 		convs = append(convs, cd)
@@ -603,6 +710,14 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 	}
 	b.log.Infof("history sync %s: %d conversations, progress %d%%",
 		data.GetSyncType(), len(convs), data.GetProgress())
+	if data.GetSyncType() == waHistorySync.HistorySync_PUSH_NAME {
+		// hypermeow stores these push names; re-resolve titles once it has.
+		time.AfterFunc(2*time.Second, func() {
+			b.names.clear()
+			b.refreshChatNames()
+		})
+		return
+	}
 	b.emitAllChats()
 
 	switch data.GetSyncType() {
@@ -613,7 +728,15 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		if b.syncTimer != nil {
 			b.syncTimer.Stop()
 		}
-		b.syncTimer = time.AfterFunc(20*time.Second, func() { b.emit(model.SyncEvent{Percent: 100}) })
+		b.syncTimer = time.AfterFunc(20*time.Second, func() {
+			// Names and LID mappings from history are stored in the
+			// background, so re-resolve everything once the chunks stop.
+			b.names.clear()
+			b.refreshChatNames()
+			b.emit(model.SyncEvent{Percent: 100})
+			// History sync allocates a lot briefly; give it back to the OS.
+			debug.FreeOSMemory()
+		})
 		b.mu.Unlock()
 	}
 }

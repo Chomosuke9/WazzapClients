@@ -120,8 +120,11 @@ func (b *Backend) Send(chatID, text string) *model.Message {
 	return m
 }
 
-func (b *Backend) Retry() {}
-func (b *Backend) Close() {}
+func (b *Backend) Avatar(string) []byte            { return nil }
+func (b *Backend) MediaData(string, string) []byte { return nil }
+func (b *Backend) Logout()                         {}
+func (b *Backend) Retry()                          {}
+func (b *Backend) Close()                          {}
 
 type demoChat struct {
 	ID, Name, Presence, Typing       string

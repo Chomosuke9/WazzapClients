@@ -14,19 +14,38 @@ const (
 	Read
 )
 
-// Kind is the type of a message.
+// Kind is how a message is drawn.
 type Kind int
 
 const (
-	KindText Kind = iota
-	KindImage
-	KindDeleted
+	KindText    Kind = iota
+	KindImage        // photo or video: thumbnail/picture above an optional caption
+	KindDeleted      // "This message was deleted"
+	KindSticker      // borderless picture
+)
+
+// Media identifies attachment types, for preview icons and labels.
+type Media int
+
+const (
+	MediaNone Media = iota
+	MediaImage
+	MediaVideo
+	MediaGIF
+	MediaVoice
+	MediaAudio
+	MediaDocument
+	MediaSticker
+	MediaLocation
+	MediaContact
+	MediaPoll
 )
 
 // Quote is the message a reply points to.
 type Quote struct {
 	Sender string
 	Text   string
+	Media  Media
 }
 
 // Message is a single conversation entry.
@@ -34,8 +53,11 @@ type Message struct {
 	ID       string
 	ChatID   string
 	Kind     Kind
+	Media    Media
+	Duration int // seconds, for voice messages
 	FromMe   bool
 	Sender   string // display name; group chats only
+	SenderID string // sender JID; group chats only
 	Text     string
 	Time     time.Time
 	Receipt  Receipt
@@ -57,6 +79,7 @@ type Chat struct {
 	Muted    bool
 	Archived bool
 	Favorite bool
+	Self     bool // the "message yourself" chat
 	Unread   int
 	Time     time.Time // last activity, used for ordering
 	Last     *Message
@@ -91,6 +114,7 @@ type ConnEvent struct {
 	QR    string // pairing code to render, for StateQR
 	Err   string // for StateError
 	Me    string // own display name, when known
+	MeID  string // own JID, when known
 }
 
 // ChatsEvent replaces the whole chat list, e.g. after a history sync chunk.
@@ -125,6 +149,12 @@ type PresenceEvent struct {
 // SyncEvent reports initial history sync progress (0–100).
 type SyncEvent struct{ Percent int }
 
+// AvatarEvent reports that the profile picture of ID became available.
+type AvatarEvent struct{ ID string }
+
+// MediaEvent reports that a message's media finished downloading.
+type MediaEvent struct{ ChatID, MsgID string }
+
 func (ConnEvent) isEvent()     {}
 func (ChatsEvent) isEvent()    {}
 func (ChatEvent) isEvent()     {}
@@ -133,6 +163,8 @@ func (ReceiptEvent) isEvent()  {}
 func (TypingEvent) isEvent()   {}
 func (PresenceEvent) isEvent() {}
 func (SyncEvent) isEvent()     {}
+func (AvatarEvent) isEvent()   {}
+func (MediaEvent) isEvent()    {}
 
 // Backend is everything the UI needs from a WhatsApp connection.
 //
@@ -148,7 +180,17 @@ type Backend interface {
 	Open(chatID string)
 	// Send queues a text message and returns it in its pending state.
 	Send(chatID, text string) *Message
+	// Avatar returns the cached profile picture (JPEG) of a chat or user,
+	// or nil. A missing or stale picture is fetched in the background and
+	// announced with an AvatarEvent. Safe to call from any goroutine.
+	Avatar(id string) []byte
+	// MediaData returns a downloaded image or sticker, or nil. Missing media
+	// is downloaded in the background and announced with a MediaEvent. Safe
+	// to call from any goroutine.
+	MediaData(chatID, msgID string) []byte
 	// Retry restarts pairing after the QR codes expired.
 	Retry()
+	// Logout unlinks this device and returns to the QR screen.
+	Logout()
 	Close()
 }

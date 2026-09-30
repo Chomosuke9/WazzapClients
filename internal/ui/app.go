@@ -9,7 +9,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/paint"
+	"gioui.org/op/clip"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"rsc.io/qr"
@@ -34,22 +34,24 @@ const messageWindow = 300
 // It is only touched from the window goroutine; backend updates arrive
 // through Backend.Poll.
 type UI struct {
-	th    *material.Theme
-	pal   *Palette
-	dark  bool
-	icons iconCache
-	now   func() time.Time
+	th     *material.Theme
+	pal    *Palette
+	dark   bool
+	now    func() time.Time
+	window *app.Window // nil when rendering headless
+	deco   widget.Decorations
 
 	backend model.Backend
 	conn    model.ConnEvent
 	syncPct int // initial history sync progress; -1 when not syncing
 	me      string
+	meID    string
 
 	chats    []*model.Chat
 	selected *model.Chat
 	msgs     []*model.Message // loaded window of the selected chat
 	msgsVer  int              // bumped whenever msgs changes
-	thumbs   map[string]thumb
+	images   *imageCache
 
 	login struct {
 		retry  widget.Clickable
@@ -58,15 +60,19 @@ type UI struct {
 	}
 
 	rail struct {
-		chats, status, channels, communities, starred, settings, profile widget.Clickable
+		chats, calls, status, channels, communities, archived, media, profile widget.Clickable
 	}
+
+	menu       menuState
+	filterMenu filterMenuState
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
+		more                widget.Clickable // collapsed filter chips
+		hiddenFilters       []int
 		search              widget.Editor
 		chips               [len(filterNames)]widget.Clickable
 		filter              int
-		archived            widget.Clickable
 		showArchived        bool
 		list                widget.List
 		rows                map[string]*widget.Clickable
@@ -74,30 +80,24 @@ type UI struct {
 	}
 
 	conv struct {
-		list                      widget.List
-		composer                  widget.Editor
-		video, call, search, menu widget.Clickable
-		attach, emoji, send       widget.Clickable
-		header                    widget.Clickable
-		rows                      []convRow
-		rowsFor                   *model.Chat
-		rowsVer                   int
-		wallpaper                 wallpaper
-		nbsp                      map[int]float32 // NBSP advance per text size in px
+		list                widget.List
+		composer            widget.Editor
+		video, search, menu widget.Clickable
+		attach, emoji, send widget.Clickable
+		header              widget.Clickable
+		rows                []convRow
+		rowsFor             *model.Chat
+		rowsVer             int
+		wallpaper           wallpaper
+		nbsp                map[int]float32 // NBSP advance per text size in px
 	}
-}
-
-type thumb struct {
-	op   paint.ImageOp
-	size image.Point
-	ok   bool
 }
 
 // New builds the UI on top of a backend. Call Start before the first frame.
 func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: time.Now, backend: b, syncPct: -1}
-	u.SetDark(false)
-	u.thumbs = make(map[string]thumb)
+	u.SetDark(true)
+	u.images = newImageCache(240)
 	u.sidebar.search.SingleLine = true
 	u.sidebar.list.Axis = layout.Vertical
 	u.sidebar.rows = make(map[string]*widget.Clickable)
@@ -108,10 +108,28 @@ func New(b model.Backend) *UI {
 }
 
 // Start loads the stored chats and starts the backend. notify is called
-// (from any goroutine) whenever the backend has new events.
+// (from any goroutine) whenever the UI should redraw.
 func (u *UI) Start(notify func()) {
+	u.images.invalidate = notify
 	u.setChats(u.backend.Chats())
 	u.backend.Start(notify)
+}
+
+// Preview loads stored chats without starting the backend, for rendering
+// screenshots of a real session without connecting to WhatsApp.
+func (u *UI) Preview() {
+	u.setChats(u.backend.Chats())
+	u.conn = model.ConnEvent{State: model.StateOnline}
+}
+
+// SelectName opens the first chat with the given name.
+func (u *UI) SelectName(name string) {
+	for _, c := range u.chats {
+		if c.Name == name {
+			u.open(c)
+			return
+		}
+	}
 }
 
 // SetDark switches between the light and dark palettes.
@@ -140,6 +158,14 @@ func (u *UI) Select(i int) {
 	u.open(u.chats[i])
 }
 
+// SelectID opens the chat with the given ID.
+func (u *UI) SelectID(id string) {
+	u.applyEvents()
+	if c := u.chatByID(id); c != nil {
+		u.open(c)
+	}
+}
+
 func (u *UI) open(c *model.Chat) {
 	if u.selected != nil && u.selected.ID == c.ID {
 		return
@@ -156,6 +182,7 @@ func (u *UI) open(c *model.Chat) {
 // Run drives the window event loop until the window is closed.
 func Run(w *app.Window, b model.Backend) error {
 	u := New(b)
+	u.window = w
 	u.Start(w.Invalidate)
 	defer b.Close()
 	var ops op.Ops
@@ -163,6 +190,8 @@ func Run(w *app.Window, b model.Backend) error {
 		switch e := w.Event().(type) {
 		case app.DestroyEvent:
 			return e.Err
+		case app.ConfigEvent:
+			u.deco.Maximized = e.Config.Mode == app.Maximized
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 			u.Layout(gtx)
@@ -171,47 +200,85 @@ func Run(w *app.Window, b model.Backend) error {
 	}
 }
 
-// Layout draws one frame: nav rail | chat list | conversation, or the login
-// screen while there is no session.
+// Layout draws one frame: custom title bar, then either the login screen or
+// nav rail | chat list | conversation.
 func (u *UI) Layout(gtx C) D {
 	u.applyEvents()
+	if a := u.deco.Update(gtx); a != 0 && u.window != nil {
+		u.window.Perform(a)
+	}
+	defer u.images.endFrame()
+
+	sz := gtx.Constraints.Max
+	fillRect(gtx, image.Rectangle{Max: sz}, u.pal.Frame)
+	tb := u.layoutTitleBar(gtx)
+	defer op.Offset(image.Pt(0, tb.Size.Y)).Push(gtx.Ops).Pop()
+	gtx.Constraints = layout.Exact(image.Pt(sz.X, sz.Y-tb.Size.Y))
+
 	if !u.conn.State.LoggedIn() {
 		u.updateLogin(gtx)
-		return u.layoutLogin(gtx)
+		u.layoutLogin(gtx)
+		return D{Size: sz}
 	}
 	u.update(gtx)
+	u.layoutMain(gtx)
+	u.layoutMenu(gtx)
+	u.layoutFilterMenu(gtx)
+	return D{Size: sz}
+}
 
-	total := gtx.Constraints.Max.X
-	railW := gtx.Dp(64)
-	listW := int(float32(total-railW) * 0.32)
-	listW = max(gtx.Dp(320), min(listW, gtx.Dp(460)))
+func (u *UI) layoutMain(gtx C) D {
+	p := u.pal
+	sz := gtx.Constraints.Max
+	railW := gtx.Dp(railWidth)
+	listW := int(float32(sz.X-railW) * 0.372)
+	listW = max(gtx.Dp(280), min(listW, gtx.Dp(440)))
 
+	rgtx := gtx
+	rgtx.Constraints = layout.Exact(image.Pt(railW, sz.Y))
+	u.layoutRail(rgtx)
+	u.menu.anchor = image.Pt(railW+listW-gtx.Dp(20), gtx.Dp(58))
+	// Chips row origin: panel border + header + search.
+	u.filterMenu.origin = image.Pt(railW+1+gtx.Dp(21), 1+gtx.Dp(68+43+11+34+6))
+
+	// The panels sit in a rounded, bordered card, like WhatsApp's.
+	defer op.Offset(image.Pt(railW, 0)).Push(gtx.Ops).Pop()
+	pw := sz.X - railW
+	r := gtx.Dp(8)
+	card := clip.RRect{Rect: image.Rect(0, 0, pw+r, sz.Y+r), NW: r}
+	fillRRect(gtx, image.Rect(0, 0, pw+r, sz.Y+r), r, p.PanelBorder)
+	card.Rect = card.Rect.Add(image.Pt(1, 1))
+	card.NW = r - 1
+	defer card.Push(gtx.Ops).Pop()
+	fillRect(gtx, image.Rect(0, 0, pw+r, sz.Y+r), p.Panel)
+
+	gtx.Constraints = layout.Exact(image.Pt(pw, sz.Y))
 	return layout.Flex{}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(railW, gtx.Constraints.Max.Y))
-			return u.layoutRail(gtx)
+			gtx.Constraints = layout.Exact(image.Pt(listW, sz.Y))
+			return layout.Inset{Top: 1, Left: 1}.Layout(gtx, u.layoutSidebar)
 		}),
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(listW, gtx.Constraints.Max.Y))
-			return u.layoutSidebar(gtx)
-		}),
-		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(1, gtx.Constraints.Max.Y))
-			return fill(gtx, u.pal.Divider)
+			gtx.Constraints = layout.Exact(image.Pt(max(1, gtx.Dp(1)), sz.Y))
+			return fill(gtx, p.Divider)
 		}),
 		layout.Flexed(1, func(gtx C) D {
-			if u.selected == nil {
-				return u.layoutEmpty(gtx)
-			}
-			return u.layoutConversation(gtx)
+			return layout.Inset{Top: 1}.Layout(gtx, func(gtx C) D {
+				if u.selected == nil {
+					return u.layoutEmpty(gtx)
+				}
+				return u.layoutConversation(gtx)
+			})
 		}),
 	)
 }
 
 // update handles input events before anything is drawn.
 func (u *UI) update(gtx C) {
-	if u.rail.settings.Clicked(gtx) {
-		u.SetDark(!u.dark)
+	u.updateMenu(gtx)
+	u.updateFilterMenu(gtx)
+	if u.sidebar.menu.Clicked(gtx) {
+		u.menu.open = !u.menu.open
 	}
 	for i := range u.sidebar.chips {
 		if u.sidebar.chips[i].Clicked(gtx) {
@@ -219,11 +286,11 @@ func (u *UI) update(gtx C) {
 			u.sidebar.list.Position = layout.Position{}
 		}
 	}
-	if u.sidebar.archived.Clicked(gtx) {
-		u.sidebar.showArchived = true
+	if u.rail.archived.Clicked(gtx) {
+		u.sidebar.showArchived = !u.sidebar.showArchived
 		u.sidebar.list.Position = layout.Position{}
 	}
-	if u.sidebar.back.Clicked(gtx) {
+	if u.rail.chats.Clicked(gtx) || u.sidebar.back.Clicked(gtx) {
 		u.sidebar.showArchived = false
 		u.sidebar.list.Position = layout.Position{}
 	}
@@ -269,11 +336,14 @@ func (u *UI) applyEvents() {
 	for _, ev := range u.backend.Poll() {
 		switch e := ev.(type) {
 		case model.ConnEvent:
-			me := u.me
+			me, meID := u.me, u.meID
 			if e.Me != "" {
 				me = e.Me
 			}
-			u.conn, u.me = e, me
+			if e.MeID != "" {
+				meID = e.MeID
+			}
+			u.conn, u.me, u.meID = e, me, meID
 		case model.ChatsEvent:
 			u.setChats(e.Chats)
 		case model.ChatEvent:
@@ -298,6 +368,10 @@ func (u *UI) applyEvents() {
 			if e.Percent >= 100 {
 				u.syncPct = -1
 			}
+		case model.AvatarEvent:
+			u.images.forget("a:" + e.ID)
+		case model.MediaEvent:
+			u.images.forget("m:" + e.ChatID + "/" + e.MsgID)
 		}
 	}
 }
@@ -373,6 +447,9 @@ func (u *UI) upsertMessage(m *model.Message) {
 		c.Last = m
 		if m.Time.After(c.Time) {
 			c.Time = m.Time
+		}
+		if !m.FromMe {
+			c.Typing = ""
 		}
 		u.sortChats()
 	}
