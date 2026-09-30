@@ -1,0 +1,825 @@
+package wa
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/polymorfa/hypermeow"
+	"github.com/polymorfa/hypermeow/appstate"
+	"github.com/polymorfa/hypermeow/proto/waCommon"
+	"github.com/polymorfa/hypermeow/proto/waE2E"
+	"github.com/polymorfa/hypermeow/proto/waSyncAction"
+	"github.com/polymorfa/hypermeow/types"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/chomosuke9/wazzapclients/internal/model"
+)
+
+// ownJID is how you appear in a chat: your phone number in chats addressed
+// by phone number, your LID everywhere else.
+func (b *Backend) ownJID(chatID string) types.JID {
+	cli := b.client()
+	if cli == nil || cli.Store.ID == nil {
+		return types.EmptyJID
+	}
+	pn := cli.Store.ID.ToNonAD()
+	lid := cli.Store.GetLID().ToNonAD()
+	if j, err := types.ParseJID(chatID); err == nil && j.Server == types.DefaultUserServer || lid.IsEmpty() {
+		return pn
+	}
+	return lid
+}
+
+// senderOf returns the author of a message.
+func (b *Backend) senderOf(m *model.Message) types.JID {
+	if m.FromMe {
+		return b.ownJID(m.ChatID)
+	}
+	if j, err := types.ParseJID(m.SenderID); err == nil && !j.IsEmpty() {
+		return j.ToNonAD()
+	}
+	j, _ := types.ParseJID(m.ChatID)
+	return j
+}
+
+// connected returns the client if it is online, reporting a toast if not.
+func (b *Backend) connected() *whatsmeow.Client {
+	cli := b.client()
+	if cli == nil || !cli.IsConnected() {
+		b.emit(model.NoticeEvent{Text: "You're offline. Try again once connected."})
+		return nil
+	}
+	return cli
+}
+
+// quotedMessage rebuilds the content of a stored message for a reply's
+// context. Media keep their original (downloadable) message; everything
+// else is quoted as text.
+func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.Message {
+	r, ok := b.store.message(ctx, chatID, id)
+	if !ok {
+		return &waE2E.Message{Conversation: proto.String("")}
+	}
+	if media, blob, err := b.store.mediaBlob(ctx, chatID, id); err == nil && len(blob) > 0 {
+		if m := mediaMessage(media, blob); m != nil {
+			return m
+		}
+	}
+	return &waE2E.Message{Conversation: proto.String(r.Text)}
+}
+
+// mediaMessage turns a stored media blob back into a sendable message.
+func mediaMessage(media model.Media, blob []byte) *waE2E.Message {
+	var (
+		m   waE2E.Message
+		err error
+	)
+	switch media {
+	case model.MediaImage:
+		m.ImageMessage = &waE2E.ImageMessage{}
+		err = proto.Unmarshal(blob, m.ImageMessage)
+	case model.MediaSticker:
+		m.StickerMessage = &waE2E.StickerMessage{}
+		err = proto.Unmarshal(blob, m.StickerMessage)
+	case model.MediaVideo, model.MediaGIF:
+		m.VideoMessage = &waE2E.VideoMessage{}
+		err = proto.Unmarshal(blob, m.VideoMessage)
+	case model.MediaVoice, model.MediaAudio:
+		m.AudioMessage = &waE2E.AudioMessage{}
+		err = proto.Unmarshal(blob, m.AudioMessage)
+	case model.MediaDocument:
+		m.DocumentMessage = &waE2E.DocumentMessage{}
+		err = proto.Unmarshal(blob, m.DocumentMessage)
+	default:
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
+	return &m
+}
+
+// setContext attaches ci to whichever content m carries.
+func setContext(m *waE2E.Message, ci *waE2E.ContextInfo) {
+	switch {
+	case m.ImageMessage != nil:
+		m.ImageMessage.ContextInfo = ci
+	case m.StickerMessage != nil:
+		m.StickerMessage.ContextInfo = ci
+	case m.VideoMessage != nil:
+		m.VideoMessage.ContextInfo = ci
+	case m.AudioMessage != nil:
+		m.AudioMessage.ContextInfo = ci
+	case m.DocumentMessage != nil:
+		m.DocumentMessage.ContextInfo = ci
+	case m.ExtendedTextMessage != nil:
+		m.ExtendedTextMessage.ContextInfo = ci
+	}
+}
+
+// Send stores the message as pending, returns it, and sends it in the background.
+func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
+	jid, err := types.ParseJID(chatID)
+	cli := b.client()
+	if err != nil || cli == nil {
+		return nil
+	}
+	ctx := b.ctx
+	m := &model.Message{
+		ID:      cli.GenerateMessageID(),
+		ChatID:  chatID,
+		FromMe:  true,
+		Text:    d.Text,
+		Time:    time.Now(),
+		Receipt: model.Pending,
+	}
+	sm := storedMsg{Message: m, mentions: d.Mentions}
+	msg := &waE2E.Message{Conversation: proto.String(d.Text)}
+	if d.Reply != nil || len(d.Mentions) > 0 {
+		ci := &waE2E.ContextInfo{MentionedJID: d.Mentions}
+		if r := d.Reply; r != nil {
+			sender := b.senderOf(r)
+			ci.StanzaID = proto.String(r.ID)
+			ci.Participant = proto.String(sender.String())
+			ci.QuotedMessage = b.quotedMessage(ctx, r.ChatID, r.ID)
+			if r.ChatID != chatID {
+				// "Reply privately" quotes a group message in a one-to-one chat.
+				ci.RemoteJID = proto.String(r.ChatID)
+			}
+			m.Quote = &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media}
+			if r.Kind == model.KindImage && r.Text == "" {
+				m.Quote.Media = r.Media
+			}
+			sm.quoteJID, sm.quoteID = sender.String(), r.ID
+		}
+		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(d.Text), ContextInfo: ci}}
+	}
+	if m.Quote != nil {
+		// Store the raw quoted text, not the display text with resolved names.
+		if raw, ok := b.store.message(ctx, d.Reply.ChatID, d.Reply.ID); ok {
+			m.Quote.Text = raw.Text
+		}
+	}
+	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
+		b.log.Errorf("store chat %s: %v", chatID, err)
+	}
+	if err := b.store.putMessage(ctx, b.db, sm); err != nil {
+		b.log.Errorf("store outgoing message: %v", err)
+	}
+	b.emitChat(chatID)
+	b.sendAsync(chatID, jid, m.ID, msg)
+	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
+		return b.resolve(ctx, r, jid.Server == types.GroupServer)
+	}
+	cp := *m
+	return &cp
+}
+
+// sendAsync sends msg in the background and marks it sent when done.
+func (b *Backend) sendAsync(chatID string, jid types.JID, id string, msg *waE2E.Message) {
+	cli := b.client()
+	go func() {
+		_, err := cli.SendMessage(b.ctx, jid, msg, whatsmeow.SendRequestExtra{ID: id})
+		if err != nil {
+			b.log.Errorf("send to %s: %v", chatID, err)
+			b.emit(model.NoticeEvent{Text: "Couldn't send the message."})
+			return
+		}
+		_ = b.store.setReceipt(b.ctx, chatID, []string{id}, model.Sent)
+		b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{id}, Receipt: model.Sent})
+	}()
+}
+
+// sendCopy sends an existing message's content to another chat, as a
+// sticker/forward, and stores the copy.
+func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool) bool {
+	ctx := b.ctx
+	cli := b.client()
+	jid, err := types.ParseJID(chatID)
+	if err != nil || cli == nil {
+		return false
+	}
+	var msg *waE2E.Message
+	media, blob, _ := b.store.mediaBlob(ctx, src.ChatID, src.ID)
+	raw, ok := b.store.message(ctx, src.ChatID, src.ID)
+	if !ok {
+		return false
+	}
+	if len(blob) > 0 {
+		msg = mediaMessage(media, blob)
+	}
+	var ci *waE2E.ContextInfo
+	if forwarded {
+		ci = &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(1)}
+	}
+	switch {
+	case msg != nil:
+		setContext(msg, ci)
+	case raw.Media != model.MediaNone || raw.Kind == model.KindDeleted || raw.Text == "":
+		return false // media we can't resend
+	default:
+		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(raw.Text), ContextInfo: ci}}
+	}
+	m := &model.Message{
+		ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Time: time.Now(), Receipt: model.Pending,
+		Kind: raw.Kind, Media: raw.Media, Duration: raw.Duration, Text: raw.Text, Thumb: raw.Thumb, Forwarded: forwarded,
+	}
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, mediaBlob: blob}); err != nil {
+		b.log.Errorf("store forwarded message: %v", err)
+	}
+	// The picture is already on disk; share it with the copy.
+	if data, err := os.ReadFile(b.mediaPath(src.ChatID, src.ID)); err == nil {
+		_ = os.WriteFile(b.mediaPath(chatID, m.ID), data, 0o600)
+	}
+	b.sendAsync(chatID, jid, m.ID, msg)
+	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
+		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, jid.Server == types.GroupServer)})
+	}
+	b.emitChat(chatID)
+	return true
+}
+
+// Forward implements model.Backend.
+func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
+	if b.connected() == nil {
+		return
+	}
+	skipped := 0
+	for _, c := range chatIDs {
+		for _, m := range msgs {
+			if !b.sendCopy(m, c, true) {
+				skipped++
+			}
+		}
+	}
+	if skipped > 0 {
+		b.emit(model.NoticeEvent{Text: "Some messages couldn't be forwarded."})
+	}
+}
+
+// SendSticker implements model.Backend.
+func (b *Backend) SendSticker(chatID string, sticker *model.Message) {
+	if b.connected() != nil {
+		b.sendCopy(sticker, chatID, false)
+	}
+}
+
+// Stickers implements model.Backend: recently received stickers, one per file.
+func (b *Backend) Stickers() []*model.Message {
+	rows, err := b.db.QueryContext(b.ctx, `SELECT chat, id, media_blob FROM wz_messages
+		WHERE media = ? AND media_blob IS NOT NULL ORDER BY ts DESC LIMIT 400`, int(model.MediaSticker))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	var out []*model.Message
+	for rows.Next() && len(out) < 60 {
+		var chat, id string
+		var blob []byte
+		if rows.Scan(&chat, &id, &blob) != nil {
+			continue
+		}
+		var s waE2E.StickerMessage
+		if proto.Unmarshal(blob, &s) != nil || s.GetIsAnimated() {
+			continue // animated stickers only show their first frame
+		}
+		key := string(s.GetFileSHA256())
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, &model.Message{ID: id, ChatID: chat, Kind: model.KindSticker, Media: model.MediaSticker})
+	}
+	return out
+}
+
+// React implements model.Backend.
+func (b *Backend) React(m *model.Message, emoji string) {
+	cli := b.connected()
+	jid, err := types.ParseJID(m.ChatID)
+	if cli == nil || err != nil {
+		return
+	}
+	_ = b.store.setReaction(b.ctx, m.ChatID, m.ID, emoji)
+	b.emitMessage(m.ChatID, m.ID)
+	msg := cli.BuildReaction(jid, b.senderOf(m), m.ID, emoji)
+	go func() {
+		if _, err := cli.SendMessage(b.ctx, jid, msg); err != nil {
+			b.log.Warnf("react in %s: %v", m.ChatID, err)
+			b.emit(model.NoticeEvent{Text: "Couldn't send the reaction."})
+		}
+	}()
+}
+
+// emitMessage re-reads a message and sends it to the UI.
+func (b *Backend) emitMessage(chatID, id string) {
+	if r, ok := b.store.message(b.ctx, chatID, id); ok {
+		j, _ := types.ParseJID(chatID)
+		b.emit(model.MessageEvent{Msg: b.resolve(b.ctx, r, j.Server == types.GroupServer)})
+	}
+}
+
+// messageKey returns the key of a stored message and its chat JID.
+func (b *Backend) messageKey(m *model.Message) (types.JID, *waCommon.MessageKey) {
+	jid, _ := types.ParseJID(m.ChatID)
+	return jid, b.client().BuildMessageKey(jid, b.senderOf(m), m.ID)
+}
+
+// Delete implements model.Backend.
+func (b *Backend) Delete(m *model.Message, forEveryone bool) {
+	cli := b.connected()
+	if cli == nil {
+		return
+	}
+	ctx := b.ctx
+	jid, _ := types.ParseJID(m.ChatID)
+	if forEveryone {
+		sender := types.EmptyJID
+		if !m.FromMe {
+			sender = b.senderOf(m) // as a group admin
+		}
+		_ = b.store.markDeleted(ctx, m.ChatID, m.ID)
+		b.emitMessage(m.ChatID, m.ID)
+		b.emitChat(m.ChatID)
+		go func() {
+			if _, err := cli.SendMessage(ctx, jid, cli.BuildRevoke(jid, sender, m.ID)); err != nil {
+				b.log.Warnf("revoke in %s: %v", m.ChatID, err)
+				b.emit(model.NoticeEvent{Text: "Couldn't delete the message for everyone."})
+			}
+		}()
+		return
+	}
+	_ = b.store.deleteMessage(ctx, m.ChatID, m.ID)
+	b.emit(model.DeletedEvent{ChatID: m.ChatID, IDs: []string{m.ID}})
+	b.emitChat(m.ChatID)
+	participant := "0"
+	if !m.FromMe && jid.Server == types.GroupServer {
+		participant = b.senderOf(m).String()
+	}
+	patch := appstate.PatchInfo{
+		Type: appstate.WAPatchRegularHigh,
+		Mutations: []appstate.MutationInfo{{
+			Index:   []string{appstate.IndexDeleteMessageForMe, jid.String(), m.ID, fromMeFlag(m.FromMe), participant},
+			Version: 3,
+			Value: &waSyncAction.SyncActionValue{DeleteMessageForMeAction: &waSyncAction.DeleteMessageForMeAction{
+				DeleteMedia:      proto.Bool(true),
+				MessageTimestamp: proto.Int64(m.Time.Unix()),
+			}},
+		}},
+	}
+	b.sendAppState(patch)
+}
+
+func fromMeFlag(fromMe bool) string {
+	if fromMe {
+		return "1"
+	}
+	return "0"
+}
+
+// sendAppState sends a patch in the background.
+func (b *Backend) sendAppState(patch appstate.PatchInfo) {
+	cli := b.client()
+	go func() {
+		if err := cli.SendAppState(b.ctx, patch); err != nil {
+			b.log.Warnf("send app state %s: %v", patch.Type, err)
+			b.emit(model.NoticeEvent{Text: "Couldn't sync the change to your phone."})
+		}
+	}()
+}
+
+// Star implements model.Backend.
+func (b *Backend) Star(m *model.Message, starred bool) {
+	cli := b.connected()
+	if cli == nil {
+		return
+	}
+	_ = b.store.setMessageFlag(b.ctx, m.ChatID, m.ID, "starred", starred)
+	b.emitMessage(m.ChatID, m.ID)
+	jid, _ := types.ParseJID(m.ChatID)
+	sender := jid // "0" in the index: one-to-one chats and your own messages
+	if jid.Server == types.GroupServer && !m.FromMe {
+		sender = b.senderOf(m)
+	}
+	b.sendAppState(appstate.BuildStar(jid, sender, m.ID, m.FromMe, starred))
+}
+
+// pinDuration is how long a pinned message stays pinned (WhatsApp offers
+// 24 hours, 7 days or 30 days; the desktop app defaults to 7 days).
+const pinDuration = 7 * 24 * time.Hour
+
+// PinMessage implements model.Backend.
+func (b *Backend) PinMessage(m *model.Message, pinned bool) {
+	cli := b.connected()
+	if cli == nil {
+		return
+	}
+	ctx := b.ctx
+	jid, key := b.messageKey(m)
+	typ := waE2E.PinInChatMessage_PIN_FOR_ALL
+	if !pinned {
+		typ = waE2E.PinInChatMessage_UNPIN_FOR_ALL
+	}
+	msg := &waE2E.Message{
+		PinInChatMessage: &waE2E.PinInChatMessage{
+			Key: key, Type: typ.Enum(), SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
+		},
+		MessageContextInfo: &waE2E.MessageContextInfo{
+			MessageAddOnDurationInSecs: proto.Uint32(uint32(pinDuration / time.Second)),
+		},
+	}
+	if pinned {
+		_, _ = b.db.ExecContext(ctx, `UPDATE wz_messages SET pinned = 0 WHERE chat = ?`, m.ChatID)
+	}
+	_ = b.store.setMessageFlag(ctx, m.ChatID, m.ID, "pinned", pinned)
+	b.emitAllMessages(m.ChatID)
+	go func() {
+		if _, err := cli.SendMessage(ctx, jid, msg); err != nil {
+			b.log.Warnf("pin in %s: %v", m.ChatID, err)
+			b.emit(model.NoticeEvent{Text: "Couldn't pin the message."})
+		}
+	}()
+}
+
+// emitAllMessages asks the UI to reload an open chat.
+func (b *Backend) emitAllMessages(chatID string) {
+	b.emit(model.DeletedEvent{ChatID: chatID})
+}
+
+// SaveMedia implements model.Backend.
+func (b *Backend) SaveMedia(m *model.Message) {
+	go func() {
+		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
+		defer cancel()
+		data, err := os.ReadFile(b.mediaPath(m.ChatID, m.ID))
+		media, blob, _ := b.store.mediaBlob(ctx, m.ChatID, m.ID)
+		if err != nil {
+			dl := mediaMessage(media, blob)
+			cli := b.client()
+			if dl == nil || cli == nil || !cli.IsConnected() {
+				b.emit(model.NoticeEvent{Text: "This media isn't available."})
+				return
+			}
+			if data, err = cli.DownloadAny(ctx, dl); err != nil {
+				b.log.Infof("download for saving %s: %v", m.ID, err)
+				b.emit(model.NoticeEvent{Text: "Couldn't download the media."})
+				return
+			}
+		}
+		path, err := saveDownload(fileName(m, media, blob), data)
+		if err != nil {
+			b.emit(model.NoticeEvent{Text: "Couldn't save the file: " + err.Error()})
+			return
+		}
+		b.emit(model.NoticeEvent{Text: "Saved to " + path})
+	}()
+}
+
+// fileName picks a name for a saved attachment.
+func fileName(m *model.Message, media model.Media, blob []byte) string {
+	stamp := m.Time.Format("2006-01-02 at 15.04.05")
+	switch media {
+	case model.MediaDocument:
+		var d waE2E.DocumentMessage
+		if proto.Unmarshal(blob, &d) == nil && d.GetFileName() != "" {
+			return d.GetFileName()
+		}
+		return "WhatsApp Document " + stamp
+	case model.MediaVideo, model.MediaGIF:
+		return "WhatsApp Video " + stamp + ".mp4"
+	case model.MediaVoice:
+		return "WhatsApp Voice " + stamp + ".ogg"
+	case model.MediaAudio:
+		return "WhatsApp Audio " + stamp + ".mp3"
+	case model.MediaSticker:
+		return "WhatsApp Sticker " + stamp + ".webp"
+	}
+	return "WhatsApp Image " + stamp + ".jpg"
+}
+
+// saveDownload writes data into the Downloads folder without overwriting.
+func saveDownload(name string, data []byte) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, "Downloads")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name = strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`<>:"/\|?*`, r) || r < 32 {
+			return '_'
+		}
+		return r
+	}, name)
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	path := filepath.Join(dir, name)
+	for i := 1; ; i++ {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) && i < 1000 {
+			path = filepath.Join(dir, base+" ("+itoa(i)+")"+ext)
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, err = f.Write(data)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		return path, err
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var s []byte
+	for ; n > 0; n /= 10 {
+		s = append([]byte{byte('0' + n%10)}, s...)
+	}
+	return string(s)
+}
+
+// lastKey returns the timestamp and key of a chat's newest message, which
+// archive, read and delete patches refer to.
+func (b *Backend) lastKey(chatID string) (time.Time, *waCommon.MessageKey) {
+	rc, ok := b.store.chat(b.ctx, chatID)
+	if !ok || rc.last == nil {
+		return time.Time{}, nil
+	}
+	_, key := b.messageKey(rc.last.Message)
+	return rc.last.Time, key
+}
+
+// chatAction applies a chat setting locally, shows it, and syncs it.
+func (b *Backend) chatAction(chatID, field string, v any, patch func(types.JID) appstate.PatchInfo) {
+	jid, err := types.ParseJID(chatID)
+	if err != nil {
+		return
+	}
+	if err := b.store.setField(b.ctx, chatID, field, v); err != nil {
+		b.log.Warnf("set %s of %s: %v", field, chatID, err)
+	}
+	b.emitChat(chatID)
+	if patch != nil && b.connected() != nil {
+		b.sendAppState(patch(jid))
+	}
+}
+
+func (b *Backend) SetArchived(chatID string, archived bool) {
+	ts, key := b.lastKey(chatID)
+	if archived {
+		_ = b.store.setField(b.ctx, chatID, "pinned", 0) // archiving unpins
+	}
+	b.chatAction(chatID, "archived", boolInt(archived), func(j types.JID) appstate.PatchInfo {
+		return appstate.BuildArchive(j, archived, ts, key)
+	})
+}
+
+func (b *Backend) SetMuted(chatID string, muted bool) {
+	v := int64(0)
+	if muted {
+		v = -1
+	}
+	b.chatAction(chatID, "muted_until", v, func(j types.JID) appstate.PatchInfo {
+		return appstate.BuildMute(j, muted, 0)
+	})
+}
+
+func (b *Backend) SetPinned(chatID string, pinned bool) {
+	v := int64(0)
+	if pinned {
+		v = time.Now().Unix()
+	}
+	b.chatAction(chatID, "pinned", v, func(j types.JID) appstate.PatchInfo {
+		return appstate.BuildPin(j, pinned)
+	})
+}
+
+func (b *Backend) SetUnread(chatID string, unread bool) {
+	v := 0
+	if unread {
+		v = -1
+	}
+	ts, key := b.lastKey(chatID)
+	b.chatAction(chatID, "unread", v, func(j types.JID) appstate.PatchInfo {
+		return appstate.BuildMarkChatAsRead(j, !unread, ts, key)
+	})
+}
+
+// SetFavorite implements model.Backend. Favourites sync through the
+// predefined Favourites list when the phone has created it.
+func (b *Backend) SetFavorite(chatID string, favorite bool) {
+	fav := b.store.meta(b.ctx, "favorites_list")
+	var patch func(types.JID) appstate.PatchInfo
+	if fav != "" {
+		patch = func(j types.JID) appstate.PatchInfo { return appstate.BuildLabelChat(j, fav, favorite) }
+	}
+	b.chatAction(chatID, "favorite", boolInt(favorite), patch)
+}
+
+// Lists implements model.Backend.
+func (b *Backend) Lists() []*model.ChatList {
+	ls, err := b.store.lists(b.ctx)
+	if err != nil {
+		b.log.Warnf("load lists: %v", err)
+	}
+	return ls
+}
+
+func (b *Backend) SetInList(chatID, listID string, in bool) {
+	if err := b.store.setInList(b.ctx, listID, chatID, in); err != nil {
+		b.log.Warnf("set list of %s: %v", chatID, err)
+	}
+	jid, err := types.ParseJID(chatID)
+	if err == nil && b.connected() != nil {
+		b.sendAppState(appstate.BuildLabelChat(jid, listID, in))
+	}
+	b.emitChat(chatID)
+}
+
+// ClearChat implements model.Backend.
+func (b *Backend) ClearChat(chatID string) {
+	jid, err := types.ParseJID(chatID)
+	if err != nil {
+		return
+	}
+	ts, key := b.lastKey(chatID)
+	_ = b.store.clearChat(b.ctx, chatID)
+	b.emit(model.DeletedEvent{ChatID: chatID})
+	b.emitChat(chatID)
+	if b.connected() == nil {
+		return
+	}
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	b.sendAppState(appstate.PatchInfo{
+		Type: appstate.WAPatchRegularHigh,
+		Mutations: []appstate.MutationInfo{{
+			Index:   []string{appstate.IndexClearChat, jid.String(), "1", "0"},
+			Version: 6,
+			Value: &waSyncAction.SyncActionValue{ClearChatAction: &waSyncAction.ClearChatAction{
+				MessageRange: &waSyncAction.SyncActionMessageRange{
+					LastMessageTimestamp: proto.Int64(ts.Unix()),
+					Messages:             messageRange(key, ts),
+				},
+			}},
+		}},
+	})
+}
+
+func messageRange(key *waCommon.MessageKey, ts time.Time) []*waSyncAction.SyncActionMessage {
+	if key == nil {
+		return nil
+	}
+	return []*waSyncAction.SyncActionMessage{{Key: key, Timestamp: proto.Int64(ts.Unix())}}
+}
+
+// DeleteChat implements model.Backend.
+func (b *Backend) DeleteChat(chatID string) {
+	jid, err := types.ParseJID(chatID)
+	if err != nil {
+		return
+	}
+	ts, key := b.lastKey(chatID)
+	_ = b.store.deleteChat(b.ctx, chatID)
+	b.emitAllChats()
+	if b.connected() != nil {
+		b.sendAppState(appstate.BuildDeleteChat(jid, ts, key, true))
+	}
+}
+
+// LeaveGroup implements model.Backend.
+func (b *Backend) LeaveGroup(chatID string) {
+	cli := b.connected()
+	jid, err := types.ParseJID(chatID)
+	if cli == nil || err != nil {
+		return
+	}
+	go func() {
+		if err := cli.LeaveGroup(b.ctx, jid); err != nil {
+			b.log.Warnf("leave %s: %v", chatID, err)
+			b.emit(model.NoticeEvent{Text: "Couldn't exit the group."})
+			return
+		}
+		b.emit(model.NoticeEvent{Text: "You exited the group."})
+	}()
+}
+
+func (b *Backend) Pref(key string) string { return b.store.meta(b.ctx, "pref:"+key) }
+
+func (b *Backend) SetPref(key, value string) {
+	_ = b.store.setMetaValue(b.ctx, "pref:"+key, value)
+}
+
+// Store helpers for the actions above and their app state counterparts.
+
+func (s *msgStore) setMessageFlag(ctx context.Context, chat, id, field string, v bool) error {
+	// field is always a constant from this package.
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET `+field+` = ? WHERE chat = ? AND id = ?`, boolInt(v), chat, id)
+	return err
+}
+
+func (s *msgStore) deleteMessage(ctx context.Context, chat, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ? AND id = ?`, chat, id)
+	return err
+}
+
+func (s *msgStore) clearChat(ctx context.Context, chat string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ? AND starred = 0`, chat)
+	return err
+}
+
+func (s *msgStore) deleteChat(ctx context.Context, chat string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ?; DELETE FROM wz_chats WHERE jid = ?;
+		DELETE FROM wz_list_chats WHERE chat = ?`, chat, chat, chat)
+	return err
+}
+
+func (s *msgStore) putList(ctx context.Context, id, name string, custom, deleted bool, order int) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO wz_lists (id, name, custom, ord, deleted) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET name = excluded.name, custom = excluded.custom, ord = excluded.ord,
+			deleted = excluded.deleted`, id, name, boolInt(custom), order, boolInt(deleted))
+	return err
+}
+
+func (s *msgStore) setInList(ctx context.Context, list, chat string, in bool) error {
+	q := `INSERT OR IGNORE INTO wz_list_chats (list, chat) VALUES (?, ?)`
+	if !in {
+		q = `DELETE FROM wz_list_chats WHERE list = ? AND chat = ?`
+	}
+	_, err := s.db.ExecContext(ctx, q, list, chat)
+	return err
+}
+
+func (s *msgStore) lists(ctx context.Context) ([]*model.ChatList, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT l.id, l.name, COALESCE(c.chat, '') FROM wz_lists l
+		LEFT JOIN wz_list_chats c ON c.list = l.id
+		WHERE l.custom = 1 AND l.deleted = 0 AND l.name <> '' ORDER BY l.ord, l.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*model.ChatList
+	for rows.Next() {
+		var id, name, chat string
+		if err := rows.Scan(&id, &name, &chat); err != nil {
+			return nil, err
+		}
+		if len(out) == 0 || out[len(out)-1].ID != id {
+			out = append(out, &model.ChatList{ID: id, Name: name})
+		}
+		if chat != "" {
+			l := out[len(out)-1]
+			l.Chats = append(l.Chats, chat)
+		}
+	}
+	return out, rows.Err()
+}
+
+// App state events from the phone for the same actions.
+
+func (b *Backend) onLabelEdit(id string, a *waSyncAction.LabelEditAction) {
+	ctx := b.ctx
+	if a.GetType() == waSyncAction.LabelEditAction_FAVORITES {
+		_ = b.store.setMetaValue(ctx, "favorites_list", id)
+	}
+	custom := a.GetType() == waSyncAction.LabelEditAction_CUSTOM || a.GetType() == waSyncAction.LabelEditAction_NONE
+	if err := b.store.putList(ctx, id, a.GetName(), custom, a.GetDeleted(), int(a.GetOrderIndex())); err != nil {
+		b.log.Warnf("store list %s: %v", id, err)
+	}
+}
+
+func (b *Backend) onLabelChat(j types.JID, list string, labeled, quiet bool) {
+	ctx := b.ctx
+	chat := b.canonical(ctx, j).String()
+	_ = b.store.setInList(ctx, list, chat, labeled)
+	if list == b.store.meta(ctx, "favorites_list") {
+		_ = b.store.setField(ctx, chat, "favorite", boolInt(labeled))
+	}
+	if !quiet {
+		b.emitChat(chat)
+	}
+}
+
+// onFavorites applies the phone's full list of favourite chats.
+func (b *Backend) onFavorites(a *waSyncAction.FavoritesAction) {
+	ctx := b.ctx
+	_, _ = b.db.ExecContext(ctx, `UPDATE wz_chats SET favorite = 0`)
+	for _, f := range a.GetFavorites() {
+		if j, err := types.ParseJID(f.GetID()); err == nil {
+			_ = b.store.setField(ctx, b.canonical(ctx, j).String(), "favorite", 1)
+		}
+	}
+	b.emitAllChats()
+}

@@ -45,6 +45,9 @@ func main() {
 	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")
 	win := flag.String("win", "", "in -compare mode, render a window of this size (W,H px) and crop it like the screenshot")
 	rightAligned := flag.Bool("right", false, "with -win, the screenshot is the window's right edge")
+	overlay := flag.String("overlay", "", "render only this overlay (chatmenu, msgmenu, emoji, viewer, forward, reply, delete, select) to <out>/overlay-<name>.png")
+	at := flag.String("at", "600,300", "with -overlay, where menus open (x,y px)")
+	overlayChat := flag.String("ochat", "rina", "with -overlay, the demo chat to open")
 	flag.Parse()
 	if *memprofile != "" {
 		defer func() {
@@ -72,6 +75,25 @@ func main() {
 
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		log.Fatal(err)
+	}
+	if *overlay != "" {
+		var x, y int
+		fmt.Sscanf(*at, "%d,%d", &x, &y)
+		u := ui.New(mock.New())
+		u.Start(func() {})
+		u.SetDark(true)
+		u.SelectID(*overlayChat)
+		u.ShowOverlay(*overlay, x, y)
+		img, err := render(u, int(float32(*width)*float32(*scale)), int(float32(*height)*float32(*scale)), float32(*scale))
+		if err != nil {
+			log.Fatal(err)
+		}
+		path := filepath.Join(*out, "overlay-"+*overlay+".png")
+		if err := writePNG(path, img); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("wrote", path)
+		return
 	}
 	shots := []struct {
 		name  string

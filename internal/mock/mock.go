@@ -19,6 +19,8 @@ type Backend struct {
 	notify func()
 	now    func() time.Time
 	meName string
+	prefs  map[string]string
+	lists  []*model.ChatList
 	extras
 }
 
@@ -50,6 +52,7 @@ func New() *Backend {
 		return time.Date(y, mo, dd, h, m, 0, 0, now.Location())
 	})
 	b.addChannelPosts()
+	b.lists = []*model.ChatList{{ID: "l1", Name: "Family", Chats: []string{"family", "mom"}}, {ID: "l2", Name: "Work"}}
 	return b
 }
 
@@ -125,26 +128,6 @@ func (b *Backend) Open(chatID string) {
 			b.emit(model.ChatEvent{Chat: &cc})
 		}
 	}
-}
-
-func (b *Backend) Send(chatID, text string) *model.Message {
-	m := &model.Message{
-		ID:      fmt.Sprintf("%s-%d", chatID, len(b.msgs[chatID])),
-		ChatID:  chatID,
-		FromMe:  true,
-		Text:    text,
-		Time:    b.now(),
-		Receipt: model.Sent,
-	}
-	b.msgs[chatID] = append(b.msgs[chatID], m)
-	for _, c := range b.chats {
-		if c.ID == chatID {
-			c.Last, c.Time = m, m.Time
-			cc := *c
-			b.emit(model.ChatEvent{Chat: &cc})
-		}
-	}
-	return m
 }
 
 func (b *Backend) Avatar(string) []byte            { return nil }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waWeb"
+	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
 	"google.golang.org/protobuf/proto"
 
@@ -16,10 +17,11 @@ import (
 type parsed struct {
 	msg storedMsg
 
-	target   string // message ID a reaction/revoke/edit applies to
+	target   string // message ID a reaction/revoke/edit/pin applies to
 	reaction string
 	revoke   bool
 	edit     string
+	pin      int // 1 pinned, -1 unpinned
 }
 
 // content summarizes what a message shows.
@@ -39,7 +41,43 @@ func marshal(m proto.Message) []byte {
 	return b
 }
 
+// unwrap strips the envelopes a message can come in (disappearing,
+// view once, edited...). Quoted messages keep them, unlike the message
+// events hypermeow hands out.
+func unwrap(m *waE2E.Message) *waE2E.Message {
+	for i := 0; i < 4 && m != nil; i++ {
+		var inner *waE2E.Message
+		switch {
+		case m.GetDeviceSentMessage().GetMessage() != nil:
+			inner = m.GetDeviceSentMessage().GetMessage()
+		case m.GetEphemeralMessage().GetMessage() != nil:
+			inner = m.GetEphemeralMessage().GetMessage()
+		case m.GetViewOnceMessage().GetMessage() != nil:
+			inner = m.GetViewOnceMessage().GetMessage()
+		case m.GetViewOnceMessageV2().GetMessage() != nil:
+			inner = m.GetViewOnceMessageV2().GetMessage()
+		case m.GetViewOnceMessageV2Extension().GetMessage() != nil:
+			inner = m.GetViewOnceMessageV2Extension().GetMessage()
+		case m.GetDocumentWithCaptionMessage().GetMessage() != nil:
+			inner = m.GetDocumentWithCaptionMessage().GetMessage()
+		case m.GetEditedMessage().GetMessage() != nil:
+			inner = m.GetEditedMessage().GetMessage()
+		case m.GetBotInvokeMessage().GetMessage() != nil:
+			inner = m.GetBotInvokeMessage().GetMessage()
+		case m.GetLottieStickerMessage().GetMessage() != nil:
+			inner = m.GetLottieStickerMessage().GetMessage()
+		case m.GetAssociatedChildMessage().GetMessage() != nil:
+			inner = m.GetAssociatedChildMessage().GetMessage()
+		default:
+			return m
+		}
+		m = inner
+	}
+	return m
+}
+
 func describe(m *waE2E.Message) content {
+	m = unwrap(m)
 	switch {
 	case m.GetConversation() != "":
 		return content{text: m.GetConversation()}
@@ -57,40 +95,66 @@ func describe(m *waE2E.Message) content {
 			media = model.MediaGIF
 		}
 		return content{text: e.GetCaption(), kind: model.KindImage, media: media, duration: int(e.GetSeconds()),
-			thumb: e.GetJPEGThumbnail(), ctx: e.GetContextInfo()}
+			thumb: e.GetJPEGThumbnail(), blob: marshal(e), ctx: e.GetContextInfo()}
+	case m.GetPtvMessage() != nil:
+		e := m.GetPtvMessage()
+		return content{kind: model.KindImage, media: model.MediaVideo, duration: int(e.GetSeconds()),
+			thumb: e.GetJPEGThumbnail(), blob: marshal(e), ctx: e.GetContextInfo()}
 	case m.GetAudioMessage() != nil:
 		e := m.GetAudioMessage()
 		media := model.MediaAudio
 		if e.GetPTT() {
 			media = model.MediaVoice
 		}
-		return content{media: media, duration: int(e.GetSeconds()), ctx: e.GetContextInfo()}
+		return content{media: media, duration: int(e.GetSeconds()), blob: marshal(e), ctx: e.GetContextInfo()}
 	case m.GetDocumentMessage() != nil:
 		e := m.GetDocumentMessage()
 		text := e.GetFileName()
 		if text == "" {
 			text = e.GetTitle()
 		}
-		return content{text: text, media: model.MediaDocument, ctx: e.GetContextInfo()}
+		return content{text: text, media: model.MediaDocument, blob: marshal(e), ctx: e.GetContextInfo()}
 	case m.GetStickerMessage() != nil:
 		e := m.GetStickerMessage()
 		return content{kind: model.KindSticker, media: model.MediaSticker, thumb: e.GetPngThumbnail(),
 			blob: marshal(e), ctx: e.GetContextInfo()}
 	case m.GetContactMessage() != nil:
-		return content{text: m.GetContactMessage().GetDisplayName(), media: model.MediaContact}
+		e := m.GetContactMessage()
+		return content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo()}
 	case m.GetContactsArrayMessage() != nil:
-		return content{text: m.GetContactsArrayMessage().GetDisplayName(), media: model.MediaContact}
+		e := m.GetContactsArrayMessage()
+		return content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo()}
 	case m.GetLocationMessage() != nil:
 		e := m.GetLocationMessage()
 		return content{text: e.GetName(), media: model.MediaLocation, thumb: e.GetJPEGThumbnail(), ctx: e.GetContextInfo()}
 	case m.GetLiveLocationMessage() != nil:
-		return content{text: "Live location", media: model.MediaLocation}
+		e := m.GetLiveLocationMessage()
+		return content{text: "Live location", media: model.MediaLocation, ctx: e.GetContextInfo()}
 	case m.GetPollCreationMessage() != nil:
-		return content{text: m.GetPollCreationMessage().GetName(), media: model.MediaPoll}
+		e := m.GetPollCreationMessage()
+		return content{text: e.GetName(), media: model.MediaPoll, ctx: e.GetContextInfo()}
 	case m.GetPollCreationMessageV2() != nil:
-		return content{text: m.GetPollCreationMessageV2().GetName(), media: model.MediaPoll}
+		e := m.GetPollCreationMessageV2()
+		return content{text: e.GetName(), media: model.MediaPoll, ctx: e.GetContextInfo()}
 	case m.GetPollCreationMessageV3() != nil:
-		return content{text: m.GetPollCreationMessageV3().GetName(), media: model.MediaPoll}
+		e := m.GetPollCreationMessageV3()
+		return content{text: e.GetName(), media: model.MediaPoll, ctx: e.GetContextInfo()}
+	// Answers to bot buttons and lists quote the message they answer.
+	case m.GetButtonsResponseMessage() != nil:
+		e := m.GetButtonsResponseMessage()
+		return content{text: e.GetSelectedDisplayText(), ctx: e.GetContextInfo()}
+	case m.GetTemplateButtonReplyMessage() != nil:
+		e := m.GetTemplateButtonReplyMessage()
+		return content{text: e.GetSelectedDisplayText(), ctx: e.GetContextInfo()}
+	case m.GetListResponseMessage() != nil:
+		e := m.GetListResponseMessage()
+		return content{text: first(e.GetTitle(), e.GetSingleSelectReply().GetSelectedRowID()), ctx: e.GetContextInfo()}
+	case m.GetInteractiveResponseMessage() != nil:
+		e := m.GetInteractiveResponseMessage()
+		return content{text: e.GetBody().GetText(), ctx: e.GetContextInfo()}
+	case m.GetGroupInviteMessage() != nil:
+		e := m.GetGroupInviteMessage()
+		return content{text: "Group invite: " + e.GetGroupName(), ctx: e.GetContextInfo()}
 	}
 	return content{}
 }
@@ -121,6 +185,13 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 
 	if r := m.GetReactionMessage(); r != nil {
 		p.target, p.reaction = r.GetKey().GetID(), r.GetText()
+		return p, p.target != ""
+	}
+	if pin := m.GetPinInChatMessage(); pin != nil {
+		p.target, p.pin = pin.GetKey().GetID(), 1
+		if pin.GetType() == waE2E.PinInChatMessage_UNPIN_FOR_ALL {
+			p.pin = -1
+		}
 		return p, p.target != ""
 	}
 	if pm := m.GetProtocolMessage(); pm != nil {
@@ -160,10 +231,44 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	p.msg.senderPush = evt.Info.PushName
 	p.msg.mediaBlob = c.blob
 	p.msg.mentions = c.ctx.GetMentionedJID()
-	if q := c.ctx.GetQuotedMessage(); q != nil {
-		qc := describe(q)
-		msg.Quote = &model.Quote{Text: qc.text, Media: qc.media}
-		p.msg.quoteJID = c.ctx.GetParticipant()
-	}
+	msg.Forwarded = c.ctx.GetIsForwarded()
+	b.parseQuote(ctx, &p.msg, c.ctx)
 	return p, true
+}
+
+// parseQuote fills in the message a reply points to. The quoted content
+// normally travels with the reply; when it is missing (or of a type that
+// isn't rendered) the original is looked up by its ID.
+func (b *Backend) parseQuote(ctx context.Context, m *storedMsg, ci *waE2E.ContextInfo) {
+	id := ci.GetStanzaID()
+	q := ci.GetQuotedMessage()
+	if id == "" && q == nil {
+		return
+	}
+	qc := describe(q)
+	quote := &model.Quote{ID: id, Text: qc.text, Media: qc.media}
+	m.quoteJID = ci.GetParticipant()
+	if qc.text == "" && qc.media == model.MediaNone && id != "" {
+		orig, ok := b.store.message(ctx, m.ChatID, id)
+		switch {
+		case ok:
+			quote.Text, quote.Media = orig.Text, orig.Media
+			if orig.Kind == model.KindDeleted {
+				quote.Text = "This message was deleted"
+			}
+			if m.quoteJID == "" {
+				m.quoteJID = orig.senderJID
+				if orig.FromMe {
+					m.quoteJID = b.ownJID(m.ChatID).String()
+				}
+			}
+		case q == nil:
+			return // only an ID, of a message we don't have
+		}
+	}
+	if j, err := types.ParseJID(m.quoteJID); err == nil && !j.IsEmpty() {
+		m.quoteJID = b.canonical(ctx, j).String()
+	}
+	m.quoteID = id
+	m.Quote = quote
 }

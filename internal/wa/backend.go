@@ -16,14 +16,12 @@ import (
 	"github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/appstate"
 	"github.com/polymorfa/hypermeow/proto/waCompanionReg"
-	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waHistorySync"
 	"github.com/polymorfa/hypermeow/store"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
 	waLog "github.com/polymorfa/hypermeow/util/log"
-	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, registers "sqlite"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -327,6 +325,12 @@ func (b *Backend) Open(chatID string) {
 			return
 		}
 		cli := b.client()
+		if c.Unread < 0 && cli.IsConnected() {
+			// Marked as unread: opening it marks it read again.
+			ts, key := b.lastKey(chatID)
+			b.sendAppState(appstate.BuildMarkChatAsRead(jid, true, ts, key))
+			_ = b.store.setField(ctx, chatID, "unread", 0)
+		}
 		if c.Unread > 0 {
 			ids, senders, err := b.store.unreadIncoming(ctx, chatID, min(c.Unread, 100))
 			if err == nil && cli.IsConnected() {
@@ -367,39 +371,6 @@ func (b *Backend) Open(chatID string) {
 			}
 		}
 	}()
-}
-
-// Send stores the message as pending, returns it, and sends it in the background.
-func (b *Backend) Send(chatID, text string) *model.Message {
-	jid, err := types.ParseJID(chatID)
-	cli := b.client()
-	if err != nil || cli == nil {
-		return nil
-	}
-	m := &model.Message{
-		ID:      cli.GenerateMessageID(),
-		ChatID:  chatID,
-		FromMe:  true,
-		Text:    text,
-		Time:    time.Now(),
-		Receipt: model.Pending,
-	}
-	if err := b.store.putMessage(b.ctx, b.db, storedMsg{Message: m}); err != nil {
-		b.log.Errorf("store outgoing message: %v", err)
-	}
-	b.emitChat(chatID)
-	go func() {
-		_, err := cli.SendMessage(b.ctx, jid, &waE2E.Message{Conversation: proto.String(text)},
-			whatsmeow.SendRequestExtra{ID: m.ID})
-		if err != nil {
-			b.log.Errorf("send to %s: %v", chatID, err)
-			return
-		}
-		_ = b.store.setReceipt(b.ctx, chatID, []string{m.ID}, model.Sent)
-		b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{m.ID}, Receipt: model.Sent})
-	}()
-	cp := *m
-	return &cp
 }
 
 func (b *Backend) emitChat(jid string) {
@@ -497,6 +468,41 @@ func (b *Backend) handle(evt any) {
 	case *events.MarkChatAsRead:
 		if e.Action.GetRead() {
 			b.updateChat(e.JID, "unread", 0, e.FromFullSync)
+		} else if c, ok := b.store.chat(ctx, b.canonical(ctx, e.JID).String()); ok && c.Unread == 0 {
+			b.updateChat(e.JID, "unread", -1, e.FromFullSync)
+		}
+	case *events.Star:
+		chat := b.canonical(ctx, e.ChatJID).String()
+		_ = b.store.setMessageFlag(ctx, chat, e.MessageID, "starred", e.Action.GetStarred())
+		if !e.FromFullSync {
+			b.emitMessage(chat, e.MessageID)
+		}
+	case *events.DeleteForMe:
+		chat := b.canonical(ctx, e.ChatJID).String()
+		_ = b.store.deleteMessage(ctx, chat, e.MessageID)
+		if !e.FromFullSync {
+			b.emit(model.DeletedEvent{ChatID: chat, IDs: []string{e.MessageID}})
+			b.emitChat(chat)
+		}
+	case *events.ClearChat:
+		chat := b.canonical(ctx, e.JID).String()
+		_ = b.store.clearChat(ctx, chat)
+		if !e.FromFullSync {
+			b.emit(model.DeletedEvent{ChatID: chat})
+			b.emitChat(chat)
+		}
+	case *events.DeleteChat:
+		_ = b.store.deleteChat(ctx, b.canonical(ctx, e.JID).String())
+		if !e.FromFullSync {
+			b.emitAllChats()
+		}
+	case *events.LabelEdit:
+		b.onLabelEdit(e.LabelID, e.Action)
+	case *events.LabelAssociationChat:
+		b.onLabelChat(e.JID, e.LabelID, e.Action.GetLabeled(), e.FromFullSync)
+	case *events.AppState:
+		if len(e.Index) > 0 && e.Index[0] == appstate.IndexFavorites && e.GetFavoritesAction() != nil {
+			b.onFavorites(e.GetFavoritesAction())
 		}
 
 	case *events.PushName, *events.Contact, *events.BusinessName:
@@ -536,7 +542,8 @@ func (b *Backend) updateChat(j types.JID, field string, v any, quiet bool) {
 // contacts) once per session database. Sessions linked before app state
 // events were enabled never received their pins and mutes.
 func (b *Backend) resyncAppStateOnce() {
-	const key = "appstate_resynced"
+	// v2 also picks up lists and favourites, which older versions ignored.
+	const key = "appstate_resynced_v2"
 	if b.store.meta(b.ctx, key) != "" {
 		return
 	}
@@ -568,6 +575,13 @@ func (b *Backend) onMessage(e *events.Message) {
 		_ = b.store.markDeleted(ctx, chat, p.target)
 	case p.edit != "":
 		_ = b.store.editText(ctx, chat, p.target, p.edit)
+	case p.pin != 0:
+		if p.pin > 0 {
+			_, _ = b.db.ExecContext(ctx, `UPDATE wz_messages SET pinned = 0 WHERE chat = ?`, chat)
+		}
+		_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
+		b.emitAllMessages(chat)
+		return
 	case p.target != "":
 		_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
 	default:
@@ -753,6 +767,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				_ = b.store.markDeleted(ctx, chat, p.target)
 			case p.edit != "":
 				_ = b.store.editText(ctx, chat, p.target, p.edit)
+			case p.pin != 0:
+				_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
 			default:
 				_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
 			}

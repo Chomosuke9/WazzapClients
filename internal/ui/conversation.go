@@ -63,8 +63,20 @@ func (u *UI) rows(c *model.Chat) []convRow {
 
 func (u *UI) layoutConversation(gtx C) D {
 	c := u.selected
+	var pinned *model.Message
+	for _, m := range u.msgs {
+		if m.Pinned && m.Kind != model.KindDeleted {
+			pinned = m
+		}
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D { return u.layoutConvHeader(gtx, c) }),
+		layout.Rigid(func(gtx C) D {
+			if pinned == nil {
+				return D{}
+			}
+			return u.layoutPinnedBanner(gtx, pinned)
+		}),
 		layout.Flexed(1, func(gtx C) D {
 			sz := gtx.Constraints.Max
 			u.conv.wallpaper.layout(gtx, u.pal.ChatBg, u.pal.Doodle)
@@ -87,6 +99,12 @@ func (u *UI) layoutConversation(gtx C) D {
 			t := op.Offset(image.Pt(0, sz.Y-cd.Size.Y)).Push(gtx.Ops)
 			composer.Add(gtx.Ops)
 			t.Pop()
+			if u.picker.open && u.picker.mode == pickComposer {
+				// Deferred so it draws (and takes clicks) above everything.
+				m := op.Record(gtx.Ops)
+				u.layoutPicker(gtx, image.Pt(gtx.Dp(12), sz.Y-cd.Size.Y+gtx.Dp(4)), sz.X-gtx.Dp(24))
+				op.Defer(gtx.Ops, m.Stop())
+			}
 			return D{Size: sz}
 		}),
 	)
@@ -210,22 +228,102 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 				return layout.N.Layout(gtx, func(gtx C) D { return u.systemChip(gtx, r.date) })
 			case r.kind == rowEncryption:
 				return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
-			case r.msg.FromMe:
-				return layout.NE.Layout(gtx, func(gtx C) D { return u.layoutMessage(gtx, c, r, maxBubble) })
 			default:
-				dims := layout.NW.Layout(gtx, func(gtx C) D { return u.layoutMessage(gtx, c, r, maxBubble) })
-				if c.IsGroup && r.first {
-					// The sender's avatar sits in the left margin, level with the bubble.
-					sz := gtx.Dp(29)
-					x := -min(gtx.Dp(40), margin)
-					t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-					u.avatar(gtx, r.msg.SenderID, r.msg.Sender, false, dp(gtx, sz))
-					t.Pop()
-				}
-				return dims
+				return u.layoutMessageRow(gtx, c, r, maxBubble, margin)
 			}
 		})
 	})
+}
+
+// layoutMessageRow draws one message with its interactions: the hover
+// chevron and right-click menu, selection, and the flash after jumping to
+// it from a reply.
+func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D {
+	p := u.pal
+	m := r.msg
+	w := gtx.Constraints.Max.X
+	sel := u.conv.selecting
+	rowKey := "row:" + m.ID
+	if sel && u.btn(rowKey).Clicked(gtx) {
+		if u.conv.picked[m.ID] {
+			delete(u.conv.picked, m.ID)
+		} else {
+			u.conv.picked[m.ID] = true
+		}
+	}
+	shift := 0
+	if sel && !m.FromMe {
+		shift = max(0, gtx.Dp(44)-margin)
+	}
+	cgtx := gtx
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(w-shift, gtx.Constraints.Max.Y)}
+	bubble := record(cgtx, func(gtx C) D { return u.layoutMessage(gtx, c, r, maxW) })
+	x := shift
+	if m.FromMe {
+		x = w - bubble.size.X
+	}
+	h := bubble.size.Y
+	band := image.Rect(-margin, -gtx.Dp(2), w+margin, h+gtx.Dp(2))
+	if u.conv.flash == m.ID {
+		if u.now().Before(u.conv.flashUntil) {
+			fillRect(gtx, band, argb(0x5dbf6e, 0x30))
+			gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil})
+		} else {
+			u.conv.flash = ""
+		}
+	}
+	if sel && u.conv.picked[m.ID] {
+		fillRect(gtx, band, argb(0x5dbf6e, 0x26))
+	}
+	bubble.at(gtx, x, 0)
+	if c.IsGroup && r.first && !m.FromMe {
+		// The sender's avatar sits in the left margin, level with the bubble.
+		sz := gtx.Dp(29)
+		t := op.Offset(image.Pt(x-min(gtx.Dp(40), margin), 0)).Push(gtx.Ops)
+		u.avatar(gtx, m.SenderID, m.Sender, false, dp(gtx, sz))
+		t.Pop()
+	}
+	if !sel {
+		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+		hovered := u.hoverArea(gtx, m.ID, bubble.size)
+		if u.rightClick(gtx, m.ID, bubble.size) {
+			u.openMessageMenu(m)
+		}
+		chev := u.btn("chev:" + m.ID)
+		if chev.Clicked(gtx) {
+			u.openMessageMenu(m)
+		}
+		if (hovered || u.ctx.msg == m) && m.Kind != model.KindSticker {
+			bg := p.BubbleIn
+			if m.FromMe {
+				bg = p.BubbleOut
+			}
+			fg := p.MetaIn
+			if m.Kind == model.KindImage {
+				bg, fg = argb(0x000000, 0x60), rgb(0xffffff)
+			}
+			ct := op.Offset(image.Pt(bubble.size.X-gtx.Dp(26+5), gtx.Dp(4))).Push(gtx.Ops)
+			u.chevronButton(gtx, chev, bg, fg)
+			ct.Pop()
+		}
+		t.Pop()
+	}
+	if sel {
+		// The whole row toggles; a checkbox sits in the left margin.
+		t := op.Offset(image.Pt(-margin, 0)).Push(gtx.Ops)
+		rg := gtx
+		rg.Constraints = layout.Exact(image.Pt(w+2*margin, h))
+		clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		box, col := icCheckBoxEmpty, p.TextSecondary
+		if u.conv.picked[m.ID] {
+			box, col = icCheckBox, p.Green
+		}
+		bt := op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(6))).Push(gtx.Ops)
+		drawIcon(gtx, box, 24, col)
+		bt.Pop()
+		t.Pop()
+	}
+	return D{Size: image.Pt(w, h)}
 }
 
 func (u *UI) systemChip(gtx C, txt string) D {
@@ -300,9 +398,13 @@ func (u *UI) nbspWidth(gtx C, size unit.Sp) float32 {
 
 func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color.NRGBA) D {
 	gtx.Constraints.Min = image.Point{}
-	children := []layout.FlexChild{
-		layout.Rigid(u.label(12.5, m.Time.Format("15:04"), col).Layout),
+	var children []layout.FlexChild
+	if m.Starred {
+		children = append(children,
+			layout.Rigid(iconW(icStarFill, 14, col)),
+			layout.Rigid(layout.Spacer{Width: 3}.Layout))
 	}
+	children = append(children, layout.Rigid(u.label(12.5, m.Time.Format("15:04"), col).Layout))
 	if m.FromMe && m.Kind != model.KindDeleted {
 		ic, tc := receiptIcon(m.Receipt, u.pal, true)
 		if m.Receipt != model.Read {
@@ -474,14 +576,38 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		contentW = max(contentW, meta.size.X)
 	}
 
+	var fwd part
+	if m.Forwarded && m.Kind != model.KindDeleted {
+		fwd = record(cgtx, func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(iconW(icForward, 16, secondary)),
+				layout.Rigid(layout.Spacer{Width: 4}.Layout),
+				layout.Rigid(u.label(13, "Forwarded", secondary, labelOpts{italic: true, maxLines: 1}).Layout),
+			)
+		})
+		contentW = max(contentW, fwd.size.X+2*textInset)
+	}
+
 	var quote part
 	if m.Quote != nil {
+		var qm *model.Message
+		for _, x := range u.msgs {
+			if x.ID == m.Quote.ID {
+				qm = x
+			}
+		}
 		qw := min(inner, max(contentW, gtx.Dp(180)))
-		quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, qw) })
+		quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, qw, qm) })
 		contentW = max(contentW, quote.size.X)
 		if quote.size.X < contentW {
-			quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, contentW) })
+			quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, contentW, qm) })
 		}
+	}
+	if u.btn("quote:"+m.ID).Clicked(gtx) && m.Quote != nil && m.Quote.ID != "" {
+		u.jumpTo(m.Quote.ID)
+	}
+	if u.btn("img:" + m.ID).Clicked(gtx) {
+		u.openViewer(m)
 	}
 
 	// Place everything, then paint the bubble behind it.
@@ -499,12 +625,35 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 			y += gtx.Dp(3)
 		}
 	}
+	if m.Forwarded && m.Kind != model.KindDeleted {
+		fx := 0
+		if isImg {
+			fx = textInset
+			y += gtx.Dp(2)
+		}
+		fwd.at(gtx, fx, y)
+		y += fwd.size.Y + gtx.Dp(3)
+	}
 	if m.Quote != nil {
 		quote.at(gtx, 0, y)
+		func() {
+			t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+			defer t.Pop()
+			qg := gtx
+			qg.Constraints = layout.Exact(quote.size)
+			clickable(qg, u.btn("quote:"+m.ID), func(gtx C) D { return D{Size: quote.size} })
+		}()
 		y += quote.size.Y + gtx.Dp(5)
 	}
 	if isImg {
 		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, img)
+		func() {
+			t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+			defer t.Pop()
+			ig := gtx
+			ig.Constraints = layout.Exact(image.Pt(imgW, imgH))
+			clickable(ig, u.btn("img:"+m.ID), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		}()
 		y += imgH
 		if metaOnImage {
 			meta.at(gtx, imgW-meta.size.X-gtx.Dp(7), y-meta.size.Y-gtx.Dp(5))
@@ -581,12 +730,15 @@ func (u *UI) paintBubble(gtx C, w, h int, bg color.NRGBA, out, tail bool) {
 	paint.FillShape(gtx.Ops, bg, clip.Outline{Path: path.End()}.Op())
 }
 
-func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width int) D {
+// layoutQuote draws a quoted message: a colored bar, the author and a
+// snippet, plus the quoted picture's thumbnail when it's loaded (qm).
+func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width int, qm *model.Message) D {
 	p := u.pal
 	name := q.Sender
 	if name == "" {
 		name = "You"
 	}
+	name = plainText(name)
 	col := p.Senders[hashIndex(name, len(p.Senders))]
 	if name == "You" {
 		col = p.Green
@@ -598,7 +750,11 @@ func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width
 	gtx.Constraints.Min.X = width
 	gtx.Constraints.Max.X = width
 	m := op.Record(gtx.Ops)
-	dims := layout.Inset{Left: 12, Right: 10, Top: 6, Bottom: 7}.Layout(gtx, func(gtx C) D {
+	right := unit.Dp(10)
+	if qm != nil && qm.Kind == model.KindImage {
+		right = 66 // room for the thumbnail
+	}
+	dims := layout.Inset{Left: 12, Right: right, Top: 6, Bottom: 7}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(u.label(13, name, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
 			layout.Rigid(layout.Spacer{Height: 1}.Layout),
@@ -621,6 +777,15 @@ func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width
 	fillRect(gtx, image.Rectangle{Max: dims.Size}, bg)
 	fillRect(gtx, image.Rect(0, 0, gtx.Dp(4), dims.Size.Y), col)
 	call.Add(gtx.Ops)
+	if qm != nil && qm.Kind == model.KindImage {
+		s := dims.Size.Y
+		tr := image.Rect(width-s, 0, width, s)
+		if img := u.messageImage(qm, s*2); img != nil && img.state == imgReady {
+			paintCover(gtx, img.op, img.size, tr)
+		} else if qm.ImageA != 0 || qm.ImageB != 0 {
+			u.gradientImage(gtx, tr, qm.ImageA, qm.ImageB)
+		}
+	}
 	return dims
 }
 
@@ -729,61 +894,6 @@ func (u *UI) gradientImage(gtx C, r image.Rectangle, a, b uint32) {
 		Stop2: f32.Pt(0, float32(r.Max.Y)), Color2: color.NRGBA{A: 0x70},
 	}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
-}
-
-// layoutComposer is the floating message box at the bottom of a chat.
-func (u *UI) layoutComposer(gtx C) D {
-	p := u.pal
-	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
-		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		hasText := trimSpace(u.conv.composer.Text()) != ""
-		m := op.Record(gtx.Ops)
-		dims := vcenter(gtx, gtx.Dp(55), func(gtx C) D {
-			return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
-				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx C) D {
-						return clickable(gtx, &u.conv.attach, func(gtx C) D {
-							sz := gtx.Dp(40)
-							if u.conv.attach.Hovered() {
-								fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Hover)
-							}
-							return centerIn(gtx, sz, iconW(icAttach, 26, p.IconStrong))
-						})
-					}),
-					layout.Rigid(layout.Spacer{Width: 2}.Layout),
-					layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.conv.emoji, icEmoji, 40, 26, p.IconStrong) }),
-					layout.Rigid(layout.Spacer{Width: 10}.Layout),
-					layout.Flexed(1, func(gtx C) D {
-						return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
-							gtx.Constraints.Min.X = gtx.Constraints.Max.X
-							gtx.Constraints.Max.Y = gtx.Dp(140)
-							e := material.Editor(u.th, &u.conv.composer, "Type a message")
-							e.TextSize = 16
-							e.Color = p.Text
-							e.HintColor = p.ComposerHint
-							e.SelectionColor = argb(0x53bdeb, 0x60)
-							return e.Layout(gtx)
-						})
-					}),
-					layout.Rigid(layout.Spacer{Width: 8}.Layout),
-					layout.Rigid(func(gtx C) D {
-						if !hasText {
-							return u.iconButton(gtx, &u.conv.send, icMic, 40, 26, p.IconStrong)
-						}
-						return clickable(gtx, &u.conv.send, func(gtx C) D {
-							sz := gtx.Dp(40)
-							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Green)
-							return centerIn(gtx, sz, iconW(icSend, 21, p.OnGreen))
-						})
-					}),
-				)
-			})
-		})
-		call := m.Stop()
-		fillRRect(gtx, image.Rectangle{Max: dims.Size}, min(dims.Size.Y/2, gtx.Dp(28)), p.Composer)
-		call.Add(gtx.Ops)
-		return dims
-	})
 }
 
 // layoutEmpty is the welcome pane shown when no chat is open.

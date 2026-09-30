@@ -71,7 +71,7 @@ func (u *UI) layoutRail(gtx C) D {
 	}
 	channelUnread := false
 	for _, c := range u.channels {
-		if c.Unread > 0 && c.Time.After(u.channelsSeen) {
+		if c.Unread != 0 && c.Time.After(u.channelsSeen) {
 			channelUnread = true
 		}
 	}

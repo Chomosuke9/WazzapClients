@@ -1,0 +1,520 @@
+package ui
+
+import (
+	"image"
+	"sort"
+	"strings"
+	"time"
+	"unicode"
+
+	"gioui.org/font"
+	"gioui.org/io/event"
+	"gioui.org/io/key"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/widget/material"
+
+	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
+)
+
+// mentionRef is an @mention inserted from the picker: the composer shows
+// "@Name", the message carries "@<user>" plus the JID.
+type mentionRef struct {
+	name, jid string
+}
+
+// requestFocus focuses tag (an editor), or clears focus when nil, on the
+// next frame.
+func (u *UI) requestFocus(tag event.Tag) {
+	u.focus, u.focusReq = tag, true
+}
+
+func (u *UI) applyFocus(gtx C) {
+	if u.focusReq {
+		gtx.Execute(key.FocusCmd{Tag: u.focus})
+		u.focus, u.focusReq = nil, false
+	}
+}
+
+func (u *UI) startReply(m *model.Message) {
+	u.conv.reply = m
+	u.requestFocus(&u.conv.composer)
+}
+
+// replyPrivately answers a group message in a one-to-one chat with its
+// author, quoting it.
+func (u *UI) replyPrivately(m *model.Message) {
+	u.openDirect(m.SenderID, m.Sender)
+	u.conv.reply = m
+}
+
+// openDirect opens the one-to-one chat with a user, creating it in the
+// list if it doesn't exist yet.
+func (u *UI) openDirect(id, name string) {
+	c := u.chatByID(id)
+	if c == nil {
+		c = &model.Chat{ID: id, Name: strings.TrimPrefix(plainText(name), "~"), Time: u.now()}
+	}
+	u.setPage(pageChats)
+	u.open(c)
+	u.requestFocus(&u.conv.composer)
+}
+
+func (u *UI) closeChat() {
+	u.selected = nil
+	u.info.open = false
+	u.endSelect()
+}
+
+func (u *UI) startSelect(m *model.Message) {
+	u.conv.selecting = true
+	u.conv.picked = map[string]bool{m.ID: true}
+}
+
+func (u *UI) endSelect() {
+	u.conv.selecting = false
+	u.conv.picked = nil
+}
+
+// pickedMessages returns the selected messages in chat order.
+func (u *UI) pickedMessages() []*model.Message {
+	var out []*model.Message
+	for _, m := range u.msgs {
+		if u.conv.picked[m.ID] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// jumpTo scrolls to a message and flashes it.
+func (u *UI) jumpTo(id string) {
+	if u.selected == nil {
+		return
+	}
+	for i, r := range u.rows(u.selected) {
+		if r.msg != nil && r.msg.ID == id {
+			u.conv.list.Position = layout.Position{First: max(0, i-2)}
+			u.conv.list.ScrollToEnd = false
+			u.conv.flash, u.conv.flashUntil = id, u.now().Add(1500*time.Millisecond)
+			return
+		}
+	}
+	u.toast("That message isn't loaded.")
+}
+
+// sendComposer sends the composer text with its reply and mentions.
+func (u *UI) sendComposer() {
+	if u.selected == nil {
+		return
+	}
+	if u.mentionQuery() != nil {
+		u.pickMention(0)
+		return
+	}
+	txt := trimSpace(u.conv.composer.Text())
+	if txt == "" {
+		return
+	}
+	d := model.Draft{Text: txt, Reply: u.conv.reply}
+	for _, mr := range u.conv.mentions {
+		at := "@" + mr.name
+		if !strings.Contains(d.Text, at) {
+			continue
+		}
+		user := mr.jid
+		if i := strings.IndexByte(user, '@'); i >= 0 {
+			user = user[:i]
+		}
+		d.Text = strings.ReplaceAll(d.Text, at, "@"+user)
+		d.Mentions = append(d.Mentions, mr.jid)
+	}
+	u.conv.composer.SetText("")
+	u.conv.reply = nil
+	u.conv.mentions = nil
+	m := u.backend.Send(u.selected.ID, d)
+	if m != nil {
+		if u.chatByID(m.ChatID) == nil {
+			u.chats = append(u.chats, u.selected)
+		}
+		u.upsertMessage(m)
+	}
+	u.conv.list.Position = layout.Position{} // jump to the newest message
+	u.conv.list.ScrollToEnd = true
+}
+
+// mentionState describes an "@query" being typed before the caret.
+type mentionState struct {
+	start, end int // rune offsets of "@query"
+	query      string
+	members    []model.Member
+}
+
+// mentionQuery returns the mention being typed in a group chat, or nil.
+func (u *UI) mentionQuery() *mentionState {
+	c := u.selected
+	if c == nil || !c.IsGroup {
+		return nil
+	}
+	ed := &u.conv.composer
+	caret, _ := ed.Selection()
+	txt := []rune(ed.Text())
+	if caret > len(txt) {
+		return nil
+	}
+	i := caret
+	for i > 0 && caret-i <= 30 {
+		r := txt[i-1]
+		if r == '@' {
+			if i > 1 && !unicode.IsSpace(txt[i-2]) {
+				return nil // part of an e-mail address
+			}
+			q := strings.ToLower(string(txt[i:caret]))
+			if u.conv.mentionDismissed == string(txt[i-1:caret]) {
+				return nil
+			}
+			if u.conv.membersFor != c.ID {
+				u.conv.members, u.conv.membersFor = u.backend.Info(c.ID), c.ID
+			}
+			info := u.conv.members
+			if info == nil {
+				return nil
+			}
+			var hits []model.Member
+			for _, m := range info.Members {
+				if m.Me {
+					continue
+				}
+				n := strings.ToLower(strings.TrimPrefix(m.Name, "~"))
+				if q == "" || strings.HasPrefix(n, q) || strings.Contains(n, " "+q) {
+					hits = append(hits, m)
+				}
+			}
+			if len(hits) == 0 {
+				return nil
+			}
+			sort.SliceStable(hits, func(a, b int) bool {
+				return !strings.HasPrefix(hits[a].Name, "~") && strings.HasPrefix(hits[b].Name, "~")
+			})
+			return &mentionState{start: i - 1, end: caret, query: q, members: hits}
+		}
+		if r == '\n' || (unicode.IsSpace(r) && caret-i > 20) {
+			return nil
+		}
+		i--
+	}
+	return nil
+}
+
+// pickMention replaces the typed "@query" with the chosen member.
+func (u *UI) pickMention(i int) {
+	ms := u.mentionQuery()
+	if ms == nil || i >= len(ms.members) {
+		return
+	}
+	m := ms.members[i]
+	name := strings.TrimPrefix(m.Name, "~")
+	ed := &u.conv.composer
+	ed.SetCaret(ms.start, ms.end)
+	ed.Insert("@" + name + " ")
+	u.conv.mentions = append(u.conv.mentions, mentionRef{name: name, jid: m.ID})
+	u.requestFocus(ed)
+}
+
+// layoutMentionPicker draws matching members above the composer.
+func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
+	p := u.pal
+	for i, m := range ms.members {
+		if u.btn("mention:" + m.ID).Clicked(gtx) {
+			u.pickMention(i)
+			return D{}
+		}
+	}
+	n := min(len(ms.members), 6)
+	rowH := gtx.Dp(52)
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	w := gtx.Constraints.Max.X
+	h := n*rowH + gtx.Dp(16)
+	r := gtx.Dp(12)
+	rect := image.Rect(0, 0, w, h)
+	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r, p.Shadow)
+	borderRRect(gtx, rect, r, p.Popup, p.PopupBorder)
+	defer clip.UniformRRect(rect, r).Push(gtx.Ops).Pop()
+	gtx.Constraints = layout.Exact(image.Pt(w, h-gtx.Dp(16)))
+	t := op.Offset(image.Pt(0, gtx.Dp(8))).Push(gtx.Ops)
+	l := material.List(u.th, &u.conv.mentionList)
+	l.Layout(gtx, len(ms.members), func(gtx C, i int) D {
+		m := ms.members[i]
+		cl := u.btn("mention:" + m.ID)
+		return clickable(gtx, cl, func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			bg := p.Popup
+			if cl.Hovered() || i == 0 {
+				bg = p.PopupHover
+			}
+			return background(gtx, bg, 0, func(gtx C) D {
+				return vcenter(gtx, rowH, func(gtx C) D {
+					return layout.Inset{Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
+						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D { return u.avatar(gtx, m.ID, m.Name, false, 34) }),
+							layout.Rigid(layout.Spacer{Width: 14}.Layout),
+							layout.Flexed(1, u.label(15.5, m.Name, p.Text, labelOpts{maxLines: 1}).Layout),
+						)
+					})
+				})
+			})
+		})
+	})
+	t.Pop()
+	return D{Size: image.Pt(w, h)}
+}
+
+// layoutReplyPreview is the quoted message above the composer's input.
+func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
+	p := u.pal
+	if u.btn("reply:close").Clicked(gtx) {
+		u.conv.reply = nil
+		return D{}
+	}
+	q := &model.Quote{ID: m.ID, Text: m.Text, Media: m.Media}
+	if !m.FromMe {
+		q.Sender = m.Sender
+		if q.Sender == "" && u.selected != nil && !u.selected.IsGroup {
+			q.Sender = u.selected.Name
+		}
+		if q.Sender == "" {
+			q.Sender = u.selected.Name
+		}
+	}
+	if m.Kind == model.KindImage && m.Text == "" {
+		q.Text = ""
+	}
+	return layout.Inset{Left: 8, Right: 8, Top: 8}.Layout(gtx, func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Flexed(1, func(gtx C) D {
+				return u.layoutQuote(gtx, q, p.QuoteIn, p.TextSecondary, gtx.Constraints.Max.X, m)
+			}),
+			layout.Rigid(layout.Spacer{Width: 8}.Layout),
+			layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("reply:close"), icClose, 40, 24, p.Icon) }),
+		)
+	})
+}
+
+// layoutComposer is the floating message box at the bottom of a chat, with
+// the reply preview and the mention picker above the input.
+func (u *UI) layoutComposer(gtx C) D {
+	p := u.pal
+	if u.conv.emoji.Clicked(gtx) {
+		if u.picker.open {
+			u.closePicker()
+		} else {
+			u.openPicker(pickComposer, nil)
+		}
+	}
+	if u.conv.selecting {
+		return u.layoutSelectBar(gtx)
+	}
+	ms := u.mentionQuery()
+	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		var picker part
+		if ms != nil {
+			picker = record(gtx, func(gtx C) D { return u.layoutMentionPicker(gtx, ms) })
+		}
+		hasText := trimSpace(u.conv.composer.Text()) != ""
+		m := op.Record(gtx.Ops)
+		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx C) D {
+				if u.conv.reply == nil {
+					return D{}
+				}
+				return u.layoutReplyPreview(gtx, u.conv.reply)
+			}),
+			layout.Rigid(func(gtx C) D {
+				return vcenter(gtx, gtx.Dp(55), func(gtx C) D {
+					return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
+						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D {
+								return clickable(gtx, &u.conv.attach, func(gtx C) D {
+									sz := gtx.Dp(40)
+									if u.conv.attach.Hovered() {
+										fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Hover)
+									}
+									return centerIn(gtx, sz, iconW(icAttach, 26, p.IconStrong))
+								})
+							}),
+							layout.Rigid(layout.Spacer{Width: 2}.Layout),
+							layout.Rigid(func(gtx C) D {
+								col := p.IconStrong
+								if u.picker.open && u.picker.mode == pickComposer {
+									col = p.Green
+								}
+								return u.iconButton(gtx, &u.conv.emoji, icEmoji, 40, 26, col)
+							}),
+							layout.Rigid(layout.Spacer{Width: 10}.Layout),
+							layout.Flexed(1, func(gtx C) D {
+								return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
+									gtx.Constraints.Min.X = gtx.Constraints.Max.X
+									gtx.Constraints.Max.Y = gtx.Dp(140)
+									e := material.Editor(u.th, &u.conv.composer, "Type a message")
+									e.TextSize = 16
+									e.Color = p.Text
+									e.HintColor = p.ComposerHint
+									e.SelectionColor = argb(0x53bdeb, 0x60)
+									return e.Layout(gtx)
+								})
+							}),
+							layout.Rigid(layout.Spacer{Width: 8}.Layout),
+							layout.Rigid(func(gtx C) D {
+								if !hasText {
+									return u.iconButton(gtx, &u.conv.send, icMic, 40, 26, p.IconStrong)
+								}
+								return clickable(gtx, &u.conv.send, func(gtx C) D {
+									sz := gtx.Dp(40)
+									fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Green)
+									return centerIn(gtx, sz, iconW(icSend, 21, p.OnGreen))
+								})
+							}),
+						)
+					})
+				})
+			}),
+		)
+		call := m.Stop()
+		r := gtx.Dp(28)
+		if u.conv.reply != nil {
+			r = gtx.Dp(20)
+		}
+		fillRRect(gtx, image.Rectangle{Max: dims.Size}, min(dims.Size.Y/2, r), p.Composer)
+		call.Add(gtx.Ops)
+		if ms != nil {
+			picker.at(gtx, 0, -picker.size.Y-gtx.Dp(8))
+		}
+		u.conv.composerH = dims.Size.Y + gtx.Dp(18)
+		return dims
+	})
+}
+
+// layoutSelectBar replaces the composer while selecting messages.
+func (u *UI) layoutSelectBar(gtx C) D {
+	p := u.pal
+	picked := u.pickedMessages()
+	if u.btn("sel:cancel").Clicked(gtx) {
+		u.endSelect()
+	}
+	if len(picked) > 0 {
+		if u.btn("sel:star").Clicked(gtx) {
+			star := false
+			for _, m := range picked {
+				star = star || !m.Starred
+			}
+			for _, m := range picked {
+				u.backend.Star(m, star)
+			}
+			u.endSelect()
+		}
+		if u.btn("sel:delete").Clicked(gtx) {
+			u.confirmDelete(picked)
+		}
+		if u.btn("sel:forward").Clicked(gtx) {
+			u.openForward(picked)
+		}
+		if u.btn("sel:copy").Clicked(gtx) {
+			var lines []string
+			for _, m := range picked {
+				if t := stripIsolates(plainText(m.Text)); t != "" {
+					lines = append(lines, t)
+				}
+			}
+			u.copyText(strings.Join(lines, "\n"))
+			u.endSelect()
+		}
+	}
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	return background(gtx, p.Panel, 0, func(gtx C) D {
+		return vcenter(gtx, gtx.Dp(62), func(gtx C) D {
+			return layout.Inset{Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
+				col := p.IconStrong
+				if len(picked) == 0 {
+					col = p.EmptyIcon
+				}
+				btn := func(key string, ic *icon.Icon) layout.FlexChild {
+					return layout.Rigid(func(gtx C) D {
+						return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return u.iconButton(gtx, u.btn(key), ic, 42, 24, col) })
+					})
+				}
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("sel:cancel"), icClose, 42, 24, p.IconStrong) }),
+					layout.Rigid(layout.Spacer{Width: 16}.Layout),
+					layout.Flexed(1, u.label(16, itoa(len(picked))+" selected", p.Text, labelOpts{maxLines: 1}).Layout),
+					btn("sel:copy", icCopy),
+					btn("sel:star", icStar),
+					btn("sel:delete", icDelete),
+					btn("sel:forward", icForward),
+				)
+			})
+		})
+	})
+}
+
+// hoverArea reports whether the pointer is over an area of size sz at the
+// current offset, without taking events from handlers underneath.
+func (u *UI) hoverArea(gtx C, key string, sz image.Point) bool {
+	tag := u.btn("hv:" + key)
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Enter | pointer.Leave | pointer.Cancel})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			switch e.Kind {
+			case pointer.Enter:
+				u.hovered[key] = true
+			default:
+				delete(u.hovered, key)
+			}
+		}
+	}
+	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, tag)
+	return u.hovered[key]
+}
+
+// layoutPinnedBanner shows the chat's pinned message under the header.
+func (u *UI) layoutPinnedBanner(gtx C, m *model.Message) D {
+	p := u.pal
+	cl := u.btn("pinned:" + m.ID)
+	if cl.Clicked(gtx) {
+		u.jumpTo(m.ID)
+	}
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	return clickable(gtx, cl, func(gtx C) D {
+		bg := p.Panel
+		if cl.Hovered() {
+			bg = p.Hover
+		}
+		d := background(gtx, bg, 0, func(gtx C) D {
+			return vcenter(gtx, gtx.Dp(50), func(gtx C) D {
+				return layout.Inset{Left: 22, Right: 16}.Layout(gtx, func(gtx C) D {
+					txt := plainText(stripIsolates(m.Text))
+					if m.Media != model.MediaNone && txt == "" {
+						txt = mediaLabel(m)
+					}
+					who, _, _ := u.senderLabel(m)
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(iconW(icPin, 20, p.TextSecondary)),
+						layout.Rigid(layout.Spacer{Width: 16}.Layout),
+						layout.Rigid(u.label(14.5, who+": ", p.TextSecondary, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+						layout.Flexed(1, u.label(14.5, firstLine(txt), p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+					)
+				})
+			})
+		})
+		fillRect(gtx, image.Rect(0, d.Size.Y-max(1, gtx.Dp(1)), d.Size.X, d.Size.Y), p.Divider)
+		return d
+	})
+}

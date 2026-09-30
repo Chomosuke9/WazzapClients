@@ -50,6 +50,17 @@ type Palette struct {
 	AnnounceBg, AnnounceIcon         color.NRGBA // community announcements tile
 	ChannelAvatar, ChannelAvatarIcon color.NRGBA // channel without a picture
 	StatusBg                         color.NRGBA // status viewer backdrop
+
+	Popup, PopupBorder, PopupHover color.NRGBA // context menus and the reaction bar
+	PopupDivider, PopupSub         color.NRGBA
+	Picker, PickerTab              color.NRGBA // emoji picker panel; its active tab
+	PickerTabBorder                color.NRGBA
+	Viewer, ViewerDivider          color.NRGBA // media viewer
+	ViewerThumb, ViewerArrow       color.NRGBA
+	Scrim                          color.NRGBA // behind dialogs
+	Dialog                         color.NRGBA
+	Toast, ToastText               color.NRGBA
+	Mention                        color.NRGBA // @mentions in the composer
 }
 
 func rgb(c uint32) color.NRGBA {
@@ -104,6 +115,15 @@ var darkPalette = Palette{
 	AnnounceBg: rgb(0x342c21), AnnounceIcon: rgb(0xf6d78b),
 	ChannelAvatar: rgb(0x32281e), ChannelAvatarIcon: rgb(0xd3a887),
 	StatusBg: rgb(0x0f0f0f),
+
+	Popup: rgb(0x161717), PopupBorder: rgb(0x2b2c2c), PopupHover: rgb(0x242626),
+	PopupDivider: rgb(0x292a2a), PopupSub: rgb(0x969696),
+	Picker: rgb(0x1d1f1f), PickerTab: rgb(0x242626), PickerTabBorder: rgb(0x343636),
+	Viewer: rgb(0x171717), ViewerDivider: rgb(0x1f1f1f),
+	ViewerThumb: rgb(0x242625), ViewerArrow: rgb(0x0e0e0e),
+	Scrim: argb(0x000000, 0x99), Dialog: rgb(0x1d1f1f),
+	Toast: rgb(0x2e2f2f), ToastText: rgb(0xfafafa),
+	Mention: rgb(0x53bdeb),
 }
 
 var lightPalette = Palette{
@@ -140,6 +160,15 @@ var lightPalette = Palette{
 	AnnounceBg: rgb(0xfdf1d8), AnnounceIcon: rgb(0xc58a13),
 	ChannelAvatar: rgb(0xf6e7da), ChannelAvatarIcon: rgb(0xa86f45),
 	StatusBg: rgb(0x0f0f0f),
+
+	Popup: rgb(0xffffff), PopupBorder: rgb(0xe9edef), PopupHover: rgb(0xf5f6f6),
+	PopupDivider: rgb(0xe9edef), PopupSub: rgb(0x667781),
+	Picker: rgb(0xffffff), PickerTab: rgb(0xf0f2f5), PickerTabBorder: rgb(0xe3e0dc),
+	Viewer: rgb(0xffffff), ViewerDivider: rgb(0xe9edef),
+	ViewerThumb: rgb(0xf0f2f5), ViewerArrow: rgb(0xf0f2f5),
+	Scrim: argb(0xffffff, 0xb0), Dialog: rgb(0xffffff),
+	Toast: rgb(0x3b4a54), ToastText: rgb(0xffffff),
+	Mention: rgb(0x027eb5),
 }
 
 func hashIndex(s string, n int) int {

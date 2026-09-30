@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gioui.org/app"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -86,6 +87,19 @@ type UI struct {
 	menu       menuState
 	filterMenu filterMenuState
 
+	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
+	ctx         ctxMenu
+	dialog      dialogState
+	picker      emojiPicker
+	viewer      mediaViewer
+	toastMsg    toastState
+	mouse       image.Point // last pointer position, in content coordinates
+	mouseTag    struct{}
+	hovered     map[string]bool // see hoverArea
+	pendingCopy string          // clipboard text waiting for a frame
+	focus       any             // editor to focus next frame (see requestFocus)
+	focusReq    bool
+
 	sidebar struct {
 		newChat, menu, back widget.Clickable
 		more                widget.Clickable // collapsed filter chips
@@ -110,6 +124,18 @@ type UI struct {
 		rowsVer             int
 		wallpaper           wallpaper
 		nbsp                map[int]float32 // NBSP advance per text size in px
+
+		reply            *model.Message // message being replied to
+		mentions         []mentionRef   // @mentions picked for the draft
+		mentionList      widget.List
+		mentionDismissed string
+		selecting        bool            // "Select" mode
+		picked           map[string]bool // selected message IDs
+		flash            string          // message highlighted after a jump
+		flashUntil       time.Time
+		composerH        int
+		members          *model.ChatInfo // group members for @mentions
+		membersFor       string
 	}
 }
 
@@ -132,6 +158,8 @@ func New(b model.Backend) *UI {
 	u.conv.list.Axis = layout.Vertical
 	u.conv.list.ScrollToEnd = true
 	u.conv.composer.Submit = true
+	u.conv.mentionList.Axis = layout.Vertical
+	u.hovered = make(map[string]bool)
 	return u
 }
 
@@ -266,7 +294,12 @@ func (u *UI) open(c *model.Chat) {
 	c.Unread = 0
 	u.backend.Open(c.ID)
 	u.conv.list.Position = layout.Position{}
+	u.conv.list.ScrollToEnd = true
 	u.conv.composer.SetText("")
+	u.conv.reply, u.conv.mentions = nil, nil
+	u.endSelect()
+	u.viewer.open = false
+	u.closePicker()
 }
 
 // Run drives the window event loop until the window is closed.
@@ -311,11 +344,21 @@ func (u *UI) Layout(gtx C) D {
 		u.layoutLogin(gtx)
 		return D{Size: sz}
 	}
+	u.applyFocus(gtx)
+	u.flushClipboard(gtx)
 	u.update(gtx)
 	u.layoutMain(gtx)
 	u.layoutMenu(gtx)
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
+	u.layoutViewer(gtx)
+	if u.picker.open && u.picker.mode == pickReaction {
+		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
+	}
+	u.layoutCtxMenu(gtx)
+	u.layoutDialog(gtx)
+	u.layoutToast(gtx)
+	u.trackMouse(gtx)
 	return D{Size: sz}
 }
 
@@ -439,6 +482,15 @@ func (u *UI) layoutWithInfo(gtx C) D {
 
 // update handles input events before anything is drawn.
 func (u *UI) update(gtx C) {
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			u.escape()
+		}
+	}
 	u.updateMenu(gtx)
 	u.updateFilterMenu(gtx)
 	if u.sidebar.menu.Clicked(gtx) {
@@ -480,6 +532,9 @@ func (u *UI) update(gtx C) {
 			}
 		}
 	}
+	if ms := u.mentionQuery(); ms == nil {
+		u.conv.mentionDismissed = ""
+	}
 	for {
 		ev, ok := u.conv.composer.Update(gtx)
 		if !ok {
@@ -494,20 +549,27 @@ func (u *UI) update(gtx C) {
 	}
 }
 
-func (u *UI) sendComposer() {
-	if u.selected == nil {
-		return
+// escape closes the topmost overlay, like WhatsApp's Esc.
+func (u *UI) escape() {
+	switch {
+	case u.ctx.kind != ctxNone:
+		u.closeMenu()
+	case u.dialog.kind != dialogNone:
+		u.dialog = dialogState{}
+	case u.picker.open:
+		u.closePicker()
+	case u.viewer.open:
+		u.closeViewer()
+	case u.mentionQuery() != nil:
+		ms := u.mentionQuery()
+		u.conv.mentionDismissed = string([]rune(u.conv.composer.Text())[ms.start:ms.end])
+	case u.conv.selecting:
+		u.endSelect()
+	case u.conv.reply != nil:
+		u.conv.reply = nil
+	case u.status.viewer.thread != nil:
+		u.status.viewer.close()
 	}
-	txt := trimSpace(u.conv.composer.Text())
-	if txt == "" {
-		return
-	}
-	u.conv.composer.SetText("")
-	m := u.backend.Send(u.selected.ID, txt)
-	if m != nil {
-		u.upsertMessage(m)
-	}
-	u.conv.list.Position = layout.Position{} // jump to the newest message
 }
 
 // applyEvents drains the backend queue into UI state.
@@ -551,7 +613,23 @@ func (u *UI) applyEvents() {
 			u.images.forget("a:" + e.ID)
 		case model.MediaEvent:
 			u.images.forget("m:" + e.ChatID + "/" + e.MsgID)
+			if e.ChatID == statusChatID {
+				u.images.forget("sm:" + e.MsgID)
+			}
+			if u.viewer.open && u.viewer.msgID == e.MsgID {
+				u.images.forget("v:" + e.MsgID)
+			}
+		case model.NoticeEvent:
+			u.toast(e.Text)
+		case model.DeletedEvent:
+			if u.selected != nil && u.selected.ID == e.ChatID {
+				u.msgs = u.backend.Messages(e.ChatID, messageWindow)
+				u.msgsVer++
+			}
 		case model.InfoEvent:
+			if u.conv.membersFor == e.ChatID {
+				u.conv.membersFor = ""
+			}
 			if u.info.open && u.info.chatID == e.ChatID {
 				u.info.data = u.backend.Info(e.ChatID)
 			}
@@ -682,6 +760,58 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 	if u.selected != nil && u.selected.ID == e.ChatID {
 		for _, m := range u.msgs {
 			up(m)
+		}
+	}
+}
+
+// ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
+// "msgmenu", "emoji", "viewer", "forward", "reply", "delete" or "select".
+// Menus open at (x, y) px in content coordinates.
+func (u *UI) ShowOverlay(name string, x, y int) {
+	u.applyEvents()
+	u.mouse = image.Pt(x, y)
+	var lastIn, lastOut, img *model.Message
+	for _, m := range u.msgs {
+		switch {
+		case m.Kind == model.KindImage:
+			img = m
+		}
+		if m.FromMe {
+			lastOut = m
+		} else {
+			lastIn = m
+		}
+	}
+	switch name {
+	case "chatmenu":
+		if len(u.chats) > 1 {
+			u.openChatMenu(u.chats[1])
+		}
+	case "msgmenu":
+		if lastIn != nil {
+			u.openMessageMenu(lastIn)
+		}
+	case "emoji":
+		u.openPicker(pickComposer, nil)
+	case "viewer":
+		if img != nil {
+			u.openViewer(img)
+		}
+	case "forward":
+		if lastIn != nil {
+			u.openForward([]*model.Message{lastIn})
+		}
+	case "reply":
+		if lastIn != nil {
+			u.startReply(lastIn)
+		}
+	case "delete":
+		if lastOut != nil {
+			u.confirmDelete([]*model.Message{lastOut})
+		}
+	case "select":
+		if lastIn != nil {
+			u.startSelect(lastIn)
 		}
 	}
 }

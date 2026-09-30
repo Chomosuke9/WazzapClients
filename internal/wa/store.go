@@ -83,6 +83,18 @@ CREATE TABLE IF NOT EXISTS wz_channels (
 	picture   TEXT NOT NULL DEFAULT '', -- preview picture URL
 	rank      INTEGER NOT NULL DEFAULT 0 -- order among suggestions
 );
+CREATE TABLE IF NOT EXISTS wz_lists (
+	id      TEXT PRIMARY KEY,
+	name    TEXT NOT NULL DEFAULT '',
+	custom  INTEGER NOT NULL DEFAULT 0, -- user-made list (not a predefined label)
+	ord     INTEGER NOT NULL DEFAULT 0,
+	deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS wz_list_chats (
+	list TEXT NOT NULL,
+	chat TEXT NOT NULL,
+	PRIMARY KEY (list, chat)
+);
 `
 
 // migrations add columns to databases created by older versions.
@@ -96,6 +108,11 @@ var migrations = []string{
 	`ALTER TABLE wz_chats ADD COLUMN parent TEXT NOT NULL DEFAULT ''`,         // community a group belongs to
 	`ALTER TABLE wz_chats ADD COLUMN community INTEGER NOT NULL DEFAULT 0`,    // 1 for a community's parent group
 	`ALTER TABLE wz_chats ADD COLUMN announce_sub INTEGER NOT NULL DEFAULT 0`, // 1 for a community's announcements
+	`ALTER TABLE wz_chats ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_messages ADD COLUMN quote_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wz_messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -145,7 +162,7 @@ func (s *msgStore) migrateLegacyMedia(ctx context.Context) error {
 
 func (s *msgStore) wipe(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats; DELETE FROM wz_meta;
-		DELETE FROM wz_status; DELETE FROM wz_channels;`)
+		DELETE FROM wz_status; DELETE FROM wz_channels; DELETE FROM wz_lists; DELETE FROM wz_list_chats;`)
 	return err
 }
 
@@ -205,7 +222,7 @@ func (s *msgStore) setField(ctx context.Context, jid, field string, v any) error
 }
 
 func (s *msgStore) addUnread(ctx context.Context, jid string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_chats SET unread = unread + 1 WHERE jid = ?`, jid)
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_chats SET unread = MAX(unread, 0) + 1 WHERE jid = ?`, jid)
 	return err
 }
 
@@ -216,6 +233,7 @@ type storedMsg struct {
 	senderJID  string
 	senderPush string
 	quoteJID   string // author of the quoted message
+	quoteID    string
 	mentions   []string
 	mediaBlob  []byte // marshaled waE2E media message
 }
@@ -228,18 +246,20 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 	}
 	_, err := x.ExecContext(ctx, `
 		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, duration, text,
-			receipt, quote_sender, quote_text, quote_media, mentions, thumb, media_blob)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			receipt, quote_sender, quote_text, quote_media, quote_id, mentions, forwarded, thumb, media_blob)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
 			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
 			duration = excluded.duration, text = excluded.text,
 			receipt = MAX(wz_messages.receipt, excluded.receipt),
 			quote_sender = excluded.quote_sender, quote_text = excluded.quote_text,
-			quote_media = excluded.quote_media, mentions = excluded.mentions,
+			quote_media = excluded.quote_media, quote_id = excluded.quote_id, mentions = excluded.mentions,
+			forwarded = excluded.forwarded,
 			thumb = COALESCE(excluded.thumb, wz_messages.thumb),
 			media_blob = COALESCE(excluded.media_blob, wz_messages.media_blob)`,
 		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
-		m.Duration, m.Text, int(m.Receipt), m.quoteJID, qt, qm, strings.Join(m.mentions, ","), m.Thumb, m.mediaBlob)
+		m.Duration, m.Text, int(m.Receipt), m.quoteJID, qt, qm, m.quoteID, strings.Join(m.mentions, ","),
+		boolInt(m.Forwarded), m.Thumb, m.mediaBlob)
 	if err != nil {
 		return err
 	}
@@ -272,7 +292,7 @@ func (s *msgStore) setReaction(ctx context.Context, chat, id, emoji string) erro
 
 func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?, media = 0, text = '', thumb = NULL, media_blob = NULL,
-		quote_sender = '', quote_text = '', quote_media = 0 WHERE chat = ? AND id = ?`, int(model.KindDeleted), chat, id)
+		quote_sender = '', quote_text = '', quote_media = 0, quote_id = '', pinned = 0 WHERE chat = ? AND id = ?`, int(model.KindDeleted), chat, id)
 	return err
 }
 
@@ -295,11 +315,11 @@ func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.
 // sender name stored by versions that resolved names at insert time.
 type rawMsg struct {
 	*model.Message
-	senderJID, senderPush, legacyName, quoteJID, mentions string
+	senderJID, senderPush, legacyName, quoteJID, quoteID, mentions string
 }
 
 const msgColumns = `chat, id, sender_jid, sender_push, sender_name, from_me, ts, kind, media, duration, text, receipt,
-	quote_sender, quote_text, quote_media, mentions, reaction, thumb`
+	quote_sender, quote_text, quote_media, quote_id, mentions, reaction, starred, pinned, forwarded, thumb`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -314,9 +334,12 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		quoteMedia          int
 		thumb               []byte
 		reaction            string
+		starred, pinned     int
+		forwarded           int
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &r.legacyName, &fromMe, &ts, &kind, &media, &m.Duration,
-		&m.Text, &receipt, &r.quoteJID, &quoteText, &quoteMedia, &r.mentions, &reaction, &thumb)
+		&m.Text, &receipt, &r.quoteJID, &quoteText, &quoteMedia, &r.quoteID, &r.mentions, &reaction,
+		&starred, &pinned, &forwarded, &thumb)
 	if err != nil {
 		return r, err
 	}
@@ -326,10 +349,11 @@ func scanMessage(sc scanner) (rawMsg, error) {
 	m.Media = model.Media(media)
 	m.Receipt = model.Receipt(receipt)
 	m.Reaction = reaction
+	m.Starred, m.Pinned, m.Forwarded = starred != 0, pinned != 0, forwarded != 0
 	m.Thumb = thumb
 	m.SenderID = r.senderJID
 	if quoteText != "" || r.quoteJID != "" || quoteMedia != 0 {
-		m.Quote = &model.Quote{Text: quoteText, Media: model.Media(quoteMedia)}
+		m.Quote = &model.Quote{ID: r.quoteID, SenderID: r.quoteJID, Text: quoteText, Media: model.Media(quoteMedia)}
 	}
 	r.Message = &m
 	return r, nil
@@ -368,7 +392,7 @@ type rawChat struct {
 }
 
 const chatQuery = `
-	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts,
+	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts, c.favorite,
 		m.id, m.sender_jid, m.sender_push, m.sender_name, m.from_me, m.ts, m.kind, m.media, m.duration, m.text, m.receipt, m.mentions
 	FROM wz_chats c
 	LEFT JOIN wz_messages m ON m.rowid = (
@@ -378,14 +402,14 @@ const chatQuery = `
 func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	var (
 		c                                 model.Chat
-		isGroup, archived, unread         int
+		isGroup, archived, unread, fav    int
 		pinned, mutedUntil, lastTS        int64
 		mID, mSender, mPush, mText, mMent sql.NullString
 		mLegacy                           sql.NullString
 		mFromMe, mTS, mKind, mMedia, mDur sql.NullInt64
 		mReceipt                          sql.NullInt64
 	)
-	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS,
+	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS, &fav,
 		&mID, &mSender, &mPush, &mLegacy, &mFromMe, &mTS, &mKind, &mMedia, &mDur, &mText, &mReceipt, &mMent)
 	if err != nil {
 		return rawChat{}, err
@@ -393,6 +417,10 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	c.IsGroup = isGroup != 0
 	c.Pinned = pinned > 0
 	c.Muted = mutedUntil == -1 || mutedUntil > now.Unix()
+	if c.Muted && mutedUntil > 0 {
+		c.MuteUntil = time.Unix(mutedUntil, 0)
+	}
+	c.Favorite = fav != 0
 	c.Archived = archived != 0
 	c.Unread = unread
 	c.Time = time.Unix(lastTS, 0)

@@ -65,6 +65,12 @@ Gotchas already found in the pinned version (v0.10.x):
   0,0. Record the child and position it yourself.
 - `LineHeightScale` defaults to 1.2 and multiplies `LineHeight`. Set it to 1 when you
   want an exact line height.
+- `widget.Clickable` registers its input area after drawing its content, so a Clickable
+  wrapping a widget hides any Clickable inside it. Draw nested buttons afterwards, on
+  top (see `layoutChatRow`), and use `hoverArea`/`rightClick`, which pass events through.
+- Popups that must draw above later siblings (the emoji picker) use `op.Defer`, which
+  keeps the local transform. Context menus instead open at `u.mouse`, the last pointer
+  position in content coordinates.
 - `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
 
@@ -78,7 +84,10 @@ cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for prot
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
-                   settings), conversation and composer, contact/group info panel
+                   settings), conversation and composer, contact/group info panel, and the
+                   overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
+                   picker (emoji.go, data in the generated emojidata.go), media viewer
+                   (viewer.go); replies, @mentions and select mode live in compose.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
@@ -127,6 +136,9 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
+# Render one overlay with demo data (chatmenu, msgmenu, emoji, viewer, forward, reply,
+# delete, select) into <out>/overlay-<name>.png:
+go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \
     -data "$APPDATA/WazzapClients" -view channels

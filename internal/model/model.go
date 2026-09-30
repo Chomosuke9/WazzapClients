@@ -43,9 +43,11 @@ const (
 
 // Quote is the message a reply points to.
 type Quote struct {
-	Sender string
-	Text   string
-	Media  Media
+	ID       string // quoted message ID, to jump to it
+	Sender   string
+	SenderID string
+	Text     string
+	Media    Media
 }
 
 // Message is a single conversation entry.
@@ -63,6 +65,9 @@ type Message struct {
 	Receipt  Receipt
 	Quote    *Quote
 	Reaction string
+	// Starred and Pinned mirror the message menu's Star and Pin.
+	Starred, Pinned bool
+	Forwarded       bool
 	// Thumb is a small JPEG preview for image and video messages.
 	Thumb []byte
 	// ImageA and ImageB are gradient colors used by demo data instead of Thumb.
@@ -72,19 +77,38 @@ type Message struct {
 // Chat is a one-to-one or group conversation. Messages are not part of it:
 // the UI loads them from the Backend when the chat is opened.
 type Chat struct {
-	ID       string
-	Name     string
-	IsGroup  bool
-	Pinned   bool
-	Muted    bool
-	Archived bool
-	Favorite bool
-	Self     bool // the "message yourself" chat
+	ID      string
+	Name    string
+	IsGroup bool
+	Pinned  bool
+	Muted   bool
+	// MuteUntil is when a timed mute ends; zero while muted means always.
+	MuteUntil time.Time
+	Archived  bool
+	Favorite  bool
+	Self      bool // the "message yourself" chat
+	// Unread counts unread messages; -1 means marked as unread.
 	Unread   int
 	Time     time.Time // last activity, used for ordering
 	Last     *Message
 	Typing   string // who is typing; empty when nobody is
 	Presence string // header subtitle, e.g. "online"
+}
+
+// Draft is an outgoing text message.
+type Draft struct {
+	Text string
+	// Reply is the message being answered, or nil.
+	Reply *Message
+	// Mentions are the JIDs of people @mentioned in Text, which refers to
+	// them as "@<user part of the JID>".
+	Mentions []string
+}
+
+// ChatList is a custom chat list ("Add to list").
+type ChatList struct {
+	ID, Name string
+	Chats    []string
 }
 
 // Member is a group participant, as listed in the group info panel.
@@ -253,6 +277,16 @@ type ChannelsEvent struct{}
 // CommunitiesEvent reports that the community structure changed.
 type CommunitiesEvent struct{}
 
+// NoticeEvent is a short message for a toast ("Saved to Downloads").
+type NoticeEvent struct{ Text string }
+
+// DeletedEvent reports that messages were removed from a chat (deleted for
+// you, or the chat was cleared). IDs is nil when the whole chat was cleared.
+type DeletedEvent struct {
+	ChatID string
+	IDs    []string
+}
+
 func (ConnEvent) isEvent()        {}
 func (ChatsEvent) isEvent()       {}
 func (ChatEvent) isEvent()        {}
@@ -267,6 +301,8 @@ func (InfoEvent) isEvent()        {}
 func (StatusEvent) isEvent()      {}
 func (ChannelsEvent) isEvent()    {}
 func (CommunitiesEvent) isEvent() {}
+func (NoticeEvent) isEvent()      {}
+func (DeletedEvent) isEvent()     {}
 
 // Backend is everything the UI needs from a WhatsApp connection.
 //
@@ -281,7 +317,44 @@ type Backend interface {
 	// Open is called when the user opens a chat: mark it read, subscribe to presence.
 	Open(chatID string)
 	// Send queues a text message and returns it in its pending state.
-	Send(chatID, text string) *Message
+	Send(chatID string, d Draft) *Message
+	// SendSticker sends a sticker that was received before, again.
+	SendSticker(chatID string, sticker *Message)
+	// Stickers lists recently received stickers, newest first.
+	Stickers() []*Message
+	// Forward sends copies of messages to other chats.
+	Forward(msgs []*Message, chatIDs []string)
+	// React sets (or, with "", removes) your reaction to a message.
+	React(m *Message, emoji string)
+	// Delete deletes a message for you, or for everyone (your own messages).
+	Delete(m *Message, forEveryone bool)
+	// Star stars or unstars a message.
+	Star(m *Message, starred bool)
+	// PinMessage pins a message to the top of its chat, or unpins it.
+	PinMessage(m *Message, pinned bool)
+	// SaveMedia saves a message's picture or file to the Downloads folder
+	// in the background; a NoticeEvent reports the result.
+	SaveMedia(m *Message)
+
+	// Chat list actions. Each is followed by a ChatEvent (or ChatsEvent).
+	SetArchived(chatID string, archived bool)
+	SetMuted(chatID string, muted bool)
+	SetPinned(chatID string, pinned bool)
+	SetUnread(chatID string, unread bool)
+	SetFavorite(chatID string, favorite bool)
+	// Lists returns the custom chat lists.
+	Lists() []*ChatList
+	SetInList(chatID, listID string, in bool)
+	// ClearChat deletes a chat's messages; DeleteChat removes the chat too.
+	ClearChat(chatID string)
+	DeleteChat(chatID string)
+	// LeaveGroup exits a group.
+	LeaveGroup(chatID string)
+
+	// Pref and SetPref keep small UI preferences (recent emoji).
+	Pref(key string) string
+	SetPref(key, value string)
+
 	// Avatar returns the cached profile picture (JPEG) of a chat or user,
 	// or nil. A missing or stale picture is fetched in the background and
 	// announced with an AvatarEvent. Safe to call from any goroutine.

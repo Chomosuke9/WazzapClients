@@ -79,4 +79,33 @@ var (
 	icHelp          = icon.Help
 	icVerified      = icon.VerifiedFill
 	icCampaign      = icon.CampaignFill
+
+	// Chat and message menus.
+	icBellLine      = icon.Notifications
+	icMarkUnread    = icon.MarkChatUnread
+	icCancel        = icon.Cancel
+	icSubmenu       = icon.ArrowRight
+	icReply         = icon.Reply
+	icReplyPrivate  = icon.ThreeP
+	icCopy          = icon.ContentCopy
+	icForward       = icon.Forward
+	icCheckBox      = icon.CheckBox
+	icCheckBoxEmpty = icon.CheckBoxOutlineBlank
+	icStarFill      = icon.StarFill
+	icPinFill       = icon.KeepFill
+	icAddReaction   = icon.AddReaction
+	icDownload      = icon.Download
+	icZoomIn        = icon.ZoomIn
+	icZoomOut       = icon.ZoomOut
+	icChevronLeft   = icon.ChevronLeft
+
+	// Emoji picker categories.
+	icEmojiPeople  = icon.Mood
+	icEmojiNature  = icon.Pets
+	icEmojiFood    = icon.LocalCafe
+	icEmojiSport   = icon.SportsBasketball
+	icEmojiTravel  = icon.DirectionsCar
+	icEmojiObjects = icon.Lightbulb
+	icEmojiSymbols = icon.EmojiSymbols
+	icEmojiFlags   = icon.Flag
 )

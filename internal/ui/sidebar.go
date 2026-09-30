@@ -231,10 +231,28 @@ func (u *UI) rowClick(c *model.Chat) *widget.Clickable {
 }
 
 func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
-	return u.chatRow(gtx, c, rowOpts{
-		click:    u.rowClick(c),
-		selected: u.selected != nil && c.ID == u.selected.ID && u.selPage == u.page,
+	click := u.rowClick(c)
+	chev := u.btn("rowmenu:" + c.ID)
+	if chev.Clicked(gtx) {
+		u.openChatMenu(c)
+	}
+	dims := u.chatRow(gtx, c, rowOpts{
+		click:    click,
+		selected: (u.selected != nil && c.ID == u.selected.ID && u.selPage == u.page) || (u.ctx.kind == ctxChat && u.ctx.chatID == c.ID),
 	})
+	if u.rightClick(gtx, "chat:"+c.ID, dims.Size) {
+		u.openChatMenu(c)
+	}
+	if click.Hovered() || chev.Hovered() {
+		// The row's chevron (drawn by layoutRowPreview) opens the menu.
+		s := gtx.Dp(30)
+		t := op.Offset(image.Pt(dims.Size.X-gtx.Dp(18+14)-s+gtx.Dp(4), gtx.Dp(53)-s/2)).Push(gtx.Ops)
+		cg := gtx
+		cg.Constraints = layout.Exact(image.Pt(s, s))
+		clickable(cg, chev, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		t.Pop()
+	}
+	return dims
 }
 
 // rowOpts adapts the chat row to the Channels and Communities pages.
@@ -318,7 +336,7 @@ func (u *UI) nameWithBadge(gtx C, name string, size unit.Sp, col color.NRGBA, ve
 func (u *UI) layoutRowTitle(gtx C, c *model.Chat, verified bool) D {
 	p := u.pal
 	timeCol := p.TextSecondary
-	if c.Unread > 0 {
+	if c.Unread != 0 {
 		timeCol = p.Green
 	}
 	var ts string
@@ -478,6 +496,13 @@ func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, hovered
 	}
 	if c.Unread > 0 {
 		row = append(row, indicator(func(gtx C) D { return u.badge(gtx, c.Unread) }))
+	} else if c.Unread < 0 {
+		// Marked as unread: an empty green badge.
+		row = append(row, indicator(func(gtx C) D {
+			s := gtx.Dp(21)
+			fillCircle(gtx, image.Pt(s/2, s/2), s/2, p.Green)
+			return D{Size: image.Pt(s, s)}
+		}))
 	}
 	if c.Pinned {
 		row = append(row, indicator(iconW(icPin, 20, p.TextSecondary)))
