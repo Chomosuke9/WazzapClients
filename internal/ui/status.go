@@ -226,6 +226,8 @@ type statusViewer struct {
 	next     widget.Clickable
 	closing  bool // fading out
 	anim     tween
+	zp       zoomPan       // pictures zoom like in the media viewer
+	held     time.Duration // time shown when zooming in paused the timer
 }
 
 // statusDuration is how long each update stays on screen.
@@ -241,7 +243,7 @@ func (v *statusViewer) show(t *model.StatusThread) {
 			break
 		}
 	}
-	v.shownAt = time.Time{}
+	v.shownAt, v.zp = time.Time{}, zoomPan{}
 }
 
 // close fades the viewer out.
@@ -263,7 +265,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	p := u.pal
 	advance := func(d int) {
 		v.index += d
-		v.shownAt = time.Time{}
+		v.shownAt, v.zp = time.Time{}, zoomPan{}
 		if v.index < 0 {
 			v.index = 0
 		}
@@ -281,6 +283,15 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		}
 		if v.prev.Clicked(gtx) {
 			advance(-1)
+		}
+		// A click on the picture goes back or forward like the rest of
+		// the window, unless it's zoomed in.
+		if clicked, _ := v.zp.update(gtx); clicked && !v.zp.zoomed() {
+			if v.zp.drag.start.X < float32(gtx.Constraints.Max.X/3) {
+				advance(-1)
+			} else {
+				advance(1)
+			}
 		}
 	}
 	a := v.anim.step(gtx, v.isOpen(), durDialog)
@@ -300,13 +311,21 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		}
 	}
 	elapsed := now.Sub(v.shownAt)
+	if v.zp.zoomed() {
+		// Zoomed in: the timer waits.
+		elapsed, v.shownAt = v.held, now.Add(-v.held)
+	} else {
+		v.held = elapsed
+	}
 	if v.isOpen() {
 		if elapsed >= statusDuration {
 			advance(1)
 			gtx.Execute(op.InvalidateCmd{})
 			return
 		}
-		gtx.Execute(op.InvalidateCmd{At: now.Add(50 * time.Millisecond)})
+		if !v.zp.zoomed() {
+			gtx.Execute(op.InvalidateCmd{At: now.Add(50 * time.Millisecond)})
+		}
 	} else {
 		gtx = gtx.Disabled() // fading out: no timer, clicks go through
 		elapsed = min(max(elapsed, 0), statusDuration)
@@ -337,7 +356,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	frameW := min(sz.X-gtx.Dp(40), frameH*9/16)
 	frame := image.Rect((sz.X-frameW)/2, gtx.Dp(92), (sz.X+frameW)/2, gtx.Dp(92)+frameH)
 	zoom := pushFx(gtx, 1, scaleAt(frame.Min.Add(frame.Size().Div(2)), lerp(0.3, 1, e)))
-	u.layoutStatusContent(gtx, t, up, frame)
+	u.layoutStatusContent(gtx, t, up, frame, &v.zp)
 	zoom.Pop()
 	defer pushFx(gtx, e, f32.Affine2D{}).Pop()
 
@@ -389,8 +408,8 @@ func (u *UI) layoutStatusViewer(gtx C) {
 }
 
 // layoutStatusContent draws an update inside r: its picture (full size once
-// downloaded) or its text on the chosen background.
-func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusUpdate, r image.Rectangle) {
+// downloaded, zoomed and panned by zp) or its text on the chosen background.
+func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusUpdate, r image.Rectangle, zp *zoomPan) {
 	defer clip.UniformRRect(r, gtx.Dp(12)).Push(gtx.Ops).Pop()
 	if up.Media == model.MediaNone {
 		bg := argbColor(up.Background)
@@ -427,14 +446,10 @@ func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusU
 		}
 	}
 	if img != nil {
-		// Fit the whole picture inside the frame.
-		s := min(float32(r.Dx())/float32(img.size.X), float32(r.Dy())/float32(img.size.Y))
-		w, h := int(float32(img.size.X)*s), int(float32(img.size.Y)*s)
-		min := r.Min.Add(image.Pt((r.Dx()-w)/2, (r.Dy()-h)/2))
-		dst := image.Rectangle{Min: min, Max: min.Add(image.Pt(w, h))}
-		paintCover(gtx, img.op, img.size, dst)
+		// The whole picture fits inside the frame at zoom 1.
+		paintCover(gtx, img.op, img.size, zp.layout(gtx, r, img.size))
 	}
-	if up.Text != "" {
+	if up.Text != "" && !zp.zoomed() {
 		cap := record(gtx, func(gtx C) D {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(r.Dx(), r.Dy())}
 			return background(gtx, argb(0x000000, 0x80), 0, func(gtx C) D {
