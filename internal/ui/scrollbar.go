@@ -28,8 +28,14 @@ type scrollbar struct {
 	n, view, track, thumb, top int
 }
 
-// scrollList lays out a vertical list with WhatsApp's thin overlay scrollbar.
+// scrollList lays out a vertical list with WhatsApp's thin overlay scrollbar
+// and smooth wheel scrolling.
 func (u *UI) scrollList(gtx C, l *widget.List, n int, el layout.ListElement) D {
+	return u.wheelList(gtx, &l.List, func(gtx C) D { return u.barList(gtx, l, n, el) })
+}
+
+// barList lays out list l with the scrollbar over it.
+func (u *UI) barList(gtx C, l *widget.List, n int, el layout.ListElement) D {
 	if u.bars == nil {
 		u.bars = make(map[*widget.List]*scrollbar)
 	}

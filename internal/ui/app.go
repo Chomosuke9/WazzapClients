@@ -111,10 +111,11 @@ type UI struct {
 	focus       any    // editor to focus next frame (see requestFocus)
 	focusReq    bool
 
-	anims    animStore                   // keyed fades: hovers, new messages, reactions
-	pageIn   tween                       // the page content fading in after a switch
-	railSel  switcher[*widget.Clickable] // the active rail button
-	pageSeen page                        // page shown last frame, to notice switches
+	anims    animStore                     // keyed fades: hovers, new messages, reactions
+	wheels   map[*layout.List]*wheelScroll // lists still easing a wheel scroll
+	pageIn   tween                         // the page content fading in after a switch
+	railSel  switcher[*widget.Clickable]   // the active rail button
+	pageSeen page                          // page shown last frame, to notice switches
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable

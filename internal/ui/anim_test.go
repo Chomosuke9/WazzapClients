@@ -117,3 +117,57 @@ func TestIdleAtRest(t *testing.T) {
 		}
 	}
 }
+
+// TestWheelScroll checks that a wheel notch scrolls a list over a few
+// frames instead of at once, and that scrolling up lets go of the newest
+// message.
+func TestWheelScroll(t *testing.T) {
+	u := New(mock.New())
+	u.Start(func() {})
+	u.SelectID("rina")
+	now := time.Now()
+	var ops op.Ops
+	var r input.Router
+	frame := func(dt time.Duration) {
+		ops.Reset()
+		u.Layout(layout.Context{Ops: &ops, Now: now, Source: r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1100, 700))})
+		r.Frame(&ops)
+		now = now.Add(dt)
+	}
+	wheel := func(x, y, dy float32) {
+		r.Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(x, y), Scroll: f32.Pt(0, dy)})
+	}
+	frame(time.Second)
+	frame(time.Second)
+
+	sb := &u.sidebar.list.List
+	start := sb.Position
+	wheel(200, 330, 120)
+	frame(16 * time.Millisecond)
+	w := u.wheels[sb]
+	if w == nil || w.pending <= 0 || w.pending >= 120 {
+		t.Fatalf("after one frame: %+v, want part of the notch left", w)
+	}
+	if sb.Position == start {
+		t.Fatal("the chat list didn't start moving in the first frame")
+	}
+	for range 30 {
+		frame(16 * time.Millisecond)
+	}
+	if u.wheels[sb] != nil {
+		t.Fatalf("still scrolling after half a second: %+v", u.wheels[sb])
+	}
+
+	conv := &u.conv.list.List
+	if conv.Position.BeforeEnd {
+		t.Fatal("the chat didn't open at its newest message")
+	}
+	wheel(560, 250, -120)
+	for range 30 {
+		frame(16 * time.Millisecond)
+	}
+	if !conv.Position.BeforeEnd {
+		t.Fatal("scrolling up stayed at the newest message")
+	}
+}

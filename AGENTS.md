@@ -192,6 +192,9 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
 - Keep opacity layers small (menus, pickers, rows). For big areas, fade a backdrop's
   color and the parts on it one by one, or cover content on a plain background with a
   `veil` of that background.
+- Lay out vertical lists with `u.scrollList`, not `List.Layout`: besides the scrollbar,
+  it takes the mouse wheel before the list and eases each notch in over a few frames
+  instead of jumping (`wheelList`, `internal/ui/scroll.go`).
 - Film an animation with `cmd/screenshot -film` (see Commands) to check its frames.
 - Run `gofmt`, `go vet ./...` and `go build ./...` before you finish.
 
@@ -221,3 +224,14 @@ go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \
     -data "$APPDATA/WazzapClients" -view channels
 ```
+
+## Committing
+
+- Stage files by name (`git add path/to/file.go`), never `git add -A` or `git add .`.
+- Never commit `third_party/` (the patched go-text that `patches/apply.sh` generates,
+  ~56k lines) or `.idea/` (IDE settings). Both are gitignored; if either shows up as
+  untracked, the `.gitignore` is missing or out of date, so sync with `origin/main`.
+- Check `git diff --cached --stat` before committing. A change of tens of thousands of
+  lines means something generated got staged.
+- Before committing on `main`, check that it isn't behind `origin/main`
+  (`git fetch && git status`), so the commit lands on the current code.
