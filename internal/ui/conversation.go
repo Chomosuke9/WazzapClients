@@ -932,9 +932,9 @@ func (u *UI) paintBubble(gtx C, w, h int, bg color.NRGBA, out, tail bool) {
 	if !u.dark {
 		shadow := rr
 		shadow.Rect = shadow.Rect.Add(image.Pt(0, 1))
-		paint.FillShape(gtx.Ops, argb(0x0b141a, 0x21), shadow.Op(gtx.Ops))
+		paintRRect(gtx, shadow, argb(0x0b141a, 0x21))
 	}
-	paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+	paintRRect(gtx, rr, bg)
 	if !tail {
 		return
 	}

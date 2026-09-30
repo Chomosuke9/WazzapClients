@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"slices"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -30,7 +31,91 @@ func fillRect(gtx C, r image.Rectangle, col color.NRGBA) {
 }
 
 func fillRRect(gtx C, r image.Rectangle, radius int, col color.NRGBA) {
-	paint.FillShape(gtx.Ops, col, clip.UniformRRect(r, radius).Op(gtx.Ops))
+	paintRRect(gtx, clip.UniformRRect(r, radius), col)
+}
+
+// paintRRect fills a rounded rectangle.
+//
+// Gio renders a path by stenciling its whole bounding box, every frame, into
+// a coverage texture that grows to the largest total ever needed and never
+// shrinks (the driver keeps what it frees, too). Row and bubble backgrounds
+// would make that several screens big, so only the corners are drawn as a
+// path, each clipped to its square, and the rest as plain rectangles.
+func paintRRect(gtx C, rr clip.RRect, col color.NRGBA) {
+	r := rr.Rect
+	lim := min(r.Dx(), r.Dy()) / 2
+	nw, ne, se, sw := min(rr.NW, lim), min(rr.NE, lim), min(rr.SE, lim), min(rr.SW, lim)
+	if col.A == 0 || r.Empty() {
+		return
+	}
+	// Under a scaling or fractional transform (animations) the pieces would
+	// have antialiased edges, and faint seams where they meet.
+	corner := max(nw, ne, se, sw)
+	if fxDepth > 0 || corner <= 0 || r.Dx()*r.Dy() < 8*corner*corner {
+		rr.NW, rr.NE, rr.SE, rr.SW = nw, ne, se, sw
+		paint.FillShape(gtx.Ops, col, rr.Op(gtx.Ops))
+		return
+	}
+	x0, y0, x1, y1 := r.Min.X, r.Min.Y, r.Max.X, r.Max.Y
+	// Horizontal bands between the corner squares' edges.
+	ys := []int{y0, y0 + nw, y0 + ne, y1 - sw, y1 - se, y1}
+	slices.Sort(ys)
+	for i := 0; i+1 < len(ys); i++ {
+		ya, yb := ys[i], ys[i+1]
+		if ya == yb {
+			continue
+		}
+		left, right := x0, x1
+		if ya < y0+nw {
+			left = x0 + nw
+		} else if yb > y1-sw {
+			left = x0 + sw
+		}
+		if ya < y0+ne {
+			right = x1 - ne
+		} else if yb > y1-se {
+			right = x1 - se
+		}
+		if left < right {
+			fillRect(gtx, image.Rect(left, ya, right, yb), col)
+		}
+	}
+	rr.NW, rr.NE, rr.SE, rr.SW = nw, ne, se, sw
+	shape := rr.Op(gtx.Ops)
+	for _, c := range [...]image.Rectangle{
+		image.Rect(x0, y0, x0+nw, y0+nw), image.Rect(x1-ne, y0, x1, y0+ne),
+		image.Rect(x1-se, y1-se, x1, y1), image.Rect(x0, y1-sw, x0+sw, y1),
+	} {
+		if c.Empty() {
+			continue
+		}
+		st := clip.Rect(c).Push(gtx.Ops)
+		paint.FillShape(gtx.Ops, col, shape)
+		st.Pop()
+	}
+}
+
+// roundCorner rounds the top-left corner of a rectangle at the origin with a
+// 1px border, by painting over it: border between arcs of radius r and r-1,
+// and bg outside. Only the r×r corner square is stenciled.
+func roundCorner(gtx C, r int, border, bg color.NRGBA) {
+	outside := func(o, rad float32) clip.Op {
+		// The corner square without the quarter disc of radius rad whose
+		// square starts at (o, o); the same curve as clip.RRect.
+		const iq = 1 - 4*(math.Sqrt2-1)/3
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(f32.Pt(0, 0))
+		p.LineTo(f32.Pt(o+rad, 0))
+		p.LineTo(f32.Pt(o+rad, o))
+		p.CubeTo(f32.Pt(o+rad*iq, o), f32.Pt(o, o+rad*iq), f32.Pt(o, o+rad))
+		p.LineTo(f32.Pt(0, o+rad))
+		p.Close()
+		return clip.Outline{Path: p.End()}.Op()
+	}
+	defer clip.Rect{Max: image.Pt(r+1, r+1)}.Push(gtx.Ops).Pop()
+	paint.FillShape(gtx.Ops, border, outside(1, float32(r-1)))
+	paint.FillShape(gtx.Ops, bg, outside(0, float32(r)))
 }
 
 func fillCircle(gtx C, center image.Point, radius int, col color.NRGBA) {

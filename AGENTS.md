@@ -7,6 +7,9 @@ Guidance for AI coding agents (and humans) working on this repository.
 WazzapClients is a lightweight, native WhatsApp desktop client written in Go.
 
 - **UI:** [Gio](https://gioui.org) (`gioui.org`), an immediate-mode GPU UI toolkit.
+  Its text library `github.com/go-text/typesetting` is patched to use less memory:
+  `patches/apply.sh` builds the patched copy in `third_party/typesetting` (not checked in;
+  run it after cloning). See `patches/README.md`.
 - **WhatsApp protocol:** [`github.com/polymorfa/hypermeow`](https://github.com/polymorfa/hypermeow),
   branch `main`. It is a performance-focused fork of `tulir/whatsmeow` that keeps the
   upstream package names. Install it with `go get github.com/polymorfa/hypermeow@main`
@@ -26,7 +29,9 @@ APIs you are about to use:
 
 1. The version pinned in `go.mod` is the source of truth. Read the actual source in the
    module cache when you're unsure:
-   `$(go env GOMODCACHE)/gioui.org@<version>/...`
+   `$(go env GOMODCACHE)/gioui.org@<version>/...`. go-text is `third_party/typesetting`
+   (upstream plus `patches/typesetting.patch`). Change go-text through the patch, not in
+   `third_party`, which `apply.sh` overwrites.
 2. API reference: https://pkg.go.dev/gioui.org (pick the version that matches `go.mod`).
 3. Guides:
    - Learn: https://gioui.org/doc/learn/get-started, https://gioui.org/doc/learn/split-widget,
@@ -83,6 +88,14 @@ Gotchas already found in the pinned version (v0.10.x):
 - `paint.PushOpacity` draws into an offscreen texture that Gio keeps, at the largest
   size ever needed, until the window closes. A fade of the whole window would pin
   ~16 MB. Keep opacity layers small (see Animations).
+- Gio stencils every path over its whole bounding box, every frame, into a coverage
+  texture that, like the opacity one, never shrinks. A rounded clip around big content,
+  or a big `clip.RRect` fill, costs a screen-sized texture. Fill rounded rectangles with
+  `fillRRect`/`paintRRect`, which only stencil the corners, and round a big panel's
+  corner with a mask (`roundCorner`) instead of clipping it.
+- A rectangle clip under a transform that isn't a whole-pixel offset becomes a path
+  too, and text outlines are rebuilt. `moveBy` rounds to whole pixels; `pushFx` counts
+  real scales in `fxDepth`, under which `paintRRect` draws one path (no seams).
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -92,6 +105,7 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 ```
 cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
+cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
                    settings), conversation and composer, contact/group info panel, and the
@@ -104,6 +118,8 @@ internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated)
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
+internal/memtrim/  gives memory back to the OS after 30 s without a frame (see ui.Run)
+patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
 ```
 
 ## Conventions
@@ -133,7 +149,9 @@ internal/mock/     demo Backend with fake chats (used by -demo and cmd/screensho
 - Sizes are in `unit.Dp` / `unit.Sp`, never raw pixels. Convert with `gtx.Dp` / `gtx.Sp`.
 - Colors live in `internal/ui/theme.go` (light and dark palettes). Don't hard-code colors
   in widgets.
-- Watch memory use. Low RAM is the reason this project exists.
+- Watch memory use. Low RAM is the reason this project exists. Measure with
+  `cmd/memprobe` before and after a change; the private working set is what Task Manager
+  shows. Keep caches bounded by bytes, not just entries (see `imageCache`).
 
 ## Animations
 
@@ -159,9 +177,11 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
 ## Commands
 
 ```sh
+sh patches/apply.sh            # once after cloning: builds the patched go-text
 go run ./cmd/wazzap            # run the app (links to WhatsApp via QR code)
 go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
+go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
 go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).

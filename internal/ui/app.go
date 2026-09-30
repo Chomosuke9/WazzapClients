@@ -16,6 +16,7 @@ import (
 	"gioui.org/widget/material"
 	"rsc.io/qr"
 
+	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -177,7 +178,7 @@ type UI struct {
 func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: time.Now, backend: b, syncPct: -1}
 	u.SetDark(true)
-	u.images = newImageCache(240)
+	u.images = newImageCache(240, 32<<20)
 	u.clicks = make(map[string]*widget.Clickable)
 	u.info.list.Axis = layout.Vertical
 	u.status.list.Axis = layout.Vertical
@@ -349,6 +350,10 @@ func Run(w *app.Window, b model.Backend) error {
 	u.window = w
 	u.Start(w.Invalidate)
 	defer b.Close()
+	// Once nothing has been drawn for a while, give memory back (see
+	// memtrim). Every frame pushes the trim back.
+	idle := time.AfterFunc(idleTrim, memtrim.Trim)
+	defer idle.Stop()
 	var ops op.Ops
 	for {
 		switch e := w.Event().(type) {
@@ -360,9 +365,14 @@ func Run(w *app.Window, b model.Backend) error {
 			gtx := app.NewContext(&ops, e)
 			u.Layout(gtx)
 			e.Frame(gtx.Ops)
+			idle.Reset(idleTrim)
 		}
 	}
 }
+
+// idleTrim is how long the window goes without a frame before memory is
+// trimmed.
+const idleTrim = 30 * time.Second
 
 // Layout draws one frame: custom title bar, then either the login screen or
 // nav rail | chat list | conversation.
@@ -429,12 +439,14 @@ func (u *UI) layoutMain(gtx C) D {
 	defer op.Offset(image.Pt(railW, 0)).Push(gtx.Ops).Pop()
 	pw := sz.X - railW
 	r := gtx.Dp(8)
-	card := clip.RRect{Rect: image.Rect(0, 0, pw+r, sz.Y+r), NW: r}
-	fillRRect(gtx, image.Rect(0, 0, pw+r, sz.Y+r), r, p.PanelBorder)
-	card.Rect = card.Rect.Add(image.Pt(1, 1))
-	card.NW = r - 1
-	defer card.Push(gtx.Ops).Pop()
-	fillRect(gtx, image.Rect(0, 0, pw+r, sz.Y+r), p.Panel)
+	card := image.Rect(0, 0, pw+r, sz.Y+r)
+	fillRRect(gtx, card, r, p.PanelBorder)
+	inner := card.Add(image.Pt(1, 1))
+	fillRRect(gtx, inner, r-1, p.Panel)
+	// A rounded clip would be stenciled over the whole window every frame;
+	// clip to the rectangle and round the corner off afterwards instead.
+	defer roundCorner(gtx, r, p.PanelBorder, p.Frame)
+	defer clip.Rect(inner).Push(gtx.Ops).Pop()
 
 	gtx.Constraints = layout.Exact(image.Pt(pw, sz.Y))
 	return layout.Flex{}.Layout(gtx,

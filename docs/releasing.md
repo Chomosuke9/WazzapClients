@@ -4,9 +4,9 @@ Workflow `.github/workflows/build.yml` berjalan pada setiap push branch, pull
 request, push tag `v*`, dan melalui **Actions > Build and release > Run workflow**.
 Pilihan manual tersedia setelah workflow masuk ke default branch.
 
-Versi Go mengikuti `go.mod`. Kedua target menjalankan pemeriksaan format,
-`go mod verify`, `go vet ./...`, `go test ./...`, dan `go build ./...` sebelum
-mengemas aplikasi:
+Versi Go mengikuti `go.mod`. Kedua target menerapkan patch go-text
+(`patches/apply.sh`), lalu menjalankan pemeriksaan format, `go mod verify`,
+`go vet ./...`, `go test ./...`, dan `go build ./...` sebelum mengemas aplikasi:
 
 | Target | Paket | Isi |
 | --- | --- | --- |

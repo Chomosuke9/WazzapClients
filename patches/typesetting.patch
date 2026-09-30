@@ -1,0 +1,391 @@
+diff --git a/font/glyphs.go b/font/glyphs.go
+index 7564af8..199a366 100644
+--- a/font/glyphs.go
++++ b/font/glyphs.go
+@@ -61,7 +61,7 @@ const maxCompositeNesting = 20 // protect against malicious fonts
+ func (f *Face) getPointsForGlyphRec(gid tables.GlyphID, currentDepth int, currentGlyphs glyphSet, allPoints *[]contourPoint /* OUT */) {
+ 	// adapted from harfbuzz/src/OT/glyf/Glyph.hh
+ 
+-	if currentDepth > maxCompositeNesting || int(gid) >= len(f.glyf) {
++	if currentDepth > maxCompositeNesting || int(gid) >= f.glyf.Len() {
+ 		// The glyph is missing or too deeply nested; still contribute the
+ 		// phantom points so the invariant documented above holds and callers
+ 		// never see a slice shorter than phantomCount.
+@@ -69,7 +69,7 @@ func (f *Face) getPointsForGlyphRec(gid tables.GlyphID, currentDepth int, curren
+ 		return
+ 	}
+ 
+-	g := f.glyf[gid]
++	g := f.glyf.Glyph(int(gid))
+ 
+ 	var points []contourPoint
+ 	if data, ok := g.Data.(tables.SimpleGlyph); ok {
+@@ -210,7 +210,7 @@ func extentsFromPoints(allPoints []contourPoint) (ext GlyphExtents) {
+ // walk through the contour points of the given glyph to compute its extends and its phantom points
+ // As an optimization, if `computeExtents` is false, the extents computation is skipped (a zero value is returned).
+ func (f *Face) getGlyfPoints(gid tables.GlyphID, computeExtents bool) (ext GlyphExtents, ph [phantomCount]contourPoint) {
+-	if int(gid) >= len(f.glyf) {
++	if int(gid) >= f.glyf.Len() {
+ 		return
+ 	}
+ 	allPoints := f.getPointsForGlyph(gid)
+diff --git a/font/metrics.go b/font/metrics.go
+index 826f25e..5897c19 100644
+--- a/font/metrics.go
++++ b/font/metrics.go
+@@ -286,7 +286,7 @@ func (f *Face) GlyphVOrigin(glyph GID) (x, y float32) {
+ 
+ 	// If and only if `vmtx` is present and it's a `glyf` font,
+ 	// we use the top phantom point, deduced from vmtx,glyf[,gvar].
+-	if !f.vmtx.IsEmpty() && f.glyf != nil {
++	if !f.vmtx.IsEmpty() && f.glyf.Len() != 0 {
+ 		y = f.getVOriginWithVar(gID(glyph))
+ 		return x, y
+ 	}
+@@ -315,14 +315,14 @@ func (f *Face) getVOriginWithVar(gid gID) float32 {
+ }
+ 
+ func (f *Face) getExtentsFromGlyf(glyph gID) (GlyphExtents, bool) {
+-	if int(glyph) >= len(f.glyf) {
++	if int(glyph) >= f.glyf.Len() {
+ 		return GlyphExtents{}, false
+ 	}
+ 	if f.isVar() { // we have to compute the outline points and apply variations
+ 		extents, _ := f.getGlyfPoints(glyph, true)
+ 		return extents, true
+ 	}
+-	return getGlyphExtents(f.glyf[glyph], f.hmtx, glyph), true
++	return getGlyphExtents(f.glyf.Header(int(glyph)), f.hmtx, glyph), true
+ }
+ 
+ func (f *Font) getExtentsFromBitmap(glyph gID, xPpem, yPpem uint16) (GlyphExtents, bool) {
+diff --git a/font/opentype/bytes.go b/font/opentype/bytes.go
+new file mode 100644
+index 0000000..b789f32
+--- /dev/null
++++ b/font/opentype/bytes.go
+@@ -0,0 +1,23 @@
++// SPDX-License-Identifier: Unlicense OR BSD-3-Clause
++
++package opentype
++
++import "bytes"
++
++// BytesReader is a Resource over font data held in memory (embedded or
++// memory-mapped). Loaders on a BytesReader return tables as subslices of
++// the data instead of copying them, so the data must not change while
++// fonts loaded from it are in use.
++//
++// This is a WazzapClients patch: copying the tables put whole fonts (a
++// 10 MB color emoji font, say) on the heap even when they are already in
++// memory.
++type BytesReader struct {
++	*bytes.Reader
++	data []byte
++}
++
++// NewBytesReader returns a Resource reading data without copying it.
++func NewBytesReader(data []byte) *BytesReader {
++	return &BytesReader{Reader: bytes.NewReader(data), data: data}
++}
+diff --git a/font/opentype/reader.go b/font/opentype/reader.go
+index 312901c..bf71666 100644
+--- a/font/opentype/reader.go
++++ b/font/opentype/reader.go
+@@ -126,7 +126,17 @@ func NewLoaders(file Resource) ([]*Loader, error) {
+ 
+ // dst is an optional storage which may be provided to reduce allocations.
+ func (pr *Loader) findTableBuffer(s tableSection, dst []byte) ([]byte, error) {
+-	if s.length != 0 && s.length < s.zLength {
++	compressed := s.length != 0 && s.length < s.zLength
++	if m, ok := pr.file.(*BytesReader); ok && !compressed {
++		// WazzapClients patch: no copy. The capacity is capped so an
++		// append by the caller can't write past the table.
++		end := int64(s.offset) + int64(s.length)
++		if end > int64(len(m.data)) {
++			return nil, io.ErrUnexpectedEOF
++		}
++		return m.data[s.offset:end:end], nil
++	}
++	if compressed {
+ 		zbuf := io.NewSectionReader(pr.file, int64(s.offset), int64(s.length))
+ 		r, err := zlib.NewReader(zbuf)
+ 		if err != nil {
+diff --git a/font/opentype/tables/glyphs_glyf_src.go b/font/opentype/tables/glyphs_glyf_src.go
+index 9362a01..b7fbad0 100644
+--- a/font/opentype/tables/glyphs_glyf_src.go
++++ b/font/opentype/tables/glyphs_glyf_src.go
+@@ -33,26 +33,74 @@ func ParseLoca(src []byte, numGlyphs int, isLong bool) (out []uint32, err error)
+ 	return out, nil
+ }
+ 
+-// Glyph Data
+-type Glyf []Glyph
++// Glyf gives access to the glyphs of a 'glyf' table.
++//
++// WazzapClients patch: glyphs are parsed on demand instead of all at once.
++// Parsing every glyph up front costs about ten times the table size in
++// heap (a CJK font easily reaches 20 MB), while a UI only ever draws a few
++// hundred glyphs, and Gio caches their outlines.
++type Glyf struct {
++	src  []byte
++	loca []uint32
++}
+ 
+-// ParseGlyf parses the 'glyf' table.
++// ParseGlyf wraps the 'glyf' table.
+ // locaOffsets has length numGlyphs + 1, and is returned by ParseLoca
+ func ParseGlyf(src []byte, locaOffsets []uint32) (Glyf, error) {
+-	out := make(Glyf, len(locaOffsets)-1)
+-	var err error
+-	for i := range out {
+-		start, end := locaOffsets[i], locaOffsets[i+1]
+-		// If a glyph has no outline, then loca[n] = loca [n+1].
+-		if start == end {
+-			continue
+-		}
+-		out[i], _, err = ParseGlyph(src[start:end])
+-		if err != nil {
+-			return nil, err
++	if len(locaOffsets) == 0 {
++		return Glyf{}, errors.New("reading Glyf: empty loca")
++	}
++	for i := 0; i+1 < len(locaOffsets); i++ {
++		if start, end := locaOffsets[i], locaOffsets[i+1]; start > end || int(end) > len(src) {
++			return Glyf{}, fmt.Errorf("reading Glyf: invalid glyph offsets %d-%d", start, end)
+ 		}
+ 	}
+-	return out, nil
++	return Glyf{src: src, loca: locaOffsets}, nil
++}
++
++// Len returns the number of glyphs.
++func (g Glyf) Len() int {
++	if len(g.loca) == 0 {
++		return 0
++	}
++	return len(g.loca) - 1
++}
++
++func (g Glyf) data(i int) []byte {
++	if i < 0 || i >= g.Len() {
++		return nil
++	}
++	// If a glyph has no outline, then loca[n] = loca [n+1].
++	return g.src[g.loca[i]:g.loca[i+1]]
++}
++
++// Glyph parses glyph i. An empty or malformed glyph is returned as the
++// zero Glyph.
++func (g Glyf) Glyph(i int) Glyph {
++	src := g.data(i)
++	if len(src) == 0 {
++		return Glyph{}
++	}
++	gl, _, err := ParseGlyph(src)
++	if err != nil {
++		return Glyph{}
++	}
++	return gl
++}
++
++// Header parses only the bounding box of glyph i; its Data is nil.
++func (g Glyf) Header(i int) Glyph {
++	src := g.data(i)
++	if len(src) < 10 {
++		return Glyph{}
++	}
++	return Glyph{
++		numberOfContours: int16(binary.BigEndian.Uint16(src[0:])),
++		XMin:             int16(binary.BigEndian.Uint16(src[2:])),
++		YMin:             int16(binary.BigEndian.Uint16(src[4:])),
++		XMax:             int16(binary.BigEndian.Uint16(src[6:])),
++		YMax:             int16(binary.BigEndian.Uint16(src[8:])),
++	}
+ }
+ 
+ type Glyph struct {
+diff --git a/font/renderer.go b/font/renderer.go
+index 2fa4f98..cab3b35 100644
+--- a/font/renderer.go
++++ b/font/renderer.go
+@@ -339,7 +339,7 @@ func (e errGlyphOutOfRange) Error() string {
+ 
+ // apply variation when needed
+ func (f *Face) glyphDataFromGlyf(glyph gID) (GlyphOutline, error) {
+-	if int(glyph) >= len(f.glyf) {
++	if int(glyph) >= f.glyf.Len() {
+ 		return GlyphOutline{}, errGlyphOutOfRange(glyph)
+ 	}
+ 	points := f.getPointsForGlyph(glyph)
+diff --git a/font/variations.go b/font/variations.go
+index 2d87701..7703457 100644
+--- a/font/variations.go
++++ b/font/variations.go
+@@ -54,7 +54,7 @@ type gvar struct {
+ }
+ 
+ func newGvar(table tables.Gvar, glyf tables.Glyf) (gvar, error) {
+-	if len(table.GlyphVariationDatas) != len(glyf) {
++	if len(table.GlyphVariationDatas) != glyf.Len() {
+ 		return gvar{}, fmt.Errorf("invalid 'gvar' table: mismatch in glyphs count")
+ 	}
+ 
+@@ -72,7 +72,7 @@ func newGvar(table tables.Gvar, glyf tables.Glyf) (gvar, error) {
+ 			tvs[j].TupleVariationHeader = header
+ 		}
+ 
+-		pointsNumberCountAll := pointNumbersCount(glyf[i]) + phantomCount
++		pointsNumberCountAll := pointNumbersCount(glyf.Glyph(i)) + phantomCount
+ 		err := parseGlyphVariationSerializedData(vs.SerializedData,
+ 			vs.HasSharedPointNumbers(), pointsNumberCountAll, false, tvs)
+ 		if err != nil {
+diff --git a/fontscan/footprint.go b/fontscan/footprint.go
+index 92b4809..9bb4756 100644
+--- a/fontscan/footprint.go
++++ b/fontscan/footprint.go
+@@ -120,11 +120,17 @@ func (fp *Footprint) isMonoHint() bool {
+ func (fp *Footprint) loadFromDisk() (*font.Face, error) {
+ 	location := fp.Location
+ 
+-	file, err := os.Open(location.File)
+-	if err != nil {
+-		return nil, err
++	var file ot.Resource
++	if data, ok := mapFontFile(location.File); ok {
++		file = ot.NewBytesReader(data)
++	} else {
++		f, err := os.Open(location.File)
++		if err != nil {
++			return nil, err
++		}
++		defer f.Close()
++		file = f
+ 	}
+-	defer file.Close()
+ 
+ 	loaders, err := ot.NewLoaders(file)
+ 	if err != nil {
+diff --git a/fontscan/mmap.go b/fontscan/mmap.go
+new file mode 100644
+index 0000000..9b49dcf
+--- /dev/null
++++ b/fontscan/mmap.go
+@@ -0,0 +1,32 @@
++// SPDX-License-Identifier: Unlicense OR BSD-3-Clause
++
++package fontscan
++
++import "sync"
++
++// WazzapClients patch: system fonts are memory-mapped rather than read, so
++// their tables stay in the (shared, evictable) file cache instead of the
++// heap. Mappings are copy-on-write and kept for the life of the process,
++// one per file, since loaded faces point into them.
++var mapped struct {
++	sync.Mutex
++	files map[string][]byte
++}
++
++// mapFontFile returns the content of a font file, mapped into memory.
++func mapFontFile(path string) ([]byte, bool) {
++	mapped.Lock()
++	defer mapped.Unlock()
++	if data, ok := mapped.files[path]; ok {
++		return data, true
++	}
++	data, ok := mmapFile(path)
++	if !ok {
++		return nil, false
++	}
++	if mapped.files == nil {
++		mapped.files = make(map[string][]byte)
++	}
++	mapped.files[path] = data
++	return data, true
++}
+diff --git a/fontscan/mmap_other.go b/fontscan/mmap_other.go
+new file mode 100644
+index 0000000..0d3d6ca
+--- /dev/null
++++ b/fontscan/mmap_other.go
+@@ -0,0 +1,7 @@
++// SPDX-License-Identifier: Unlicense OR BSD-3-Clause
++
++//go:build !unix && !windows
++
++package fontscan
++
++func mmapFile(path string) ([]byte, bool) { return nil, false }
+diff --git a/fontscan/mmap_unix.go b/fontscan/mmap_unix.go
+new file mode 100644
+index 0000000..943a324
+--- /dev/null
++++ b/fontscan/mmap_unix.go
+@@ -0,0 +1,27 @@
++// SPDX-License-Identifier: Unlicense OR BSD-3-Clause
++
++//go:build unix
++
++package fontscan
++
++import (
++	"os"
++	"syscall"
++)
++
++func mmapFile(path string) ([]byte, bool) {
++	f, err := os.Open(path)
++	if err != nil {
++		return nil, false
++	}
++	defer f.Close()
++	st, err := f.Stat()
++	if err != nil || st.Size() == 0 || st.Size() > 1<<30 {
++		return nil, false
++	}
++	data, err := syscall.Mmap(int(f.Fd()), 0, int(st.Size()), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_PRIVATE)
++	if err != nil {
++		return nil, false
++	}
++	return data, true
++}
+diff --git a/fontscan/mmap_windows.go b/fontscan/mmap_windows.go
+new file mode 100644
+index 0000000..5251ed5
+--- /dev/null
++++ b/fontscan/mmap_windows.go
+@@ -0,0 +1,33 @@
++// SPDX-License-Identifier: Unlicense OR BSD-3-Clause
++
++package fontscan
++
++import (
++	"os"
++	"syscall"
++	"unsafe"
++)
++
++func mmapFile(path string) ([]byte, bool) {
++	f, err := os.Open(path)
++	if err != nil {
++		return nil, false
++	}
++	defer f.Close()
++	st, err := f.Stat()
++	if err != nil || st.Size() == 0 || st.Size() > 1<<30 {
++		return nil, false
++	}
++	size := st.Size()
++	h, err := syscall.CreateFileMapping(syscall.Handle(f.Fd()), nil, syscall.PAGE_WRITECOPY,
++		uint32(size>>32), uint32(size), nil)
++	if err != nil {
++		return nil, false
++	}
++	defer syscall.CloseHandle(h)
++	addr, err := syscall.MapViewOfFile(h, syscall.FILE_MAP_COPY, 0, 0, uintptr(size))
++	if err != nil {
++		return nil, false
++	}
++	return unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(size)), true
++}

@@ -29,22 +29,30 @@ type imgEntry struct {
 	op    paint.ImageOp
 	size  image.Point
 	used  int64 // frame counter of last use, for eviction
+	bytes int   // decoded size, counted in imageCache.bytes
 }
 
 // imageCache decodes and downscales images off the UI goroutine. Decoded
 // bitmaps are the biggest memory cost of a chat app, so entries are capped
-// and evicted least-recently-used first.
+// and evicted least-recently-used first, by count and by decoded size.
 type imageCache struct {
 	mu         sync.Mutex
 	m          map[string]*imgEntry
 	frame      int64
-	limit      int
+	limit      int // entries
+	budget     int // decoded bytes
+	bytes      int
 	invalidate func()
 }
 
-func newImageCache(limit int) *imageCache {
-	return &imageCache{m: make(map[string]*imgEntry), limit: limit}
+func newImageCache(limit, budget int) *imageCache {
+	return &imageCache{m: make(map[string]*imgEntry), limit: limit, budget: budget}
 }
+
+// decodeSlots limits how many images decode at once. A full-size photo
+// takes tens of MB while it decodes, and opening a chat full of them
+// would otherwise decode them all in parallel and grow the heap for good.
+var decodeSlots = make(chan struct{}, 2)
 
 // get returns the entry for key, loading it in the background (load may
 // block; it runs on its own goroutine) when it isn't cached yet.
@@ -58,12 +66,19 @@ func (c *imageCache) get(key string, maxSide int, load func() []byte) *imgEntry 
 	e := &imgEntry{state: imgLoading, used: c.frame}
 	c.m[key] = e
 	go func() {
-		img := decodeScaled(load(), maxSide)
+		data := load()
+		decodeSlots <- struct{}{}
+		img := decodeScaled(data, maxSide)
+		<-decodeSlots
 		c.mu.Lock()
 		if img == nil {
 			e.state = imgMissing
 		} else {
 			e.state, e.op, e.size = imgReady, paint.NewImageOp(img), img.Bounds().Size()
+			if c.m[key] == e { // not forgotten meanwhile
+				e.bytes = 4 * e.size.X * e.size.Y
+				c.bytes += e.bytes
+			}
 		}
 		c.mu.Unlock()
 		if c.invalidate != nil {
@@ -76,17 +91,25 @@ func (c *imageCache) get(key string, maxSide int, load func() []byte) *imgEntry 
 // forget drops key so the next get reloads it.
 func (c *imageCache) forget(key string) {
 	c.mu.Lock()
-	delete(c.m, key)
+	c.remove(key)
 	c.mu.Unlock()
 }
 
-// endFrame evicts least recently used entries beyond the limit.
+func (c *imageCache) remove(key string) {
+	if e, ok := c.m[key]; ok {
+		c.bytes -= e.bytes
+		delete(c.m, key)
+	}
+}
+
+// endFrame evicts least recently used entries beyond the limits. Images
+// drawn in the frame that just ended stay.
 func (c *imageCache) endFrame() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.frame++
-	for len(c.m) > c.limit {
-		oldest, key := c.frame, ""
+	for len(c.m) > c.limit || c.bytes > c.budget {
+		oldest, key := c.frame-1, ""
 		for k, e := range c.m {
 			if e.state != imgLoading && e.used < oldest {
 				oldest, key = e.used, k
@@ -95,7 +118,7 @@ func (c *imageCache) endFrame() {
 		if key == "" {
 			return
 		}
-		delete(c.m, key)
+		c.remove(key)
 	}
 }
 

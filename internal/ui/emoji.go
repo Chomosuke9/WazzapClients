@@ -522,8 +522,3 @@ func centerIn2(gtx C, w, h int, wd layout.Widget) D {
 	gtx.Constraints = layout.Exact(image.Pt(w, h))
 	return layout.Center.Layout(gtx, wd)
 }
-
-func paintRRect(gtx C, rr clip.RRect, col color.NRGBA) {
-	defer rr.Push(gtx.Ops).Pop()
-	fillRect(gtx, rr.Rect, col)
-}

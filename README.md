@@ -29,6 +29,7 @@ Requires the Go version in `go.mod`. On Linux, install Gio's
 [system dependencies](https://gioui.org/doc/install/linux) first.
 
 ```sh
+sh patches/apply.sh            # once after cloning: patched go-text (see patches/)
 go run ./cmd/wazzap            # run the app and link it via QR code
 go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/wazzap -debug     # log protocol traffic
