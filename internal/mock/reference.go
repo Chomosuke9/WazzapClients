@@ -67,6 +67,18 @@ func NewReference() *Backend {
 			[]*model.Message{in("Tuan Guru", "tuan@lid", "Terima kasih semuanya", at(1, 14, 12))}},
 		{model.Chat{ID: "teman@g.us", Name: "TEMAN BANTU NAIK", IsGroup: true, Muted: true},
 			[]*model.Message{in("~Oke", "oke@lid", "oke bg", at(1, 12, 0))}},
+		// Community groups, shown on the Communities screen.
+		{model.Chat{ID: "fpam-ann@g.us", Name: "Announcements", IsGroup: true, Muted: true, Unread: 2},
+			[]*model.Message{in("", "", "~San replied to an announcement", at(2, 5, 0))}},
+		{model.Chat{ID: "melers@g.us", Name: "Forum Melers : Sistem Hitam", IsGroup: true, Muted: true},
+			[]*model.Message{{Sender: "~Alvaroygy", SenderID: "alvaro@lid", Media: model.MediaSticker, Kind: model.KindSticker,
+				Time: at(3, 20, 0)}}},
+		{model.Chat{ID: "wa-ann@g.us", Name: "Announcements", IsGroup: true, Muted: true},
+			[]*model.Message{in("Vivy", vivy, "Aku mau makan bergizi gratis @all", at(3, 19, 0))}},
+		{model.Chat{ID: "support@g.us", Name: "Support", IsGroup: true, Muted: true},
+			[]*model.Message{in("", "", "~JANZZ requested to join", at(4, 9, 0))}},
+		{model.Chat{ID: "zytro-ann@g.us", Name: "Announcements", IsGroup: true, Muted: true},
+			[]*model.Message{in("", "", "Welcome to the community!", at(6, 9, 0))}},
 	}
 	for _, s := range specs {
 		c := s.chat
@@ -79,5 +91,8 @@ func NewReference() *Backend {
 		b.chats = append(b.chats, &c)
 		b.msgs[c.ID] = s.msgs
 	}
+	b.extras = referenceExtras(at)
+	b.meName = "whoami"
+	b.addChannelPosts()
 	return b
 }

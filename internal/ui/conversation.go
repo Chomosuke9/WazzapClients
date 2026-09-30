@@ -73,7 +73,11 @@ func (u *UI) layoutConversation(gtx C) D {
 			m := op.Record(gtx.Ops)
 			cgtx := gtx
 			cgtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: sz}
-			cd := u.layoutComposer(cgtx)
+			var cd D
+			if !isChannelID(c.ID) {
+				// Channels are read-only.
+				cd = u.layoutComposer(cgtx)
+			}
 			composer := m.Stop()
 
 			lgtx := gtx
@@ -95,6 +99,9 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 		return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
 			return layout.Inset{Left: 17, Right: 16}.Layout(gtx, func(gtx C) D {
 				sub := c.Presence
+				if ch := u.channelByID(c.ID); ch != nil {
+					sub = followers(ch.Followers)
+				}
 				if c.Typing != "" {
 					sub = "typing…"
 					if c.IsGroup {
@@ -116,7 +123,12 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 						return clickable(gtx, &u.conv.header, func(gtx C) D {
 							gtx.Constraints.Min.X = gtx.Constraints.Max.X
 							return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-								layout.Rigid(func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 41) }),
+								layout.Rigid(func(gtx C) D {
+									if isChannelID(c.ID) {
+										return u.avatarOf(gtx, c.ID, avatarChannel, 41)
+									}
+									return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 41)
+								}),
 								layout.Rigid(layout.Spacer{Width: 16}.Layout),
 								layout.Flexed(1, func(gtx C) D {
 									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -273,7 +285,7 @@ func (u *UI) nbspWidth(gtx C, size unit.Sp) float32 {
 	}
 	spaces := make([]rune, n)
 	for i := range spaces {
-		spaces[i] = ' '
+		spaces[i] = '\u00a0'
 	}
 	w := float32(measure("x"+string(spaces)+"x")-measure("xx")) / n
 	if w <= 0 {
@@ -434,13 +446,13 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		nbsp := u.nbspWidth(gtx, textSize)
 		spacer := make([]rune, int(float32(meta.size.X+gtx.Dp(8))/nbsp)+1)
 		for i := range spacer {
-			spacer[i] = ' '
+			spacer[i] = '\u00a0'
 		}
 		prefix := ""
 		if leadW > 0 {
 			indent := make([]rune, int(float32(leadW)/nbsp)+1)
 			for i := range indent {
-				indent[i] = ' '
+				indent[i] = '\u00a0'
 			}
 			prefix = string(indent)
 		}

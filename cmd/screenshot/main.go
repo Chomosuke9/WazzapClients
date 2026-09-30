@@ -40,6 +40,11 @@ func main() {
 	memprofile := flag.String("memprofile", "", "write a heap profile after rendering")
 	data := flag.String("data", "", "in -compare mode, render this session's stored chats (no network)")
 	chatName := flag.String("chatname", "", "in -compare mode with -data, open the chat with this name")
+	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings or info")
+	infoScroll := flag.Int("infoscroll", 0, "in -compare mode with -view info, first visible item of the info panel")
+	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")
+	win := flag.String("win", "", "in -compare mode, render a window of this size (W,H px) and crop it like the screenshot")
+	rightAligned := flag.Bool("right", false, "with -win, the screenshot is the window's right edge")
 	flag.Parse()
 	if *memprofile != "" {
 		defer func() {
@@ -59,7 +64,7 @@ func main() {
 	}
 
 	if *compare != "" {
-		if err := compareShot(*compare, *crop, *chat, *chatName, *data, *out, float32(*scale)); err != nil {
+		if err := compareShot(*compare, *crop, *win, *rightAligned, *chat, *chatName, *data, *out, *view, *infoScroll, *infoOffset, float32(*scale)); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -74,12 +79,19 @@ func main() {
 		chat  string
 		login bool
 		ref   bool
+		page  string // "info" opens the chat's info panel
 	}{
-		{"preview-dark.png", true, "test@g.us", false, true},
-		{"preview-light.png", false, "rina", false, false},
-		{"preview-group.png", false, "family", false, false},
-		{"preview-empty.png", true, "", false, true},
-		{"preview-login.png", true, "", true, false},
+		{"preview-dark.png", true, "test@g.us", false, true, ""},
+		{"preview-light.png", false, "rina", false, false, ""},
+		{"preview-group.png", false, "family", false, false, ""},
+		{"preview-empty.png", true, "", false, true, ""},
+		{"preview-login.png", true, "", true, false, ""},
+		{"preview-info.png", true, "test@g.us", false, true, "info"},
+		{"preview-contact.png", false, "rina", false, false, "info"},
+		{"preview-status.png", true, "", false, true, "status"},
+		{"preview-channels.png", true, "", false, true, "channels"},
+		{"preview-communities.png", true, "", false, true, "communities"},
+		{"preview-settings.png", false, "", false, true, "settings"},
 	}
 	for _, s := range shots {
 		var b *mock.Backend
@@ -100,6 +112,13 @@ func main() {
 		if s.chat != "" {
 			u.SelectID(s.chat)
 		}
+		switch s.page {
+		case "":
+		case "info":
+			u.ShowInfo(0, 0)
+		default:
+			u.ShowPage(s.page)
+		}
 		img, err := render(u, int(float32(*width)*float32(*scale)), int(float32(*height)*float32(*scale)), float32(*scale))
 		if err != nil {
 			log.Fatalf("%s: %v", s.name, err)
@@ -112,7 +131,7 @@ func main() {
 	}
 }
 
-func compareShot(path, crop, chat, chatName, data, outDir string, scale float32) error {
+func compareShot(path, crop, win string, rightAligned bool, chat, chatName, data, outDir, view string, infoScroll, infoOffset int, scale float32) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -142,9 +161,38 @@ func compareShot(path, crop, chat, chatName, data, outDir string, scale float32)
 		u.SelectID(chat)
 	}
 	u.SetDark(true)
-	ours, err := render(u, r.Dx(), r.Dy(), scale)
-	if err != nil {
-		return err
+	switch view {
+	case "chats":
+	case "info":
+		u.ShowInfo(infoScroll, infoOffset)
+	case "statusviewer":
+		u.ShowStatus(1)
+	default:
+		u.ShowPage(view)
+	}
+	var ours *image.RGBA
+	if win != "" {
+		var w, h int
+		if _, err := fmt.Sscanf(win, "%d,%d", &w, &h); err != nil {
+			return fmt.Errorf("bad -win: %w", err)
+		}
+		full, err := render(u, w, h, scale)
+		if err != nil {
+			return err
+		}
+		// The screenshot shows the window's left part, or its right part.
+		off := r.Min
+		if rightAligned {
+			off.X = w - r.Dx()
+		}
+		ours = image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+		draw.Draw(ours, ours.Bounds(), full, off, draw.Src)
+	} else {
+		var err error
+		ours, err = render(u, r.Dx(), r.Dy(), scale)
+		if err != nil {
+			return err
+		}
 	}
 	gap := 12
 	out := image.NewRGBA(image.Rect(0, 0, 2*r.Dx()+gap, r.Dy()))

@@ -25,7 +25,7 @@ func TestNewlineHeight(t *testing.T) {
 		{[]string{"a"}, 1},
 		{[]string{"a\nb\nc"}, 3},
 		{[]string{"x ", "B", "\nline2\nline3"}, 3},
-		{[]string{"x ", "B", "\nline2\nline3", "   "}, 3},
+		{[]string{"x ", "B", "\nline2\nline3", " \u00a0\u00a0"}, 3},
 		{[]string{"x\n\ny"}, 3},
 		{[]string{"a\r\nb"}, 2},
 	}

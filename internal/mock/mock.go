@@ -18,6 +18,8 @@ type Backend struct {
 	events []model.Event
 	notify func()
 	now    func() time.Time
+	meName string
+	extras
 }
 
 // New returns a demo backend with timestamps relative to the current time.
@@ -42,12 +44,37 @@ func New() *Backend {
 		b.chats = append(b.chats, &c)
 		b.msgs[d.ID] = d.Messages
 	}
+	now := b.now()
+	b.extras = demoExtras(func(d, h, m int) time.Time {
+		y, mo, dd := now.AddDate(0, 0, -d).Date()
+		return time.Date(y, mo, dd, h, m, 0, 0, now.Location())
+	})
+	b.addChannelPosts()
 	return b
+}
+
+// addChannelPosts makes each channel's last post openable.
+func (b *Backend) addChannelPosts() {
+	for _, ch := range b.channels {
+		if ch.Last == nil {
+			continue
+		}
+		ch.Last.ID = ch.ID + "-0"
+		ch.Last.ChatID = ch.ID
+		if ch.Last.Receipt == model.Pending {
+			ch.Last.Receipt = model.Read
+		}
+		b.msgs[ch.ID] = []*model.Message{ch.Last}
+	}
 }
 
 func (b *Backend) Start(notify func()) {
 	b.notify = notify
-	b.emit(model.ConnEvent{State: model.StateOnline, Me: "Me Myself"})
+	me := b.meName
+	if me == "" {
+		me = "Me Myself"
+	}
+	b.emit(model.ConnEvent{State: model.StateOnline, Me: me, MeID: "me@lid"})
 }
 
 func (b *Backend) emit(e model.Event) {

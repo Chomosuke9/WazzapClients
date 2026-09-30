@@ -57,6 +57,32 @@ CREATE TABLE IF NOT EXISTS wz_meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS wz_status (
+	id         TEXT PRIMARY KEY,
+	sender     TEXT NOT NULL,
+	push       TEXT NOT NULL DEFAULT '',
+	from_me    INTEGER NOT NULL DEFAULT 0,
+	ts         INTEGER NOT NULL,
+	media      INTEGER NOT NULL DEFAULT 0,
+	text       TEXT NOT NULL DEFAULT '',
+	bg         INTEGER NOT NULL DEFAULT 0, -- ARGB behind text statuses
+	thumb      BLOB,
+	media_blob BLOB,
+	viewed     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS wz_status_ts ON wz_status (ts);
+CREATE TABLE IF NOT EXISTS wz_channels (
+	jid       TEXT PRIMARY KEY,
+	name      TEXT NOT NULL DEFAULT '',
+	verified  INTEGER NOT NULL DEFAULT 0,
+	followers INTEGER NOT NULL DEFAULT 0,
+	following INTEGER NOT NULL DEFAULT 0,
+	owner     INTEGER NOT NULL DEFAULT 0,
+	muted     INTEGER NOT NULL DEFAULT 0,
+	created   INTEGER NOT NULL DEFAULT 0,
+	picture   TEXT NOT NULL DEFAULT '', -- preview picture URL
+	rank      INTEGER NOT NULL DEFAULT 0 -- order among suggestions
+);
 `
 
 // migrations add columns to databases created by older versions.
@@ -67,6 +93,9 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN duration INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_messages ADD COLUMN quote_media INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_chats ADD COLUMN parent TEXT NOT NULL DEFAULT ''`,         // community a group belongs to
+	`ALTER TABLE wz_chats ADD COLUMN community INTEGER NOT NULL DEFAULT 0`,    // 1 for a community's parent group
+	`ALTER TABLE wz_chats ADD COLUMN announce_sub INTEGER NOT NULL DEFAULT 0`, // 1 for a community's announcements
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -115,7 +144,8 @@ func (s *msgStore) migrateLegacyMedia(ctx context.Context) error {
 }
 
 func (s *msgStore) wipe(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats; DELETE FROM wz_meta;`)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats; DELETE FROM wz_meta;
+		DELETE FROM wz_status; DELETE FROM wz_channels;`)
 	return err
 }
 
@@ -252,6 +282,10 @@ func (s *msgStore) editText(ctx context.Context, chat, id, text string) error {
 }
 
 func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.Media, blob []byte, err error) {
+	if chat == statusChat {
+		err = s.db.QueryRowContext(ctx, `SELECT media, media_blob FROM wz_status WHERE id = ?`, id).Scan(&media, &blob)
+		return
+	}
 	err = s.db.QueryRowContext(ctx, `SELECT media, media_blob FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
 		Scan(&media, &blob)
 	return
@@ -379,10 +413,16 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	return rc, nil
 }
 
-// chats lists chats that have any activity, newest first.
+// chats lists chats that have any activity, newest first. Channels and
+// community parent groups aren't chats.
 func (s *msgStore) chats(ctx context.Context) ([]rawChat, error) {
-	rows, err := s.db.QueryContext(ctx, chatQuery+` WHERE c.last_ts > 0 OR m.id IS NOT NULL
+	return s.queryChats(ctx, chatQuery+` WHERE (c.last_ts > 0 OR m.id IS NOT NULL)
+		AND c.community = 0 AND c.jid NOT LIKE '%@newsletter'
 		ORDER BY c.pinned DESC, MAX(c.last_ts, COALESCE(m.ts, 0)) DESC`)
+}
+
+func (s *msgStore) queryChats(ctx context.Context, q string, args ...any) ([]rawChat, error) {
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +445,7 @@ func (s *msgStore) chat(ctx context.Context, jid string) (rawChat, bool) {
 }
 
 func (s *msgStore) chatJIDs(ctx context.Context, groups bool) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT jid FROM wz_chats WHERE is_group = ?`, boolInt(groups))
+	rows, err := s.db.QueryContext(ctx, `SELECT jid FROM wz_chats WHERE is_group = ? AND jid NOT LIKE '%@newsletter'`, boolInt(groups))
 	if err != nil {
 		return nil, err
 	}

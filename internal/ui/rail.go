@@ -21,10 +21,14 @@ func (u *UI) layoutRail(gtx C) D {
 	p := u.pal
 	sz := gtx.Constraints.Max
 
-	unread := 0
+	unread, archivedUnread := 0, 0
 	for _, c := range u.chats {
-		if c.Unread > 0 && !c.Archived {
+		switch {
+		case c.Unread == 0:
+		case !c.Archived:
 			unread++
+		case !c.Muted:
+			archivedUnread++
 		}
 	}
 	glyph := func(ic *icon.Icon) func(gtx C, col color.NRGBA) D {
@@ -40,23 +44,46 @@ func (u *UI) layoutRail(gtx C) D {
 			})
 		})
 	}
-	chats := glyph(icChats)
-	if !u.sidebar.showArchived {
+	onChats := u.page == pageChats && !u.sidebar.showArchived
+	onArchive := u.page == pageChats && u.sidebar.showArchived
+	chats := func(gtx C, col color.NRGBA) D { return chatsOutline(gtx, 24, col) }
+	if onChats {
 		chats = func(gtx C, col color.NRGBA) D { return chatsIcon(gtx, 24, col, p.RailActive) }
 	}
 	archive := glyph(icArchive)
-	if u.sidebar.showArchived {
+	if onArchive {
 		archive = glyph(icArchiveOn)
+	}
+	status := func(gtx C, col color.NRGBA) D { return statusIcon(gtx, 24, col, u.page == pageStatus) }
+	channels := func(gtx C, col color.NRGBA) D {
+		return channelsIcon(gtx, 24, col, p.RailActive, u.page == pageChannels)
+	}
+	communities := func(gtx C, col color.NRGBA) D { return drawIcon(gtx, icGroupsLine, 27, col) }
+	if u.page == pageCommunities {
+		communities = func(gtx C, col color.NRGBA) D { return drawIcon(gtx, icGroupsFill, 27, col) }
+	}
+	// Dots mark news since the page was last opened.
+	statusUnseen := false
+	for _, t := range u.statuses {
+		if !t.Mine && !t.Viewed() && t.Last().Time.After(u.statusSeen) {
+			statusUnseen = true
+		}
+	}
+	channelUnread := false
+	for _, c := range u.channels {
+		if c.Unread > 0 && c.Time.After(u.channelsSeen) {
+			channelUnread = true
+		}
 	}
 
 	gtx.Constraints = layout.Exact(sz)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(layout.Spacer{Height: 10}.Layout),
-		item(&u.rail.chats, !u.sidebar.showArchived, chats, unread, false),
-		item(&u.rail.calls, false, glyph(icCall), 0, false),
-		item(&u.rail.status, false, func(gtx C, col color.NRGBA) D { return statusIcon(gtx, 24, col) }, 0, false),
-		item(&u.rail.channels, false, func(gtx C, col color.NRGBA) D { return channelsIcon(gtx, 24, col) }, 0, true),
-		item(&u.rail.communities, false, glyph(icGroupsFill), 0, false),
+		item(&u.rail.chats, onChats, chats, unread, false),
+		item(&u.rail.calls, u.page == pageCalls, glyph(icCall), 0, false),
+		item(&u.rail.status, u.page == pageStatus, status, 0, statusUnseen),
+		item(&u.rail.channels, u.page == pageChannels, channels, 0, channelUnread),
+		item(&u.rail.communities, u.page == pageCommunities, communities, 0, false),
 		layout.Rigid(func(gtx C) D {
 			w := gtx.Dp(42)
 			x := (gtx.Constraints.Max.X - w) / 2
@@ -64,7 +91,7 @@ func (u *UI) layoutRail(gtx C) D {
 			fillRect(gtx, image.Rect(x, y, x+w, y+max(1, gtx.Dp(1))), p.RailSeparator)
 			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(21))}
 		}),
-		item(&u.rail.archived, u.sidebar.showArchived, archive, 0, false),
+		item(&u.rail.archived, onArchive, archive, archivedUnread, false),
 		layout.Flexed(1, layout.Spacer{}.Layout),
 		item(&u.rail.media, false, glyph(icMedia), 0, false),
 		layout.Rigid(func(gtx C) D {
@@ -72,7 +99,14 @@ func (u *UI) layoutRail(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				return layout.N.Layout(gtx, func(gtx C) D {
 					return clickable(gtx, &u.rail.profile, func(gtx C) D {
-						return centerIn(gtx, gtx.Dp(42), func(gtx C) D {
+						sz := gtx.Dp(42)
+						switch {
+						case u.page == pageSettings:
+							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.RailActive)
+						case u.rail.profile.Hovered():
+							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Hover)
+						}
+						return centerIn(gtx, sz, func(gtx C) D {
 							return u.avatar(gtx, u.meID, u.meName(), false, 30)
 						})
 					})
@@ -96,10 +130,8 @@ func (u *UI) railButton(gtx C, c *widget.Clickable, active bool, glyph func(gtx 
 		if active {
 			col = p.IconActive
 		}
-		off := (sz - gtx.Dp(24)) / 2
-		t := op.Offset(image.Pt(off, off)).Push(gtx.Ops)
-		glyph(gtx, col)
-		t.Pop()
+		g := record(gtx, func(gtx C) D { return glyph(gtx, col) })
+		g.at(gtx, (sz-g.size.X)/2, (sz-g.size.Y)/2)
 
 		switch {
 		case badge > 0:

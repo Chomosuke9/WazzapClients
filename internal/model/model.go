@@ -87,6 +87,92 @@ type Chat struct {
 	Presence string // header subtitle, e.g. "online"
 }
 
+// Member is a group participant, as listed in the group info panel.
+type Member struct {
+	ID    string
+	Name  string
+	Admin bool
+	Me    bool
+}
+
+// ChatInfo is what the contact or group info panel shows.
+type ChatInfo struct {
+	ID      string
+	Name    string
+	IsGroup bool
+	// About is a contact's "about" text or a group's description.
+	About string
+	// Phone is a contact's formatted phone number.
+	Phone string
+	// Members lists group participants: you first, then admins, then the rest.
+	Members []Member
+	// Created and CreatedBy describe who made a group and when ("you" or a name).
+	Created   time.Time
+	CreatedBy string
+	// Disappearing is the disappearing-messages timer in seconds (0 = off).
+	Disappearing uint32
+	// MediaCount counts media, links and documents; Media holds the newest
+	// pictures to preview.
+	MediaCount int
+	Media      []*Message
+}
+
+// StatusUpdate is one status post.
+type StatusUpdate struct {
+	ID    string
+	Media Media
+	Text  string
+	Thumb []byte
+	// Background is the ARGB color behind a text status.
+	Background uint32
+	Time       time.Time
+	Viewed     bool
+}
+
+// StatusThread is everything one contact posted in the last 24 hours,
+// oldest first.
+type StatusThread struct {
+	ID      string // poster's JID
+	Name    string
+	Mine    bool
+	Updates []*StatusUpdate
+}
+
+// Last returns the newest update.
+func (t *StatusThread) Last() *StatusUpdate { return t.Updates[len(t.Updates)-1] }
+
+// Viewed reports whether every update has been seen.
+func (t *StatusThread) Viewed() bool {
+	for _, u := range t.Updates {
+		if !u.Viewed {
+			return false
+		}
+	}
+	return true
+}
+
+// Channel is a WhatsApp channel (newsletter), followed or suggested.
+type Channel struct {
+	ID        string
+	Name      string
+	Verified  bool
+	Followers int
+	Following bool
+	Muted     bool
+	Unread    int
+	Time      time.Time
+	Last      *Message
+}
+
+// Community groups its linked groups. Announcements is the announcement
+// group's JID; Groups are the other linked groups the user is in.
+type Community struct {
+	ID            string
+	Name          string
+	Announcements string
+	Groups        []string
+}
+
 // ConnState is the backend's connection/login state.
 type ConnState int
 
@@ -155,16 +241,32 @@ type AvatarEvent struct{ ID string }
 // MediaEvent reports that a message's media finished downloading.
 type MediaEvent struct{ ChatID, MsgID string }
 
-func (ConnEvent) isEvent()     {}
-func (ChatsEvent) isEvent()    {}
-func (ChatEvent) isEvent()     {}
-func (MessageEvent) isEvent()  {}
-func (ReceiptEvent) isEvent()  {}
-func (TypingEvent) isEvent()   {}
-func (PresenceEvent) isEvent() {}
-func (SyncEvent) isEvent()     {}
-func (AvatarEvent) isEvent()   {}
-func (MediaEvent) isEvent()    {}
+// InfoEvent reports that the info panel details of a chat changed.
+type InfoEvent struct{ ChatID string }
+
+// StatusEvent reports that the status list changed.
+type StatusEvent struct{}
+
+// ChannelsEvent reports that the followed or suggested channels changed.
+type ChannelsEvent struct{}
+
+// CommunitiesEvent reports that the community structure changed.
+type CommunitiesEvent struct{}
+
+func (ConnEvent) isEvent()        {}
+func (ChatsEvent) isEvent()       {}
+func (ChatEvent) isEvent()        {}
+func (MessageEvent) isEvent()     {}
+func (ReceiptEvent) isEvent()     {}
+func (TypingEvent) isEvent()      {}
+func (PresenceEvent) isEvent()    {}
+func (SyncEvent) isEvent()        {}
+func (AvatarEvent) isEvent()      {}
+func (MediaEvent) isEvent()       {}
+func (InfoEvent) isEvent()        {}
+func (StatusEvent) isEvent()      {}
+func (ChannelsEvent) isEvent()    {}
+func (CommunitiesEvent) isEvent() {}
 
 // Backend is everything the UI needs from a WhatsApp connection.
 //
@@ -188,6 +290,22 @@ type Backend interface {
 	// is downloaded in the background and announced with a MediaEvent. Safe
 	// to call from any goroutine.
 	MediaData(chatID, msgID string) []byte
+	// Info returns the contact or group details for the info panel. They
+	// may be stale or nil; fresh ones are fetched in the background and
+	// announced with an InfoEvent.
+	Info(chatID string) *ChatInfo
+	// Statuses lists the last 24 hours of status updates, own thread first.
+	Statuses() []*StatusThread
+	// ViewStatus marks a status update as seen.
+	ViewStatus(threadID, statusID string)
+	// Channels lists followed channels, newest activity first.
+	Channels() []*Channel
+	// SuggestedChannels lists channels to follow.
+	SuggestedChannels() []*Channel
+	// FollowChannel follows a suggested channel; a ChannelsEvent follows.
+	FollowChannel(id string)
+	// Communities lists the user's communities.
+	Communities() []*Community
 	// Retry restarts pairing after the QR codes expired.
 	Retry()
 	// Logout unlinks this device and returns to the QR screen.

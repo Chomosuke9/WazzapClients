@@ -41,9 +41,13 @@ func (c *nameCache) clear() {
 	c.mu.Unlock()
 }
 
+// skipChat reports JIDs that aren't conversations. Status updates are
+// handled separately; channels are stored like chats but listed apart.
 func skipChat(j types.JID) bool {
-	return j.IsEmpty() || j.Server == types.BroadcastServer || j.Server == types.NewsletterServer
+	return j.IsEmpty() || j.Server == types.BroadcastServer
 }
+
+func isChannel(j types.JID) bool { return j.Server == types.NewsletterServer }
 
 // canonical maps a chat JID to the one used as the chat key. hypermeow treats
 // the LID as the stable identity, so one-to-one chats are keyed by LID when a

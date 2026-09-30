@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,6 +56,9 @@ type Backend struct {
 
 	subMu     sync.Mutex
 	subtitles map[string]string // group JID → participant list
+
+	infoMu      sync.Mutex
+	infoFetched map[string]bool // info panels refreshed this session
 }
 
 var _ model.Backend = (*Backend)(nil)
@@ -73,12 +77,13 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 		return nil, err
 	}
 	b := &Backend{
-		dataDir:   dataDir,
-		log:       newLogger(logf, debug),
-		logf:      logf,
-		avatars:   newFetcher(),
-		downloads: newFetcher(),
-		subtitles: make(map[string]string),
+		dataDir:     dataDir,
+		log:         newLogger(logf, debug),
+		logf:        logf,
+		avatars:     newFetcher(),
+		downloads:   newFetcher(),
+		subtitles:   make(map[string]string),
+		infoFetched: make(map[string]bool),
 	}
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 
@@ -309,6 +314,14 @@ func (b *Backend) Open(chatID string) {
 		if err != nil {
 			return
 		}
+		if isChannel(jid) {
+			_ = b.store.setField(ctx, chatID, "unread", 0)
+			if cli := b.client(); cli != nil && cli.IsConnected() {
+				b.fetchChannelPosts(ctx, cli, jid)
+			}
+			b.emit(model.ChannelsEvent{})
+			return
+		}
 		c := b.chat(chatID)
 		if c == nil {
 			return
@@ -390,6 +403,10 @@ func (b *Backend) Send(chatID, text string) *model.Message {
 }
 
 func (b *Backend) emitChat(jid string) {
+	if strings.HasSuffix(jid, "@"+types.NewsletterServer) {
+		b.emit(model.ChannelsEvent{})
+		return
+	}
 	if c := b.chat(jid); c != nil {
 		b.emit(model.ChatEvent{Chat: c})
 	}
@@ -417,6 +434,7 @@ func (b *Backend) handle(evt any) {
 			}
 			b.refreshGroupNames()
 			b.resyncAppStateOnce()
+			b.refreshChannels()
 		}()
 	case *events.Disconnected, *events.KeepAliveTimeout:
 		b.emit(model.ConnEvent{State: model.StateOffline})
@@ -536,6 +554,10 @@ func (b *Backend) resyncAppStateOnce() {
 
 func (b *Backend) onMessage(e *events.Message) {
 	ctx := b.ctx
+	if isStatus(e.Info.Chat) {
+		b.onStatus(e)
+		return
+	}
 	p, ok := b.parse(ctx, e)
 	if !ok {
 		return
@@ -551,7 +573,7 @@ func (b *Backend) onMessage(e *events.Message) {
 	default:
 		name := ""
 		chatJID, _ := types.ParseJID(chat)
-		if !e.Info.IsGroup {
+		if !e.Info.IsGroup && !isChannel(chatJID) {
 			name = b.chatName(ctx, chatJID)
 		}
 		_, exists := b.store.chat(ctx, chat)
@@ -581,6 +603,18 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 	ctx := b.ctx
 	chat := b.canonical(ctx, e.Chat).String()
 	var r model.Receipt
+	if isStatus(e.Chat) {
+		// Statuses seen on another device.
+		if e.Type == types.ReceiptTypeReadSelf {
+			ids := make([]string, len(e.MessageIDs))
+			for i, id := range e.MessageIDs {
+				ids[i] = string(id)
+			}
+			_ = b.store.setStatusViewed(ctx, ids)
+			b.emit(model.StatusEvent{})
+		}
+		return
+	}
 	switch e.Type {
 	case types.ReceiptTypeReadSelf:
 		b.updateChat(e.Chat, "unread", 0, false)
@@ -623,9 +657,20 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		edits   []parsed
 	}
 	var convs []convData
+	var statuses []storedStatus
 	for _, conv := range data.GetConversations() {
 		raw, err := types.ParseJID(conv.GetID())
 		if err != nil {
+			continue
+		}
+		if isStatus(raw) {
+			for _, hm := range conv.GetMessages() {
+				if evt, err := cli.ParseWebMessage(raw, hm.GetMessage()); err == nil {
+					if st, ok := b.parseStatus(ctx, evt); ok && st.revoke == "" {
+						statuses = append(statuses, st)
+					}
+				}
+			}
 			continue
 		}
 		jid := b.canonical(ctx, raw)
@@ -636,7 +681,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			continue
 		}
 		cd := convData{jid: jid, isGroup: jid.Server == types.GroupServer}
-		if cd.isGroup {
+		if cd.isGroup || isChannel(jid) {
 			cd.name = first(conv.GetName(), conv.GetDisplayName())
 		} else {
 			cd.name = b.chatName(ctx, jid)
@@ -677,6 +722,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 	if err != nil {
 		b.log.Errorf("history sync: begin: %v", err)
 		return
+	}
+	for _, st := range statuses {
+		if err := b.store.putStatus(ctx, tx, st); err != nil {
+			b.log.Warnf("history sync: status %s: %v", st.id, err)
+		}
 	}
 	for _, cd := range convs {
 		jid := cd.jid.String()
@@ -719,6 +769,9 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		return
 	}
 	b.emitAllChats()
+	if len(statuses) > 0 {
+		b.emit(model.StatusEvent{})
+	}
 
 	switch data.GetSyncType() {
 	case waHistorySync.HistorySync_INITIAL_BOOTSTRAP, waHistorySync.HistorySync_RECENT, waHistorySync.HistorySync_FULL:
@@ -765,11 +818,15 @@ func (b *Backend) refreshGroupNames() {
 		return
 	}
 	for _, g := range groups {
+		if err := b.store.setGroupShape(b.ctx, g); err != nil {
+			b.log.Warnf("store group %s: %v", g.JID, err)
+		}
 		if g.Name != "" {
 			_ = b.store.setName(b.ctx, g.JID.String(), g.Name)
 		}
 	}
 	b.emitAllChats()
+	b.emit(model.CommunitiesEvent{})
 }
 
 func (b *Backend) fetchGroupName(j types.JID) {

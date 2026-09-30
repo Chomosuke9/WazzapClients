@@ -126,7 +126,14 @@ func (b *Backend) fetchAvatar(id string) {
 	path := b.avatarPath(id)
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
 
-	info, err := cli.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{Preview: true})
+	var info *types.ProfilePictureInfo
+	if isChannel(jid) {
+		// Channel pictures come with their metadata, not the profile API.
+		info, err = b.channelPictureInfo(ctx, jid)
+	} else {
+		params := &whatsmeow.GetProfilePictureParams{Preview: true, IsCommunity: b.store.isCommunity(ctx, id)}
+		info, err = cli.GetProfilePictureInfo(ctx, jid, params)
+	}
 	switch {
 	case errors.Is(err, whatsmeow.ErrProfilePictureNotSet), errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized),
 		err == nil && info == nil:
@@ -148,6 +155,24 @@ func (b *Backend) fetchAvatar(id string) {
 		return
 	}
 	b.emit(model.AvatarEvent{ID: id})
+}
+
+func (b *Backend) channelPictureInfo(ctx context.Context, jid types.JID) (*types.ProfilePictureInfo, error) {
+	if url := b.store.channelPicture(ctx, jid.String()); url != "" {
+		return &types.ProfilePictureInfo{URL: url}, nil
+	}
+	n, err := b.client().GetNewsletterInfo(ctx, jid)
+	if err != nil || n == nil {
+		return nil, err
+	}
+	url := pictureURL(&n.ThreadMeta.Preview)
+	if url == "" {
+		url = pictureURL(n.ThreadMeta.Picture)
+	}
+	if url == "" {
+		return nil, whatsmeow.ErrProfilePictureNotSet
+	}
+	return &types.ProfilePictureInfo{URL: url}, nil
 }
 
 func httpGet(ctx context.Context, url string) ([]byte, error) {

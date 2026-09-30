@@ -3,6 +3,7 @@ package ui
 import (
 	_ "embed"
 	"image/color"
+	"sync"
 
 	"gioui.org/font"
 	"gioui.org/font/gofont"
@@ -40,6 +41,15 @@ type Palette struct {
 	Menu, MenuHover, Shadow      color.NRGBA
 	CloseHover                   color.NRGBA
 	Senders                      []color.NRGBA
+
+	EmptyIcon                        color.NRGBA // big glyphs of empty panes
+	RowHover                         color.NRGBA // settings and info list rows
+	Danger, DangerSoft               color.NRGBA // "Log out"; "Exit group" and friends
+	RingViewed                       color.NRGBA // status ring once seen
+	Verified                         color.NRGBA
+	AnnounceBg, AnnounceIcon         color.NRGBA // community announcements tile
+	ChannelAvatar, ChannelAvatarIcon color.NRGBA // channel without a picture
+	StatusBg                         color.NRGBA // status viewer backdrop
 }
 
 func rgb(c uint32) color.NRGBA {
@@ -87,6 +97,13 @@ var darkPalette = Palette{
 	Menu: rgb(0x242626), MenuHover: rgb(0x2e2f2f), Shadow: argb(0x000000, 0x60),
 	CloseHover: rgb(0xc42b1c),
 	Senders:    rgbs(0xcca48f, 0x8fb8e8, 0xe6a1b8, 0x86c9a8, 0xdcc27a, 0xb1a3e6, 0xe89b7f, 0x7fc3d6, 0xc7b7a0),
+
+	EmptyIcon: rgb(0x454545), RowHover: rgb(0x1d1f1f),
+	Danger: rgb(0xe85d65), DangerSoft: rgb(0xed9ea5),
+	RingViewed: rgb(0x414141), Verified: rgb(0x3c79e6),
+	AnnounceBg: rgb(0x342c21), AnnounceIcon: rgb(0xf6d78b),
+	ChannelAvatar: rgb(0x32281e), ChannelAvatarIcon: rgb(0xd3a887),
+	StatusBg: rgb(0x0f0f0f),
 }
 
 var lightPalette = Palette{
@@ -116,6 +133,13 @@ var lightPalette = Palette{
 	Menu: rgb(0xffffff), MenuHover: rgb(0xf5f6f6), Shadow: argb(0x0b141a, 0x30),
 	CloseHover: rgb(0xc42b1c),
 	Senders:    rgbs(0x1f7aec, 0xe542a3, 0x02a698, 0xc85a00, 0x7f66ff, 0xd62f45, 0x029d00, 0x0e8a94, 0xa4661f),
+
+	EmptyIcon: rgb(0xc4c9cc), RowHover: rgb(0xf5f6f6),
+	Danger: rgb(0xea0038), DangerSoft: rgb(0xd4314a),
+	RingViewed: rgb(0xc3c9cc), Verified: rgb(0x2a7de1),
+	AnnounceBg: rgb(0xfdf1d8), AnnounceIcon: rgb(0xc58a13),
+	ChannelAvatar: rgb(0xf6e7da), ChannelAvatarIcon: rgb(0xa86f45),
+	StatusBg: rgb(0x0f0f0f),
 }
 
 func hashIndex(s string, n int) int {
@@ -137,9 +161,12 @@ var notoColorEmoji []byte
 // emoji from Noto, then common system UI fonts and the bundled Go fonts.
 const typeface font.Typeface = "Segoe UI, Noto Color Emoji, Segoe UI Symbol, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
 
+var patchEmoji sync.Once
+
 func newTheme() *material.Theme {
 	th := material.NewTheme()
 	faces := gofont.Collection()
+	patchEmoji.Do(func() { narrowEmojiSpaces(notoColorEmoji) })
 	if emoji, err := opentype.ParseCollection(notoColorEmoji); err == nil {
 		faces = append(faces, emoji...)
 	}

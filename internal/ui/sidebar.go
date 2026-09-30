@@ -231,9 +231,39 @@ func (u *UI) rowClick(c *model.Chat) *widget.Clickable {
 }
 
 func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
+	return u.chatRow(gtx, c, rowOpts{
+		click:    u.rowClick(c),
+		selected: u.selected != nil && c.ID == u.selected.ID && u.selPage == u.page,
+	})
+}
+
+// rowOpts adapts the chat row to the Channels and Communities pages.
+type rowOpts struct {
+	click    *widget.Clickable
+	selected bool
+	avatar   layout.Widget // replaces the chat's round avatar
+	avatarW  unit.Dp       // left edge of the avatar within the row (default 12)
+	textGap  unit.Dp       // space between avatar and text (default 16)
+	verified bool          // blue badge after the name
+}
+
+// chatRow draws one row of the chat list: avatar, name and time, then the
+// last message preview with indicators.
+func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 	p := u.pal
-	click := u.rowClick(c)
+	click := o.click
 	last := c.Last
+	avatar := o.avatar
+	if avatar == nil {
+		avatar = func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 52) }
+	}
+	left, gap := o.avatarW, o.textGap
+	if left == 0 {
+		left = 12
+	}
+	if gap == 0 {
+		gap = 16
+	}
 
 	return layout.Inset{Left: 13, Right: 18, Top: 2, Bottom: 2}.Layout(gtx, func(gtx C) D {
 		return clickable(gtx, click, func(gtx C) D {
@@ -241,20 +271,20 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 			bg := p.Panel
 			hovered := click.Hovered()
 			switch {
-			case u.selected != nil && c.ID == u.selected.ID:
+			case o.selected:
 				bg = p.Selected
 			case hovered:
 				bg = p.Hover
 			}
 			return background(gtx, bg, 10, func(gtx C) D {
-				return vcenter(gtx, gtx.Dp(76), func(gtx C) D {
-					return layout.Inset{Left: 12, Right: 14}.Layout(gtx, func(gtx C) D {
+				return vcenter(gtx, gtx.Dp(76.3), func(gtx C) D {
+					return layout.Inset{Left: left, Right: 14}.Layout(gtx, func(gtx C) D {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 52) }),
-							layout.Rigid(layout.Spacer{Width: 16}.Layout),
+							layout.Rigid(avatar),
+							layout.Rigid(layout.Spacer{Width: gap}.Layout),
 							layout.Flexed(1, func(gtx C) D {
 								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-									layout.Rigid(func(gtx C) D { return u.layoutRowTitle(gtx, c) }),
+									layout.Rigid(func(gtx C) D { return u.layoutRowTitle(gtx, c, o.verified) }),
 									layout.Rigid(layout.Spacer{Height: 3}.Layout),
 									layout.Rigid(func(gtx C) D { return u.layoutRowPreview(gtx, c, last, hovered) }),
 								)
@@ -267,7 +297,25 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 	})
 }
 
-func (u *UI) layoutRowTitle(gtx C, c *model.Chat) D {
+// nameWithBadge draws a name that truncates before a trailing verified
+// badge, which always stays visible.
+func (u *UI) nameWithBadge(gtx C, name string, size unit.Sp, col color.NRGBA, verified bool) D {
+	if !verified {
+		return u.label(size, name, col).Layout(gtx)
+	}
+	badge := gtx.Dp(22)
+	ngtx := gtx
+	ngtx.Constraints.Min.X = 0
+	ngtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-badge)
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { return u.label(size, name, col).Layout(ngtx) }),
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Left: 4}.Layout(gtx, iconW(icVerified, 18, u.pal.Verified))
+		}),
+	)
+}
+
+func (u *UI) layoutRowTitle(gtx C, c *model.Chat, verified bool) D {
 	p := u.pal
 	timeCol := p.TextSecondary
 	if c.Unread > 0 {
@@ -280,7 +328,7 @@ func (u *UI) layoutRowTitle(gtx C, c *model.Chat) D {
 	children := []layout.FlexChild{
 		layout.Flexed(1, func(gtx C) D {
 			if !c.Self {
-				return u.label(17.5, c.Name, p.Text).Layout(gtx)
+				return u.nameWithBadge(gtx, c.Name, 17.5, p.Text, verified)
 			}
 			// "Name (You)": the name truncates, the suffix never does.
 			return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,

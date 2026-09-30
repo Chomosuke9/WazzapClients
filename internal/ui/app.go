@@ -3,6 +3,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"sort"
 	"time"
 
@@ -40,6 +41,8 @@ type UI struct {
 	now    func() time.Time
 	window *app.Window // nil when rendering headless
 	deco   widget.Decorations
+	// winWidth is the window width in px, for panels sized relative to it.
+	winWidth int
 
 	backend model.Backend
 	conn    model.ConnEvent
@@ -49,9 +52,26 @@ type UI struct {
 
 	chats    []*model.Chat
 	selected *model.Chat
+	selPage  page             // page the selected chat was opened from
 	msgs     []*model.Message // loaded window of the selected chat
 	msgsVer  int              // bumped whenever msgs changes
 	images   *imageCache
+
+	page         page
+	statusSeen   time.Time // when the Status page was last open
+	channelsSeen time.Time // when the Channels page was last open
+	statuses     []*model.StatusThread
+	channels     []*model.Channel
+	suggested    []*model.Channel
+	communities  []*model.Community
+	clicks       map[string]*widget.Clickable // see btn
+
+	info     infoState
+	status   statusState
+	channel  channelState
+	commun   communityState
+	settings settingsState
+	calls    callsState
 
 	login struct {
 		retry  widget.Clickable
@@ -98,6 +118,14 @@ func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: time.Now, backend: b, syncPct: -1}
 	u.SetDark(true)
 	u.images = newImageCache(240)
+	u.clicks = make(map[string]*widget.Clickable)
+	u.info.list.Axis = layout.Vertical
+	u.status.list.Axis = layout.Vertical
+	u.channel.list.Axis = layout.Vertical
+	u.channel.search.SingleLine = true
+	u.commun.list.Axis = layout.Vertical
+	u.settings.list.Axis = layout.Vertical
+	u.settings.search.SingleLine = true
 	u.sidebar.search.SingleLine = true
 	u.sidebar.list.Axis = layout.Vertical
 	u.sidebar.rows = make(map[string]*widget.Clickable)
@@ -112,14 +140,72 @@ func New(b model.Backend) *UI {
 func (u *UI) Start(notify func()) {
 	u.images.invalidate = notify
 	u.setChats(u.backend.Chats())
+	u.loadPages()
 	u.backend.Start(notify)
+}
+
+// loadPages reads what the Status, Channels and Communities pages show.
+func (u *UI) loadPages() {
+	u.statuses = u.backend.Statuses()
+	u.channels = u.backend.Channels()
+	u.suggested = u.backend.SuggestedChannels()
+	u.communities = u.backend.Communities()
 }
 
 // Preview loads stored chats without starting the backend, for rendering
 // screenshots of a real session without connecting to WhatsApp.
 func (u *UI) Preview() {
 	u.setChats(u.backend.Chats())
+	u.loadPages()
 	u.conn = model.ConnEvent{State: model.StateOnline}
+}
+
+// SetMe sets the user's own name and JID (used for screenshots).
+func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
+
+// ShowPage switches the navigation rail to one of "chats", "archived",
+// "calls", "status", "channels", "communities" or "settings".
+func (u *UI) ShowPage(name string) {
+	pages := map[string]page{"chats": pageChats, "archived": pageChats, "calls": pageCalls, "status": pageStatus,
+		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings}
+	u.setPage(pages[name])
+	u.sidebar.showArchived = name == "archived"
+}
+
+// ShowStatus opens the status viewer on the i-th poster (used for screenshots).
+func (u *UI) ShowStatus(i int) {
+	u.setPage(pageStatus)
+	if i < len(u.statuses) {
+		u.status.viewer.show(u.statuses[i])
+	}
+}
+
+// ShowInfo opens the info panel of the selected chat, scrolled to the
+// given list item and pixel offset (used for screenshots).
+func (u *UI) ShowInfo(first, offset int) {
+	if u.selected == nil {
+		return
+	}
+	u.openInfo(u.selected.ID)
+	u.info.list.Position = layout.Position{First: first, Offset: offset}
+}
+
+func (u *UI) setPage(pg page) {
+	if u.page == pg {
+		return
+	}
+	// Leaving a page counts as having seen it, as does opening it.
+	for _, p := range []page{u.page, pg} {
+		switch p {
+		case pageStatus:
+			u.statusSeen = u.now()
+		case pageChannels:
+			u.channelsSeen = u.now()
+		}
+	}
+	u.page = pg
+	u.info.open = false
+	u.status.viewer.close()
 }
 
 // SelectName opens the first chat with the given name.
@@ -167,8 +253,12 @@ func (u *UI) SelectID(id string) {
 }
 
 func (u *UI) open(c *model.Chat) {
-	if u.selected != nil && u.selected.ID == c.ID {
+	if u.selected != nil && u.selected.ID == c.ID && u.selPage == u.page {
 		return
+	}
+	u.selPage = u.page
+	if u.info.open && u.info.chatID != c.ID {
+		u.info.open = false
 	}
 	u.selected = c
 	u.msgs = u.backend.Messages(c.ID, messageWindow)
@@ -210,6 +300,7 @@ func (u *UI) Layout(gtx C) D {
 	defer u.images.endFrame()
 
 	sz := gtx.Constraints.Max
+	u.winWidth = sz.X
 	fillRect(gtx, image.Rectangle{Max: sz}, u.pal.Frame)
 	tb := u.layoutTitleBar(gtx)
 	defer op.Offset(image.Pt(0, tb.Size.Y)).Push(gtx.Ops).Pop()
@@ -224,6 +315,7 @@ func (u *UI) Layout(gtx C) D {
 	u.layoutMain(gtx)
 	u.layoutMenu(gtx)
 	u.layoutFilterMenu(gtx)
+	u.layoutStatusViewer(gtx)
 	return D{Size: sz}
 }
 
@@ -232,7 +324,7 @@ func (u *UI) layoutMain(gtx C) D {
 	sz := gtx.Constraints.Max
 	railW := gtx.Dp(railWidth)
 	listW := int(float32(sz.X-railW) * 0.372)
-	listW = max(gtx.Dp(280), min(listW, gtx.Dp(440)))
+	listW = max(gtx.Dp(280), min(listW, gtx.Dp(430)))
 
 	rgtx := gtx
 	rgtx.Constraints = layout.Exact(image.Pt(railW, sz.Y))
@@ -256,19 +348,91 @@ func (u *UI) layoutMain(gtx C) D {
 	return layout.Flex{}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			gtx.Constraints = layout.Exact(image.Pt(listW, sz.Y))
-			return layout.Inset{Top: 1, Left: 1}.Layout(gtx, u.layoutSidebar)
+			return layout.Inset{Top: 1, Left: 1}.Layout(gtx, u.layoutPageSidebar)
 		}),
 		layout.Rigid(func(gtx C) D {
 			gtx.Constraints = layout.Exact(image.Pt(max(1, gtx.Dp(1)), sz.Y))
 			return fill(gtx, p.Divider)
 		}),
 		layout.Flexed(1, func(gtx C) D {
-			return layout.Inset{Top: 1}.Layout(gtx, func(gtx C) D {
-				if u.selected == nil {
-					return u.layoutEmpty(gtx)
-				}
-				return u.layoutConversation(gtx)
-			})
+			return layout.Inset{Top: 1}.Layout(gtx, u.layoutRightPane)
+		}),
+	)
+}
+
+// layoutPageSidebar draws the list column of the selected page.
+func (u *UI) layoutPageSidebar(gtx C) D {
+	switch u.page {
+	case pageStatus:
+		return u.layoutStatusList(gtx)
+	case pageChannels:
+		return u.layoutChannelList(gtx)
+	case pageCommunities:
+		return u.layoutCommunityList(gtx)
+	case pageSettings:
+		return u.layoutSettingsList(gtx)
+	case pageCalls:
+		return u.layoutCallsList(gtx)
+	}
+	return u.layoutSidebar(gtx)
+}
+
+// layoutRightPane draws the open conversation (with the info panel beside
+// it), or the selected page's placeholder.
+func (u *UI) layoutRightPane(gtx C) D {
+	if u.selected != nil && u.selPage == u.page && u.page != pageStatus && u.page != pageSettings {
+		if !u.info.open {
+			return u.layoutConversation(gtx)
+		}
+		return u.layoutWithInfo(gtx)
+	}
+	switch u.page {
+	case pageStatus:
+		return u.emptyPane(gtx, func(gtx C, col color.NRGBA) D { return statusIcon(gtx, 56, col, true) },
+			"Share statuses", "Share photos, videos and text that disappear after 24 hours.", "")
+	case pageChannels:
+		return u.emptyPane(gtx, func(gtx C, col color.NRGBA) D { return channelsIcon(gtx, 58, col, u.pal.Panel, true) },
+			"Discover channels", "Entertainment, sports, news, lifestyle, people and more. Follow the channels that interest you", "")
+	case pageCommunities:
+		return u.emptyPane(gtx, iconGlyph(icGroupsFill, 72),
+			"Create communities", "Bring members together in topic-based groups and easily send them admin announcements.",
+			"Your personal messages in communities are end-to-end encrypted")
+	case pageSettings:
+		return u.emptyPane(gtx, iconGlyph(icSettings, 64), "Settings", "Manage your account, privacy, chats and notifications.", "")
+	case pageCalls:
+		return u.emptyPane(gtx, iconGlyph(icCallLine, 60), "Calls",
+			"Calling from this app isn't supported yet. Use your phone to make and answer calls.", "")
+	}
+	return u.layoutEmpty(gtx)
+}
+
+// layoutWithInfo splits the pane between the conversation and the contact
+// or group info panel, which takes about 30% of the window like WhatsApp's.
+func (u *UI) layoutWithInfo(gtx C) D {
+	sz := gtx.Constraints.Max
+	infoW := max(gtx.Dp(340), int(float32(u.winWidth)*0.3))
+	infoW = min(infoW, sz.X)
+	convW := sz.X - infoW
+	if convW < gtx.Dp(380) {
+		// Too narrow to share: the panel covers the conversation.
+		cgtx := gtx
+		cgtx.Constraints = layout.Exact(sz)
+		u.layoutConversation(cgtx)
+		t := op.Offset(image.Pt(sz.X-infoW, 0)).Push(gtx.Ops)
+		igtx := gtx
+		igtx.Constraints = layout.Exact(image.Pt(infoW, sz.Y))
+		u.layoutInfo(igtx)
+		t.Pop()
+		return D{Size: sz}
+	}
+	return layout.Flex{}.Layout(gtx,
+		layout.Rigid(func(gtx C) D {
+			gtx.Constraints = layout.Exact(image.Pt(convW, sz.Y))
+			return u.layoutConversation(gtx)
+		}),
+		layout.Rigid(func(gtx C) D {
+			gtx.Constraints = layout.Exact(image.Pt(infoW, sz.Y))
+			return u.layoutInfo(gtx)
 		}),
 	)
 }
@@ -287,12 +451,27 @@ func (u *UI) update(gtx C) {
 		}
 	}
 	if u.rail.archived.Clicked(gtx) {
-		u.sidebar.showArchived = !u.sidebar.showArchived
+		u.sidebar.showArchived = u.page != pageChats || !u.sidebar.showArchived
+		u.setPage(pageChats)
 		u.sidebar.list.Position = layout.Position{}
 	}
 	if u.rail.chats.Clicked(gtx) || u.sidebar.back.Clicked(gtx) {
 		u.sidebar.showArchived = false
+		u.setPage(pageChats)
 		u.sidebar.list.Position = layout.Position{}
+	}
+	for c, pg := range map[*widget.Clickable]page{&u.rail.calls: pageCalls, &u.rail.status: pageStatus,
+		&u.rail.channels: pageChannels, &u.rail.communities: pageCommunities, &u.rail.profile: pageSettings} {
+		if c.Clicked(gtx) {
+			u.setPage(pg)
+		}
+	}
+	if u.conv.header.Clicked(gtx) && u.selected != nil && !isChannelID(u.selected.ID) {
+		if u.info.open {
+			u.info.open = false
+		} else {
+			u.openInfo(u.selected.ID)
+		}
 	}
 	for id, click := range u.sidebar.rows {
 		if click.Clicked(gtx) {
@@ -372,6 +551,17 @@ func (u *UI) applyEvents() {
 			u.images.forget("a:" + e.ID)
 		case model.MediaEvent:
 			u.images.forget("m:" + e.ChatID + "/" + e.MsgID)
+		case model.InfoEvent:
+			if u.info.open && u.info.chatID == e.ChatID {
+				u.info.data = u.backend.Info(e.ChatID)
+			}
+		case model.StatusEvent:
+			u.statuses = u.backend.Statuses()
+		case model.ChannelsEvent:
+			u.channels = u.backend.Channels()
+			u.suggested = u.backend.SuggestedChannels()
+		case model.CommunitiesEvent:
+			u.communities = u.backend.Communities()
 		}
 	}
 }
@@ -405,6 +595,9 @@ func (u *UI) setChats(chats []*model.Chat) {
 	u.sortChats()
 	if u.selected != nil {
 		sel := u.chatByID(u.selected.ID)
+		if isChannelID(u.selected.ID) {
+			sel = u.selected // channels aren't in the chat list
+		}
 		if sel == nil {
 			u.selected = nil
 			return

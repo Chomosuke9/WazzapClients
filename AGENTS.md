@@ -45,14 +45,28 @@ Gotchas already found in the pinned version (v0.10.x):
   `Center` and the corners clear both. Reset `Min` yourself if the child must shrink-wrap.
 - Gio blends colors in linear space, so a translucent overlay looks much stronger than the
   same alpha in CSS. For subtle tints (wallpaper doodles), pre-mix an opaque sRGB color.
-- `widget.Icon` caches only its last size and color. Use the `iconCache` in `internal/ui`
-  instead of sharing one `widget.Icon` across call sites.
+- `widget.Icon` caches only its last size and color. Icons come from `internal/ui/icon`
+  instead, which caches a rasterized image per size and color.
 - If a dependency fails to compile in a way upstream can't (e.g. an import cycle), run
   `go mod verify`. The module cache was once modified locally (probably by an IDE
   auto-import); delete that module version from `GOMODCACHE`, re-download it, and
   `go clean -cache`.
 - Text rendering supports bitmap color-emoji fonts (CBDT/sbix) but not COLR fonts such as
   Windows' Segoe UI Emoji, which renders monochrome.
+- The shaper never switches fonts for a space, so a space after an emoji takes the emoji
+  font's (very wide) advance. `narrowEmojiSpaces` in `internal/ui/fonts.go` patches the
+  bundled font's space glyphs at load time.
+- `layout.Flex` passes its cross-axis minimum to every child. Giving a row a minimum
+  height stretches its labels and pins their text to the top. Use `vcenter`
+  (`internal/ui/draw.go`) to make a row taller.
+- A `Flexed` child must return the full width it was given. If it returns less, the
+  `Rigid` children after it move left (see how `layoutListItem` applies `padRight`).
+- `layout.Center` doesn't center a child that is larger than the box; it places it at
+  0,0. Record the child and position it yourself.
+- `LineHeightScale` defaults to 1.2 and multiplies `LineHeight`. Set it to 1 when you
+  want an exact line height.
+- `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
+  `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -63,7 +77,11 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
-internal/ui/       Gio UI: login/QR, nav rail, chat list, conversation, composer
+internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
+                   settings), conversation and composer, contact/group info panel
+internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
+                   wallpaper doodles
+internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 ```
@@ -81,6 +99,14 @@ internal/mock/     demo Backend with fake chats (used by -demo and cmd/screensho
   to the same SQLite file and would block until the busy timeout (see `onHistory`).
 - One-to-one chats are keyed by LID when a mapping is known (`canonical`), because
   hypermeow treats the LID as the stable identity.
+- Channels (newsletters) are stored like chats in `wz_chats`/`wz_messages`, plus their
+  metadata in `wz_channels`, and are left out of the chat list. Status updates live in
+  `wz_status`. Community structure is in the `parent`, `community` and `announce_sub`
+  columns of `wz_chats`, filled from `GetJoinedGroups` on connect.
+- Measure against real WhatsApp Desktop screenshots instead of guessing sizes. Use
+  `cmd/screenshot -compare`, which renders the same view at the screenshot's scale next to
+  it (see Commands). Full-window screenshots at 2000px wide are 1.22 px/dp; native
+  2560x1600 crops are 1.5616 px/dp.
 - Sizes are in `unit.Dp` / `unit.Sp`, never raw pixels. Convert with `gtx.Dp` / `gtx.Sp`.
 - Colors live in `internal/ui/theme.go` (light and dark palettes). Don't hard-code colors
   in widgets.
@@ -94,4 +120,14 @@ go run ./cmd/wazzap            # run the app (links to WhatsApp via QR code)
 go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
 go vet ./... && go build ./...
+
+# Side by side with a WhatsApp screenshot (writes compare.png and ours.png).
+# -view: chats, archived, status, channels, communities, settings, info, statusviewer
+go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
+# A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
+go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
+    -scale 1.5616 -view info -infoscroll 7 -infooffset 40
+# Render your real stored chats instead of demo data (no network):
+go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \
+    -data "$APPDATA/WazzapClients" -view channels
 ```

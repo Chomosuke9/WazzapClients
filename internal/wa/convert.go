@@ -30,6 +30,7 @@ type content struct {
 	duration int
 	thumb    []byte
 	blob     []byte // marshaled media message, for downloads
+	bg       uint32 // ARGB background of a text status
 	ctx      *waE2E.ContextInfo
 }
 
@@ -44,7 +45,7 @@ func describe(m *waE2E.Message) content {
 		return content{text: m.GetConversation()}
 	case m.GetExtendedTextMessage() != nil:
 		e := m.GetExtendedTextMessage()
-		return content{text: e.GetText(), ctx: e.GetContextInfo()}
+		return content{text: e.GetText(), bg: e.GetBackgroundArgb(), ctx: e.GetContextInfo()}
 	case m.GetImageMessage() != nil:
 		e := m.GetImageMessage()
 		return content{text: e.GetCaption(), kind: model.KindImage, media: model.MediaImage,

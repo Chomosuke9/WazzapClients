@@ -168,8 +168,9 @@ func strokeArc(gtx C, c f32.Point, r, start, sweep, width float32, col color.NRG
 	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: width}.Op())
 }
 
-// statusIcon is the "Status" glyph: a ring inside a ring broken into four arcs.
-func statusIcon(gtx C, size unit.Dp, col color.NRGBA) D {
+// statusIcon is the "Status" glyph: a ring inside a ring broken into four
+// arcs. The selected variant fills the inner ring.
+func statusIcon(gtx C, size unit.Dp, col color.NRGBA, filled bool) D {
 	px := float32(gtx.Dp(size))
 	c := f32.Pt(px/2, px/2)
 	w := px * 0.09
@@ -178,13 +179,18 @@ func statusIcon(gtx C, size unit.Dp, col color.NRGBA) D {
 		start := float32(i)*math.Pi/2 - math.Pi/4 + gap/2
 		strokeArc(gtx, c, px*0.42, start, math.Pi/2-gap, w, col)
 	}
-	strokeArc(gtx, c, px*0.22, 0, 2*math.Pi, w, col)
+	if filled {
+		fillCircle(gtx, image.Pt(int(c.X), int(c.Y)), int(px*0.22+w/2), col)
+	} else {
+		strokeArc(gtx, c, px*0.22, 0, 2*math.Pi, w, col)
+	}
 	return D{Size: image.Pt(int(px), int(px))}
 }
 
 // channelsIcon is the "Channels" glyph: a round speech bubble with a
-// broadcast symbol inside.
-func channelsIcon(gtx C, size unit.Dp, col color.NRGBA) D {
+// broadcast symbol inside. The selected variant is a solid bubble with the
+// symbol cut out in bg.
+func channelsIcon(gtx C, size unit.Dp, col, bg color.NRGBA, filled bool) D {
 	px := float32(gtx.Dp(size))
 	c := f32.Pt(px*0.52, px*0.47)
 	r := px * 0.38
@@ -193,16 +199,26 @@ func channelsIcon(gtx C, size unit.Dp, col color.NRGBA) D {
 		a := deg * math.Pi / 180
 		return f32.Pt(c.X+r*float32(math.Cos(a)), c.Y+r*float32(math.Sin(a)))
 	}
-	var p clip.Path
-	p.Begin(gtx.Ops)
-	p.MoveTo(pt(150))
-	p.ArcTo(c, c, float32(310*math.Pi/180))
-	p.LineTo(f32.Pt(px*0.1, px*0.9))
-	p.Close()
-	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: w}.Op())
-	fillCircle(gtx, image.Pt(int(c.X), int(c.Y)), int(px*0.06), col)
-	strokeArc(gtx, c, px*0.18, -math.Pi/4, math.Pi/2, w, col)
-	strokeArc(gtx, c, px*0.18, math.Pi*3/4, math.Pi/2, w, col)
+	bubble := func() clip.PathSpec {
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(pt(150))
+		p.ArcTo(c, c, float32(310*math.Pi/180))
+		p.LineTo(f32.Pt(px*0.1, px*0.9))
+		p.Close()
+		return p.End()
+	}
+	glyph := col
+	if filled {
+		paint.FillShape(gtx.Ops, col, clip.Outline{Path: bubble()}.Op())
+		paint.FillShape(gtx.Ops, col, clip.Stroke{Path: bubble(), Width: w}.Op())
+		glyph = bg
+	} else {
+		paint.FillShape(gtx.Ops, col, clip.Stroke{Path: bubble(), Width: w}.Op())
+	}
+	fillCircle(gtx, image.Pt(int(c.X), int(c.Y)), int(px*0.06), glyph)
+	strokeArc(gtx, c, px*0.18, -math.Pi/4, math.Pi/2, w, glyph)
+	strokeArc(gtx, c, px*0.18, math.Pi*3/4, math.Pi/2, w, glyph)
 	return D{Size: image.Pt(int(px), int(px))}
 }
 
@@ -228,6 +244,32 @@ func chatsIcon(gtx C, size unit.Dp, col, bg color.NRGBA) D {
 	}
 	line(9, 18, 10.5)
 	line(9, 16, 14.5)
+	return D{Size: image.Pt(int(px), int(px))}
+}
+
+// chatsOutline is the unselected "Chats" glyph: the same message box as
+// chatsIcon, outlined.
+func chatsOutline(gtx C, size unit.Dp, col color.NRGBA) D {
+	px := float32(gtx.Dp(size))
+	u := px / 24
+	w := 1.9 * u
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(f32.Pt(2.2*u, 4.6*u))
+	p.LineTo(f32.Pt(19*u, 4.6*u))
+	p.QuadTo(f32.Pt(21.4*u, 4.6*u), f32.Pt(21.4*u, 7*u))
+	p.LineTo(f32.Pt(21.4*u, 17*u))
+	p.QuadTo(f32.Pt(21.4*u, 19.4*u), f32.Pt(19*u, 19.4*u))
+	p.LineTo(f32.Pt(8*u, 19.4*u))
+	p.QuadTo(f32.Pt(5.6*u, 19.4*u), f32.Pt(5.6*u, 17*u))
+	p.LineTo(f32.Pt(5.6*u, 8.4*u))
+	p.Close()
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: w}.Op())
+	line := func(x0, x1, y float32) {
+		fillRRect(gtx, image.Rect(int(x0*u), int(y*u-w/2), int(x1*u), int(y*u+w/2)), int(w/2), col)
+	}
+	line(9, 18, 10.3)
+	line(9, 15.5, 14)
 	return D{Size: image.Pt(int(px), int(px))}
 }
 
