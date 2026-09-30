@@ -539,6 +539,11 @@ func (u *UI) layoutMemberItem(gtx C, c *widget.Clickable, it listItem, g listGeo
 // disappearingIcon is WhatsApp's disappearing-messages glyph: a timer dial,
 // solid on the left and dotted on the right, with a hand.
 func disappearingIcon(gtx C, col color.NRGBA) D {
+	return cachedGlyph(gtx, glyphKey{name: "disappearing", px: gtx.Dp(26), col: col},
+		func(gtx C) D { return drawDisappearingIcon(gtx, col) })
+}
+
+func drawDisappearingIcon(gtx C, col color.NRGBA) D {
 	px := float32(gtx.Dp(26))
 	u := px / 26
 	c := f32.Pt(13*u, 13*u)

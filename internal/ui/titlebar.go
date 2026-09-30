@@ -89,6 +89,11 @@ func glyphMinimize(gtx C, col color.NRGBA) {
 }
 
 func (u *UI) glyphMaximize(gtx C, col color.NRGBA) {
+	cachedGlyph(gtx, glyphKey{name: "maximize", px: gtx.Dp(10), col: col, flag: u.deco.Maximized},
+		func(gtx C) D { u.drawGlyphMaximize(gtx, col); return D{} })
+}
+
+func (u *UI) drawGlyphMaximize(gtx C, col color.NRGBA) {
 	g := float32(gtx.Dp(10))
 	lw := float32(max(1, gtx.Dp(1)))
 	if u.deco.Maximized {
@@ -108,6 +113,11 @@ func (u *UI) glyphMaximize(gtx C, col color.NRGBA) {
 }
 
 func glyphClose(gtx C, col color.NRGBA) {
+	cachedGlyph(gtx, glyphKey{name: "close", px: gtx.Dp(10), col: col},
+		func(gtx C) D { drawGlyphClose(gtx, col); return D{} })
+}
+
+func drawGlyphClose(gtx C, col color.NRGBA) {
 	g := float32(gtx.Dp(10))
 	var p clip.Path
 	p.Begin(gtx.Ops)

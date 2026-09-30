@@ -68,7 +68,7 @@ type labelOpts struct {
 }
 
 func (u *UI) label(size unit.Sp, txt string, col color.NRGBA, o ...labelOpts) material.LabelStyle {
-	l := material.Label(u.th, size, txt)
+	l := material.Label(u.th, size, displayText(txt))
 	l.Color = col
 	l.MaxLines = 1
 	if len(o) > 0 {
@@ -171,6 +171,11 @@ func strokeArc(gtx C, c f32.Point, r, start, sweep, width float32, col color.NRG
 // statusIcon is the "Status" glyph: a ring inside a ring broken into four
 // arcs. The selected variant fills the inner ring.
 func statusIcon(gtx C, size unit.Dp, col color.NRGBA, filled bool) D {
+	return cachedGlyph(gtx, glyphKey{name: "status", px: gtx.Dp(size), col: col, flag: filled},
+		func(gtx C) D { return drawStatusIcon(gtx, size, col, filled) })
+}
+
+func drawStatusIcon(gtx C, size unit.Dp, col color.NRGBA, filled bool) D {
 	px := float32(gtx.Dp(size))
 	c := f32.Pt(px/2, px/2)
 	w := px * 0.09
@@ -191,6 +196,11 @@ func statusIcon(gtx C, size unit.Dp, col color.NRGBA, filled bool) D {
 // broadcast symbol inside. The selected variant is a solid bubble with the
 // symbol cut out in bg.
 func channelsIcon(gtx C, size unit.Dp, col, bg color.NRGBA, filled bool) D {
+	return cachedGlyph(gtx, glyphKey{name: "channels", px: gtx.Dp(size), col: col, bg: bg, flag: filled},
+		func(gtx C) D { return drawChannelsIcon(gtx, size, col, bg, filled) })
+}
+
+func drawChannelsIcon(gtx C, size unit.Dp, col, bg color.NRGBA, filled bool) D {
 	px := float32(gtx.Dp(size))
 	c := f32.Pt(px*0.52, px*0.47)
 	r := px * 0.38
@@ -250,6 +260,11 @@ func chatsIcon(gtx C, size unit.Dp, col, bg color.NRGBA) D {
 // chatsOutline is the unselected "Chats" glyph: the same message box as
 // chatsIcon, outlined.
 func chatsOutline(gtx C, size unit.Dp, col color.NRGBA) D {
+	return cachedGlyph(gtx, glyphKey{name: "chats", px: gtx.Dp(size), col: col},
+		func(gtx C) D { return drawChatsOutline(gtx, size, col) })
+}
+
+func drawChatsOutline(gtx C, size unit.Dp, col color.NRGBA) D {
 	px := float32(gtx.Dp(size))
 	u := px / 24
 	w := 1.9 * u

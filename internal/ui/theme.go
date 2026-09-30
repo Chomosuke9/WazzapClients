@@ -191,7 +191,13 @@ var notoColorEmoji []byte
 
 // Typeface prefers Segoe UI (what WhatsApp Desktop uses on Windows), color
 // emoji from Noto, then common system UI fonts and the bundled Go fonts.
-const typeface font.Typeface = "Segoe UI, Noto Color Emoji, Segoe UI Symbol, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
+//
+// MS Gothic covers Japanese and most Chinese text in a single file for
+// every weight. Without it the fallback picks Yu Gothic, whose weights are
+// separate files that each cost ~40 MB of heap once loaded (the whole
+// glyph table is parsed), so a bold name plus a regular message would load
+// two of them.
+const typeface font.Typeface = "Segoe UI, Noto Color Emoji, Segoe UI Symbol, MS Gothic, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
 
 var patchEmoji sync.Once
 

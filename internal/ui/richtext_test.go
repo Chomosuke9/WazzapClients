@@ -49,3 +49,12 @@ func TestPlainText(t *testing.T) {
 		t.Errorf("plainText = %q", got)
 	}
 }
+
+func TestDisplayText(t *testing.T) {
+	if got := displayText("a\tb\x02c\x7f\n⁨@Vi⁩"); got != "a bc\n@Vi" {
+		t.Errorf("displayText = %q", got)
+	}
+	if s := "plain text ✓"; displayText(s) != s {
+		t.Error("clean text changed")
+	}
+}

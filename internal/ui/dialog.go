@@ -44,6 +44,7 @@ type dialogState struct {
 	picked []string // chat IDs, in the order they were picked
 	search widget.Editor
 	list   widget.List
+	chats  []*model.Chat // matching chats, a buffer reused every frame
 }
 
 // confirm asks before a destructive action. A Cancel button is added.
@@ -247,12 +248,13 @@ func (u *UI) forwardPanel(gtx C) D {
 		return D{}
 	}
 	q := strings.ToLower(trimSpace(d.search.Text()))
-	var chats []*model.Chat
+	chats := d.chats[:0] // reused every frame
 	for _, c := range u.chats {
 		if q == "" || strings.Contains(strings.ToLower(c.Name), q) {
 			chats = append(chats, c)
 		}
 	}
+	d.chats = chats
 	for _, c := range chats {
 		if u.btn("fwd:" + c.ID).Clicked(gtx) {
 			if i := indexOf(d.picked, c.ID); i >= 0 {

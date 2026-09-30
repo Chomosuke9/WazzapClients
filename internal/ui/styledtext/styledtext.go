@@ -142,8 +142,10 @@ func (t TextStyle) layoutSpan(gtx layout.Context, maxWidth int, span SpanStyle) 
 	multiLine := runesDisplayed < utf8.RuneCountInString(span.Content)
 	endedWithNewline := ti.hasNewline
 	if multiLine {
+		// Skip runesDisplayed runes (not bytes: multi-byte text, like
+		// CJK, would otherwise stop early and miss a hard newline).
 		var i int
-		for i = 0; i < runesDisplayed; {
+		for n := 0; n < runesDisplayed && i < len(span.Content); n++ {
 			_, sz := utf8.DecodeRuneInString(span.Content[i:])
 			i += sz
 		}

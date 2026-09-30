@@ -151,7 +151,7 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool) 
 	var isCode, isStrike bool
 	add := func(s string, f font.Font, c color.NRGBA) {
 		if s != "" {
-			spans = append(spans, styledtext.SpanStyle{Font: f, Size: size, Color: c, Content: s})
+			spans = append(spans, styledtext.SpanStyle{Font: f, Size: size, Color: c, Content: displayText(s)})
 			code, strike = append(code, isCode), append(strike, isStrike)
 		}
 	}
@@ -258,11 +258,12 @@ func parseBlocks(s string) []textBlock {
 // for a leading icon and the room for the time.
 func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.NRGBA, italic bool, prefix, suffix string) D {
 	plain := font.Font{Typeface: typeface}
-	blocks := parseBlocks(text)
+	blocks := u.parsedRich(text, size, col, italic)
 	maxW := gtx.Constraints.Max.X
 	y, w := 0, 0
 	for i, b := range blocks {
-		spans, code, strike := u.richSpans(b.text, size, col, italic)
+		// The parsed spans are cached: cap them so appends copy.
+		spans, code, strike := b.spans[:len(b.spans):len(b.spans)], b.code[:len(b.code):len(b.code)], b.strike[:len(b.strike):len(b.strike)]
 		if i == 0 && prefix != "" {
 			spans = append([]styledtext.SpanStyle{{Font: plain, Size: size, Color: col, Content: prefix}}, spans...)
 			code, strike = append([]bool{false}, code...), append([]bool{false}, strike...)

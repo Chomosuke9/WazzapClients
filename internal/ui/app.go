@@ -267,6 +267,7 @@ func (u *UI) SetDark(dark bool) {
 	}
 	u.th.Palette.Fg = u.pal.Text
 	u.th.Palette.Bg = u.pal.Panel
+	richBlocks.m = nil // spans carry palette colors (mentions, links)
 	u.th.Palette.ContrastBg = u.pal.Green
 }
 

@@ -181,7 +181,7 @@ func (u *UI) layoutChips(gtx C) D {
 
 func (u *UI) filteredChats() []*model.Chat {
 	q := strings.ToLower(trimSpace(u.sidebar.search.Text()))
-	var out []*model.Chat
+	out := u.sidebar.visible[:0] // reused every frame
 	for _, c := range u.chats {
 		if c.Archived != u.sidebar.showArchived {
 			continue
@@ -487,7 +487,7 @@ func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, hovered
 			children = append(children, small(mediaIcon(last.Media), col, 18, 4))
 			txt = mediaLabel(last)
 		}
-		children = append(children, layout.Flexed(1, u.label(size, firstLine(plainText(txt)), p.TextSecondary, labelOpts{maxLines: 1, italic: italic}).Layout))
+		children = append(children, layout.Flexed(1, u.label(size, previewText(txt), p.TextSecondary, labelOpts{maxLines: 1, italic: italic}).Layout))
 	}
 
 	// Indicators are rigid children of the outer row, so Flex sizes them

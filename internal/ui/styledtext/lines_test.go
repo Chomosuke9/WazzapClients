@@ -27,6 +27,7 @@ func TestNewlineHeight(t *testing.T) {
 		{[]string{"x ", "B", "\nline2\nline3"}, 3},
 		{[]string{"x ", "B", "\nline2\nline3", " \u00a0\u00a0"}, 3},
 		{[]string{"x\n\ny"}, 3},
+		{[]string{"héllö ✓\n\ny"}, 3}, // multi-byte runes before a blank line
 		{[]string{"a\r\nb"}, 2},
 	}
 	for _, tt := range tests {
