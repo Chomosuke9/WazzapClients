@@ -547,11 +547,14 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		var picker part
 		if ghost := c.mentionGhost; ghost != nil {
-			pg := gtx
-			if ms == nil {
-				pg = gtx.Disabled() // fading out
-			}
-			picker = record(pg, func(gtx C) D { return u.layoutMentionPicker(gtx, ghost) })
+			picker = record(gtx, func(gtx C) D {
+				if ms == nil {
+					var done func()
+					gtx, done = fadeOut(gtx)
+					defer done()
+				}
+				return u.layoutMentionPicker(gtx, ghost)
+			})
 		}
 		m := op.Record(gtx.Ops)
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -560,12 +563,15 @@ func (u *UI) layoutComposerBox(gtx C) D {
 				if ghost == nil {
 					return D{}
 				}
-				pg := gtx
-				if reply == nil {
-					pg = gtx.Disabled() // shrinking away
-				}
 				// The preview rises out of the input as the box grows.
-				full := record(pg, func(gtx C) D { return u.layoutReplyPreview(gtx, ghost) })
+				full := record(gtx, func(gtx C) D {
+					if reply == nil {
+						var done func()
+						gtx, done = fadeOut(gtx)
+						defer done()
+					}
+					return u.layoutReplyPreview(gtx, ghost)
+				})
 				h := lerpInt(0, full.size.Y, rv)
 				defer clip.Rect{Max: image.Pt(full.size.X, h)}.Push(gtx.Ops).Pop()
 				withOpacity(gtx, rv, func() { full.at(gtx, 0, h-full.size.Y) })

@@ -553,7 +553,9 @@ func (u *UI) layoutWithInfo(gtx C) D {
 	t := op.Offset(image.Pt(sz.X-shown, 0)).Push(gtx.Ops)
 	igtx := gtx
 	if !u.info.open {
-		igtx = igtx.Disabled() // sliding away
+		var done func()
+		igtx, done = fadeOut(igtx)
+		defer done()
 	}
 	igtx.Constraints = layout.Exact(image.Pt(infoW, sz.Y))
 	u.layoutInfo(igtx)

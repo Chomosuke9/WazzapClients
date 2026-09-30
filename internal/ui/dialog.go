@@ -123,7 +123,9 @@ func (u *UI) layoutDialog(gtx C) {
 	e := easeOut(v)
 	sz := gtx.Constraints.Max
 	if d.closing {
-		gtx = gtx.Disabled() // clicks go through while it fades
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
 		fillRect(gtx, image.Rectangle{Max: sz}, faded(p.Scrim, e))
 	} else {
 		sgtx := gtx

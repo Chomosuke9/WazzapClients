@@ -98,6 +98,9 @@ Gotchas already found in the pinned version (v0.10.x):
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
 - `gtx.Disabled()` blocks `gtx.Execute` too, so a disabled context can't ask for the
   next frame. Step animations with the enabled context before disabling it.
+- A disabled context still registers its input areas, and Gio hit-tests them: they
+  read no events but block every handler underneath. Draw anything fading away with
+  `fadeOut` (`anim.go`), which also pushes a `pointer.PassOp`.
 - A `ScrollToEnd` list drops a trailing child of height 0 when it trims to the
   viewport, then stops following the end. Rows that grow in start at 1px.
 - `paint.PushOpacity` draws into an offscreen texture that Gio keeps, at the largest
@@ -182,7 +185,7 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
   and `switcher` moves a highlight between items (the open chat, the active rail
   button). Hovers and other per-widget fades go through `u.hover` and `u.anims`.
 - A closing overlay keeps its state with a `closing` flag (or a "ghost" copy of what
-  it showed) and draws with `gtx.Disabled()` while it fades, so clicks go through.
+  it showed) and draws with `fadeOut(gtx)` while it fades, so clicks go through.
   Check `isOpen()` or `shown()` rather than the raw fields.
 - Don't animate icon or `cachedGlyph` colors: both are cached per color. Cross-fade
   two colors with `withOpacity`.

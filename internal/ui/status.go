@@ -327,7 +327,9 @@ func (u *UI) layoutStatusViewer(gtx C) {
 			gtx.Execute(op.InvalidateCmd{At: now.Add(50 * time.Millisecond)})
 		}
 	} else {
-		gtx = gtx.Disabled() // fading out: no timer, clicks go through
+		var done func()
+		gtx, done = fadeOut(gtx) // no timer either
+		defer done()
 		elapsed = min(max(elapsed, 0), statusDuration)
 	}
 	up := t.Updates[v.index]

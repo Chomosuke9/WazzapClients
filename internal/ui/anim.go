@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -390,4 +391,14 @@ func (u *UI) veil(gtx C, r image.Rectangle, col color.NRGBA, v float32) {
 	if v < 1 {
 		fillRect(gtx, r, faded(col, 1-v))
 	}
+}
+
+// fadeOut is the context for something that is fading or sliding away:
+// disabled, so it takes no input, and letting clicks through. Gio still
+// hit-tests the input areas of a disabled context, so without the pass
+// they would swallow clicks meant for what's underneath until the fade
+// ends. Call the returned pop once it is drawn.
+func fadeOut(gtx C) (C, func()) {
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	return gtx.Disabled(), pass.Pop
 }

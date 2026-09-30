@@ -185,7 +185,9 @@ func (u *UI) layoutViewer(gtx C) {
 		return
 	}
 	if !v.open {
-		gtx = gtx.Disabled() // clicks go through while it fades
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
 	} else {
 		u.syncVideo(m)
 	}

@@ -226,7 +226,9 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 		sgtx.Constraints = layout.Exact(sz)
 		e.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	} else {
-		gtx = gtx.Disabled() // clicks go through while it fades
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
 	}
 
 	w := min(gtx.Dp(614), maxW)
