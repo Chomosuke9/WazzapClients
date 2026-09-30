@@ -3,9 +3,11 @@ package ui
 import (
 	"image"
 	"image/color"
+	"math"
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -319,11 +321,17 @@ func fadeW(gtx C, a float32, w layout.Widget) D {
 	return w(gtx)
 }
 
+// fxDepth counts the transforms pushFx has pushed that aren't whole-pixel
+// translations, so drawing code can tell when it may not be pixel aligned.
+// Only the window goroutine draws.
+var fxDepth int
+
 // fxStack is a transform and an opacity pushed together; see pushFx.
 type fxStack struct {
 	t          op.TransformStack
 	o          paint.OpacityStack
 	hasT, hasO bool
+	scaled     bool // not a whole-pixel translation; see fxDepth
 }
 
 // pushFx transforms and fades what is drawn until Pop. The identity and
@@ -332,6 +340,10 @@ func pushFx(gtx C, opacity float32, tr f32.Affine2D) fxStack {
 	var s fxStack
 	if tr != (f32.Affine2D{}) {
 		s.t, s.hasT = op.Affine(tr).Push(gtx.Ops), true
+		if sx, hx, ox, hy, sy, oy := tr.Elems(); sx != 1 || hx != 0 || hy != 0 || sy != 1 || ox != float32(int(ox)) || oy != float32(int(oy)) {
+			s.scaled = true
+			fxDepth++
+		}
 	}
 	if opacity < 1 {
 		s.o, s.hasO = paint.PushOpacity(gtx.Ops, max(opacity, 0)), true
@@ -346,6 +358,9 @@ func (s fxStack) Pop() {
 	if s.hasT {
 		s.t.Pop()
 	}
+	if s.scaled {
+		fxDepth--
+	}
 }
 
 // scaleAt scales by s around origin.
@@ -356,9 +371,11 @@ func scaleAt(origin image.Point, s float32) f32.Affine2D {
 	return f32.AffineId().Scale(pointF(origin), f32.Pt(s, s))
 }
 
-// moveBy translates by d px.
+// moveBy translates by d px, rounded to whole pixels. Under a fractional
+// offset Gio stencils every clip rectangle as a path, and rebuilds text
+// outlines, which is slow and grows its coverage texture for good.
 func moveBy(dx, dy float32) f32.Affine2D {
-	return f32.AffineId().Offset(f32.Pt(dx, dy))
+	return f32.AffineId().Offset(f32.Pt(float32(math.Round(float64(dx))), float32(math.Round(float64(dy)))))
 }
 
 // pushPopup animates a popup at linear progress v: it grows from 90% out
@@ -374,4 +391,14 @@ func (u *UI) veil(gtx C, r image.Rectangle, col color.NRGBA, v float32) {
 	if v < 1 {
 		fillRect(gtx, r, faded(col, 1-v))
 	}
+}
+
+// fadeOut is the context for something that is fading or sliding away:
+// disabled, so it takes no input, and letting clicks through. Gio still
+// hit-tests the input areas of a disabled context, so without the pass
+// they would swallow clicks meant for what's underneath until the fade
+// ends. Call the returned pop once it is drawn.
+func fadeOut(gtx C) (C, func()) {
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	return gtx.Disabled(), pass.Pop
 }

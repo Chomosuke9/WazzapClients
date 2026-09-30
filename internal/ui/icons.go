@@ -100,6 +100,10 @@ var (
 	icZoomIn        = icon.ZoomIn
 	icZoomOut       = icon.ZoomOut
 	icChevronLeft   = icon.ChevronLeft
+	icPlayFill      = icon.PlayArrowFill
+	icPauseFill     = icon.PauseFill
+	icVolumeFill    = icon.VolumeUpFill
+	icVolumeOffFill = icon.VolumeOffFill
 
 	// Emoji picker categories.
 	icEmojiPeople  = icon.Mood

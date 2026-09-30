@@ -1,2 +1,4 @@
 # gofmt emits LF; keep Windows checkouts in the same format as Linux.
 *.go text eol=lf
+*.patch text eol=lf
+*.sh text eol=lf

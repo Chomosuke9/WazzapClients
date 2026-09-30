@@ -5,26 +5,68 @@ import (
 	"sync"
 
 	"gioui.org/font"
-	"gioui.org/font/gofont"
 	"gioui.org/font/opentype"
+	fontapi "github.com/go-text/typesetting/font"
+	ot "github.com/go-text/typesetting/font/opentype"
+	"golang.org/x/image/font/gofont/gobold"
+	"golang.org/x/image/font/gofont/gobolditalic"
+	"golang.org/x/image/font/gofont/goitalic"
+	"golang.org/x/image/font/gofont/gomedium"
+	"golang.org/x/image/font/gofont/gomediumitalic"
+	"golang.org/x/image/font/gofont/gomono"
+	"golang.org/x/image/font/gofont/gomonobold"
+	"golang.org/x/image/font/gofont/goregular"
 )
 
 // Keep the patched face distinct from any unpatched Noto Color Emoji installed
 // on the system. Gio loads system faces first and may select them on a tie.
 const emojiTypeface font.Typeface = "WazzapClients Emoji"
 
-var patchEmoji sync.Once
+var (
+	loadFonts sync.Once
+	bundled   []font.FontFace
+)
 
+// bundledFonts returns the Go fonts (the last fallback) and the color emoji
+// font. They are parsed once and shared by every shaper.
 func bundledFonts() []font.FontFace {
-	faces := gofont.Collection()
-	patchEmoji.Do(func() { narrowEmojiSpaces(notoColorEmoji) })
-	if emoji, err := opentype.ParseCollection(notoColorEmoji); err == nil {
-		for i := range emoji {
-			emoji[i].Font.Typeface = emojiTypeface
+	loadFonts.Do(func() {
+		for _, ttf := range [][]byte{goregular.TTF, gomedium.TTF, gobold.TTF, goitalic.TTF,
+			gomediumitalic.TTF, gobolditalic.TTF, gomono.TTF, gomonobold.TTF} {
+			bundled = append(bundled, parseInPlace(ttf)...)
 		}
-		faces = append(faces, emoji...)
+		narrowEmojiSpaces(notoColorEmoji)
+		for _, f := range parseInPlace(notoColorEmoji) {
+			f.Font.Typeface = emojiTypeface
+			bundled = append(bundled, f)
+		}
+	})
+	return bundled[:len(bundled):len(bundled)]
+}
+
+// memFace is a font parsed from bytes that stay in memory.
+type memFace struct{ font *fontapi.Font }
+
+func (f memFace) Face() *fontapi.Face { return fontapi.NewFace(f.font) }
+
+// parseInPlace parses a font (or collection) whose tables stay in data,
+// which is embedded in the binary. opentype.ParseCollection would copy
+// every table to the heap: 10 MB for the emoji bitmaps alone. The patched
+// go-text in third_party/typesetting reads a BytesReader in place.
+func parseInPlace(data []byte) []font.FontFace {
+	lds, err := ot.NewLoaders(ot.NewBytesReader(data))
+	if err != nil {
+		return nil
 	}
-	return faces
+	var out []font.FontFace
+	for _, ld := range lds {
+		ft, err := fontapi.NewFont(ld)
+		if err != nil {
+			continue
+		}
+		out = append(out, font.FontFace{Font: opentype.DescriptionToFont(ft.Describe()), Face: memFace{ft}})
+	}
+	return out
 }
 
 // narrowEmojiSpaces sets the advance of the emoji font's space glyphs to a

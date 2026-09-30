@@ -123,7 +123,9 @@ func (u *UI) layoutDialog(gtx C) {
 	e := easeOut(v)
 	sz := gtx.Constraints.Max
 	if d.closing {
-		gtx = gtx.Disabled() // clicks go through while it fades
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
 		fillRect(gtx, image.Rectangle{Max: sz}, faded(p.Scrim, e))
 	} else {
 		sgtx := gtx
@@ -300,9 +302,7 @@ func (u *UI) forwardPanel(gtx C) D {
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
-			l := material.List(u.th, &d.list)
-			l.AnchorStrategy = material.Overlay
-			return l.Layout(gtx, len(chats), func(gtx C, i int) D {
+			return u.scrollList(gtx, &d.list, len(chats), func(gtx C, i int) D {
 				c := chats[i]
 				on := indexOf(d.picked, c.ID) >= 0
 				cl := u.btn("fwd:" + c.ID)

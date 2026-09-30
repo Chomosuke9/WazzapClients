@@ -226,7 +226,9 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 		sgtx.Constraints = layout.Exact(sz)
 		e.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	} else {
-		gtx = gtx.Disabled() // clicks go through while it fades
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
 	}
 
 	w := min(gtx.Dp(614), maxW)
@@ -369,11 +371,7 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
-			l := material.List(u.th, &e.list)
-			l.AnchorStrategy = material.Overlay
-			l.Indicator.Color = p.TextSecondary
-			l.Indicator.Color.A = 0x50
-			return l.Layout(gtx, len(rows)+1, func(gtx C, i int) D {
+			return u.scrollList(gtx, &e.list, len(rows)+1, func(gtx C, i int) D {
 				if i == len(rows) {
 					return D{Size: image.Pt(0, gtx.Dp(56))} // room for the tabs
 				}
@@ -484,9 +482,8 @@ func (u *UI) layoutStickerTab(gtx C) D {
 	cell := gtx.Dp(110)
 	cols := max(2, (w-gtx.Dp(24))/cell)
 	n := (len(e.stickers) + cols - 1) / cols
-	l := material.List(u.th, &e.list)
 	return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D {
-		return l.Layout(gtx, n+1, func(gtx C, row int) D {
+		return u.scrollList(gtx, &e.list, n+1, func(gtx C, row int) D {
 			if row == n {
 				return D{Size: image.Pt(0, gtx.Dp(56))}
 			}
@@ -521,9 +518,4 @@ func (u *UI) layoutStickerTab(gtx C) D {
 func centerIn2(gtx C, w, h int, wd layout.Widget) D {
 	gtx.Constraints = layout.Exact(image.Pt(w, h))
 	return layout.Center.Layout(gtx, wd)
-}
-
-func paintRRect(gtx C, rr clip.RRect, col color.NRGBA) {
-	defer rr.Push(gtx.Ops).Pop()
-	fillRect(gtx, rr.Rect, col)
 }

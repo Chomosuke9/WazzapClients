@@ -49,7 +49,9 @@ func (u *UI) layoutMenu(gtx C) {
 		sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
 		m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	} else {
-		gtx = gtx.Disabled() // fading out
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
 	}
 
 	themeLabel, themeIcon := "Light theme", icLightMode
@@ -146,7 +148,9 @@ func (u *UI) layoutFilterMenu(gtx C) {
 		sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
 		f.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	} else {
-		gtx = gtx.Disabled() // fading out
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
 	}
 
 	w := gtx.Dp(180)

@@ -16,6 +16,7 @@ import (
 	"gioui.org/widget/material"
 	"rsc.io/qr"
 
+	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -57,6 +58,8 @@ type UI struct {
 	msgs     []*model.Message // loaded window of the selected chat
 	msgsVer  int              // bumped whenever msgs changes
 	images   *imageCache
+	players  players // animated stickers on screen
+	bars     map[*widget.List]*scrollbar
 
 	page         page
 	statusSeen   time.Time // when the Status page was last open
@@ -177,7 +180,7 @@ type UI struct {
 func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: time.Now, backend: b, syncPct: -1}
 	u.SetDark(true)
-	u.images = newImageCache(240)
+	u.images = newImageCache(240, 32<<20)
 	u.clicks = make(map[string]*widget.Clickable)
 	u.info.list.Axis = layout.Vertical
 	u.status.list.Axis = layout.Vertical
@@ -349,6 +352,10 @@ func Run(w *app.Window, b model.Backend) error {
 	u.window = w
 	u.Start(w.Invalidate)
 	defer b.Close()
+	// Once nothing has been drawn for a while, give memory back (see
+	// memtrim). Every frame pushes the trim back.
+	idle := time.AfterFunc(idleTrim, memtrim.Trim)
+	defer idle.Stop()
 	var ops op.Ops
 	for {
 		switch e := w.Event().(type) {
@@ -360,9 +367,14 @@ func Run(w *app.Window, b model.Backend) error {
 			gtx := app.NewContext(&ops, e)
 			u.Layout(gtx)
 			e.Frame(gtx.Ops)
+			idle.Reset(idleTrim)
 		}
 	}
 }
+
+// idleTrim is how long the window goes without a frame before memory is
+// trimmed.
+const idleTrim = 30 * time.Second
 
 // Layout draws one frame: custom title bar, then either the login screen or
 // nav rail | chat list | conversation.
@@ -372,6 +384,7 @@ func (u *UI) Layout(gtx C) D {
 		u.window.Perform(a)
 	}
 	defer u.images.endFrame()
+	defer u.players.endFrame()
 	defer u.anims.endFrame()
 
 	sz := gtx.Constraints.Max
@@ -429,12 +442,14 @@ func (u *UI) layoutMain(gtx C) D {
 	defer op.Offset(image.Pt(railW, 0)).Push(gtx.Ops).Pop()
 	pw := sz.X - railW
 	r := gtx.Dp(8)
-	card := clip.RRect{Rect: image.Rect(0, 0, pw+r, sz.Y+r), NW: r}
-	fillRRect(gtx, image.Rect(0, 0, pw+r, sz.Y+r), r, p.PanelBorder)
-	card.Rect = card.Rect.Add(image.Pt(1, 1))
-	card.NW = r - 1
-	defer card.Push(gtx.Ops).Pop()
-	fillRect(gtx, image.Rect(0, 0, pw+r, sz.Y+r), p.Panel)
+	card := image.Rect(0, 0, pw+r, sz.Y+r)
+	fillRRect(gtx, card, r, p.PanelBorder)
+	inner := card.Add(image.Pt(1, 1))
+	fillRRect(gtx, inner, r-1, p.Panel)
+	// A rounded clip would be stenciled over the whole window every frame;
+	// clip to the rectangle and round the corner off afterwards instead.
+	defer roundCorner(gtx, r, p.PanelBorder, p.Frame)
+	defer clip.Rect(inner).Push(gtx.Ops).Pop()
 
 	gtx.Constraints = layout.Exact(image.Pt(pw, sz.Y))
 	return layout.Flex{}.Layout(gtx,
@@ -538,7 +553,9 @@ func (u *UI) layoutWithInfo(gtx C) D {
 	t := op.Offset(image.Pt(sz.X-shown, 0)).Push(gtx.Ops)
 	igtx := gtx
 	if !u.info.open {
-		igtx = igtx.Disabled() // sliding away
+		var done func()
+		igtx, done = fadeOut(igtx)
+		defer done()
 	}
 	igtx.Constraints = layout.Exact(image.Pt(infoW, sz.Y))
 	u.layoutInfo(igtx)
@@ -650,6 +667,9 @@ func (u *UI) applyEvents() {
 			if e.MeID != "" {
 				meID = e.MeID
 			}
+			if e.State == model.StateOnline && u.conn.State != model.StateOnline {
+				u.images.retryMissing() // downloads were skipped while offline
+			}
 			u.conn, u.me, u.meID = e, me, meID
 		case model.ChatsEvent:
 			u.setChats(e.Chats)
@@ -685,6 +705,7 @@ func (u *UI) applyEvents() {
 			if u.viewer.open && u.viewer.msgID == e.MsgID {
 				u.images.forget("v:" + e.MsgID)
 			}
+			u.videoDownloaded(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.DeletedEvent:

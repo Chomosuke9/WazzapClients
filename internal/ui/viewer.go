@@ -5,9 +5,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/font"
-	"gioui.org/io/event"
 	"gioui.org/io/key"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -23,21 +21,18 @@ import (
 type mediaViewer struct {
 	open  bool
 	msgID string
-	zoom  float32 // 1 = fit
-	pan   f32.Point
-	drag  struct {
-		active bool
-		last   f32.Point
-	}
+	zp    zoomPan
 	strip widget.List
 
 	anim   tween       // opening and closing
 	origin image.Point // where it was opened, which the picture zooms out of
 	// What is shown glides to zoom, pan and the current thumbnail.
-	shownZoom, panX, panY, stripX follower
+	stripX follower // the thumbnail strip sliding to the current one
+
+	video videoView // the video being shown, if it is one
 }
 
-// viewerItems lists the chat's pictures and videos, oldest first.
+// viewerItems lists the chat's pictures and videos (KindImage), oldest first.
 func (u *UI) viewerItems() []*model.Message {
 	var out []*model.Message
 	for _, m := range u.msgs {
@@ -52,14 +47,19 @@ func (u *UI) openViewer(m *model.Message) {
 	if u.viewer.anim.v > 0 {
 		u.images.forget("v:" + u.viewer.msgID) // still fading out
 	}
-	u.viewer = mediaViewer{open: true, msgID: m.ID, zoom: 1, origin: u.mouse}
+	u.stopVideo()
+	u.viewer = mediaViewer{open: true, msgID: m.ID, origin: u.mouse, video: videoView{muted: u.viewer.video.muted}}
 	u.viewer.strip.Axis = layout.Horizontal
 	u.closePicker()
 	u.requestFocus(nil) // so arrow keys reach the viewer, not the composer
 }
 
-// closeViewer fades the viewer out. Its picture is released after.
-func (u *UI) closeViewer() { u.viewer.open = false }
+// closeViewer fades the viewer out. Its picture is released after; a
+// video stops at once.
+func (u *UI) closeViewer() {
+	u.viewer.open = false
+	u.stopVideo()
+}
 
 // hideViewer closes the viewer at once.
 func (u *UI) hideViewer() {
@@ -68,6 +68,7 @@ func (u *UI) hideViewer() {
 	}
 	u.viewer.open = false
 	u.viewer.anim.snap(false)
+	u.stopVideo()
 }
 
 // viewerMsg returns the shown message and its index in items.
@@ -97,8 +98,9 @@ func (u *UI) showViewerAt(items []*model.Message, i int) {
 		return
 	}
 	u.images.forget("v:" + u.viewer.msgID)
+	u.stopVideo()
 	u.viewer.msgID = items[i].ID
-	u.viewer.zoom, u.viewer.pan = 1, f32.Point{}
+	u.viewer.zp.reset()
 }
 
 func (u *UI) layoutViewer(gtx C) {
@@ -116,7 +118,7 @@ func (u *UI) layoutViewer(gtx C) {
 	// Keyboard: arrows switch, Escape closes.
 	for v.open {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameLeftArrow}, key.Filter{Name: key.NameRightArrow},
-			key.Filter{Name: key.NameEscape})
+			key.Filter{Name: key.NameEscape}, key.Filter{Name: key.NameSpace})
 		if !ok {
 			break
 		}
@@ -130,6 +132,10 @@ func (u *UI) layoutViewer(gtx C) {
 				if !u.ctx.isOpen() {
 					u.closeViewer()
 				}
+			case key.NameSpace:
+				if isVideo(m) {
+					u.toggleVideo(gtx, m)
+				}
 			}
 		}
 	}
@@ -141,8 +147,8 @@ func (u *UI) layoutViewer(gtx C) {
 	}
 	b := u.backend
 	tools := []tool{
-		{"zoomout", icZoomOut, v.zoom <= 1, func() { v.zoom = max(1, v.zoom/1.5); v.pan = v.pan.Mul(0.5) }},
-		{"zoomin", icZoomIn, v.zoom >= 5, func() { v.zoom = min(5, v.zoom*1.5) }},
+		{"zoomout", icZoomOut, !v.zp.zoomed(), func() { v.zp.zoomCenter(v.zp.zoom / 1.5) }},
+		{"zoomin", icZoomIn, v.zp.zoom >= maxZoom, func() { v.zp.zoomCenter(max(1, v.zp.zoom) * 1.5) }},
 		{"goto", icChats, false, func() { u.closeViewer(); u.jumpTo(m.ID) }},
 		{"reply", icReply, isChannelID(m.ChatID), func() { u.closeViewer(); u.startReply(m) }},
 		{"star", starIcon(m.Starred), false, func() { b.Star(m, !m.Starred) }},
@@ -157,6 +163,9 @@ func (u *UI) layoutViewer(gtx C) {
 		if u.btn("vw:"+t.key).Clicked(gtx) && !t.off && v.open {
 			t.run()
 		}
+	}
+	if u.btn("vw:play").Clicked(gtx) && v.open && isVideo(m) {
+		u.toggleVideo(gtx, m)
 	}
 	if u.btn("vw:prev").Clicked(gtx) {
 		u.showViewerAt(items, idx-1)
@@ -176,7 +185,11 @@ func (u *UI) layoutViewer(gtx C) {
 		return
 	}
 	if !v.open {
-		gtx = gtx.Disabled() // clicks go through while it fades
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
+	} else {
+		u.syncVideo(m)
 	}
 
 	sz := gtx.Constraints.Max
@@ -253,7 +266,9 @@ func (u *UI) layoutViewer(gtx C) {
 	}
 	lower.Pop()
 	area := image.Rect(gtx.Dp(140), gtx.Dp(74), sz.X-gtx.Dp(140), bottom)
-	u.layoutViewerImage(gtx, m, area)
+	if shown := u.layoutViewerImage(gtx, m, area); isVideo(m) && v.open {
+		u.layoutVideoControls(gtx, m, shown)
+	}
 
 	// Previous and next.
 	arrow := func(key string, ic *icon.Icon, cx int, enabled bool) {
@@ -307,57 +322,27 @@ func (u *UI) senderLabel(m *model.Message) (name, id string, group bool) {
 	return "", "", false
 }
 
-// layoutViewerImage draws the full picture fitted into area, zoomed and
-// panned. Dragging pans; the wheel zooms.
-func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) {
+// layoutViewerImage draws the full picture (or the video) fitted into area,
+// zoomed and panned (see zoomPan), and returns where it shows. Clicking a
+// video plays or pauses it.
+func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) image.Rectangle {
 	v := &u.viewer
 	if area.Dx() <= 0 || area.Dy() <= 0 {
-		return
+		return image.Rectangle{}
 	}
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &v.drag, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Scroll,
-			ScrollY: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}})
-		if !ok {
-			break
-		}
-		e, ok := ev.(pointer.Event)
-		if !ok {
-			continue
-		}
-		switch e.Kind {
-		case pointer.Press:
-			v.drag.active, v.drag.last = true, e.Position
-		case pointer.Drag:
-			if v.drag.active && v.zoom > 1 {
-				v.pan = v.pan.Add(e.Position.Sub(v.drag.last))
-				v.panX.snap(v.pan.X) // dragging follows the pointer exactly
-				v.panY.snap(v.pan.Y)
-			}
-			v.drag.last = e.Position
-		case pointer.Release:
-			v.drag.active = false
-		case pointer.Scroll:
-			if e.Scroll.Y < 0 {
-				v.zoom = min(5, v.zoom*1.15)
-			} else if e.Scroll.Y > 0 {
-				v.zoom = max(1, v.zoom/1.15)
-				if v.zoom == 1 {
-					v.pan = f32.Point{}
-				}
-			}
-		}
+	clicked, moved := v.zp.update(gtx)
+	if moved {
+		v.video.lastMove = gtx.Now
 	}
-	func() {
-		defer clip.Rect(area).Push(gtx.Ops).Pop()
-		if v.zoom > 1 {
-			pointer.CursorGrab.Add(gtx.Ops)
-		}
-		event.Op(gtx.Ops, &v.drag)
-	}()
+	if clicked && isVideo(m) {
+		u.toggleVideo(gtx, m)
+	}
 
 	maxSide := max(area.Dx(), area.Dy()) * 2
 	var img *imgEntry
-	if m.Media == model.MediaImage {
+	if isVideo(m) {
+		img = u.videoFrame(area.Size())
+	} else if m.Media == model.MediaImage {
 		b := u.backend
 		chat, id := m.ChatID, m.ID
 		if e := u.images.get("v:"+id, maxSide, func() []byte { return b.MediaData(chat, id) }); e.state == imgReady {
@@ -367,17 +352,12 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) {
 	if img == nil {
 		img = u.messageImage(m, gtx.Dp(330))
 	}
-	// Zoom and pan glide to where the wheel and buttons set them.
-	zoom := v.shownZoom.step(gtx, v.zoom, durPopIn)
-	pan := f32.Pt(v.panX.step(gtx, v.pan.X, durPopIn), v.panY.step(gtx, v.pan.Y, durPopIn))
 	var dst image.Rectangle
 	ready := img != nil && img.state == imgReady
 	if ready {
-		s := min(float32(area.Dx())/float32(img.size.X), float32(area.Dy())/float32(img.size.Y)) * zoom
-		w, h := float32(img.size.X)*s, float32(img.size.Y)*s
-		c := pointF(area.Min.Add(area.Size().Div(2))).Add(pan)
-		dst = image.Rect(int(c.X-w/2), int(c.Y-h/2), int(c.X+w/2), int(c.Y+h/2))
+		dst = v.zp.layout(gtx, area, img.size)
 	} else {
+		v.zp.layout(gtx, area, image.Point{})
 		w := min(area.Dx(), area.Dy()*3/4)
 		dst = image.Rect(0, 0, w, w*4/3).Add(area.Min.Add(image.Pt((area.Dx()-w)/2, (area.Dy()-w*4/3)/2)))
 	}
@@ -401,18 +381,14 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) {
 			paint.PaintOp{}.Add(gtx.Ops)
 		}()
 	} else {
-		u.layoutImage(gtx, dst, m, nil)
+		pic := *m
+		pic.Media = model.MediaImage // without the bubble's play button; the viewer draws its own
+		u.layoutImage(gtx, dst, &pic, nil)
 	}
-	if m.Media == model.MediaVideo || m.Media == model.MediaGIF {
-		c := dst.Min.Add(dst.Size().Div(2))
-		rad := gtx.Dp(34)
-		fillCircle(gtx, c, rad, argb(0x000000, 0x90))
-		t := op.Offset(c.Sub(image.Pt(gtx.Dp(20), gtx.Dp(20)))).Push(gtx.Ops)
-		drawIcon(gtx, icDownload, 40, rgb(0xffffff))
-		t.Pop()
-		note := record(gtx, u.label(13.5, "Videos can't play here yet. Save it to watch.", rgb(0xffffff)).Layout)
-		note.at(gtx, c.X-note.size.X/2, c.Y+rad+gtx.Dp(12))
+	if isVideo(m) {
+		u.layoutVideoCenter(gtx, m, dst.Min.Add(dst.Size().Div(2)))
 	}
+	return dst.Intersect(area)
 }
 
 // layoutViewerStrip draws the row of thumbnails, centered on the current one.

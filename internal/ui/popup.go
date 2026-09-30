@@ -319,7 +319,9 @@ func (u *UI) layoutCtxMenu(gtx C) {
 
 	sz := gtx.Constraints.Max
 	if m.closing {
-		gtx = gtx.Disabled() // clicks go through while it fades
+		var done func()
+		gtx, done = fadeOut(gtx)
+		defer done()
 	} else {
 		sgtx := gtx
 		sgtx.Constraints = layout.Exact(sz)

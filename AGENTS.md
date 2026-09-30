@@ -7,6 +7,9 @@ Guidance for AI coding agents (and humans) working on this repository.
 WazzapClients is a lightweight, native WhatsApp desktop client written in Go.
 
 - **UI:** [Gio](https://gioui.org) (`gioui.org`), an immediate-mode GPU UI toolkit.
+  Its text library `github.com/go-text/typesetting` is patched to use less memory:
+  `patches/apply.sh` builds the patched copy in `third_party/typesetting` (not checked in;
+  run it after cloning). See `patches/README.md`.
 - **WhatsApp protocol:** [`github.com/polymorfa/hypermeow`](https://github.com/polymorfa/hypermeow),
   branch `main`. It is a performance-focused fork of `tulir/whatsmeow` that keeps the
   upstream package names. Install it with `go get github.com/polymorfa/hypermeow@main`
@@ -26,7 +29,9 @@ APIs you are about to use:
 
 1. The version pinned in `go.mod` is the source of truth. Read the actual source in the
    module cache when you're unsure:
-   `$(go env GOMODCACHE)/gioui.org@<version>/...`
+   `$(go env GOMODCACHE)/gioui.org@<version>/...`. go-text is `third_party/typesetting`
+   (upstream plus `patches/typesetting.patch`). Change go-text through the patch, not in
+   `third_party`, which `apply.sh` overwrites.
 2. API reference: https://pkg.go.dev/gioui.org (pick the version that matches `go.mod`).
 3. Guides:
    - Learn: https://gioui.org/doc/learn/get-started, https://gioui.org/doc/learn/split-widget,
@@ -74,15 +79,41 @@ Gotchas already found in the pinned version (v0.10.x):
 - `widget.Editor` paints all its text in one color. Colored spans (the composer's
   @mentions) are drawn over it: see `paintMentions`. `Editor.Regions` reuses the slice
   you pass it, so don't use it to append.
+- Gio makes only its window thread DPI aware on Windows. While a drag holds the mouse
+  capture, Windows then reports the pointer in DPI-unaware coordinates (divided by the
+  display scale), so every dragged thing lagged the pointer. `dpi_windows.go` makes the
+  whole process per-monitor aware at init.
+- `material.List`'s scrollbar turns thumb drags into "scroll by N items" against a length
+  re-estimated from the visible rows, so the thumb drifts from the pointer. Use
+  `u.scrollList` (`internal/ui/scrollbar.go`) for every list.
+- `golang.org/x/image/webp` can't read animated WebP. Animated stickers go through
+  `internal/webpanim`; `stickerFrame` (`player.go`) plays the ones on screen.
+- Videos use the OS's decoder, never a bundled codec (`internal/video`). The Windows
+  backend calls COM through `syscall.SyscallN` without cgo: convert pointers to
+  `uintptr` inside the `SyscallN` argument list, and read `double` results from `r2`
+  (Go returns XMM0 there). Media Foundation's memory goes back only with `MFShutdown`,
+  so each player starts and shuts it down. The viewer's video UI is `videoview.go`;
+  `WAZZAP_DEMO_VIDEO=<file.mp4>` makes `-demo` play that file.
 - `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
 - `gtx.Disabled()` blocks `gtx.Execute` too, so a disabled context can't ask for the
   next frame. Step animations with the enabled context before disabling it.
+- A disabled context still registers its input areas, and Gio hit-tests them: they
+  read no events but block every handler underneath. Draw anything fading away with
+  `fadeOut` (`anim.go`), which also pushes a `pointer.PassOp`.
 - A `ScrollToEnd` list drops a trailing child of height 0 when it trims to the
   viewport, then stops following the end. Rows that grow in start at 1px.
 - `paint.PushOpacity` draws into an offscreen texture that Gio keeps, at the largest
   size ever needed, until the window closes. A fade of the whole window would pin
   ~16 MB. Keep opacity layers small (see Animations).
+- Gio stencils every path over its whole bounding box, every frame, into a coverage
+  texture that, like the opacity one, never shrinks. A rounded clip around big content,
+  or a big `clip.RRect` fill, costs a screen-sized texture. Fill rounded rectangles with
+  `fillRRect`/`paintRRect`, which only stencil the corners, and round a big panel's
+  corner with a mask (`roundCorner`) instead of clipping it.
+- A rectangle clip under a transform that isn't a whole-pixel offset becomes a path
+  too, and text outlines are rebuilt. `moveBy` rounds to whole pixels; `pushFx` counts
+  real scales in `fxDepth`, under which `paintRRect` draws one path (no seams).
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -92,6 +123,7 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 ```
 cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
+cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
                    settings), conversation and composer, contact/group info panel, and the
@@ -104,6 +136,11 @@ internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated)
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
+internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
+internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
+                   other systems return ErrUnsupported and open the system's player app
+internal/memtrim/  gives memory back to the OS after 30 s without a frame (see ui.Run)
+patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
 ```
 
 ## Conventions
@@ -133,7 +170,9 @@ internal/mock/     demo Backend with fake chats (used by -demo and cmd/screensho
 - Sizes are in `unit.Dp` / `unit.Sp`, never raw pixels. Convert with `gtx.Dp` / `gtx.Sp`.
 - Colors live in `internal/ui/theme.go` (light and dark palettes). Don't hard-code colors
   in widgets.
-- Watch memory use. Low RAM is the reason this project exists.
+- Watch memory use. Low RAM is the reason this project exists. Measure with
+  `cmd/memprobe` before and after a change; the private working set is what Task Manager
+  shows. Keep caches bounded by bytes, not just entries (see `imageCache`).
 
 ## Animations
 
@@ -146,7 +185,7 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
   and `switcher` moves a highlight between items (the open chat, the active rail
   button). Hovers and other per-widget fades go through `u.hover` and `u.anims`.
 - A closing overlay keeps its state with a `closing` flag (or a "ghost" copy of what
-  it showed) and draws with `gtx.Disabled()` while it fades, so clicks go through.
+  it showed) and draws with `fadeOut(gtx)` while it fades, so clicks go through.
   Check `isOpen()` or `shown()` rather than the raw fields.
 - Don't animate icon or `cachedGlyph` colors: both are cached per color. Cross-fade
   two colors with `withOpacity`.
@@ -159,9 +198,11 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
 ## Commands
 
 ```sh
+sh patches/apply.sh            # once after cloning: builds the patched go-text
 go run ./cmd/wazzap            # run the app (links to WhatsApp via QR code)
 go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
+go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
 go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).

@@ -7,6 +7,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"sync"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/op"
@@ -14,6 +15,8 @@ import (
 	"gioui.org/op/paint"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // stickers
+
+	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
 
 type imgState int
@@ -29,22 +32,41 @@ type imgEntry struct {
 	op    paint.ImageOp
 	size  image.Point
 	used  int64 // frame counter of last use, for eviction
+	bytes int   // decoded size, counted in imageCache.bytes
+	// animated is set for animated stickers; the image is their first frame.
+	animated bool
+	// empty is set when load returned nothing: the media isn't downloaded
+	// yet, or the download failed. It is asked for again after retryAfter.
+	empty    bool
+	loadedAt time.Time
 }
+
+// retryAfter is how long missing media waits before it's asked for again.
+// A download can fail without an event (offline, a timeout), and the
+// backend only queues one when asked.
+const retryAfter = 15 * time.Second
 
 // imageCache decodes and downscales images off the UI goroutine. Decoded
 // bitmaps are the biggest memory cost of a chat app, so entries are capped
-// and evicted least-recently-used first.
+// and evicted least-recently-used first, by count and by decoded size.
 type imageCache struct {
 	mu         sync.Mutex
 	m          map[string]*imgEntry
 	frame      int64
-	limit      int
+	limit      int // entries
+	budget     int // decoded bytes
+	bytes      int
 	invalidate func()
 }
 
-func newImageCache(limit int) *imageCache {
-	return &imageCache{m: make(map[string]*imgEntry), limit: limit}
+func newImageCache(limit, budget int) *imageCache {
+	return &imageCache{m: make(map[string]*imgEntry), limit: limit, budget: budget}
 }
+
+// decodeSlots limits how many images decode at once. A full-size photo
+// takes tens of MB while it decodes, and opening a chat full of them
+// would otherwise decode them all in parallel and grow the heap for good.
+var decodeSlots = make(chan struct{}, 2)
 
 // get returns the entry for key, loading it in the background (load may
 // block; it runs on its own goroutine) when it isn't cached yet.
@@ -52,18 +74,30 @@ func (c *imageCache) get(key string, maxSide int, load func() []byte) *imgEntry 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.m[key]; ok {
-		e.used = c.frame
-		return e
+		if !e.empty || time.Since(e.loadedAt) < retryAfter {
+			e.used = c.frame
+			return e
+		}
+		c.remove(key)
 	}
 	e := &imgEntry{state: imgLoading, used: c.frame}
 	c.m[key] = e
 	go func() {
-		img := decodeScaled(load(), maxSide)
+		data := load()
+		decodeSlots <- struct{}{}
+		img, animated := decodeScaled(data, maxSide)
+		<-decodeSlots
 		c.mu.Lock()
+		e.loadedAt = time.Now()
 		if img == nil {
-			e.state = imgMissing
+			e.state, e.empty = imgMissing, len(data) == 0
 		} else {
 			e.state, e.op, e.size = imgReady, paint.NewImageOp(img), img.Bounds().Size()
+			e.animated = animated
+			if c.m[key] == e { // not forgotten meanwhile
+				e.bytes = 4 * e.size.X * e.size.Y
+				c.bytes += e.bytes
+			}
 		}
 		c.mu.Unlock()
 		if c.invalidate != nil {
@@ -76,17 +110,37 @@ func (c *imageCache) get(key string, maxSide int, load func() []byte) *imgEntry 
 // forget drops key so the next get reloads it.
 func (c *imageCache) forget(key string) {
 	c.mu.Lock()
-	delete(c.m, key)
+	c.remove(key)
 	c.mu.Unlock()
 }
 
-// endFrame evicts least recently used entries beyond the limit.
+func (c *imageCache) remove(key string) {
+	if e, ok := c.m[key]; ok {
+		c.bytes -= e.bytes
+		delete(c.m, key)
+	}
+}
+
+// retryMissing drops media that wasn't there, so the next get asks the
+// backend again. Called when the connection comes back.
+func (c *imageCache) retryMissing() {
+	c.mu.Lock()
+	for k, e := range c.m {
+		if e.empty {
+			c.remove(k)
+		}
+	}
+	c.mu.Unlock()
+}
+
+// endFrame evicts least recently used entries beyond the limits. Images
+// drawn in the frame that just ended stay.
 func (c *imageCache) endFrame() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.frame++
-	for len(c.m) > c.limit {
-		oldest, key := c.frame, ""
+	for len(c.m) > c.limit || c.bytes > c.budget {
+		oldest, key := c.frame-1, ""
 		for k, e := range c.m {
 			if e.state != imgLoading && e.used < oldest {
 				oldest, key = e.used, k
@@ -95,22 +149,36 @@ func (c *imageCache) endFrame() {
 		if key == "" {
 			return
 		}
-		delete(c.m, key)
+		c.remove(key)
 	}
 }
 
-func decodeScaled(data []byte, maxSide int) image.Image {
+// decodeScaled decodes an image to fit in maxSide. Animated WebP stickers
+// decode to their first frame, and animated is set.
+func decodeScaled(data []byte, maxSide int) (img image.Image, animated bool) {
 	if len(data) == 0 {
-		return nil
+		return nil, false
 	}
-	src, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil
+	var src image.Image
+	if webpanim.IsAnimated(data) {
+		a, err := webpanim.Parse(data)
+		if err != nil {
+			return nil, false
+		}
+		if src, _, err = a.Next(); err != nil {
+			return nil, false
+		}
+		animated = true
+	} else {
+		var err error
+		if src, _, err = image.Decode(bytes.NewReader(data)); err != nil {
+			return nil, false
+		}
 	}
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w == 0 || h == 0 {
-		return nil
+		return nil, false
 	}
 	if s := max(w, h); s > maxSide {
 		w, h = max(1, w*maxSide/s), max(1, h*maxSide/s)
@@ -121,7 +189,7 @@ func decodeScaled(data []byte, maxSide int) image.Image {
 	} else {
 		xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Src, nil)
 	}
-	return dst
+	return dst, animated
 }
 
 // paintCover paints img scaled to cover r (like CSS object-fit: cover),

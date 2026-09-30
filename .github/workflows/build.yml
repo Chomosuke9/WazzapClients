@@ -68,6 +68,10 @@ jobs:
             libxfixes-dev \
             libvulkan-dev
 
+      # go.mod replaces go-text with the patched copy this builds.
+      - name: Apply dependency patches
+        run: sh patches/apply.sh
+
       - name: Verify dependencies
         run: |
           go mod download

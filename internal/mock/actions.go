@@ -2,6 +2,7 @@ package mock
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -129,6 +130,20 @@ func (b *Backend) PinMessage(m *model.Message, pinned bool) {
 
 func (b *Backend) SaveMedia(*model.Message) {
 	b.emit(model.NoticeEvent{Text: "Demo mode doesn't save files."})
+}
+
+func (b *Backend) PlayMedia(*model.Message) {
+	b.emit(model.NoticeEvent{Text: "Demo mode doesn't play videos."})
+}
+
+// VideoFile plays the file named by $WAZZAP_DEMO_VIDEO, to try the player.
+func (b *Backend) VideoFile(m *model.Message) string {
+	if p := os.Getenv("WAZZAP_DEMO_VIDEO"); p != "" {
+		return p
+	}
+	b.emit(model.NoticeEvent{Text: "Demo mode doesn't play videos."})
+	b.emit(model.MediaEvent{ChatID: m.ChatID, MsgID: m.ID, Failed: true})
+	return ""
 }
 
 func (b *Backend) setChat(id string, f func(*model.Chat)) {
