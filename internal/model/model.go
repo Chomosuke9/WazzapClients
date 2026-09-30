@@ -103,6 +103,11 @@ type Draft struct {
 	// Mentions are the JIDs of people @mentioned in Text, which refers to
 	// them as "@<user part of the JID>".
 	Mentions []string
+	// MentionAll means Text contains "@all", which notifies every member.
+	MentionAll bool
+	// MentionAdmins means Text contains "@<group JID>", shown as "@admin";
+	// Mentions then lists the group's admins.
+	MentionAdmins bool
 }
 
 // ChatList is a custom chat list ("Add to list").

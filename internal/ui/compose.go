@@ -14,7 +14,11 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/text"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"golang.org/x/image/math/fixed"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
@@ -25,6 +29,13 @@ import (
 type mentionRef struct {
 	name, jid string
 }
+
+// Picker entries that aren't members: "@all" notifies everyone, "@admin"
+// the group's admins.
+const (
+	mentionAllID   = "@all"
+	mentionAdminID = "@admin"
+)
 
 // requestFocus focuses tag (an editor), or clears focus when nil, on the
 // next frame.
@@ -120,9 +131,35 @@ func (u *UI) sendComposer() {
 		return
 	}
 	d := model.Draft{Text: txt, Reply: u.conv.reply}
-	for _, mr := range u.conv.mentions {
+	// Longer names first, so "@Al" doesn't eat the start of "@Alice".
+	refs := append([]mentionRef(nil), u.conv.mentions...)
+	sort.SliceStable(refs, func(a, b int) bool { return len(refs[a].name) > len(refs[b].name) })
+	seen := map[string]bool{}
+	addJID := func(jid string) {
+		if !seen[jid] {
+			seen[jid] = true
+			d.Mentions = append(d.Mentions, jid)
+		}
+	}
+	for _, mr := range refs {
 		at := "@" + mr.name
 		if !strings.Contains(d.Text, at) {
+			continue
+		}
+		switch mr.jid {
+		case mentionAllID:
+			d.MentionAll = true // the text keeps "@all"
+			continue
+		case mentionAdminID:
+			d.MentionAdmins = true
+			d.Text = strings.ReplaceAll(d.Text, at, "@"+u.selected.ID)
+			if info := u.chatMembers(u.selected.ID); info != nil {
+				for _, m := range info.Members {
+					if m.Admin && !m.Me {
+						addJID(m.ID)
+					}
+				}
+			}
 			continue
 		}
 		user := mr.jid
@@ -130,7 +167,7 @@ func (u *UI) sendComposer() {
 			user = user[:i]
 		}
 		d.Text = strings.ReplaceAll(d.Text, at, "@"+user)
-		d.Mentions = append(d.Mentions, mr.jid)
+		addJID(mr.jid)
 	}
 	u.conv.composer.SetText("")
 	u.conv.reply = nil
@@ -176,29 +213,41 @@ func (u *UI) mentionQuery() *mentionState {
 			if u.conv.mentionDismissed == string(txt[i-1:caret]) {
 				return nil
 			}
-			if u.conv.membersFor != c.ID {
-				u.conv.members, u.conv.membersFor = u.backend.Info(c.ID), c.ID
-			}
-			info := u.conv.members
+			info := u.chatMembers(c.ID)
 			if info == nil {
 				return nil
 			}
+			matches := func(name string) bool {
+				n := strings.ToLower(strings.TrimPrefix(name, "~"))
+				return q == "" || strings.HasPrefix(n, q) || strings.Contains(n, " "+q)
+			}
 			var hits []model.Member
+			var me *model.Member
 			for _, m := range info.Members {
 				if m.Me {
-					continue
-				}
-				n := strings.ToLower(strings.TrimPrefix(m.Name, "~"))
-				if q == "" || strings.HasPrefix(n, q) || strings.Contains(n, " "+q) {
+					if matches(m.Name) || matches(u.meName()) {
+						me = &m
+					}
+				} else if matches(m.Name) {
 					hits = append(hits, m)
 				}
-			}
-			if len(hits) == 0 {
-				return nil
 			}
 			sort.SliceStable(hits, func(a, b int) bool {
 				return !strings.HasPrefix(hits[a].Name, "~") && strings.HasPrefix(hits[b].Name, "~")
 			})
+			if me != nil {
+				hits = append(hits, *me) // yourself last
+			}
+			var special []model.Member
+			for _, id := range []string{mentionAllID, mentionAdminID} {
+				if matches(id[1:]) {
+					special = append(special, model.Member{ID: id, Name: id[1:]})
+				}
+			}
+			hits = append(special, hits...)
+			if len(hits) == 0 {
+				return nil
+			}
 			return &mentionState{start: i - 1, end: caret, query: q, members: hits}
 		}
 		if r == '\n' || (unicode.IsSpace(r) && caret-i > 20) {
@@ -217,6 +266,9 @@ func (u *UI) pickMention(i int) {
 	}
 	m := ms.members[i]
 	name := strings.TrimPrefix(m.Name, "~")
+	if m.Me {
+		name = u.meName()
+	}
 	ed := &u.conv.composer
 	ed.SetCaret(ms.start, ms.end)
 	ed.Insert("@" + name + " ")
@@ -224,7 +276,114 @@ func (u *UI) pickMention(i int) {
 	u.requestFocus(ed)
 }
 
-// layoutMentionPicker draws matching members above the composer.
+// chatMembers returns a group's member list, cached per chat.
+func (u *UI) chatMembers(chatID string) *model.ChatInfo {
+	if u.conv.membersFor != chatID {
+		u.conv.members, u.conv.membersFor = u.backend.Info(chatID), chatID
+	}
+	return u.conv.members
+}
+
+// amAdmin reports whether you administer a group.
+func (u *UI) amAdmin(chatID string) bool {
+	if info := u.chatMembers(chatID); info != nil {
+		for _, m := range info.Members {
+			if m.Me {
+				return m.Admin
+			}
+		}
+	}
+	return false
+}
+
+// mentionRanges returns the rune ranges of the picked @mentions still in
+// the composer text.
+func (u *UI) mentionRanges(txt string) [][2]int {
+	var out [][2]int
+	runes := []rune(txt)
+	for _, mr := range u.conv.mentions {
+		at := []rune("@" + mr.name)
+		for i := 0; i+len(at) <= len(runes); i++ {
+			if string(runes[i:i+len(at)]) == string(at) {
+				out = append(out, [2]int{i, i + len(at)})
+				i += len(at) - 1
+			}
+		}
+	}
+	return out
+}
+
+// paintMentions draws the picked @mentions in the composer in green. The
+// editor paints all its text in one color, so a green copy of the text is
+// drawn over it, clipped to the mentions.
+func (u *UI) paintMentions(gtx C, e material.EditorStyle) {
+	ed := e.Editor
+	txt := ed.Text()
+	ranges := u.mentionRanges(txt)
+	if len(ranges) == 0 {
+		return
+	}
+	// The editor may be scrolled: compare where a mention sits in the
+	// shaped text with where the editor shows it.
+	sh := u.th.Shaper
+	sh.LayoutString(text.Parameters{
+		Font:     e.Font,
+		PxPerEm:  fixed.I(gtx.Sp(e.TextSize)),
+		MaxWidth: gtx.Constraints.Max.X,
+		MinWidth: gtx.Constraints.Min.X,
+		Locale:   gtx.Locale,
+	}, txt)
+	baseline := map[int]int{} // rune offset of a mention -> its baseline
+	for _, r := range ranges {
+		baseline[r[0]] = -1
+	}
+	idx := 0
+	for {
+		g, ok := sh.NextGlyph()
+		if !ok {
+			break
+		}
+		if g.Flags&text.FlagClusterBreak == 0 {
+			continue
+		}
+		if y, ok := baseline[idx]; ok && y < 0 {
+			baseline[idx] = int(g.Y)
+		}
+		idx += int(g.Runes)
+	}
+	var regions, buf []widget.Region
+	scroll, known := 0, false
+	for _, r := range ranges {
+		buf = ed.Regions(r[0], r[1], buf) // reuses buf
+		if !known && len(buf) > 0 && baseline[r[0]] >= 0 {
+			scroll, known = baseline[r[0]]-(buf[0].Bounds.Max.Y-buf[0].Baseline), true
+		}
+		regions = append(regions, buf...)
+	}
+	if !known {
+		return
+	}
+	lgtx := gtx
+	lgtx.Constraints.Max.Y = 1 << 24
+	m := op.Record(gtx.Ops)
+	t := op.Offset(image.Pt(0, -scroll)).Push(gtx.Ops)
+	cm := op.Record(gtx.Ops)
+	paint.ColorOp{Color: u.pal.Green}.Add(gtx.Ops)
+	widget.Label{}.Layout(lgtx, sh, e.Font, e.TextSize, txt, cm.Stop())
+	t.Pop()
+	call := m.Stop()
+	for _, r := range regions {
+		// Cover the editor's glyphs first, so their edges don't show.
+		cl := clip.Rect(r.Bounds).Push(gtx.Ops)
+		paint.ColorOp{Color: u.pal.Composer}.Add(gtx.Ops)
+		paint.PaintOp{}.Add(gtx.Ops)
+		call.Add(gtx.Ops)
+		cl.Pop()
+	}
+}
+
+// layoutMentionPicker draws matching members, plus "@all" and "@admin",
+// above the composer.
 func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 	p := u.pal
 	for i, m := range ms.members {
@@ -233,39 +392,62 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 			return D{}
 		}
 	}
+	rowH := gtx.Dp(56)
+	pad := gtx.Dp(8)
 	n := min(len(ms.members), 6)
-	rowH := gtx.Dp(52)
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	w := gtx.Constraints.Max.X
-	h := n*rowH + gtx.Dp(16)
-	r := gtx.Dp(12)
+	h := n*rowH + 2*pad
+	r := gtx.Dp(16)
 	rect := image.Rect(0, 0, w, h)
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r, p.Shadow)
 	borderRRect(gtx, rect, r, p.Popup, p.PopupBorder)
 	defer clip.UniformRRect(rect, r).Push(gtx.Ops).Pop()
-	gtx.Constraints = layout.Exact(image.Pt(w, h-gtx.Dp(16)))
-	t := op.Offset(image.Pt(0, gtx.Dp(8))).Push(gtx.Ops)
+	gtx.Constraints = layout.Exact(image.Pt(w-2*pad, h-2*pad))
+	t := op.Offset(image.Pt(pad, pad)).Push(gtx.Ops)
 	l := material.List(u.th, &u.conv.mentionList)
 	l.Layout(gtx, len(ms.members), func(gtx C, i int) D {
 		m := ms.members[i]
 		cl := u.btn("mention:" + m.ID)
 		return clickable(gtx, cl, func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			bg := p.Popup
+			sz := image.Pt(gtx.Constraints.Max.X, rowH)
 			if cl.Hovered() || i == 0 {
-				bg = p.PopupHover
+				fillRRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(10), p.PopupHover)
 			}
-			return background(gtx, bg, 0, func(gtx C) D {
-				return vcenter(gtx, rowH, func(gtx C) D {
-					return layout.Inset{Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
-						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(func(gtx C) D { return u.avatar(gtx, m.ID, m.Name, false, 34) }),
-							layout.Rigid(layout.Spacer{Width: 14}.Layout),
-							layout.Flexed(1, u.label(15.5, m.Name, p.Text, labelOpts{maxLines: 1}).Layout),
-						)
-					})
+			gtx.Constraints = layout.Constraints{Max: sz}
+			name, sub := m.Name, ""
+			switch m.ID {
+			case mentionAllID:
+				sub = "Mention all members in this chat"
+			case mentionAdminID:
+				sub = "Mention all admins in this chat"
+			}
+			vcenter(gtx, rowH, func(gtx C) D {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx C) D {
+							if sub == "" {
+								return u.avatar(gtx, m.ID, m.Name, false, 36)
+							}
+							d := gtx.Dp(36)
+							fillCircle(gtx, image.Pt(d/2, d/2), d/2, p.PopupBorder)
+							return centerIn(gtx, d, iconW(icGroups, 22, p.UserAvatarIcon))
+						}),
+						layout.Rigid(layout.Spacer{Width: 14}.Layout),
+						layout.Flexed(1, func(gtx C) D {
+							if sub == "" {
+								return u.label(15.5, name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
+							}
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(u.label(16, name, p.Text, labelOpts{maxLines: 1}).Layout),
+								layout.Rigid(u.label(13.5, sub, p.PopupSub, labelOpts{maxLines: 1}).Layout),
+							)
+						}),
+					)
 				})
 			})
+			return D{Size: sz}
 		})
 	})
 	t.Pop()
@@ -364,7 +546,9 @@ func (u *UI) layoutComposer(gtx C) D {
 									e.Color = p.Text
 									e.HintColor = p.ComposerHint
 									e.SelectionColor = argb(0x53bdeb, 0x60)
-									return e.Layout(gtx)
+									d := e.Layout(gtx)
+									u.paintMentions(gtx, e)
+									return d
 								})
 							}),
 							layout.Rigid(layout.Spacer{Width: 8}.Layout),

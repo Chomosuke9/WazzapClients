@@ -52,13 +52,18 @@ func (u *UI) confirm(title, body string, buttons ...dialogButton) {
 		buttons: append(buttons, dialogButton{label: "Cancel"})}
 }
 
-// confirmDelete offers "Delete for everyone" when all messages are yours
-// and still recent, like WhatsApp (which allows about two days).
+// confirmDelete offers "Delete for everyone" when all messages are yours,
+// or you administer the group, and they are still recent, like WhatsApp
+// (which allows about two days).
 func (u *UI) confirmDelete(msgs []*model.Message) {
 	b := u.backend
 	everyone := len(msgs) > 0
+	admin := false
+	if c := u.selected; c != nil && c.IsGroup {
+		admin = u.amAdmin(c.ID)
+	}
 	for _, m := range msgs {
-		if !m.FromMe || m.Kind == model.KindDeleted || u.now().Sub(m.Time) > 60*time.Hour {
+		if (!m.FromMe && !admin) || m.Kind == model.KindDeleted || u.now().Sub(m.Time) > 60*time.Hour {
 			everyone = false
 		}
 	}

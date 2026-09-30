@@ -71,6 +71,9 @@ Gotchas already found in the pinned version (v0.10.x):
 - Popups that must draw above later siblings (the emoji picker) use `op.Defer`, which
   keeps the local transform. Context menus instead open at `u.mouse`, the last pointer
   position in content coordinates.
+- `widget.Editor` paints all its text in one color. Colored spans (the composer's
+  @mentions) are drawn over it: see `paintMentions`. `Editor.Regions` reuses the slice
+  you pass it, so don't use it to append.
 - `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
 
@@ -137,7 +140,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (chatmenu, msgmenu, emoji, viewer, forward, reply,
-# delete, select) into <out>/overlay-<name>.png:
+# delete, select, mention, mentioned) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \

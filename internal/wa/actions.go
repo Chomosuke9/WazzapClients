@@ -137,10 +137,21 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		Time:    time.Now(),
 		Receipt: model.Pending,
 	}
-	sm := storedMsg{Message: m, mentions: d.Mentions}
+	sm := storedMsg{Message: m, mentions: append([]string(nil), d.Mentions...)}
 	msg := &waE2E.Message{Conversation: proto.String(d.Text)}
-	if d.Reply != nil || len(d.Mentions) > 0 {
+	if d.Reply != nil || len(d.Mentions) > 0 || d.MentionAll || d.MentionAdmins {
 		ci := &waE2E.ContextInfo{MentionedJID: d.Mentions}
+		if d.MentionAll {
+			// "@all" is rendered by WhatsApp when nonJIDMentions is set.
+			ci.NonJIDMentions = proto.Uint32(1)
+			sm.mentions = append(sm.mentions, mentionAll)
+		}
+		if d.MentionAdmins {
+			// The text mentions the group itself, which WhatsApp shows under
+			// the given subject; the admins are the mentioned JIDs.
+			ci.GroupMentions = []*waE2E.GroupMention{{GroupJID: proto.String(chatID), GroupSubject: proto.String("admin")}}
+			sm.mentions = append(sm.mentions, groupMention(chatID, "admin"))
+		}
 		if r := d.Reply; r != nil {
 			sender := b.senderOf(r)
 			ci.StanzaID = proto.String(r.ID)
@@ -156,7 +167,14 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			}
 			sm.quoteJID, sm.quoteID = sender.String(), r.ID
 		}
-		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(d.Text), ContextInfo: ci}}
+		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:                  proto.String(d.Text),
+			ContextInfo:           ci,
+			InviteLinkGroupTypeV2: waE2E.ExtendedTextMessage_DEFAULT.Enum(),
+		}}
+		if d.MentionAdmins {
+			msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
+		}
 	}
 	if m.Quote != nil {
 		// Store the raw quoted text, not the display text with resolved names.

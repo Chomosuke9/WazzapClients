@@ -60,7 +60,6 @@ type Palette struct {
 	Scrim                          color.NRGBA // behind dialogs
 	Dialog                         color.NRGBA
 	Toast, ToastText               color.NRGBA
-	Mention                        color.NRGBA // @mentions in the composer
 }
 
 func rgb(c uint32) color.NRGBA {
@@ -123,7 +122,6 @@ var darkPalette = Palette{
 	ViewerThumb: rgb(0x242625), ViewerArrow: rgb(0x0e0e0e),
 	Scrim: argb(0x000000, 0x99), Dialog: rgb(0x1d1f1f),
 	Toast: rgb(0x2e2f2f), ToastText: rgb(0xfafafa),
-	Mention: rgb(0x53bdeb),
 }
 
 var lightPalette = Palette{
@@ -168,7 +166,6 @@ var lightPalette = Palette{
 	ViewerThumb: rgb(0xf0f2f5), ViewerArrow: rgb(0xf0f2f5),
 	Scrim: argb(0xffffff, 0xb0), Dialog: rgb(0xffffff),
 	Toast: rgb(0x3b4a54), ToastText: rgb(0xffffff),
-	Mention: rgb(0x027eb5),
 }
 
 func hashIndex(s string, n int) int {

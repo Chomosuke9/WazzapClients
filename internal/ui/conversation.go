@@ -286,14 +286,20 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	if !sel {
 		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
 		hovered := u.hoverArea(gtx, m.ID, bubble.size)
-		if u.rightClick(gtx, m.ID, bubble.size) {
+		right, double := u.pressArea(gtx, m.ID, bubble.size)
+		if right {
 			u.openMessageMenu(m)
+		}
+		if double && m.Kind != model.KindDeleted {
+			u.startReply(m)
 		}
 		chev := u.btn("chev:" + m.ID)
 		if chev.Clicked(gtx) {
 			u.openMessageMenu(m)
 		}
-		if (hovered || u.ctx.msg == m) && m.Kind != model.KindSticker {
+		// The chevron covers part of the bubble's hover area, so it keeps
+		// itself visible while it is hovered.
+		if (hovered || chev.Hovered() || u.ctx.msg == m) && m.Kind != model.KindSticker {
 			bg := p.BubbleIn
 			if m.FromMe {
 				bg = p.BubbleOut

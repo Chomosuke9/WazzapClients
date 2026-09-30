@@ -88,16 +88,20 @@ type UI struct {
 	filterMenu filterMenuState
 
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
-	ctx         ctxMenu
-	dialog      dialogState
-	picker      emojiPicker
-	viewer      mediaViewer
-	toastMsg    toastState
-	mouse       image.Point // last pointer position, in content coordinates
-	mouseTag    struct{}
-	hovered     map[string]bool // see hoverArea
-	pendingCopy string          // clipboard text waiting for a frame
-	focus       any             // editor to focus next frame (see requestFocus)
+	ctx       ctxMenu
+	dialog    dialogState
+	picker    emojiPicker
+	viewer    mediaViewer
+	toastMsg  toastState
+	mouse     image.Point // last pointer position, in content coordinates
+	mouseTag  struct{}
+	hovered   map[string]bool // see hoverArea
+	lastPress struct {        // for double clicks, see pressArea
+		key string
+		at  time.Duration
+	}
+	pendingCopy string // clipboard text waiting for a frame
+	focus       any    // editor to focus next frame (see requestFocus)
 	focusReq    bool
 
 	sidebar struct {
@@ -812,6 +816,22 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "select":
 		if lastIn != nil {
 			u.startSelect(lastIn)
+		}
+	case "mention", "mentioned":
+		// The mention picker, or a draft with picked mentions.
+		ed := &u.conv.composer
+		ed.SetText("Hi @")
+		ed.SetCaret(4, 4)
+		u.requestFocus(ed)
+		if name == "mentioned" {
+			u.pickMention(0)
+			ed.Insert("and ")
+			ed.SetText(ed.Text() + "@")
+			ed.SetCaret(ed.Len(), ed.Len())
+			if ms := u.mentionQuery(); ms != nil {
+				u.pickMention(len(ms.members) - 1)
+			}
+			ed.Insert("see you soon")
 		}
 	}
 }

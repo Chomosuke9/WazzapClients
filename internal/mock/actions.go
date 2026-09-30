@@ -2,6 +2,7 @@ package mock
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -44,7 +45,7 @@ func (b *Backend) add(m *model.Message) {
 }
 
 func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
-	m := &model.Message{ChatID: chatID, FromMe: true, Text: d.Text, Time: b.now(), Receipt: model.Sent}
+	m := &model.Message{ChatID: chatID, FromMe: true, Text: b.showMentions(chatID, d), Time: b.now(), Receipt: model.Sent}
 	if r := d.Reply; r != nil {
 		name := r.Sender
 		if r.FromMe {
@@ -196,4 +197,28 @@ func (b *Backend) SetPref(key, value string) {
 		b.prefs = map[string]string{}
 	}
 	b.prefs[key] = value
+}
+
+// showMentions turns a draft's "@<user>" mentions into highlighted names,
+// like the real backend does when it loads a message.
+func (b *Backend) showMentions(chatID string, d model.Draft) string {
+	mark := func(name string) string { return "⁨@" + name + "⁩" }
+	txt := d.Text
+	if d.MentionAll {
+		txt = strings.ReplaceAll(txt, "@all", mark("all"))
+	}
+	if d.MentionAdmins {
+		txt = strings.ReplaceAll(txt, "@"+chatID, mark("admin"))
+	}
+	if info := b.Info(chatID); info != nil {
+		for _, m := range info.Members {
+			user, _, _ := strings.Cut(m.ID, "@")
+			for _, id := range d.Mentions {
+				if id == m.ID {
+					txt = strings.ReplaceAll(txt, "@"+user, mark(m.Name))
+				}
+			}
+		}
+	}
+	return txt
 }

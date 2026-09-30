@@ -204,9 +204,31 @@ func (b *Backend) senderNameStr(ctx context.Context, jid, push, legacy string) s
 	return b.senderName(ctx, j, push, legacy)
 }
 
+// Besides JIDs, a message's stored mention list can hold these tokens.
+const (
+	// mentionAll marks "@all" (nonJIDMentions), which notifies everyone.
+	mentionAll = "all"
+	// groupMentionPrefix starts "gm:<group JID>:<subject>": the text
+	// mentions "@<group JID>", which is shown as "@<subject>".
+	groupMentionPrefix = "gm:"
+)
+
+func groupMention(jid, subject string) string {
+	return groupMentionPrefix + jid + ":" + strings.ReplaceAll(subject, ",", " ")
+}
+
 // replaceMentions turns "@123456" into "@Name" for every mentioned JID.
 func (b *Backend) replaceMentions(ctx context.Context, text, mentions string) string {
 	for _, s := range strings.Split(mentions, ",") {
+		switch {
+		case s == mentionAll:
+			text = strings.ReplaceAll(text, "@all", mention("all"))
+			continue
+		case strings.HasPrefix(s, groupMentionPrefix):
+			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
+			text = strings.ReplaceAll(text, "@"+jid, mention(subject))
+			continue
+		}
 		j, err := types.ParseJID(s)
 		if err != nil || j.User == "" {
 			continue

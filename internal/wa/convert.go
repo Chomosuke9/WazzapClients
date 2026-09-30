@@ -68,6 +68,8 @@ func unwrap(m *waE2E.Message) *waE2E.Message {
 			inner = m.GetLottieStickerMessage().GetMessage()
 		case m.GetAssociatedChildMessage().GetMessage() != nil:
 			inner = m.GetAssociatedChildMessage().GetMessage()
+		case m.GetGroupMentionedMessage().GetMessage() != nil:
+			inner = m.GetGroupMentionedMessage().GetMessage()
 		default:
 			return m
 		}
@@ -230,7 +232,13 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	p.msg.senderJID = evt.Info.Sender.ToNonAD().String()
 	p.msg.senderPush = evt.Info.PushName
 	p.msg.mediaBlob = c.blob
-	p.msg.mentions = c.ctx.GetMentionedJID()
+	p.msg.mentions = append([]string(nil), c.ctx.GetMentionedJID()...)
+	if c.ctx.GetNonJIDMentions() > 0 {
+		p.msg.mentions = append(p.msg.mentions, mentionAll)
+	}
+	for _, gm := range c.ctx.GetGroupMentions() {
+		p.msg.mentions = append(p.msg.mentions, groupMention(gm.GetGroupJID(), gm.GetGroupSubject()))
+	}
 	msg.Forwarded = c.ctx.GetIsForwarded()
 	b.parseQuote(ctx, &p.msg, c.ctx)
 	return p, true

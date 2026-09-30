@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"io"
 	"strings"
+	"time"
 
 	"gioui.org/io/clipboard"
 	"gioui.org/io/event"
@@ -40,21 +41,36 @@ func (u *UI) trackMouse(gtx C) {
 // rightClick reports a secondary-button press on an area of size sz at the
 // current offset. Other handlers underneath still get the event.
 func (u *UI) rightClick(gtx C, key string, sz image.Point) bool {
+	right, _ := u.pressArea(gtx, key, sz)
+	return right
+}
+
+// pressArea is rightClick that also reports a double left-click.
+func (u *UI) pressArea(gtx C, key string, sz image.Point) (right, double bool) {
 	tag := u.btn("rc:" + key) // only its address is used, as an event tag
-	clicked := false
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
 		if !ok {
 			break
 		}
-		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-			clicked = true
+		e, ok := ev.(pointer.Event)
+		switch {
+		case !ok:
+		case e.Buttons.Contain(pointer.ButtonSecondary):
+			right = true
+		case e.Buttons.Contain(pointer.ButtonPrimary):
+			if u.lastPress.key == key && e.Time-u.lastPress.at < 400*time.Millisecond {
+				double = true
+				u.lastPress.key = ""
+			} else {
+				u.lastPress.key, u.lastPress.at = key, e.Time
+			}
 		}
 	}
 	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, tag)
-	return clicked
+	return right, double
 }
 
 // menuItem is one row of a popup menu, or a divider.
