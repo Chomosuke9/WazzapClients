@@ -9,6 +9,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -21,6 +22,12 @@ import (
 // and the scrollable list of chats.
 func (u *UI) layoutSidebar(gtx C) D {
 	u.sidebar.visible = u.filteredChats()
+	u.sidebar.order.update(gtx, u.sidebar.visible)
+	menuID := ""
+	if u.ctx.isOpen() && u.ctx.kind == ctxChat {
+		menuID = u.ctx.chatID
+	}
+	u.sidebar.menuSel.step(gtx, menuID, durSwitch)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(u.layoutSidebarHeader),
 		layout.Rigid(u.layoutSearch),
@@ -53,10 +60,7 @@ func (u *UI) layoutSidebarHeader(gtx C) D {
 				layout.Rigid(func(gtx C) D {
 					return clickable(gtx, &u.sidebar.newChat, func(gtx C) D {
 						sz := gtx.Dp(42)
-						col := p.Green
-						if u.sidebar.newChat.Hovered() {
-							col = mix(col, rgb(0xffffff), 0.1)
-						}
+						col := mix(p.Green, rgb(0xffffff), 0.1*u.hover(gtx, &u.sidebar.newChat))
 						fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, col)
 						return centerIn(gtx, sz, iconW(icNewChat, 22, p.OnGreen))
 					})
@@ -90,16 +94,12 @@ func (u *UI) layoutSearch(gtx C) D {
 	})
 }
 
-// chip draws one filter pill; active chips are green.
-func (u *UI) chip(gtx C, c *widget.Clickable, active bool, w layout.Widget) D {
+// chip draws one filter pill; active (0 to 1) chips are green.
+func (u *UI) chip(gtx C, c *widget.Clickable, active float32, w layout.Widget) D {
 	p := u.pal
-	bg, border := p.Chip, p.ChipBorder
-	switch {
-	case active:
-		bg, border = p.ChipActive, p.ChipActiveBorder
-	case c.Hovered():
-		bg = p.Hover
-	}
+	bg := mix(p.Chip, p.Hover, u.hover(gtx, c)*(1-active))
+	bg = mix(bg, p.ChipActive, active)
+	border := mix(p.ChipBorder, p.ChipActiveBorder, active)
 	return clickable(gtx, c, func(gtx C) D {
 		m := op.Record(gtx.Ops)
 		dims := vcenter(gtx, gtx.Dp(34), w)
@@ -119,14 +119,13 @@ func (u *UI) layoutChips(gtx C) D {
 		more := gtx.Dp(38)
 		cgtx := gtx
 		cgtx.Constraints.Min = image.Point{}
+		sel := &u.sidebar.chipSel
+		sel.step(gtx, u.sidebar.filter, durSwitch)
 		parts := make([]part, len(filterNames))
 		for i, name := range filterNames {
 			i, name := i, name
-			active := u.sidebar.filter == i
-			fg := p.ChipText
-			if active {
-				fg = p.ChipActiveText
-			}
+			active := sel.of(i)
+			fg := mix(p.ChipText, p.ChipActiveText, active)
 			parts[i] = record(cgtx, func(gtx C) D {
 				return u.chip(gtx, &u.sidebar.chips[i], active, func(gtx C) D {
 					return layout.Inset{Left: 12, Right: 12}.Layout(gtx,
@@ -160,15 +159,18 @@ func (u *UI) layoutChips(gtx C) D {
 			h = max(h, parts[i].size.Y)
 		}
 		if shown < len(parts) {
-			hiddenActive := u.sidebar.filter >= shown
+			var hiddenActive float32
+			for i := shown; i < len(parts); i++ {
+				hiddenActive = max(hiddenActive, sel.of(i))
+			}
 			t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
 			d := u.chip(cgtx, &u.sidebar.more, hiddenActive, func(gtx C) D {
 				gtx.Constraints.Min.X = more
-				col := p.ChipText
-				if hiddenActive {
-					col = p.ChipActiveText
-				}
-				return layout.Center.Layout(gtx, iconW(icDropDown, 22, col))
+				return layout.Center.Layout(gtx, func(gtx C) D {
+					d := iconW(icDropDown, 22, p.ChipText)(gtx)
+					withOpacity(gtx, hiddenActive, func() { iconW(icDropDown, 22, p.ChipActiveText)(gtx) })
+					return d
+				})
 			})
 			t.Pop()
 			u.filterMenu.anchor = image.Pt(x, 0)
@@ -216,9 +218,80 @@ func (u *UI) layoutChatList(gtx C) D {
 	l.Indicator.Color.A = 0x50
 	l.Indicator.MinorWidth = 5
 	l.Indicator.CornerRadius = 3
+	o := &u.sidebar.order
 	return l.Layout(gtx, len(chats), func(gtx C, i int) D {
-		return u.layoutChatRow(gtx, chats[i])
+		c := chats[i]
+		dy, a, moving := o.at(c.ID)
+		if !moving {
+			d := u.layoutChatRow(gtx, c)
+			o.rowH = d.Size.Y
+			return d
+		}
+		row := record(gtx, func(gtx C) D { return u.layoutChatRow(gtx, c) })
+		withOpacity(gtx, a, func() { row.at(gtx, 0, dy) })
+		return D{Size: row.size}
 	})
+}
+
+// chatOrder slides chat rows to their new places when a message reorders
+// the list. Rows that moved by one place slide there; a chat that jumped
+// up fades in at its new place while the rows above it make room.
+type chatOrder struct {
+	prev    []string       // chat IDs as drawn last frame
+	shift   map[string]int // moving rows: their old place, in rows from the new one
+	pending bool           // the order may have changed since the last frame
+	anim    tween
+	rowH    int
+}
+
+// fadeInRow is the shift of a row that fades in instead of sliding.
+const fadeInRow = 1 << 20
+
+// update notices a new order of the visible chats and advances the slide.
+func (o *chatOrder) update(gtx C, visible []*model.Chat) {
+	if o.pending && len(o.prev) > 0 {
+		was := make(map[string]int, len(o.prev))
+		for i, id := range o.prev {
+			was[id] = i
+		}
+		if o.shift == nil {
+			o.shift = make(map[string]int)
+		}
+		clear(o.shift)
+		for i, c := range visible {
+			switch j, ok := was[c.ID]; {
+			case !ok || j-i > 1:
+				o.shift[c.ID] = fadeInRow
+			case j != i:
+				o.shift[c.ID] = j - i
+			}
+		}
+		if len(o.shift) > 0 {
+			o.anim.snap(false)
+		}
+	}
+	o.pending = false
+	o.prev = o.prev[:0]
+	for _, c := range visible {
+		o.prev = append(o.prev, c.ID)
+	}
+	if len(o.shift) > 0 && o.anim.step(gtx, true, durSlide) >= 1 {
+		clear(o.shift)
+	}
+}
+
+// at returns where a row is drawn while rows move: its offset from its
+// place in px and its opacity.
+func (o *chatOrder) at(id string) (dy int, alpha float32, moving bool) {
+	s, ok := o.shift[id]
+	if !ok {
+		return 0, 1, false
+	}
+	e := easeOut(o.anim.v)
+	if s == fadeInRow {
+		return 0, e, true
+	}
+	return int(float32(s*o.rowH) * (1 - e)), 1, true
 }
 
 func (u *UI) rowClick(c *model.Chat) *widget.Clickable {
@@ -237,8 +310,8 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 		u.openChatMenu(c)
 	}
 	dims := u.chatRow(gtx, c, rowOpts{
-		click:    click,
-		selected: (u.selected != nil && c.ID == u.selected.ID && u.selPage == u.page) || (u.ctx.kind == ctxChat && u.ctx.chatID == c.ID),
+		click: click,
+		sel:   max(u.sidebar.openSel.of(c.ID), u.sidebar.menuSel.of(c.ID)),
 		// The chevron's button covers part of the row, so the row counts
 		// as hovered while the chevron is.
 		hovered: chev.Hovered(),
@@ -261,7 +334,7 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 // rowOpts adapts the chat row to the Channels and Communities pages.
 type rowOpts struct {
 	click    *widget.Clickable
-	selected bool
+	sel      float32       // selected highlight, 0 to 1
 	avatar   layout.Widget // replaces the chat's round avatar
 	avatarW  unit.Dp       // left edge of the avatar within the row (default 12)
 	textGap  unit.Dp       // space between avatar and text (default 16)
@@ -290,14 +363,8 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 	return layout.Inset{Left: 13, Right: 18, Top: 2, Bottom: 2}.Layout(gtx, func(gtx C) D {
 		return clickable(gtx, click, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			bg := p.Panel
-			hovered := click.Hovered() || o.hovered
-			switch {
-			case o.selected:
-				bg = p.Selected
-			case hovered:
-				bg = p.Hover
-			}
+			hover := u.hoverOn(gtx, click, click.Hovered() || o.hovered)
+			bg := mix(mix(p.Panel, p.Hover, hover), p.Selected, o.sel)
 			return background(gtx, bg, 10, func(gtx C) D {
 				return vcenter(gtx, gtx.Dp(76.3), func(gtx C) D {
 					return layout.Inset{Left: left, Right: 14}.Layout(gtx, func(gtx C) D {
@@ -308,7 +375,7 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 									layout.Rigid(func(gtx C) D { return u.layoutRowTitle(gtx, c, o.verified) }),
 									layout.Rigid(layout.Spacer{Height: 3}.Layout),
-									layout.Rigid(func(gtx C) D { return u.layoutRowPreview(gtx, c, last, hovered) }),
+									layout.Rigid(func(gtx C) D { return u.layoutRowPreview(gtx, c, last, hover) }),
 								)
 							}),
 						)
@@ -439,8 +506,9 @@ func shortName(name string) string {
 }
 
 // layoutRowPreview draws the second line of a chat row: last message preview
-// followed by muted / pinned / unread indicators.
-func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, hovered bool) D {
+// followed by muted / pinned / unread indicators, and the menu chevron while
+// the row is hovered (chev, 0 to 1).
+func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, chev float32) D {
 	p := u.pal
 	var children []layout.FlexChild
 	small := func(ic *icon.Icon, col color.NRGBA, size unit.Dp, right unit.Dp) layout.FlexChild {
@@ -514,8 +582,15 @@ func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, hovered
 	if c.Pinned {
 		row = append(row, indicator(iconW(icPin, 20, p.TextSecondary)))
 	}
-	if hovered {
-		row = append(row, indicator(iconW(icChevron, 22, p.TextSecondary)))
+	if chev > 0 {
+		// The chevron slides in, pushing the indicators aside.
+		row = append(row, layout.Rigid(func(gtx C) D {
+			full := record(gtx, func(gtx C) D { return layout.Inset{Left: 8}.Layout(gtx, iconW(icChevron, 22, p.TextSecondary)) })
+			w := lerpInt(0, full.size.X, chev)
+			defer clip.Rect{Max: image.Pt(w, full.size.Y)}.Push(gtx.Ops).Pop()
+			withOpacity(gtx, chev, func() { full.at(gtx, 0, 0) })
+			return D{Size: image.Pt(w, full.size.Y)}
+		}))
 	}
 	return vcenter(gtx, gtx.Dp(22), func(gtx C) D {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, row...)

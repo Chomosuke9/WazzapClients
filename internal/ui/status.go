@@ -117,10 +117,7 @@ func (u *UI) statusRow(gtx C, key string, t *model.StatusThread, title, sub stri
 	return layout.Inset{Left: 8, Right: 18}.Layout(gtx, func(gtx C) D {
 		return clickable(gtx, c, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			bg := p.Panel
-			if c.Hovered() {
-				bg = p.Hover
-			}
+			bg := mix(p.Panel, p.Hover, u.hover(gtx, c))
 			return background(gtx, bg, 10, func(gtx C) D {
 				return vcenter(gtx, gtx.Dp(height), func(gtx C) D {
 					return layout.Inset{Left: 11}.Layout(gtx, func(gtx C) D {
@@ -227,13 +224,15 @@ type statusViewer struct {
 	closeBtn widget.Clickable
 	prev     widget.Clickable
 	next     widget.Clickable
+	closing  bool // fading out
+	anim     tween
 }
 
 // statusDuration is how long each update stays on screen.
 const statusDuration = 6 * time.Second
 
 func (v *statusViewer) show(t *model.StatusThread) {
-	v.thread = t
+	v.thread, v.closing = t, false
 	v.index = 0
 	// Start at the first unseen update, like WhatsApp.
 	for i, up := range t.Updates {
@@ -245,7 +244,15 @@ func (v *statusViewer) show(t *model.StatusThread) {
 	v.shownAt = time.Time{}
 }
 
-func (v *statusViewer) close() { v.thread = nil }
+// close fades the viewer out.
+func (v *statusViewer) close() {
+	if v.thread != nil {
+		v.closing = true
+	}
+}
+
+// isOpen reports whether the viewer is open and not fading out.
+func (v *statusViewer) isOpen() bool { return v.thread != nil && !v.closing }
 
 func (u *UI) layoutStatusViewer(gtx C) {
 	v := &u.status.viewer
@@ -254,10 +261,6 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		return
 	}
 	p := u.pal
-	if v.closeBtn.Clicked(gtx) {
-		v.close()
-		return
-	}
 	advance := func(d int) {
 		v.index += d
 		v.shownAt = time.Time{}
@@ -265,45 +268,59 @@ func (u *UI) layoutStatusViewer(gtx C) {
 			v.index = 0
 		}
 		if v.index >= len(t.Updates) {
+			v.index = len(t.Updates) - 1
 			v.close()
 		}
 	}
-	if v.next.Clicked(gtx) {
-		advance(1)
+	if v.isOpen() {
+		if v.closeBtn.Clicked(gtx) {
+			v.close()
+		}
+		if v.next.Clicked(gtx) {
+			advance(1)
+		}
+		if v.prev.Clicked(gtx) {
+			advance(-1)
+		}
 	}
-	if v.prev.Clicked(gtx) {
-		advance(-1)
-	}
-	if v.thread == nil {
+	a := v.anim.step(gtx, v.isOpen(), durDialog)
+	if a == 0 && v.closing {
+		v.thread, v.closing = nil, false
 		return
 	}
 	now := gtx.Now
 	if now.IsZero() {
 		now = time.Now()
 	}
-	up := t.Updates[v.index]
-	if v.shownAt.IsZero() {
+	if v.isOpen() && v.shownAt.IsZero() {
 		v.shownAt = now
-		if !up.Viewed && !t.Mine {
+		if up := t.Updates[v.index]; !up.Viewed && !t.Mine {
 			up.Viewed = true
 			u.backend.ViewStatus(t.ID, up.ID)
 		}
 	}
 	elapsed := now.Sub(v.shownAt)
-	if elapsed >= statusDuration {
-		advance(1)
-		if v.thread == nil {
+	if v.isOpen() {
+		if elapsed >= statusDuration {
+			advance(1)
+			gtx.Execute(op.InvalidateCmd{})
 			return
 		}
-		gtx.Execute(op.InvalidateCmd{})
-		return
+		gtx.Execute(op.InvalidateCmd{At: now.Add(50 * time.Millisecond)})
+	} else {
+		gtx = gtx.Disabled() // fading out: no timer, clicks go through
+		elapsed = min(max(elapsed, 0), statusDuration)
 	}
-	gtx.Execute(op.InvalidateCmd{At: now.Add(50 * time.Millisecond)})
+	up := t.Updates[v.index]
 
 	sz := gtx.Constraints.Max
-	fillRect(gtx, image.Rectangle{Max: sz}, p.StatusBg)
+	// The backdrop fades, the update zooms out of the middle and the
+	// controls fade: a fade of the whole window would need an opacity layer
+	// that size, and Gio keeps its texture for good.
+	e := easeOut(a)
+	fillRect(gtx, image.Rectangle{Max: sz}, faded(p.StatusBg, e))
 	// Clicks on the left third go back, anywhere else forward.
-	func() {
+	if v.isOpen() {
 		third := sz.X / 3
 		pg := gtx
 		pg.Constraints = layout.Exact(image.Pt(third, sz.Y))
@@ -313,13 +330,16 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		ng.Constraints = layout.Exact(image.Pt(sz.X-third, sz.Y))
 		v.next.Layout(ng, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 		t.Pop()
-	}()
+	}
 
 	// The update itself, centered in a portrait frame.
 	frameH := sz.Y - gtx.Dp(120)
 	frameW := min(sz.X-gtx.Dp(40), frameH*9/16)
 	frame := image.Rect((sz.X-frameW)/2, gtx.Dp(92), (sz.X+frameW)/2, gtx.Dp(92)+frameH)
+	zoom := pushFx(gtx, 1, scaleAt(frame.Min.Add(frame.Size().Div(2)), lerp(0.3, 1, e)))
 	u.layoutStatusContent(gtx, t, up, frame)
+	zoom.Pop()
+	defer pushFx(gtx, e, f32.Affine2D{}).Pop()
 
 	// Progress segments across the top of the frame.
 	n := len(t.Updates)

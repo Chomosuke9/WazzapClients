@@ -4,7 +4,6 @@ import (
 	"image"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 
 	"gioui.org/font"
@@ -76,7 +75,7 @@ func (u *UI) openDirect(id, name string) {
 
 func (u *UI) closeChat() {
 	u.selected = nil
-	u.info.open = false
+	u.hideInfo()
 	u.endSelect()
 }
 
@@ -106,17 +105,18 @@ func (u *UI) pickedMessages() []*model.Message {
 // while it lays out (a click inside a message) would scroll to the top.
 func (u *UI) scrollMessages(p layout.Position) {
 	u.conv.scrollTo = &p // layoutMessages redraws for it
+	u.conv.glide = glide{}
 }
 
-// jumpTo scrolls to a message and flashes it.
+// jumpTo scrolls smoothly to a message and flashes it.
 func (u *UI) jumpTo(id string) {
 	if u.selected == nil {
 		return
 	}
 	for i, r := range u.rows(u.selected) {
 		if r.msg != nil && r.msg.ID == id {
-			u.scrollMessages(layout.Position{First: max(0, i-2)})
-			u.conv.flash, u.conv.flashUntil = id, u.now().Add(1500*time.Millisecond)
+			u.conv.glide = glide{first: max(0, i-2), pending: true}
+			u.conv.flash, u.conv.flashUntil = id, u.now().Add(flashTime)
 			return
 		}
 	}
@@ -281,6 +281,19 @@ func (u *UI) pickMention(i int) {
 	u.requestFocus(ed)
 }
 
+// resetComposerAnims ends the composer's animations, for a chat switch.
+func (u *UI) resetComposerAnims() {
+	c := &u.conv
+	c.replyAnim.snap(false)
+	c.replyGhost = nil
+	c.mentionAnim.snap(false)
+	c.mentionGhost = nil
+	c.selAnim.snap(false)
+	c.selV = 0
+	c.sendAnim.snap(false)
+	c.glide = glide{}
+}
+
 // chatMembers returns a group's member list, cached per chat.
 func (u *UI) chatMembers(chatID string) *model.ChatInfo {
 	if u.conv.membersFor != chatID {
@@ -393,8 +406,7 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 	p := u.pal
 	for i, m := range ms.members {
 		if u.btn("mention:" + m.ID).Clicked(gtx) {
-			u.pickMention(i)
-			return D{}
+			u.pickMention(i) // it keeps drawing while it fades out
 		}
 	}
 	rowH := gtx.Dp(56)
@@ -416,8 +428,12 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 		cl := u.btn("mention:" + m.ID)
 		return clickable(gtx, cl, func(gtx C) D {
 			sz := image.Pt(gtx.Constraints.Max.X, rowH)
-			if cl.Hovered() || i == 0 {
-				fillRRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(10), p.PopupHover)
+			h := u.hover(gtx, cl)
+			if i == 0 {
+				h = 1 // Enter picks it
+			}
+			if h > 0 {
+				fillRRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(10), faded(p.PopupHover, h))
 			}
 			gtx.Constraints = layout.Constraints{Max: sz}
 			name, sub := m.Name, ""
@@ -463,8 +479,7 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
 	p := u.pal
 	if u.btn("reply:close").Clicked(gtx) {
-		u.conv.reply = nil
-		return D{}
+		u.conv.reply = nil // it keeps drawing while it shrinks away
 	}
 	q := &model.Quote{ID: m.ID, Text: m.Text, Media: m.Media}
 	if !m.FromMe {
@@ -490,10 +505,9 @@ func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
 	})
 }
 
-// layoutComposer is the floating message box at the bottom of a chat, with
-// the reply preview and the mention picker above the input.
+// layoutComposer is the floating message box at the bottom of a chat, or
+// the select bar in select mode. Switching between them cross-fades.
 func (u *UI) layoutComposer(gtx C) D {
-	p := u.pal
 	if u.conv.emoji.Clicked(gtx) {
 		if u.picker.open {
 			u.closePicker()
@@ -502,23 +516,61 @@ func (u *UI) layoutComposer(gtx C) D {
 		}
 	}
 	if u.conv.selecting {
-		return u.layoutSelectBar(gtx)
+		return fadeW(gtx, easeOut(u.conv.selV), u.layoutSelectBar)
 	}
+	return fadeW(gtx, easeOut(1-u.conv.selV), u.layoutComposerBox)
+}
+
+// layoutComposerBox is the message box, with the reply preview and the
+// mention picker above the input. Both grow in and shrink away.
+func (u *UI) layoutComposerBox(gtx C) D {
+	p := u.pal
+	c := &u.conv
 	ms := u.mentionQuery()
+	if ms != nil {
+		c.mentionGhost = ms
+	}
+	mv := easeOut(c.mentionAnim.step(gtx, ms != nil, popDur(ms != nil)))
+	if mv == 0 {
+		c.mentionGhost = nil
+	}
+	reply := c.reply
+	if reply != nil {
+		c.replyGhost = reply
+	}
+	rv := easeOut(c.replyAnim.step(gtx, reply != nil, durGrow))
+	if rv == 0 {
+		c.replyGhost = nil
+	}
+	hasText := trimSpace(c.composer.Text()) != ""
+	sv := easeOut(c.sendAnim.step(gtx, hasText, durSwitch))
 	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		var picker part
-		if ms != nil {
-			picker = record(gtx, func(gtx C) D { return u.layoutMentionPicker(gtx, ms) })
+		if ghost := c.mentionGhost; ghost != nil {
+			pg := gtx
+			if ms == nil {
+				pg = gtx.Disabled() // fading out
+			}
+			picker = record(pg, func(gtx C) D { return u.layoutMentionPicker(gtx, ghost) })
 		}
-		hasText := trimSpace(u.conv.composer.Text()) != ""
 		m := op.Record(gtx.Ops)
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx C) D {
-				if u.conv.reply == nil {
+				ghost := c.replyGhost
+				if ghost == nil {
 					return D{}
 				}
-				return u.layoutReplyPreview(gtx, u.conv.reply)
+				pg := gtx
+				if reply == nil {
+					pg = gtx.Disabled() // shrinking away
+				}
+				// The preview rises out of the input as the box grows.
+				full := record(pg, func(gtx C) D { return u.layoutReplyPreview(gtx, ghost) })
+				h := lerpInt(0, full.size.Y, rv)
+				defer clip.Rect{Max: image.Pt(full.size.X, h)}.Push(gtx.Ops).Pop()
+				withOpacity(gtx, rv, func() { full.at(gtx, 0, h-full.size.Y) })
+				return D{Size: image.Pt(full.size.X, h)}
 			}),
 			layout.Rigid(func(gtx C) D {
 				return vcenter(gtx, gtx.Dp(55), func(gtx C) D {
@@ -527,8 +579,8 @@ func (u *UI) layoutComposer(gtx C) D {
 							layout.Rigid(func(gtx C) D {
 								return clickable(gtx, &u.conv.attach, func(gtx C) D {
 									sz := gtx.Dp(40)
-									if u.conv.attach.Hovered() {
-										fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Hover)
+									if h := u.hover(gtx, &u.conv.attach); h > 0 {
+										fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, faded(p.Hover, h))
 									}
 									return centerIn(gtx, sz, iconW(icAttach, 26, p.IconStrong))
 								})
@@ -558,13 +610,25 @@ func (u *UI) layoutComposer(gtx C) D {
 							}),
 							layout.Rigid(layout.Spacer{Width: 8}.Layout),
 							layout.Rigid(func(gtx C) D {
-								if !hasText {
-									return u.iconButton(gtx, &u.conv.send, icMic, 40, 26, p.IconStrong)
-								}
+								// The mic turns into the send button as you type.
 								return clickable(gtx, &u.conv.send, func(gtx C) D {
 									sz := gtx.Dp(40)
-									fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Green)
-									return centerIn(gtx, sz, iconW(icSend, 21, p.OnGreen))
+									mid := image.Pt(sz/2, sz/2)
+									if h := u.hover(gtx, &u.conv.send) * (1 - sv); h > 0 {
+										fillCircle(gtx, mid, sz/2, faded(p.Hover, h))
+									}
+									if sv < 1 {
+										fx := pushFx(gtx, 1-sv, scaleAt(mid, lerp(1, 0.5, sv)))
+										centerIn(gtx, sz, iconW(icMic, 26, p.IconStrong))
+										fx.Pop()
+									}
+									if sv > 0 {
+										fx := pushFx(gtx, sv, scaleAt(mid, lerp(0.5, 1, sv)))
+										fillCircle(gtx, mid, sz/2, p.Green)
+										centerIn(gtx, sz, iconW(icSend, 21, p.OnGreen))
+										fx.Pop()
+									}
+									return D{Size: image.Pt(sz, sz)}
 								})
 							}),
 						)
@@ -573,14 +637,13 @@ func (u *UI) layoutComposer(gtx C) D {
 			}),
 		)
 		call := m.Stop()
-		r := gtx.Dp(28)
-		if u.conv.reply != nil {
-			r = gtx.Dp(20)
-		}
+		r := lerpInt(gtx.Dp(28), gtx.Dp(20), rv)
 		fillRRect(gtx, image.Rectangle{Max: dims.Size}, min(dims.Size.Y/2, r), p.Composer)
 		call.Add(gtx.Ops)
-		if ms != nil {
+		if picker.size.Y > 0 {
+			fx := pushFx(gtx, mv, moveBy(0, float32(gtx.Dp(10))*(1-mv)))
 			picker.at(gtx, 0, -picker.size.Y-gtx.Dp(8))
+			fx.Pop()
 		}
 		u.conv.composerH = dims.Size.Y + gtx.Dp(18)
 		return dims
@@ -682,10 +745,7 @@ func (u *UI) layoutPinnedBanner(gtx C, m *model.Message) D {
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return clickable(gtx, cl, func(gtx C) D {
-		bg := p.Panel
-		if cl.Hovered() {
-			bg = p.Hover
-		}
+		bg := mix(p.Panel, p.Hover, u.hover(gtx, cl))
 		d := background(gtx, bg, 0, func(gtx C) D {
 			return vcenter(gtx, gtx.Dp(50), func(gtx C) D {
 				return layout.Inset{Left: 22, Right: 16}.Layout(gtx, func(gtx C) D {

@@ -30,6 +30,11 @@ type mediaViewer struct {
 		last   f32.Point
 	}
 	strip widget.List
+
+	anim   tween       // opening and closing
+	origin image.Point // where it was opened, which the picture zooms out of
+	// What is shown glides to zoom, pan and the current thumbnail.
+	shownZoom, panX, panY, stripX follower
 }
 
 // viewerItems lists the chat's pictures and videos, oldest first.
@@ -44,15 +49,25 @@ func (u *UI) viewerItems() []*model.Message {
 }
 
 func (u *UI) openViewer(m *model.Message) {
-	u.viewer = mediaViewer{open: true, msgID: m.ID, zoom: 1}
+	if u.viewer.anim.v > 0 {
+		u.images.forget("v:" + u.viewer.msgID) // still fading out
+	}
+	u.viewer = mediaViewer{open: true, msgID: m.ID, zoom: 1, origin: u.mouse}
 	u.viewer.strip.Axis = layout.Horizontal
 	u.closePicker()
 	u.requestFocus(nil) // so arrow keys reach the viewer, not the composer
 }
 
-func (u *UI) closeViewer() {
-	u.images.forget("v:" + u.viewer.msgID)
+// closeViewer fades the viewer out. Its picture is released after.
+func (u *UI) closeViewer() { u.viewer.open = false }
+
+// hideViewer closes the viewer at once.
+func (u *UI) hideViewer() {
+	if u.viewer.open || u.viewer.anim.v > 0 {
+		u.images.forget("v:" + u.viewer.msgID)
+	}
 	u.viewer.open = false
+	u.viewer.anim.snap(false)
 }
 
 // viewerMsg returns the shown message and its index in items.
@@ -88,19 +103,18 @@ func (u *UI) showViewerAt(items []*model.Message, i int) {
 
 func (u *UI) layoutViewer(gtx C) {
 	v := &u.viewer
-	if !v.open || u.selected == nil {
-		v.open = false
+	if !v.open && v.anim.v == 0 {
 		return
 	}
 	p := u.pal
 	items := u.viewerItems()
 	m, idx := u.viewerMsg(items)
-	if m == nil {
-		u.closeViewer()
+	if m == nil || u.selected == nil {
+		u.hideViewer()
 		return
 	}
 	// Keyboard: arrows switch, Escape closes.
-	for {
+	for v.open {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameLeftArrow}, key.Filter{Name: key.NameRightArrow},
 			key.Filter{Name: key.NameEscape})
 		if !ok {
@@ -113,9 +127,8 @@ func (u *UI) layoutViewer(gtx C) {
 			case key.NameRightArrow:
 				u.showViewerAt(items, idx+1)
 			case key.NameEscape:
-				if u.ctx.kind == ctxNone {
+				if !u.ctx.isOpen() {
 					u.closeViewer()
-					return
 				}
 			}
 		}
@@ -141,11 +154,8 @@ func (u *UI) layoutViewer(gtx C) {
 		{"close", icClose, false, func() { u.closeViewer() }},
 	}
 	for _, t := range tools {
-		if u.btn("vw:"+t.key).Clicked(gtx) && !t.off {
+		if u.btn("vw:"+t.key).Clicked(gtx) && !t.off && v.open {
 			t.run()
-			if !v.open {
-				return
-			}
 		}
 	}
 	if u.btn("vw:prev").Clicked(gtx) {
@@ -160,14 +170,29 @@ func (u *UI) layoutViewer(gtx C) {
 		}
 	}
 	m, idx = u.viewerMsg(items)
+	a := v.anim.step(gtx, v.open, durDialog)
+	if a == 0 && !v.open {
+		u.images.forget("v:" + v.msgID)
+		return
+	}
+	if !v.open {
+		gtx = gtx.Disabled() // clicks go through while it fades
+	}
 
 	sz := gtx.Constraints.Max
-	fillRect(gtx, image.Rectangle{Max: sz}, p.Viewer)
-	// Block input to the chat underneath.
-	u.btn("vw:bg").Layout(gtx, func(gtx C) D { return D{Size: sz} })
+	// The backdrop and the controls fade and the picture zooms (see
+	// layoutViewerImage). Fading everything at once would take an opacity
+	// layer the size of the window, and Gio keeps its texture for good.
+	e := easeOut(a)
+	fillRect(gtx, image.Rectangle{Max: sz}, faded(p.Viewer, e))
+	if v.open {
+		// Block input to the chat underneath.
+		u.btn("vw:bg").Layout(gtx, func(gtx C) D { return D{Size: sz} })
+	}
 
 	// Header: who sent it and when.
 	name, avatarID, group := u.senderLabel(m)
+	top := pushFx(gtx, e, moveBy(0, -float32(gtx.Dp(12))*(1-e)))
 	func() {
 		t := op.Offset(image.Pt(gtx.Dp(29), 0)).Push(gtx.Ops)
 		defer t.Pop()
@@ -200,18 +225,20 @@ func (u *UI) layoutViewer(gtx C) {
 		cl := u.btn("vw:" + t.key)
 		clickable(gtx, cl, func(gtx C) D {
 			s := gtx.Dp(42)
-			if cl.Hovered() && !t.off {
-				fillCircle(gtx, image.Pt(s/2, s/2), s/2, p.Hover)
+			if h := u.hover(gtx, cl); h > 0 && !t.off {
+				fillCircle(gtx, image.Pt(s/2, s/2), s/2, faded(p.Hover, h))
 			}
 			return centerIn(gtx, s, iconW(t.ic, 24, col))
 		})
 		off.Pop()
 		x += pitch
 	}
+	top.Pop()
 
 	// Thumbnail strip and the divider above it.
 	stripTop := sz.Y - gtx.Dp(105)
-	fillRect(gtx, image.Rect(0, stripTop, sz.X, stripTop+max(1, gtx.Dp(1))), p.ViewerDivider)
+	fillRect(gtx, image.Rect(0, stripTop, sz.X, stripTop+max(1, gtx.Dp(1))), faded(p.ViewerDivider, e))
+	lower := pushFx(gtx, e, moveBy(0, float32(gtx.Dp(12))*(1-e)))
 	u.layoutViewerStrip(gtx, items, idx, stripTop+gtx.Dp(10))
 
 	// Caption, then the picture filling what's left.
@@ -224,6 +251,7 @@ func (u *UI) layoutViewer(gtx C) {
 		cap.at(gtx, (sz.X-cap.size.X)/2, stripTop-gtx.Dp(22)-cap.size.Y)
 		bottom = stripTop - gtx.Dp(44) - cap.size.Y
 	}
+	lower.Pop()
 	area := image.Rect(gtx.Dp(140), gtx.Dp(74), sz.X-gtx.Dp(140), bottom)
 	u.layoutViewerImage(gtx, m, area)
 
@@ -232,14 +260,15 @@ func (u *UI) layoutViewer(gtx C) {
 		s := gtx.Dp(43)
 		t := op.Offset(image.Pt(cx-s/2, (area.Min.Y+area.Max.Y)/2-s/2)).Push(gtx.Ops)
 		defer t.Pop()
+		defer pushFx(gtx, e, f32.Affine2D{}).Pop()
 		cl := u.btn(key)
 		col, bg := p.IconStrong, p.ViewerArrow
 		if !enabled {
 			col, bg = p.EmptyIcon, mix(p.Viewer, p.ViewerArrow, 0.5)
 		}
 		clickable(gtx, cl, func(gtx C) D {
-			if cl.Hovered() && enabled {
-				bg = p.Hover
+			if enabled {
+				bg = mix(bg, p.Hover, u.hover(gtx, cl))
 			}
 			fillCircle(gtx, image.Pt(s/2, s/2), s/2, bg)
 			return centerIn(gtx, s, iconW(ic, 28, col))
@@ -301,6 +330,8 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) {
 		case pointer.Drag:
 			if v.drag.active && v.zoom > 1 {
 				v.pan = v.pan.Add(e.Position.Sub(v.drag.last))
+				v.panX.snap(v.pan.X) // dragging follows the pointer exactly
+				v.panY.snap(v.pan.Y)
 			}
 			v.drag.last = e.Position
 		case pointer.Release:
@@ -336,13 +367,30 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) {
 	if img == nil {
 		img = u.messageImage(m, gtx.Dp(330))
 	}
-	defer clip.Rect(area).Push(gtx.Ops).Pop()
+	// Zoom and pan glide to where the wheel and buttons set them.
+	zoom := v.shownZoom.step(gtx, v.zoom, durPopIn)
+	pan := f32.Pt(v.panX.step(gtx, v.pan.X, durPopIn), v.panY.step(gtx, v.pan.Y, durPopIn))
 	var dst image.Rectangle
-	if img != nil && img.state == imgReady {
-		s := min(float32(area.Dx())/float32(img.size.X), float32(area.Dy())/float32(img.size.Y)) * v.zoom
+	ready := img != nil && img.state == imgReady
+	if ready {
+		s := min(float32(area.Dx())/float32(img.size.X), float32(area.Dy())/float32(img.size.Y)) * zoom
 		w, h := float32(img.size.X)*s, float32(img.size.Y)*s
-		c := pointF(area.Min.Add(area.Size().Div(2))).Add(v.pan)
+		c := pointF(area.Min.Add(area.Size().Div(2))).Add(pan)
 		dst = image.Rect(int(c.X-w/2), int(c.Y-h/2), int(c.X+w/2), int(c.Y+h/2))
+	} else {
+		w := min(area.Dx(), area.Dy()*3/4)
+		dst = image.Rect(0, 0, w, w*4/3).Add(area.Min.Add(image.Pt((area.Dx()-w)/2, (area.Dy()-w*4/3)/2)))
+	}
+	// Opening grows the picture out of where it was clicked, from about the
+	// size of a bubble's picture; closing shrinks it back.
+	if e := easeOut(v.anim.v); e < 1 && dst.Dx() > 0 {
+		c1 := pointF(dst.Min.Add(dst.Size().Div(2)))
+		c := pointF(v.origin).Add(c1.Sub(pointF(v.origin)).Mul(e))
+		s := lerp(min(1, float32(gtx.Dp(330))/float32(dst.Dx())), 1, e)
+		defer pushFx(gtx, 1, f32.AffineId().Scale(c1, f32.Pt(s, s)).Offset(c.Sub(c1))).Pop()
+	}
+	defer clip.Rect(area).Push(gtx.Ops).Pop()
+	if ready {
 		func() {
 			defer clip.Rect(dst.Intersect(area)).Push(gtx.Ops).Pop()
 			s := f32.Pt(float32(dst.Dx())/float32(img.size.X), float32(dst.Dy())/float32(img.size.Y))
@@ -353,8 +401,6 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) {
 			paint.PaintOp{}.Add(gtx.Ops)
 		}()
 	} else {
-		w := min(area.Dx(), area.Dy()*3/4)
-		dst = image.Rect(0, 0, w, w*4/3).Add(area.Min.Add(image.Pt((area.Dx()-w)/2, (area.Dy()-w*4/3)/2)))
 		u.layoutImage(gtx, dst, m, nil)
 	}
 	if m.Media == model.MediaVideo || m.Media == model.MediaGIF {
@@ -376,7 +422,8 @@ func (u *UI) layoutViewerStrip(gtx C, items []*model.Message, cur, y int) {
 	cell := gtx.Dp(74)
 	gap := gtx.Dp(12)
 	pitch := cell + gap
-	x0 := sz.X/2 - cell/2 - cur*pitch
+	// The strip slides to keep the current picture in the middle.
+	x0 := int(u.viewer.stripX.step(gtx, float32(sz.X/2-cell/2-cur*pitch), durSlide))
 	first := max(0, (-x0)/pitch-1)
 	for i := first; i < len(items); i++ {
 		x := x0 + i*pitch

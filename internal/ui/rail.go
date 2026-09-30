@@ -75,6 +75,25 @@ func (u *UI) layoutRail(gtx C) D {
 			channelUnread = true
 		}
 	}
+	// The active item's circle moves from one item to the next.
+	var active *widget.Clickable
+	switch {
+	case onChats:
+		active = &u.rail.chats
+	case onArchive:
+		active = &u.rail.archived
+	case u.page == pageCalls:
+		active = &u.rail.calls
+	case u.page == pageStatus:
+		active = &u.rail.status
+	case u.page == pageChannels:
+		active = &u.rail.channels
+	case u.page == pageCommunities:
+		active = &u.rail.communities
+	case u.page == pageSettings:
+		active = &u.rail.profile
+	}
+	u.railSel.step(gtx, active, durSwitch)
 
 	gtx.Constraints = layout.Exact(sz)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -100,12 +119,7 @@ func (u *UI) layoutRail(gtx C) D {
 				return layout.N.Layout(gtx, func(gtx C) D {
 					return clickable(gtx, &u.rail.profile, func(gtx C) D {
 						sz := gtx.Dp(42)
-						switch {
-						case u.page == pageSettings:
-							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.RailActive)
-						case u.rail.profile.Hovered():
-							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Hover)
-						}
+						u.railCircle(gtx, &u.rail.profile, sz)
 						return centerIn(gtx, sz, func(gtx C) D {
 							return u.avatar(gtx, u.meID, u.meName(), false, 30)
 						})
@@ -120,12 +134,7 @@ func (u *UI) railButton(gtx C, c *widget.Clickable, active bool, glyph func(gtx 
 	p := u.pal
 	return clickable(gtx, c, func(gtx C) D {
 		sz := gtx.Dp(42)
-		switch {
-		case active:
-			fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.RailActive)
-		case c.Hovered():
-			fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Hover)
-		}
+		u.railCircle(gtx, c, sz)
 		col := p.Icon
 		if active {
 			col = p.IconActive
@@ -146,6 +155,19 @@ func (u *UI) railButton(gtx C, c *widget.Clickable, active bool, glyph func(gtx 
 		}
 		return D{Size: image.Pt(sz, sz)}
 	})
+}
+
+// railCircle paints a rail button's round background: the active item's,
+// fading between items, or the hover highlight.
+func (u *UI) railCircle(gtx C, c *widget.Clickable, sz int) {
+	p := u.pal
+	a := u.railSel.of(c)
+	if h := u.hover(gtx, c) * (1 - a); h > 0 {
+		fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, faded(p.Hover, h))
+	}
+	if a > 0 {
+		fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, faded(p.RailActive, a))
+	}
 }
 
 // railBadge is the compact count bubble shown on rail icons.

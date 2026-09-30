@@ -48,6 +48,8 @@ func main() {
 	overlay := flag.String("overlay", "", "render only this overlay (chatmenu, msgmenu, emoji, viewer, forward, reply, delete, select, mention, mentioned) to <out>/overlay-<name>.png")
 	at := flag.String("at", "600,300", "with -overlay, where menus open (x,y px)")
 	overlayChat := flag.String("ochat", "rina", "with -overlay, the demo chat to open")
+	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, info, message, reorder or hover")
+	step := flag.Duration("step", 30*time.Millisecond, "with -film, time between frames")
 	flag.Parse()
 	if *memprofile != "" {
 		defer func() {
@@ -75,6 +77,20 @@ func main() {
 
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		log.Fatal(err)
+	}
+	if *filmName != "" {
+		var x, y int
+		fmt.Sscanf(*at, "%d,%d", &x, &y)
+		img, err := film(*filmName, *overlayChat, x, y, int(float64(*width)**scale), int(float64(*height)**scale), float32(*scale), *step)
+		if err != nil {
+			log.Fatal(err)
+		}
+		path := filepath.Join(*out, "film-"+*filmName+".png")
+		if err := writePNG(path, img); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("wrote", path)
+		return
 	}
 	if *overlay != "" {
 		var x, y int

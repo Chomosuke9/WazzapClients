@@ -148,10 +148,7 @@ func (u *UI) layoutListItem(gtx C, c *widget.Clickable, it listItem, g listGeom)
 	return layout.Inset{Left: g.hoverLeft, Right: g.hoverRight}.Layout(gtx, func(gtx C) D {
 		return clickable(gtx, c, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			bg := p.Panel
-			if c.Hovered() {
-				bg = p.RowHover
-			}
+			bg := mix(p.Panel, p.RowHover, u.hover(gtx, c))
 			return background(gtx, bg, 10, func(gtx C) D {
 				minH := g.height
 				if it.sub != "" || it.content != nil {

@@ -64,6 +64,7 @@ func (u *UI) rows(c *model.Chat) []convRow {
 
 func (u *UI) layoutConversation(gtx C) D {
 	c := u.selected
+	u.conv.selV = u.conv.selAnim.step(gtx, u.conv.selecting, durGrow)
 	var pinned *model.Message
 	for _, m := range u.msgs {
 		if m.Pinned && m.Kind != model.KindDeleted {
@@ -100,7 +101,7 @@ func (u *UI) layoutConversation(gtx C) D {
 			t := op.Offset(image.Pt(0, sz.Y-cd.Size.Y)).Push(gtx.Ops)
 			composer.Add(gtx.Ops)
 			t.Pop()
-			if u.picker.open && u.picker.mode == pickComposer {
+			if u.picker.shown() && u.picker.mode == pickComposer {
 				// Deferred so it draws (and takes clicks) above everything.
 				m := op.Record(gtx.Ops)
 				u.layoutPicker(gtx, image.Pt(gtx.Dp(12), sz.Y-cd.Size.Y+gtx.Dp(4)), sz.X-gtx.Dp(24))
@@ -163,8 +164,8 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 						// Video call with a drop-down arrow, like WhatsApp's call picker.
 						return clickable(gtx, &u.conv.video, func(gtx C) D {
 							h := gtx.Dp(40)
-							if u.conv.video.Hovered() {
-								fillRRect(gtx, image.Rect(0, 0, gtx.Dp(60), h), h/2, p.Hover)
+							if a := u.hover(gtx, &u.conv.video); a > 0 {
+								fillRRect(gtx, image.Rect(0, 0, gtx.Dp(60), h), h/2, faded(p.Hover, a))
 							}
 							gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(60), h))
 							return layout.Center.Layout(gtx, func(gtx C) D {
@@ -193,6 +194,61 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 
 func dp(gtx C, px int) unit.Dp { return unit.Dp(float32(px) / gtx.Metric.PxPerDp) }
 
+// flashTime is how long a message stays highlighted after a jump to it.
+const flashTime = 1500 * time.Millisecond
+
+// glide scrolls the message list smoothly to a row: the list is put where
+// the row is now (or a screen away, when it isn't on screen) and the
+// offset eases to zero.
+type glide struct {
+	first   int // the row that ends at the top
+	pending bool
+	active  bool
+	from    float32 // starting offset in px
+	start   time.Time
+}
+
+// glideFrom returns the list offset that shows row i where it is now, from
+// the rows laid out last frame, or one screen away in its direction.
+func (u *UI) glideFrom(i, screen int) int {
+	pos := u.conv.list.Position
+	y := -pos.Offset // of row i, from the top of the list
+	known := true
+	for j := pos.First; j < i && known; j++ {
+		h, ok := u.conv.heights[j]
+		y, known = y+h, ok
+	}
+	for j := i; j < pos.First && known; j++ {
+		h, ok := u.conv.heights[j]
+		y, known = y-h, ok
+	}
+	switch {
+	case !known && i < pos.First, known && y < -screen:
+		y = -screen
+	case !known, y > screen:
+		y = screen
+	}
+	return -y
+}
+
+// appearing lays out a new message's row growing from nothing at the
+// bottom, its bubble rising into place as the rows above make room.
+func (u *UI) appearing(gtx C, id string, w layout.Widget) D {
+	k := animKey{id: id, tag: tagAppear}
+	v := u.anims.fade(gtx, k, true, durAppear, durAppear)
+	if v >= 1 {
+		u.anims.stop(k)
+	}
+	e := easeOut(v)
+	full := record(gtx, w)
+	// At least 1px: the list drops a trailing child of no height when it
+	// trims to the viewport, and would then stop following the end.
+	h := max(1, lerpInt(0, full.size.Y, e))
+	defer clip.Rect{Max: image.Pt(full.size.X, h)}.Push(gtx.Ops).Pop()
+	withOpacity(gtx, e, func() { full.at(gtx, 0, h-full.size.Y) })
+	return D{Size: image.Pt(full.size.X, h)}
+}
+
 func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	rows := u.rows(c)
 	width := gtx.Constraints.Max.X
@@ -200,9 +256,29 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	maxBubble := min(width*69/100, width-2*margin)
 
 	if p := u.conv.scrollTo; p != nil {
-		u.conv.list.Position, u.conv.list.ScrollToEnd = *p, *p == (layout.Position{})
+		u.conv.list.Position = *p
 		u.conv.scrollTo = nil
 	}
+	if g := &u.conv.glide; g.pending {
+		g.pending, g.active = false, true
+		g.from, g.start = float32(u.glideFrom(g.first, gtx.Constraints.Max.Y)), gtx.Now
+	}
+	if g := &u.conv.glide; g.active {
+		t := float32(1)
+		if !gtx.Now.IsZero() {
+			t = min(1, float32(gtx.Now.Sub(g.start))/float32(durScroll))
+		}
+		// BeforeEnd keeps the list from snapping back to the newest message.
+		u.conv.list.Position = layout.Position{First: g.first, Offset: int(g.from * (1 - easeInOut(t))), BeforeEnd: true}
+		g.active = t < 1
+		if g.active {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+	if u.conv.heights == nil {
+		u.conv.heights = make(map[int]int)
+	}
+	clear(u.conv.heights)
 	l := material.List(u.th, &u.conv.list)
 	l.AnchorStrategy = material.Overlay
 	l.Indicator.Color = u.pal.TextSecondary
@@ -231,17 +307,27 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		if i == len(rows)-1 {
 			in.Bottom += 8
 		}
-		return in.Layout(gtx, func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			switch {
-			case r.kind == rowDate:
-				return layout.N.Layout(gtx, func(gtx C) D { return u.systemChip(gtx, r.date) })
-			case r.kind == rowEncryption:
-				return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
-			default:
-				return u.layoutMessageRow(gtx, c, r, maxBubble, margin)
-			}
-		})
+		row := func(gtx C) D {
+			return in.Layout(gtx, func(gtx C) D {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				switch {
+				case r.kind == rowDate:
+					return layout.N.Layout(gtx, func(gtx C) D { return u.systemChip(gtx, r.date) })
+				case r.kind == rowEncryption:
+					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
+				default:
+					return u.layoutMessageRow(gtx, c, r, maxBubble, margin)
+				}
+			})
+		}
+		var dims D
+		if r.kind == rowMessage && u.anims.running(animKey{id: r.msg.ID, tag: tagAppear}) {
+			dims = u.appearing(gtx, r.msg.ID, row)
+		} else {
+			dims = row(gtx)
+		}
+		u.conv.heights[i] = dims.Size.Y
+		return dims
 	})
 }
 
@@ -261,9 +347,11 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			u.conv.picked[m.ID] = true
 		}
 	}
+	// Select mode moves incoming bubbles over for the checkboxes.
+	selV := easeOut(u.conv.selV)
 	shift := 0
-	if sel && !m.FromMe {
-		shift = max(0, gtx.Dp(44)-margin)
+	if !m.FromMe {
+		shift = int(float32(max(0, gtx.Dp(44)-margin)) * selV)
 	}
 	cgtx := gtx
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(w-shift, gtx.Constraints.Max.Y)}
@@ -275,9 +363,17 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	h := bubble.size.Y
 	band := image.Rect(-margin, -gtx.Dp(2), w+margin, h+gtx.Dp(2))
 	if u.conv.flash == m.ID {
-		if u.now().Before(u.conv.flashUntil) {
-			fillRect(gtx, band, argb(0x5dbf6e, 0x30))
-			gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil})
+		// The highlight fades in quickly and out slowly.
+		const in, out = 200 * time.Millisecond, 600 * time.Millisecond
+		left := u.conv.flashUntil.Sub(u.now())
+		if left > 0 {
+			a := min(1, float32(flashTime-left)/float32(in), float32(left)/float32(out))
+			fillRect(gtx, band, faded(argb(0x5dbf6e, 0x30), smooth(a)))
+			if left > out && flashTime-left > in {
+				gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil.Add(-out)})
+			} else {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		} else {
 			u.conv.flash = ""
 		}
@@ -308,8 +404,9 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			u.openMessageMenu(m)
 		}
 		// The chevron covers part of the bubble's hover area, so it keeps
-		// itself visible while it is hovered.
-		if (hovered || chev.Hovered() || u.ctx.msg == m) && m.Kind != model.KindSticker {
+		// itself visible while it is hovered. It fades and slides in.
+		show := (hovered || chev.Hovered() || (u.ctx.isOpen() && u.ctx.msg == m)) && m.Kind != model.KindSticker
+		if cv := smooth(u.anims.fade(gtx, animKey{p: chev, tag: tagShow}, show, durHoverIn, durHoverOut)); cv > 0 {
 			bg := p.BubbleIn
 			if m.FromMe {
 				bg = p.BubbleOut
@@ -319,23 +416,27 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 				bg, fg = argb(0x000000, 0x60), rgb(0xffffff)
 			}
 			ct := op.Offset(image.Pt(bubble.size.X-gtx.Dp(26+5), gtx.Dp(4))).Push(gtx.Ops)
+			fx := pushFx(gtx, cv, moveBy(float32(gtx.Dp(6))*(1-cv), 0))
 			u.chevronButton(gtx, chev, bg, fg)
+			fx.Pop()
 			ct.Pop()
 		}
 		t.Pop()
 	}
-	if sel {
+	if selV > 0 {
 		// The whole row toggles; a checkbox sits in the left margin.
 		t := op.Offset(image.Pt(-margin, 0)).Push(gtx.Ops)
-		rg := gtx
-		rg.Constraints = layout.Exact(image.Pt(w+2*margin, h))
-		clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		if sel {
+			rg := gtx
+			rg.Constraints = layout.Exact(image.Pt(w+2*margin, h))
+			clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		}
 		box, col := icCheckBoxEmpty, p.TextSecondary
 		if u.conv.picked[m.ID] {
 			box, col = icCheckBox, p.Green
 		}
 		bt := op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(6))).Push(gtx.Ops)
-		drawIcon(gtx, box, 24, col)
+		withOpacity(gtx, selV, func() { drawIcon(gtx, box, 24, col) })
 		bt.Pop()
 		t.Pop()
 	}
@@ -457,6 +558,17 @@ func (p part) at(gtx C, x, y int) {
 // layoutMessage draws a bubble (or a sticker) plus its reaction pill.
 func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 	m := r.msg
+	// A reaction that changes while the chat is open pops in.
+	pop := animKey{id: m.ID, tag: tagPop}
+	if old, ok := u.conv.reactions[m.ID]; !ok || old != m.Reaction {
+		if ok && m.Reaction != "" {
+			u.anims.start(pop)
+		}
+		if u.conv.reactions == nil {
+			u.conv.reactions = make(map[string]string)
+		}
+		u.conv.reactions[m.ID] = m.Reaction
+	}
 	var dims D
 	if m.Kind == model.KindSticker {
 		dims = u.layoutSticker(gtx, m)
@@ -480,8 +592,18 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 	}
 	ring := gtx.Dp(2)
 	py := dims.Size.Y - gtx.Dp(5)
+	fx := fxStack{}
+	if u.anims.running(pop) {
+		v := u.anims.fade(gtx, pop, true, 380*time.Millisecond, 0)
+		if v >= 1 {
+			u.anims.stop(pop)
+		}
+		mid := image.Pt(x+pill.size.X/2, py+pill.size.Y/2)
+		fx = pushFx(gtx, min(1, 3*v), scaleAt(mid, lerp(0.3, 1, easeOutBack(v))))
+	}
 	fillRRect(gtx, image.Rect(x-ring, py-ring, x+pill.size.X+ring, py+pill.size.Y+ring), pill.size.Y/2+ring, p.ChatBg)
 	pill.at(gtx, x, py)
+	fx.Pop()
 	dims.Size.Y = py + pill.size.Y + ring
 	return dims
 }
@@ -762,6 +884,13 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 				ic = icOpenInNew
 			case model.ButtonCopy:
 				ic = icCopy
+			}
+			if h := u.hover(gtx, u.btn("mbtn:"+m.ID+":"+itoa(i))); h > 0 {
+				rr := clip.RRect{Rect: image.Rect(-padL, top+line, w-padL, top+btnH)}
+				if i == len(btnLabels)-1 {
+					rr.SE, rr.SW = gtx.Dp(8), gtx.Dp(8) // the bubble's corners
+				}
+				paintRRect(gtx, rr, faded(p.BubbleLine, h))
 			}
 			rowW := lb.size.X + gtx.Dp(26)
 			x := -padL + (w-rowW)/2

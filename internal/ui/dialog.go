@@ -38,6 +38,8 @@ type dialogState struct {
 	body    string
 	buttons []dialogButton
 	scrim   widget.Clickable
+	closing bool // fading out
+	anim    tween
 
 	// Forward picker.
 	fwd    []*model.Message
@@ -45,7 +47,14 @@ type dialogState struct {
 	search widget.Editor
 	list   widget.List
 	chats  []*model.Chat // matching chats, a buffer reused every frame
+	bar    tween         // the send bar, shown once a chat is picked
 }
+
+// isOpen reports whether a dialog is open and not fading out.
+func (d *dialogState) isOpen() bool { return d.kind != dialogNone && !d.closing }
+
+// closeDialog fades the dialog out.
+func (u *UI) closeDialog() { u.dialog.closing = true }
 
 // confirm asks before a destructive action. A Cancel button is added.
 func (u *UI) confirm(title, body string, buttons ...dialogButton) {
@@ -103,14 +112,24 @@ func (u *UI) layoutDialog(gtx C) {
 		return
 	}
 	p := u.pal
-	if d.scrim.Clicked(gtx) {
+	if d.isOpen() && d.scrim.Clicked(gtx) {
+		u.closeDialog()
+	}
+	v := d.anim.step(gtx, d.isOpen(), durDialog)
+	if v == 0 && d.closing {
 		u.dialog = dialogState{}
 		return
 	}
+	e := easeOut(v)
 	sz := gtx.Constraints.Max
-	sgtx := gtx
-	sgtx.Constraints = layout.Exact(sz)
-	d.scrim.Layout(sgtx, func(gtx C) D { return fill(gtx, p.Scrim) })
+	if d.closing {
+		gtx = gtx.Disabled() // clicks go through while it fades
+		fillRect(gtx, image.Rectangle{Max: sz}, faded(p.Scrim, e))
+	} else {
+		sgtx := gtx
+		sgtx.Constraints = layout.Exact(sz)
+		d.scrim.Layout(sgtx, func(gtx C) D { return fill(gtx, faded(p.Scrim, e)) })
+	}
 
 	var panel part
 	switch d.kind {
@@ -119,22 +138,20 @@ func (u *UI) layoutDialog(gtx C) {
 	case dialogForward:
 		panel = record(gtx, u.forwardPanel)
 	}
-	if u.dialog.kind == dialogNone {
-		return // a button closed it
-	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
 	rect := image.Rectangle{Max: panel.size}.Add(image.Pt(x, y))
+	defer pushFx(gtx, e, scaleAt(rect.Min.Add(rect.Size().Div(2)), lerp(0.95, 1, e))).Pop()
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(4))).Inset(-gtx.Dp(3)), r+gtx.Dp(3), p.Shadow)
 	fillRRect(gtx, rect, r, p.Dialog)
-	// Swallow clicks on the panel so they don't reach the scrim.
-	func() {
+	if !d.closing {
+		// Swallow clicks on the panel so they don't reach the scrim.
 		t := op.Offset(rect.Min).Push(gtx.Ops)
-		defer t.Pop()
 		pg := gtx
 		pg.Constraints = layout.Exact(panel.size)
 		u.btn("dialog:panel").Layout(pg, func(gtx C) D { return D{Size: panel.size} })
-	}()
+		t.Pop()
+	}
 	panel.at(gtx, x, y)
 }
 
@@ -143,11 +160,11 @@ func (u *UI) confirmPanel(gtx C) D {
 	p := u.pal
 	for i, bt := range d.buttons {
 		if u.btn("dialog:" + itoa(i+1)).Clicked(gtx) {
-			u.dialog = dialogState{}
+			u.closeDialog() // and keep drawing it as it fades
 			if bt.run != nil {
 				bt.run()
 			}
-			return D{}
+			break
 		}
 	}
 	w := min(gtx.Dp(480), gtx.Constraints.Max.X-gtx.Dp(32))
@@ -221,9 +238,7 @@ func (u *UI) dialogButton(gtx C, key string, bt dialogButton) D {
 		case bt.primary:
 			fg, bg, border = p.OnGreen, p.Green, p.Green
 		}
-		if c.Hovered() {
-			bg = mix(bg, p.Text, 0.08)
-		}
+		bg = mix(bg, p.Text, 0.08*u.hover(gtx, c))
 		lbl := record(gtx, u.label(14.5, bt.label, fg, labelOpts{weight: font.Medium, maxLines: 1}).Layout)
 		h := gtx.Dp(40)
 		w := lbl.size.X + gtx.Dp(48)
@@ -238,15 +253,14 @@ func (u *UI) forwardPanel(gtx C) D {
 	d := &u.dialog
 	p := u.pal
 	if u.btn("fwd:close").Clicked(gtx) {
-		u.dialog = dialogState{}
-		return D{}
+		u.closeDialog()
 	}
-	if u.btn("fwd:send").Clicked(gtx) && len(d.picked) > 0 {
+	if u.btn("fwd:send").Clicked(gtx) && len(d.picked) > 0 && d.isOpen() {
 		u.backend.Forward(d.fwd, d.picked)
 		u.endSelect()
-		u.dialog = dialogState{}
-		return D{}
+		u.closeDialog()
 	}
+	bar := easeOut(d.bar.step(gtx, len(d.picked) > 0, durGrow))
 	q := strings.ToLower(trimSpace(d.search.Text()))
 	chats := d.chats[:0] // reused every frame
 	for _, c := range u.chats {
@@ -294,10 +308,7 @@ func (u *UI) forwardPanel(gtx C) D {
 				cl := u.btn("fwd:" + c.ID)
 				return clickable(gtx, cl, func(gtx C) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
-					bg := p.Dialog
-					if cl.Hovered() {
-						bg = p.Hover
-					}
+					bg := mix(p.Dialog, p.Hover, u.hover(gtx, cl))
 					return background(gtx, bg, 0, func(gtx C) D {
 						return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
 							return layout.Inset{Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
@@ -319,36 +330,47 @@ func (u *UI) forwardPanel(gtx C) D {
 			})
 		}),
 		layout.Rigid(func(gtx C) D {
-			if len(d.picked) == 0 {
+			if bar == 0 {
 				return D{}
 			}
-			var names []string
-			for _, id := range d.picked {
-				if c := u.chatByID(id); c != nil {
-					names = append(names, c.Name)
-				}
-			}
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return background(gtx, p.Panel, 0, func(gtx C) D {
-				return vcenter(gtx, gtx.Dp(72), func(gtx C) D {
-					return layout.Inset{Left: 24, Right: 16}.Layout(gtx, func(gtx C) D {
-						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Flexed(1, u.label(15, strings.Join(names, ", "), p.TextSecondary, labelOpts{maxLines: 1}).Layout),
-							layout.Rigid(layout.Spacer{Width: 12}.Layout),
-							layout.Rigid(func(gtx C) D {
-								c := u.btn("fwd:send")
-								return clickable(gtx, c, func(gtx C) D {
-									sz := gtx.Dp(52)
-									fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Green)
-									return centerIn(gtx, sz, iconW(icSend, 24, p.OnGreen))
-								})
-							}),
-						)
-					})
-				})
-			})
+			// The bar slides up as the list makes room for it.
+			full := record(gtx, func(gtx C) D { return u.forwardBar(gtx, d) })
+			h := lerpInt(0, full.size.Y, bar)
+			defer clip.Rect{Max: image.Pt(full.size.X, h)}.Push(gtx.Ops).Pop()
+			full.at(gtx, 0, 0)
+			return D{Size: image.Pt(full.size.X, h)}
 		}),
 	)
+}
+
+// forwardBar names the picked chats next to the send button.
+func (u *UI) forwardBar(gtx C, d *dialogState) D {
+	p := u.pal
+	var names []string
+	for _, id := range d.picked {
+		if c := u.chatByID(id); c != nil {
+			names = append(names, c.Name)
+		}
+	}
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	return background(gtx, p.Panel, 0, func(gtx C) D {
+		return vcenter(gtx, gtx.Dp(72), func(gtx C) D {
+			return layout.Inset{Left: 24, Right: 16}.Layout(gtx, func(gtx C) D {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, u.label(15, strings.Join(names, ", "), p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+					layout.Rigid(layout.Spacer{Width: 12}.Layout),
+					layout.Rigid(func(gtx C) D {
+						c := u.btn("fwd:send")
+						return clickable(gtx, c, func(gtx C) D {
+							sz := gtx.Dp(52)
+							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, mix(p.Green, p.Text, 0.1*u.hover(gtx, c)))
+							return centerIn(gtx, sz, iconW(icSend, 24, p.OnGreen))
+						})
+					}),
+				)
+			})
+		})
+	})
 }
 
 func indexOf(s []string, v string) int {
@@ -387,21 +409,25 @@ func (u *UI) searchField(gtx C, ed *widget.Editor, hint string) D {
 type toastState struct {
 	text  string
 	until time.Time
+	anim  tween
 }
 
-func (u *UI) toast(s string) { u.toastMsg = toastState{text: s, until: u.now().Add(4 * time.Second)} }
+func (u *UI) toast(s string) { u.toastMsg.text, u.toastMsg.until = s, u.now().Add(4*time.Second) }
 
 func (u *UI) layoutToast(gtx C) {
 	t := &u.toastMsg
 	if t.text == "" {
 		return
 	}
-	now := u.now()
-	if now.After(t.until) {
+	on := u.now().Before(t.until)
+	v := t.anim.step(gtx, on, durDialog)
+	if v == 0 && !on {
 		t.text = ""
 		return
 	}
-	gtx.Execute(op.InvalidateCmd{At: t.until})
+	if on {
+		gtx.Execute(op.InvalidateCmd{At: t.until})
+	}
 	p := u.pal
 	sz := gtx.Constraints.Max
 	card := record(gtx, func(gtx C) D {
@@ -411,6 +437,9 @@ func (u *UI) layoutToast(gtx C) {
 	})
 	x := gtx.Dp(railWidth) + gtx.Dp(24)
 	y := sz.Y - card.size.Y - gtx.Dp(24)
+	// It rises into place and sinks away.
+	e := easeOut(v)
+	defer pushFx(gtx, e, moveBy(0, float32(gtx.Dp(16))*(1-e))).Pop()
 	rect := image.Rectangle{Max: card.size}.Add(image.Pt(x, y))
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), gtx.Dp(9), p.Shadow)
 	fillRRect(gtx, rect, gtx.Dp(8), p.Toast)

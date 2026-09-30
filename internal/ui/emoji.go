@@ -98,7 +98,15 @@ type emojiPicker struct {
 	stickers []*model.Message
 	recent   []string
 	loaded   bool
+
+	anim      tween // opening and closing
+	catSel    switcher[int]
+	underline follower // x of the active category's underline
+	tabSel    switcher[pickTab]
 }
+
+// shown reports whether the picker is open or still fading out.
+func (e *emojiPicker) shown() bool { return e.open || e.anim.v > 0 }
 
 const recentEmojiMax = 36
 
@@ -109,6 +117,7 @@ func (u *UI) openPicker(mode pickMode, target *model.Message) {
 	e.search.SingleLine = true
 	e.list.Axis = layout.Vertical
 	e.list.Position = layout.Position{}
+	e.catSel, e.underline, e.tabSel = switcher[int]{}, follower{}, switcher[pickTab]{} // no sliding from last time
 	if !e.loaded {
 		e.loaded = true
 		e.recent = strings.Fields(u.backend.Pref("recent_emoji"))
@@ -192,28 +201,33 @@ func (u *UI) pickerRows(cols int) []pickerRow {
 // anchor (content coordinates).
 func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	e := &u.picker
-	if !e.open {
+	if e.open {
+		if e.scrim.Clicked(gtx) {
+			u.closePicker()
+		}
+		for {
+			ev, ok := gtx.Event(key.Filter{Focus: &e.search, Name: key.NameEscape})
+			if !ok {
+				break
+			}
+			if ke, ok := ev.(key.Event); ok && ke.State == key.Press {
+				u.closePicker()
+			}
+		}
+	}
+	v := e.anim.step(gtx, e.open, popDur(e.open))
+	if v == 0 {
 		return
 	}
 	p := u.pal
-	if e.scrim.Clicked(gtx) {
-		u.closePicker()
-		return
-	}
-	for {
-		ev, ok := gtx.Event(key.Filter{Focus: &e.search, Name: key.NameEscape})
-		if !ok {
-			break
-		}
-		if ke, ok := ev.(key.Event); ok && ke.State == key.Press {
-			u.closePicker()
-			return
-		}
-	}
 	sz := gtx.Constraints.Max
-	sgtx := gtx
-	sgtx.Constraints = layout.Exact(sz)
-	e.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	if e.open {
+		sgtx := gtx
+		sgtx.Constraints = layout.Exact(sz)
+		e.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	} else {
+		gtx = gtx.Disabled() // clicks go through while it fades
+	}
 
 	w := min(gtx.Dp(614), maxW)
 	h := min(gtx.Dp(604), anchor.Y-gtx.Dp(8))
@@ -225,6 +239,14 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 		x, y = (sz.X-w)/2, (sz.Y-h)/2
 	}
 	rect := image.Rectangle{Max: image.Pt(w, h)}.Add(image.Pt(x, y))
+	// Above the composer it rises into place; for reactions it grows from
+	// the middle.
+	ev := easeOut(v)
+	if e.mode == pickReaction {
+		defer pushFx(gtx, ev, scaleAt(rect.Min.Add(rect.Size().Div(2)), lerp(0.92, 1, ev))).Pop()
+	} else {
+		defer pushFx(gtx, ev, moveBy(0, float32(gtx.Dp(16))*(1-ev))).Pop()
+	}
 	r := gtx.Dp(16)
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(3))).Inset(-gtx.Dp(2)), r+gtx.Dp(2), p.Shadow)
 	borderRRect(gtx, rect, r, p.Picker, p.PopupBorder)
@@ -280,16 +302,14 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 	for _, r := range rows {
 		for _, ch := range r.items {
 			if u.btn("emoji:" + ch).Clicked(gtx) {
-				u.pickEmoji(ch)
-				if !e.open {
-					return D{}
-				}
+				u.pickEmoji(ch) // may close it; it keeps drawing as it fades
 			}
 		}
 	}
 	if len(rows) > 0 && e.list.Position.First < len(rows) && trimSpace(e.search.Text()) == "" {
 		e.active = rows[e.list.Position.First].cat
 	}
+	e.catSel.step(gtx, e.active, durSwitch)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			// Category tabs with a green underline under the active one.
@@ -303,22 +323,21 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 				cg.Constraints = layout.Exact(image.Pt(tabW, h))
 				cl := u.btn("cat:" + itoa(ci+1))
 				clickable(cg, cl, func(gtx C) D {
-					col := p.Icon
-					if ci == e.active || cl.Hovered() {
-						col = p.Text
-					}
 					isz := gtx.Dp(26)
 					icT := op.Offset(image.Pt((tabW-isz)/2, gtx.Dp(29)-isz/2)).Push(gtx.Ops)
-					drawIcon(gtx, c.ic, 26, col)
+					// Icon colors are cached per color: cross-fade two icons
+					// instead of animating the color.
+					drawIcon(gtx, c.ic, 26, p.Icon)
+					withOpacity(gtx, max(u.hover(gtx, cl), e.catSel.of(ci)), func() { drawIcon(gtx, c.ic, 26, p.Text) })
 					icT.Pop()
-					if ci == e.active {
-						bw := gtx.Dp(27)
-						fillRRect(gtx, image.Rect((tabW-bw)/2, gtx.Dp(49), (tabW+bw)/2, gtx.Dp(52)), gtx.Dp(2), p.Green)
-					}
 					return D{Size: gtx.Constraints.Max}
 				})
 				t.Pop()
 			}
+			// The underline slides to the active category.
+			x := int(e.underline.step(gtx, float32(e.active*tabW), durSlide))
+			bw := gtx.Dp(27)
+			fillRRect(gtx, image.Rect(x+(tabW-bw)/2, gtx.Dp(49), x+(tabW+bw)/2, gtx.Dp(52)), gtx.Dp(2), p.Green)
 			return D{Size: image.Pt(w, h)}
 		}),
 		layout.Rigid(func(gtx C) D {
@@ -374,8 +393,8 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 						children = append(children, layout.Rigid(func(gtx C) D {
 							cl := u.btn("emoji:" + ch)
 							return clickable(gtx, cl, func(gtx C) D {
-								if cl.Hovered() {
-									fillRRect(gtx, image.Rect(0, 0, cellW, pitch), gtx.Dp(8), p.PopupHover)
+								if h := u.hover(gtx, cl); h > 0 {
+									fillRRect(gtx, image.Rect(0, 0, cellW, pitch), gtx.Dp(8), faded(p.PopupHover, h))
 								}
 								return centerIn2(gtx, cellW, pitch, u.label(29, ch, p.Text).Layout)
 							})
@@ -400,6 +419,7 @@ func (u *UI) pickerTabs(gtx C) {
 			}
 		}
 	}
+	e.tabSel.step(gtx, e.tab, durSwitch)
 	segW, h := gtx.Dp(77), gtx.Dp(33)
 	w := 3 * segW
 	sz := gtx.Constraints.Max
@@ -414,7 +434,8 @@ func (u *UI) pickerTabs(gtx C) {
 		cl := u.btn("ptab:" + itoa(i+1))
 		clickable(cg, cl, func(gtx C) D {
 			r := image.Rect(1, 1, segW-1, h-1)
-			if int(e.tab) == i {
+			a := max(e.tabSel.of(pickTab(i)), 0.5*u.hover(gtx, cl))
+			if a > 0 {
 				rr := clip.RRect{Rect: r}
 				switch i {
 				case 0:
@@ -422,20 +443,21 @@ func (u *UI) pickerTabs(gtx C) {
 				case 2:
 					rr.NE, rr.SE = h/2, h/2
 				}
-				paintRRect(gtx, rr, p.PickerTab)
+				paintRRect(gtx, rr, faded(p.PickerTab, a))
 			}
-			col := p.TextSecondary
-			if int(e.tab) == i {
-				col = p.Text
+			a = e.tabSel.of(pickTab(i))
+			glyph := func(col color.NRGBA) {
+				switch i {
+				case 0:
+					centerIn2(gtx, segW, h, iconW(icEmoji, 22, col))
+				case 1:
+					centerIn2(gtx, segW, h, u.label(12.5, "GIF", col, labelOpts{weight: font.Bold, maxLines: 1}).Layout)
+				case 2:
+					centerIn2(gtx, segW, h, iconW(icSticker, 21, col))
+				}
 			}
-			switch i {
-			case 0:
-				centerIn2(gtx, segW, h, iconW(icEmoji, 22, col))
-			case 1:
-				centerIn2(gtx, segW, h, u.label(12.5, "GIF", col, labelOpts{weight: font.Bold, maxLines: 1}).Layout)
-			case 2:
-				centerIn2(gtx, segW, h, iconW(icSticker, 21, col))
-			}
+			glyph(p.TextSecondary)
+			withOpacity(gtx, a, func() { glyph(p.Text) })
 			return D{Size: image.Pt(segW, h)}
 		})
 		t.Pop()
@@ -474,8 +496,8 @@ func (u *UI) layoutStickerTab(gtx C) D {
 				children = append(children, layout.Rigid(func(gtx C) D {
 					cl := u.btn("sticker:" + s.ChatID + "/" + s.ID)
 					return clickable(gtx, cl, func(gtx C) D {
-						if cl.Hovered() {
-							fillRRect(gtx, image.Rect(0, 0, cell, cell), gtx.Dp(10), p.PopupHover)
+						if h := u.hover(gtx, cl); h > 0 {
+							fillRRect(gtx, image.Rect(0, 0, cell, cell), gtx.Dp(10), faded(p.PopupHover, h))
 						}
 						img := u.messageImage(s, cell*2)
 						if img != nil && img.state == imgReady {

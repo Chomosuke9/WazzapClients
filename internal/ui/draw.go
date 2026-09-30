@@ -125,8 +125,8 @@ func clickable(gtx C, c *widget.Clickable, w layout.Widget) D {
 func (u *UI) iconButton(gtx C, c *widget.Clickable, ic *icon.Icon, box, size unit.Dp, col color.NRGBA) D {
 	return clickable(gtx, c, func(gtx C) D {
 		sz := gtx.Dp(box)
-		if c.Hovered() {
-			fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, u.pal.Hover)
+		if h := u.hover(gtx, c); h > 0 {
+			fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, faded(u.pal.Hover, h))
 		}
 		return centerIn(gtx, sz, iconW(ic, size, col))
 	})

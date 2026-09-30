@@ -124,11 +124,11 @@ func (u *UI) channelRow(gtx C, ch *model.Channel) D {
 		ch.Unread = 0
 	}
 	return u.chatRow(gtx, c, rowOpts{
-		click:    click,
-		selected: u.selected != nil && u.selected.ID == ch.ID && u.selPage == pageChannels,
-		avatar:   func(gtx C) D { return u.avatarOf(gtx, ch.ID, avatarChannel, 51) },
-		avatarW:  11,
-		textGap:  15,
+		click:   click,
+		sel:     u.sidebar.openSel.of(ch.ID),
+		avatar:  func(gtx C) D { return u.avatarOf(gtx, ch.ID, avatarChannel, 51) },
+		avatarW: 11,
+		textGap: 15,
 	})
 }
 
@@ -155,10 +155,7 @@ func (u *UI) suggestedRow(gtx C, ch *model.Channel) D {
 						u.backend.FollowChannel(ch.ID)
 					}
 					return clickable(gtx, c, func(gtx C) D {
-						bg := p.ChipActive
-						if c.Hovered() {
-							bg = mix(bg, p.Green, 0.15)
-						}
+						bg := mix(p.ChipActive, p.Green, 0.15*u.hover(gtx, c))
 						sz := image.Pt(gtx.Dp(76), gtx.Dp(34))
 						fillRRect(gtx, image.Rectangle{Max: sz}, sz.Y/2, bg)
 						gtx.Constraints = layout.Exact(sz)
@@ -176,10 +173,7 @@ func (u *UI) outlineButton(gtx C, c *widget.Clickable, txt string) D {
 	p := u.pal
 	return clickable(gtx, c, func(gtx C) D {
 		sz := image.Pt(gtx.Constraints.Max.X, gtx.Dp(44))
-		bg := p.Panel
-		if c.Hovered() {
-			bg = p.Hover
-		}
+		bg := mix(p.Panel, p.Hover, u.hover(gtx, c))
 		borderRRect(gtx, image.Rectangle{Max: sz}, sz.Y/2, bg, p.ChipBorder)
 		gtx.Constraints = layout.Exact(sz)
 		return layout.Center.Layout(gtx, u.label(15.5, txt, p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)

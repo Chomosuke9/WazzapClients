@@ -65,17 +65,21 @@ func (u *UI) layoutTitleBar(gtx C) D {
 func (u *UI) captionButton(gtx C, c *widget.Clickable, w, h int, isClose bool, glyph func(C, color.NRGBA)) {
 	gtx.Constraints = layout.Exact(image.Pt(w, h))
 	c.Layout(gtx, func(gtx C) D {
-		col := u.pal.FrameText
-		if c.Hovered() {
+		a := u.hover(gtx, c)
+		if a > 0 {
 			bg := u.pal.Hover
 			if isClose {
-				bg, col = u.pal.CloseHover, rgb(0xffffff)
+				bg = u.pal.CloseHover
 			}
-			fillRect(gtx, image.Rect(0, 0, w, h), bg)
+			fillRect(gtx, image.Rect(0, 0, w, h), faded(bg, a))
 		}
 		g := gtx.Dp(10)
 		t := op.Offset(image.Pt((w-g)/2, (h-g)/2)).Push(gtx.Ops)
-		glyph(gtx, col)
+		glyph(gtx, u.pal.FrameText)
+		if isClose {
+			// Glyphs are cached per color: cross-fade to white.
+			withOpacity(gtx, a, func() { glyph(gtx, rgb(0xffffff)) })
+		}
 		t.Pop()
 		return D{Size: image.Pt(w, h)}
 	})

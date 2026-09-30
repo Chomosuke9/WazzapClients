@@ -108,6 +108,11 @@ type UI struct {
 	focus       any    // editor to focus next frame (see requestFocus)
 	focusReq    bool
 
+	anims    animStore                   // keyed fades: hovers, new messages, reactions
+	pageIn   tween                       // the page content fading in after a switch
+	railSel  switcher[*widget.Clickable] // the active rail button
+	pageSeen page                        // page shown last frame, to notice switches
+
 	sidebar struct {
 		newChat, menu, back widget.Clickable
 		more                widget.Clickable // collapsed filter chips
@@ -119,6 +124,11 @@ type UI struct {
 		list                widget.List
 		rows                map[string]*widget.Clickable
 		visible             []*model.Chat
+
+		// Highlights of the open chat and of the chat whose menu is open.
+		openSel, menuSel switcher[string]
+		chipSel          switcher[int]
+		order            chatOrder // rows sliding to new places
 	}
 
 	conv struct {
@@ -147,6 +157,19 @@ type UI struct {
 		scrollTo   *layout.Position
 		members    *model.ChatInfo // group members for @mentions
 		membersFor string
+
+		// Animations. A ghost is what a part showed before it went away,
+		// drawn while it fades out.
+		replyAnim    tween
+		replyGhost   *model.Message
+		mentionAnim  tween
+		mentionGhost *mentionState
+		selAnim      tween
+		selV         float32           // select mode's progress this frame
+		sendAnim     tween             // the mic turning into the send button
+		glide        glide             // smooth scroll to a message
+		heights      map[int]int       // row heights laid out last frame, by index
+		reactions    map[string]string // reaction shown per message, to pop new ones
 	}
 }
 
@@ -243,7 +266,7 @@ func (u *UI) setPage(pg page) {
 		}
 	}
 	u.page = pg
-	u.info.open = false
+	u.hideInfo()
 	u.status.viewer.close()
 }
 
@@ -271,6 +294,9 @@ func (u *UI) SetDark(dark bool) {
 	u.th.Palette.ContrastBg = u.pal.Green
 }
 
+// Escape presses Esc, closing the topmost overlay (used for screenshots).
+func (u *UI) Escape() { u.escape() }
+
 // SetConn overrides the connection state (used for screenshots).
 func (u *UI) SetConn(e model.ConnEvent) { u.conn = e }
 
@@ -297,8 +323,8 @@ func (u *UI) open(c *model.Chat) {
 		return
 	}
 	u.selPage = u.page
-	if u.info.open && u.info.chatID != c.ID {
-		u.info.open = false
+	if u.info.chatID != c.ID {
+		u.hideInfo()
 	}
 	u.selected = c
 	u.msgs = u.backend.Messages(c.ID, messageWindow)
@@ -309,9 +335,12 @@ func (u *UI) open(c *model.Chat) {
 	u.conv.list.ScrollToEnd = true
 	u.conv.composer.SetText("")
 	u.conv.reply, u.conv.mentions = nil, nil
+	u.conv.reactions = nil
 	u.endSelect()
-	u.viewer.open = false
+	u.resetComposerAnims()
+	u.hideViewer()
 	u.closePicker()
+	u.picker.anim.snap(false)
 }
 
 // Run drives the window event loop until the window is closed.
@@ -343,6 +372,7 @@ func (u *UI) Layout(gtx C) D {
 		u.window.Perform(a)
 	}
 	defer u.images.endFrame()
+	defer u.anims.endFrame()
 
 	sz := gtx.Constraints.Max
 	u.winWidth = sz.X
@@ -364,7 +394,7 @@ func (u *UI) Layout(gtx C) D {
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
 	u.layoutViewer(gtx)
-	if u.picker.open && u.picker.mode == pickReaction {
+	if u.picker.shown() && u.picker.mode == pickReaction {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
 	u.layoutCtxMenu(gtx)
@@ -381,6 +411,12 @@ func (u *UI) layoutMain(gtx C) D {
 	railW := gtx.Dp(railWidth)
 	listW := int(float32(sz.X-railW) * 0.372)
 	listW = max(gtx.Dp(280), min(listW, gtx.Dp(430)))
+	// A new page's list fades in and rises a little into place.
+	if u.page != u.pageSeen {
+		u.pageSeen = u.page
+		u.pageIn.snap(false)
+	}
+	pageV := easeOut(u.pageIn.step(gtx, true, durSwitch))
 
 	rgtx := gtx
 	rgtx.Constraints = layout.Exact(image.Pt(railW, sz.Y))
@@ -404,7 +440,11 @@ func (u *UI) layoutMain(gtx C) D {
 	return layout.Flex{}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			gtx.Constraints = layout.Exact(image.Pt(listW, sz.Y))
-			return layout.Inset{Top: 1, Left: 1}.Layout(gtx, u.layoutPageSidebar)
+			t := pushFx(gtx, 1, moveBy(0, float32(gtx.Dp(10))*(1-pageV)))
+			d := layout.Inset{Top: 1, Left: 1}.Layout(gtx, u.layoutPageSidebar)
+			t.Pop()
+			u.veil(gtx, image.Rect(1, 1, listW, sz.Y), p.Panel, pageV)
+			return d
 		}),
 		layout.Rigid(func(gtx C) D {
 			gtx.Constraints = layout.Exact(image.Pt(max(1, gtx.Dp(1)), sz.Y))
@@ -418,6 +458,11 @@ func (u *UI) layoutMain(gtx C) D {
 
 // layoutPageSidebar draws the list column of the selected page.
 func (u *UI) layoutPageSidebar(gtx C) D {
+	openID := ""
+	if u.selected != nil && u.selPage == u.page {
+		openID = u.selected.ID
+	}
+	u.sidebar.openSel.step(gtx, openID, durSwitch)
 	switch u.page {
 	case pageStatus:
 		return u.layoutStatusList(gtx)
@@ -437,11 +482,18 @@ func (u *UI) layoutPageSidebar(gtx C) D {
 // it), or the selected page's placeholder.
 func (u *UI) layoutRightPane(gtx C) D {
 	if u.selected != nil && u.selPage == u.page && u.page != pageStatus && u.page != pageSettings {
-		if !u.info.open {
+		if !u.info.shown() {
 			return u.layoutConversation(gtx)
 		}
 		return u.layoutWithInfo(gtx)
 	}
+	d := u.layoutPlaceholder(gtx)
+	u.veil(gtx, image.Rectangle{Max: d.Size}, u.pal.Panel, easeOut(u.pageIn.v)) // fades in with the page
+	return d
+}
+
+// layoutPlaceholder draws the right pane of a page without an open chat.
+func (u *UI) layoutPlaceholder(gtx C) D {
 	switch u.page {
 	case pageStatus:
 		return u.emptyPane(gtx, func(gtx C, col color.NRGBA) D { return statusIcon(gtx, 56, col, true) },
@@ -464,33 +516,34 @@ func (u *UI) layoutRightPane(gtx C) D {
 
 // layoutWithInfo splits the pane between the conversation and the contact
 // or group info panel, which takes about 30% of the window like WhatsApp's.
+// The panel slides in from the right edge while the conversation narrows.
 func (u *UI) layoutWithInfo(gtx C) D {
 	sz := gtx.Constraints.Max
+	v := easeOut(u.info.anim.step(gtx, u.info.open, durPanel))
 	infoW := max(gtx.Dp(340), int(float32(u.winWidth)*0.3))
 	infoW = min(infoW, sz.X)
-	convW := sz.X - infoW
-	if convW < gtx.Dp(380) {
+	shown := lerpInt(0, infoW, v) // how much of the panel is on screen
+	convW := sz.X - shown
+	if sz.X-infoW < gtx.Dp(380) {
 		// Too narrow to share: the panel covers the conversation.
-		cgtx := gtx
-		cgtx.Constraints = layout.Exact(sz)
-		u.layoutConversation(cgtx)
-		t := op.Offset(image.Pt(sz.X-infoW, 0)).Push(gtx.Ops)
-		igtx := gtx
-		igtx.Constraints = layout.Exact(image.Pt(infoW, sz.Y))
-		u.layoutInfo(igtx)
-		t.Pop()
+		convW = sz.X
+	}
+	cgtx := gtx
+	cgtx.Constraints = layout.Exact(image.Pt(convW, sz.Y))
+	u.layoutConversation(cgtx)
+	if shown == 0 {
 		return D{Size: sz}
 	}
-	return layout.Flex{}.Layout(gtx,
-		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(convW, sz.Y))
-			return u.layoutConversation(gtx)
-		}),
-		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(infoW, sz.Y))
-			return u.layoutInfo(gtx)
-		}),
-	)
+	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+	t := op.Offset(image.Pt(sz.X-shown, 0)).Push(gtx.Ops)
+	igtx := gtx
+	if !u.info.open {
+		igtx = igtx.Disabled() // sliding away
+	}
+	igtx.Constraints = layout.Exact(image.Pt(infoW, sz.Y))
+	u.layoutInfo(igtx)
+	t.Pop()
+	return D{Size: sz}
 }
 
 // update handles input events before anything is drawn.
@@ -565,10 +618,10 @@ func (u *UI) update(gtx C) {
 // escape closes the topmost overlay, like WhatsApp's Esc.
 func (u *UI) escape() {
 	switch {
-	case u.ctx.kind != ctxNone:
+	case u.ctx.isOpen():
 		u.closeMenu()
-	case u.dialog.kind != dialogNone:
-		u.dialog = dialogState{}
+	case u.dialog.isOpen():
+		u.closeDialog()
 	case u.picker.open:
 		u.closePicker()
 	case u.viewer.open:
@@ -580,7 +633,7 @@ func (u *UI) escape() {
 		u.endSelect()
 	case u.conv.reply != nil:
 		u.conv.reply = nil
-	case u.status.viewer.thread != nil:
+	case u.status.viewer.isOpen():
 		u.status.viewer.close()
 	}
 }
@@ -708,11 +761,13 @@ func (u *UI) upsertChat(c *model.Chat) {
 				u.selected = c
 			}
 			u.sortChats()
+			u.sidebar.order.pending = true
 			return
 		}
 	}
 	u.chats = append(u.chats, c)
 	u.sortChats()
+	u.sidebar.order.pending = true
 }
 
 func (u *UI) sortChats() {
@@ -736,6 +791,7 @@ func (u *UI) upsertMessage(m *model.Message) {
 			c.Typing = ""
 		}
 		u.sortChats()
+		u.sidebar.order.pending = true
 	}
 	if u.selected == nil || u.selected.ID != m.ChatID {
 		return
@@ -748,6 +804,10 @@ func (u *UI) upsertMessage(m *model.Message) {
 		}
 	}
 	i := sort.Search(len(u.msgs), func(i int) bool { return u.msgs[i].Time.After(m.Time) })
+	if i == len(u.msgs) && u.now().Sub(m.Time) < time.Minute {
+		// A new message slides in at the bottom (history arrives older).
+		u.anims.start(animKey{id: m.ID, tag: tagAppear})
+	}
 	u.msgs = append(u.msgs, nil)
 	copy(u.msgs[i+1:], u.msgs[i:])
 	u.msgs[i] = m

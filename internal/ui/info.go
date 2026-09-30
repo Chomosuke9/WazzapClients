@@ -27,7 +27,18 @@ type infoState struct {
 	data       *model.ChatInfo
 	list       widget.List
 	closeBtn   widget.Clickable
-	allMembers bool // the member list is expanded
+	allMembers bool  // the member list is expanded
+	anim       tween // sliding in and out
+}
+
+// shown reports whether the panel is open or still sliding away.
+func (s *infoState) shown() bool { return s.open || s.anim.v > 0 }
+
+// hideInfo closes the panel at once, for when the chat or page changes
+// under it.
+func (u *UI) hideInfo() {
+	u.info.open = false
+	u.info.anim.snap(false)
 }
 
 // infoMembersShown is how many members a group's panel lists before
@@ -333,10 +344,7 @@ func (u *UI) infoAction(gtx C, key string, ic *icon.Icon, label string) D {
 		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx C) D {
 				sz := image.Pt(gtx.Dp(63), gtx.Dp(50.5))
-				bg := p.Hover
-				if c.Hovered() {
-					bg = mix(bg, rgb(0xffffff), 0.06)
-				}
+				bg := mix(p.Hover, rgb(0xffffff), 0.06*u.hover(gtx, c))
 				fillRRect(gtx, image.Rectangle{Max: sz}, sz.Y/2, bg)
 				gtx.Constraints = layout.Exact(sz)
 				return layout.Center.Layout(gtx, iconW(ic, 27, p.IconStrong))

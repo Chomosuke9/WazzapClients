@@ -104,7 +104,15 @@ type ctxMenu struct {
 	scrim  widget.Clickable
 	lists  bool // "Add to list" submenu open
 	all    []*model.ChatList
+
+	// A closed menu fades out showing the items it had.
+	closing bool
+	anim    tween
+	items   []menuItem
 }
+
+// isOpen reports whether the menu is open and not fading out.
+func (m *ctxMenu) isOpen() bool { return m.kind != ctxNone && !m.closing }
 
 func (u *UI) openChatMenu(c *model.Chat) {
 	u.ctx = ctxMenu{kind: ctxChat, chatID: c.ID, at: u.mouse, all: u.backend.Lists()}
@@ -114,7 +122,7 @@ func (u *UI) openMessageMenu(m *model.Message) {
 	u.ctx = ctxMenu{kind: ctxMessage, chatID: m.ChatID, msg: m, at: u.mouse}
 }
 
-func (u *UI) closeMenu() { u.ctx = ctxMenu{} }
+func (u *UI) closeMenu() { u.ctx.closing = true }
 
 // chatMenuItems mirrors WhatsApp's chat context menu.
 func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
@@ -259,48 +267,64 @@ func (u *UI) layoutCtxMenu(gtx C) {
 	if m.kind == ctxNone {
 		return
 	}
-	if m.scrim.Clicked(gtx) {
-		u.closeMenu()
-		return
-	}
-	var items []menuItem
-	switch m.kind {
-	case ctxChat:
-		c := u.chatByID(m.chatID)
-		if c == nil {
+	if m.isOpen() {
+		if m.scrim.Clicked(gtx) {
 			u.closeMenu()
+		}
+	}
+	if m.isOpen() {
+		var items []menuItem
+		switch m.kind {
+		case ctxChat:
+			if c := u.chatByID(m.chatID); c != nil {
+				items = u.chatMenuItems(c)
+			}
+		case ctxMessage:
+			if u.selected != nil && u.selected.ID == m.chatID {
+				items = u.messageMenuItems(u.selected, m.msg)
+			}
+		case ctxViewer:
+			items = u.viewerMenuItems()
+		}
+		if items == nil {
+			u.ctx = ctxMenu{} // its chat went away
 			return
 		}
-		items = u.chatMenuItems(c)
-	case ctxMessage:
-		if u.selected == nil || u.selected.ID != m.chatID {
+		m.items = items
+		// Run the action of an item clicked last frame.
+		for _, it := range items {
+			if it.key == "" || !u.btn("menu:"+it.key).Clicked(gtx) {
+				continue
+			}
+			if it.arrow {
+				m.lists = !m.lists
+				continue
+			}
 			u.closeMenu()
-			return
+			if it.run != nil {
+				it.run()
+			}
+			break
 		}
-		items = u.messageMenuItems(u.selected, m.msg)
-	case ctxViewer:
-		items = u.viewerMenuItems()
+		if m.items == nil {
+			return // the action opened another menu
+		}
 	}
-	// Run the action of an item clicked last frame.
-	for _, it := range items {
-		if it.key == "" || !u.btn("menu:"+it.key).Clicked(gtx) {
-			continue
-		}
-		if it.arrow {
-			m.lists = !m.lists
-			continue
-		}
-		u.closeMenu()
-		if it.run != nil {
-			it.run()
-		}
+	v := m.anim.step(gtx, m.isOpen(), popDur(m.isOpen()))
+	if v == 0 && m.closing {
+		u.ctx = ctxMenu{}
 		return
 	}
+	items := m.items
 
 	sz := gtx.Constraints.Max
-	sgtx := gtx
-	sgtx.Constraints = layout.Exact(sz)
-	m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	if m.closing {
+		gtx = gtx.Disabled() // clicks go through while it fades
+	} else {
+		sgtx := gtx
+		sgtx.Constraints = layout.Exact(sz)
+		m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	}
 
 	menu := record(gtx, func(gtx C) D { return u.menuPanel(gtx, "menu:", items) })
 	reactH := 0
@@ -316,12 +340,14 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		pos.Y = max(reactH+gtx.Dp(8), sz.Y-gtx.Dp(8)-menu.size.Y)
 	}
 	pos.Y = max(pos.Y, reactH+gtx.Dp(8))
+	// It grows out of the corner nearest to where it was opened.
+	origin := image.Pt(min(max(m.at.X, pos.X), pos.X+menu.size.X), min(max(m.at.Y, pos.Y), pos.Y+menu.size.Y))
+	defer pushPopup(gtx, v, origin).Pop()
 	menu.at(gtx, pos.X, pos.Y)
 	if reactH > 0 {
 		u.layoutReactionBar(gtx, m.msg, image.Pt(pos.X+menu.size.X/2, pos.Y-gtx.Dp(7)))
 	}
-	if m.kind == ctxChat && m.lists {
-		c := u.chatByID(m.chatID)
+	if c := u.chatByID(m.chatID); m.kind == ctxChat && m.lists && c != nil {
 		sub := record(gtx, func(gtx C) D { return u.menuPanel(gtx, "list:", u.listItems(c)) })
 		x := pos.X + menu.size.X - gtx.Dp(8)
 		if x+sub.size.X > sz.X {
@@ -467,12 +493,12 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 			})
 		})
 	}
-	draw := func(gtx C, hovered bool) D {
+	draw := func(gtx C, hover float32) D {
 		m := op.Record(gtx.Ops)
 		dims := content(gtx)
 		call := m.Stop()
-		if hovered {
-			fillRect(gtx, image.Rectangle{Max: dims.Size}, p.PopupHover)
+		if hover > 0 {
+			fillRect(gtx, image.Rectangle{Max: dims.Size}, faded(p.PopupHover, hover))
 		}
 		ic := it.ic
 		switch it.check {
@@ -495,10 +521,10 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 		return dims
 	}
 	if it.key == "" {
-		return draw(gtx, false)
+		return draw(gtx, 0)
 	}
 	c := u.btn(prefix + it.key)
-	return clickable(gtx, c, func(gtx C) D { return draw(gtx, c.Hovered()) })
+	return clickable(gtx, c, func(gtx C) D { return draw(gtx, u.hover(gtx, c)) })
 }
 
 // quickReactions are the reaction bar's emoji, as in WhatsApp.
@@ -508,6 +534,7 @@ var quickReactions = [...]string{"👍", "❤️", "😂", "😮", "😢", "🙏
 // top (its bottom-center point).
 func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
 	p := u.pal
+	// The bar keeps drawing after a click: the menu fades out with it.
 	for i, e := range quickReactions {
 		if u.btn("react:" + itoa(i+1)).Clicked(gtx) {
 			if m.Reaction == e {
@@ -515,13 +542,11 @@ func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
 			}
 			u.backend.React(m, e)
 			u.closeMenu()
-			return
 		}
 	}
 	if u.btn("react:more").Clicked(gtx) {
 		u.closeMenu()
 		u.openPicker(pickReaction, m)
-		return
 	}
 	bar := record(gtx, func(gtx C) D {
 		gtx.Constraints.Min = image.Point{}
@@ -532,8 +557,12 @@ func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
 					c := u.btn(key)
 					return clickable(gtx, c, func(gtx C) D {
 						sz := gtx.Dp(35)
-						if c.Hovered() || active {
-							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.PopupHover)
+						h := u.hover(gtx, c)
+						if active {
+							h = 1
+						}
+						if h > 0 {
+							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, faded(p.PopupHover, h))
 						}
 						return centerIn(gtx, sz, w)
 					})

@@ -14,6 +14,7 @@ import (
 // menuState is the chat list's ⋮ drop-down.
 type menuState struct {
 	open          bool
+	anim          tween
 	anchor        image.Point // top-right corner, in window coordinates below the title bar
 	scrim         widget.Clickable
 	theme, logout widget.Clickable
@@ -38,13 +39,18 @@ func (u *UI) updateMenu(gtx C) {
 // underneath catches clicks outside it and closes it.
 func (u *UI) layoutMenu(gtx C) {
 	m := &u.menu
-	if !m.open {
+	v := m.anim.step(gtx, m.open, popDur(m.open))
+	if v == 0 {
 		return
 	}
 	p := u.pal
-	sgtx := gtx
-	sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
-	m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	if m.open {
+		sgtx := gtx
+		sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
+		m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	} else {
+		gtx = gtx.Disabled() // fading out
+	}
 
 	themeLabel, themeIcon := "Light theme", icLightMode
 	if !u.dark {
@@ -70,10 +76,7 @@ func (u *UI) layoutMenu(gtx C) {
 			children = append(children, layout.Rigid(func(gtx C) D {
 				return clickable(gtx, it.click, func(gtx C) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
-					bg := p.Menu
-					if it.click.Hovered() {
-						bg = p.MenuHover
-					}
+					bg := mix(p.Menu, p.MenuHover, u.hover(gtx, it.click))
 					return background(gtx, bg, 8, func(gtx C) D {
 						return vcenter(gtx, gtx.Dp(42), func(gtx C) D {
 							return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
@@ -94,6 +97,7 @@ func (u *UI) layoutMenu(gtx C) {
 
 	pos := image.Pt(m.anchor.X-dims.Size.X, m.anchor.Y)
 	defer op.Offset(pos).Push(gtx.Ops).Pop()
+	defer pushPopup(gtx, v, image.Pt(dims.Size.X, 0)).Pop()
 	r := gtx.Dp(12)
 	rect := image.Rectangle{Max: dims.Size}
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r, p.Shadow)
@@ -105,6 +109,7 @@ func (u *UI) layoutMenu(gtx C) {
 // filterMenuState is the drop-down of filter chips that didn't fit.
 type filterMenuState struct {
 	open   bool
+	anim   tween
 	origin image.Point // chips row, in content coordinates
 	anchor image.Point // more-chip, relative to origin
 	scrim  widget.Clickable
@@ -130,13 +135,19 @@ func (u *UI) updateFilterMenu(gtx C) {
 
 func (u *UI) layoutFilterMenu(gtx C) {
 	f := &u.filterMenu
-	if !f.open || len(u.sidebar.hiddenFilters) == 0 {
+	open := f.open && len(u.sidebar.hiddenFilters) > 0
+	v := f.anim.step(gtx, open, popDur(open))
+	if v == 0 {
 		return
 	}
 	p := u.pal
-	sgtx := gtx
-	sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
-	f.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	if open {
+		sgtx := gtx
+		sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
+		f.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	} else {
+		gtx = gtx.Disabled() // fading out
+	}
 
 	w := gtx.Dp(180)
 	rec := op.Record(gtx.Ops)
@@ -150,10 +161,11 @@ func (u *UI) layoutFilterMenu(gtx C) {
 				c := &f.items[i]
 				return clickable(gtx, c, func(gtx C) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
-					bg := p.Menu
-					if c.Hovered() || u.sidebar.filter == i {
-						bg = p.MenuHover
+					h := u.hover(gtx, c)
+					if u.sidebar.filter == i {
+						h = 1
 					}
+					bg := mix(p.Menu, p.MenuHover, h)
 					return background(gtx, bg, 8, func(gtx C) D {
 						return vcenter(gtx, gtx.Dp(40), func(gtx C) D {
 							return layout.Inset{Left: 12, Right: 12}.Layout(gtx, u.label(15, filterNames[i], p.Text).Layout)
@@ -167,6 +179,7 @@ func (u *UI) layoutFilterMenu(gtx C) {
 	call := rec.Stop()
 	pos := f.origin.Add(f.anchor)
 	defer op.Offset(pos).Push(gtx.Ops).Pop()
+	defer pushPopup(gtx, v, image.Point{}).Pop()
 	r := gtx.Dp(12)
 	rect := image.Rectangle{Max: dims.Size}
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r, p.Shadow)

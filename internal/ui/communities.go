@@ -103,11 +103,11 @@ func (u *UI) layoutCommunityEntry(gtx C, e communityEntry) D {
 			u.open(c)
 		}
 		o := rowOpts{
-			click:    click,
-			selected: u.selected != nil && u.selected.ID == c.ID && u.selPage == pageCommunities,
-			avatarW:  15,
-			textGap:  21,
-			avatar:   func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, true, 43) },
+			click:   click,
+			sel:     u.sidebar.openSel.of(c.ID),
+			avatarW: 15,
+			textGap: 21,
+			avatar:  func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, true, 43) },
 		}
 		if e.announce {
 			// The announcement group is named after the community;
@@ -152,10 +152,7 @@ func (u *UI) simpleRow(gtx C, c *widget.Clickable, pic layout.Widget, title stri
 	return layout.Inset{Left: 13, Right: 18, Top: 2, Bottom: 2}.Layout(gtx, func(gtx C) D {
 		return clickable(gtx, c, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			bg := p.Panel
-			if c.Hovered() {
-				bg = p.Hover
-			}
+			bg := mix(p.Panel, p.Hover, u.hover(gtx, c))
 			return background(gtx, bg, 10, func(gtx C) D {
 				return vcenter(gtx, gtx.Dp(76.3), func(gtx C) D {
 					return layout.Inset{Left: 11, Right: 14}.Layout(gtx, func(gtx C) D {

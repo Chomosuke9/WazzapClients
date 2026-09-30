@@ -76,6 +76,13 @@ Gotchas already found in the pinned version (v0.10.x):
   you pass it, so don't use it to append.
 - `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
+- `gtx.Disabled()` blocks `gtx.Execute` too, so a disabled context can't ask for the
+  next frame. Step animations with the enabled context before disabling it.
+- A `ScrollToEnd` list drops a trailing child of height 0 when it trims to the
+  viewport, then stops following the end. Rows that grow in start at 1px.
+- `paint.PushOpacity` draws into an offscreen texture that Gio keeps, at the largest
+  size ever needed, until the window closes. A fade of the whole window would pin
+  ~16 MB. Keep opacity layers small (see Animations).
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -90,7 +97,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    settings), conversation and composer, contact/group info panel, and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
-                   (viewer.go); replies, @mentions and select mode live in compose.go
+                   (viewer.go); replies, @mentions and select mode live in compose.go;
+                   animation helpers in anim.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
@@ -126,6 +134,26 @@ internal/mock/     demo Backend with fake chats (used by -demo and cmd/screensho
 - Colors live in `internal/ui/theme.go` (light and dark palettes). Don't hard-code colors
   in widgets.
 - Watch memory use. Low RAM is the reason this project exists.
+
+## Animations
+
+The helpers are in `internal/ui/anim.go`. Each frame computes an animation's progress
+from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
+(`TestIdleAtRest` checks this).
+
+- `tween` is an on/off progress (a popup opening, a panel sliding) that turns around
+  midway without jumping. `follower` glides a number to a new target (tab underlines),
+  and `switcher` moves a highlight between items (the open chat, the active rail
+  button). Hovers and other per-widget fades go through `u.hover` and `u.anims`.
+- A closing overlay keeps its state with a `closing` flag (or a "ghost" copy of what
+  it showed) and draws with `gtx.Disabled()` while it fades, so clicks go through.
+  Check `isOpen()` or `shown()` rather than the raw fields.
+- Don't animate icon or `cachedGlyph` colors: both are cached per color. Cross-fade
+  two colors with `withOpacity`.
+- Keep opacity layers small (menus, pickers, rows). For big areas, fade a backdrop's
+  color and the parts on it one by one, or cover content on a plain background with a
+  `veil` of that background.
+- Film an animation with `cmd/screenshot -film` (see Commands) to check its frames.
 - Run `gofmt`, `go vet ./...` and `go build ./...` before you finish.
 
 ## Commands
@@ -145,6 +173,9 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # Render one overlay with demo data (chatmenu, msgmenu, emoji, viewer, forward, reply,
 # delete, select, mention, mentioned) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
+# Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and
+# closing (Esc) below. Also info, message, reorder, and hover (the pointer at -at):
+go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 40ms -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \
     -data "$APPDATA/WazzapClients" -view channels
