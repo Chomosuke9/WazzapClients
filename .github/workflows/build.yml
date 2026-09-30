@@ -19,6 +19,7 @@ jobs:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+
     strategy:
       fail-fast: false
       matrix:
@@ -26,15 +27,19 @@ jobs:
           - os: windows-2022
             target: windows-amd64
             cgo: '0'
+
           - os: ubuntu-22.04
             target: linux-amd64
             cgo: '1'
+
     env:
       CGO_ENABLED: ${{ matrix.cgo }}
       GOFLAGS: -mod=readonly
+
     defaults:
       run:
         shell: bash
+
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,9 +55,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev \
-            libffi-dev libxcursor-dev libxfixes-dev libvulkan-dev
+            gcc \
+            pkg-config \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxkbcommon-x11-dev \
+            libgles2-mesa-dev \
+            libegl1-mesa-dev \
+            libffi-dev \
+            libxcursor-dev \
+            libxfixes-dev \
+            libvulkan-dev
 
       - name: Verify dependencies
         run: |
@@ -62,6 +76,7 @@ jobs:
       - name: Check formatting
         run: |
           unformatted=$(gofmt -l cmd internal)
+
           if [ -n "$unformatted" ]; then
             printf '%s\n' "$unformatted"
             exit 1
@@ -76,51 +91,100 @@ jobs:
       - name: Build all packages
         run: go build ./...
 
-      - name: Package Windows executable
+      # =========================
+      # Windows
+      # =========================
+
+      - name: Build Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force bin/package, bin/dist | Out-Null
-          go build -trimpath -ldflags '-s -w -H=windowsgui' -o bin/package/WazzapClients.exe ./cmd/wazzap
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Compress-Archive -Path bin/package/WazzapClients.exe -DestinationPath bin/dist/WazzapClients-windows-amd64.zip
+          New-Item -ItemType Directory -Force bin/dist | Out-Null
 
-      - name: Package Linux executable
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p bin/package bin/dist
-          go build -trimpath -ldflags '-s -w' -o bin/package/wazzapclients ./cmd/wazzap
-          tar -czf bin/dist/WazzapClients-linux-amd64.tar.gz -C bin/package wazzapclients
+          go build `
+            -trimpath `
+            -ldflags '-s -w -H=windowsgui' `
+            -o bin/dist/WazzapClients-windows-amd64.exe `
+            ./cmd/wazzap
 
-      - name: Upload build
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload Windows executable
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
-          name: WazzapClients-${{ matrix.target }}
-          path: bin/dist/*
+          path: bin/dist/WazzapClients-windows-amd64.exe
+          archive: false
           if-no-files-found: error
-          compression-level: 0
+          retention-days: 14
+
+      # =========================
+      # Linux
+      # =========================
+
+      - name: Build Linux executable
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p bin/dist
+
+          go build \
+            -trimpath \
+            -ldflags '-s -w' \
+            -o bin/dist/WazzapClients-linux-amd64 \
+            ./cmd/wazzap
+
+          chmod +x bin/dist/WazzapClients-linux-amd64
+
+      - name: Upload Linux executable
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: bin/dist/WazzapClients-linux-amd64
+          archive: false
+          if-no-files-found: error
           retention-days: 14
 
   release:
     name: Draft release
+
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
     needs: build
+
     runs-on: ubuntu-22.04
+
     timeout-minutes: 10
+
     permissions:
       contents: write
+
     steps:
-      - name: Download build packages
+      - name: Download Windows build
         uses: actions/download-artifact@v8
         with:
-          pattern: WazzapClients-*
+          name: WazzapClients-windows-amd64.exe
           path: dist
-          merge-multiple: true
+
+      - name: Download Linux build
+        uses: actions/download-artifact@v8
+        with:
+          name: WazzapClients-linux-amd64
+          path: dist
+
+      - name: Show downloaded files
+        run: |
+          ls -lah dist
 
       - name: Generate checksums
         working-directory: dist
         run: |
-          sha256sum WazzapClients-windows-amd64.zip WazzapClients-linux-amd64.tar.gz > SHA256SUMS
+          sha256sum \
+            WazzapClients-windows-amd64.exe \
+            WazzapClients-linux-amd64 \
+            > SHA256SUMS
+
           sha256sum --check SHA256SUMS
 
       - name: Create or update draft release
@@ -128,14 +192,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
+
         run: |
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft'); then
+
             if [ "$draft" != 'true' ]; then
               echo 'Release already published; refusing to replace its assets.' >&2
               exit 1
             fi
-            gh release upload "$RELEASE_TAG" dist/* --clobber
+
+            gh release upload "$RELEASE_TAG" \
+              dist/WazzapClients-windows-amd64.exe \
+              dist/WazzapClients-linux-amd64 \
+              dist/SHA256SUMS \
+              --clobber
+
           else
-            gh release create "$RELEASE_TAG" dist/* \
-              --verify-tag --draft --generate-notes --title "WazzapClients $RELEASE_TAG"
+
+            gh release create "$RELEASE_TAG" \
+              dist/WazzapClients-windows-amd64.exe \
+              dist/WazzapClients-linux-amd64 \
+              dist/SHA256SUMS \
+              --verify-tag \
+              --draft \
+              --generate-notes \
+              --title "WazzapClients $RELEASE_TAG"
+
           fi
