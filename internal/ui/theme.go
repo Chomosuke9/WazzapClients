@@ -3,11 +3,8 @@ package ui
 import (
 	_ "embed"
 	"image/color"
-	"sync"
 
 	"gioui.org/font"
-	"gioui.org/font/gofont"
-	"gioui.org/font/opentype"
 	"gioui.org/text"
 	"gioui.org/widget/material"
 )
@@ -197,19 +194,12 @@ var notoColorEmoji []byte
 // separate files that each cost ~40 MB of heap once loaded (the whole
 // glyph table is parsed), so a bold name plus a regular message would load
 // two of them.
-const typeface font.Typeface = "Segoe UI, Noto Color Emoji, Segoe UI Symbol, MS Gothic, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
-
-var patchEmoji sync.Once
+const typeface font.Typeface = "Segoe UI, " + emojiTypeface + ", Segoe UI Symbol, MS Gothic, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
 
 func newTheme() *material.Theme {
 	th := material.NewTheme()
-	faces := gofont.Collection()
-	patchEmoji.Do(func() { narrowEmojiSpaces(notoColorEmoji) })
-	if emoji, err := opentype.ParseCollection(notoColorEmoji); err == nil {
-		faces = append(faces, emoji...)
-	}
 	// System fonts are enabled by default and cover other scripts.
-	th.Shaper = text.NewShaper(text.WithCollection(faces))
+	th.Shaper = text.NewShaper(text.WithCollection(bundledFonts()))
 	th.Face = typeface
 	th.TextSize = 14
 	return th

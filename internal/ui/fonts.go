@@ -1,6 +1,31 @@
 package ui
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"sync"
+
+	"gioui.org/font"
+	"gioui.org/font/gofont"
+	"gioui.org/font/opentype"
+)
+
+// Keep the patched face distinct from any unpatched Noto Color Emoji installed
+// on the system. Gio loads system faces first and may select them on a tie.
+const emojiTypeface font.Typeface = "WazzapClients Emoji"
+
+var patchEmoji sync.Once
+
+func bundledFonts() []font.FontFace {
+	faces := gofont.Collection()
+	patchEmoji.Do(func() { narrowEmojiSpaces(notoColorEmoji) })
+	if emoji, err := opentype.ParseCollection(notoColorEmoji); err == nil {
+		for i := range emoji {
+			emoji[i].Font.Typeface = emojiTypeface
+		}
+		faces = append(faces, emoji...)
+	}
+	return faces
+}
 
 // narrowEmojiSpaces sets the advance of the emoji font's space glyphs to a
 // normal word space, in place.
