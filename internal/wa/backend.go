@@ -51,6 +51,7 @@ type Backend struct {
 
 	avatars   *fetcher
 	downloads *fetcher
+	playing   sync.Map // videos being fetched for PlayMedia, by path
 
 	subMu     sync.Mutex
 	subtitles map[string]string // group JID → participant list

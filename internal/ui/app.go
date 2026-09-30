@@ -58,6 +58,8 @@ type UI struct {
 	msgs     []*model.Message // loaded window of the selected chat
 	msgsVer  int              // bumped whenever msgs changes
 	images   *imageCache
+	players  players // animated stickers on screen
+	bars     map[*widget.List]*scrollbar
 
 	page         page
 	statusSeen   time.Time // when the Status page was last open
@@ -382,6 +384,7 @@ func (u *UI) Layout(gtx C) D {
 		u.window.Perform(a)
 	}
 	defer u.images.endFrame()
+	defer u.players.endFrame()
 	defer u.anims.endFrame()
 
 	sz := gtx.Constraints.Max
@@ -662,6 +665,9 @@ func (u *UI) applyEvents() {
 			if e.MeID != "" {
 				meID = e.MeID
 			}
+			if e.State == model.StateOnline && u.conn.State != model.StateOnline {
+				u.images.retryMissing() // downloads were skipped while offline
+			}
 			u.conn, u.me, u.meID = e, me, meID
 		case model.ChatsEvent:
 			u.setChats(e.Chats)
@@ -697,6 +703,7 @@ func (u *UI) applyEvents() {
 			if u.viewer.open && u.viewer.msgID == e.MsgID {
 				u.images.forget("v:" + e.MsgID)
 			}
+			u.videoDownloaded(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.DeletedEvent:

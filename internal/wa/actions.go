@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -515,6 +517,100 @@ func (b *Backend) SaveMedia(m *model.Message) {
 		}
 		b.emit(model.NoticeEvent{Text: "Saved to " + path})
 	}()
+}
+
+// PlayMedia implements model.Backend. Videos are kept next to the other
+// media, with an extension so the system knows what plays them.
+func (b *Backend) PlayMedia(m *model.Message) {
+	path := b.mediaPath(m.ChatID, m.ID) + ".mp4"
+	if _, busy := b.playing.LoadOrStore(path, true); busy {
+		return // already downloading; it opens when done
+	}
+	go func() {
+		defer b.playing.Delete(path)
+		if _, err := os.Stat(path); err != nil {
+			if !b.downloadVideo(m, path) {
+				return
+			}
+		}
+		if err := openFile(path); err != nil {
+			b.log.Warnf("open video: %v", err)
+			b.emit(model.NoticeEvent{Text: "Couldn't open a video player."})
+		}
+	}()
+}
+
+// VideoFile implements model.Backend.
+func (b *Backend) VideoFile(m *model.Message) string {
+	path := b.mediaPath(m.ChatID, m.ID) + ".mp4"
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	if _, busy := b.playing.LoadOrStore(path, true); !busy {
+		go func() {
+			defer b.playing.Delete(path)
+			ok := b.downloadVideo(m, path)
+			b.emit(model.MediaEvent{ChatID: m.ChatID, MsgID: m.ID, Failed: !ok})
+		}()
+	}
+	return ""
+}
+
+// downloadVideo streams a video to path, so a big one never sits in memory.
+func (b *Backend) downloadVideo(m *model.Message, path string) bool {
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Minute)
+	defer cancel()
+	media, blob, _ := b.store.mediaBlob(ctx, m.ChatID, m.ID)
+	var dl whatsmeow.DownloadableMessage
+	if media == model.MediaVideo || media == model.MediaGIF {
+		v := &waE2E.VideoMessage{}
+		if proto.Unmarshal(blob, v) == nil {
+			dl = v
+		}
+	}
+	cli := b.client()
+	if dl == nil || cli == nil || !cli.IsConnected() {
+		b.emit(model.NoticeEvent{Text: "This video isn't available."})
+		return false
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	f, err := os.OpenFile(path+".part", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		b.emit(model.NoticeEvent{Text: "Couldn't save the video: " + err.Error()})
+		return false
+	}
+	err = cli.DownloadToFile(ctx, dl, f)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(path+".part", path)
+	}
+	if err != nil {
+		_ = os.Remove(path + ".part")
+		b.log.Infof("download video %s: %v", m.ID, err)
+		b.emit(model.NoticeEvent{Text: "Couldn't download the video."})
+		return false
+	}
+	return true
+}
+
+// openFile opens a file with the system's default app for its type.
+func openFile(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait() // reap the process
+	return nil
 }
 
 // fileName picks a name for a saved attachment.

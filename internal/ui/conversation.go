@@ -15,7 +15,6 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
-	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/styledtext"
@@ -279,18 +278,13 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		u.conv.heights = make(map[int]int)
 	}
 	clear(u.conv.heights)
-	l := material.List(u.th, &u.conv.list)
-	l.AnchorStrategy = material.Overlay
-	l.Indicator.Color = u.pal.TextSecondary
-	l.Indicator.Color.A = 0x50
-	l.Indicator.MinorWidth = 5
 	gtx.Constraints.Min = gtx.Constraints.Max
 	defer func() {
 		if u.conv.scrollTo != nil {
 			gtx.Execute(op.InvalidateCmd{}) // requested while laying out
 		}
 	}()
-	return l.Layout(gtx, len(rows), func(gtx C, i int) D {
+	return u.scrollList(gtx, &u.conv.list, len(rows), func(gtx C, i int) D {
 		r := rows[i]
 		in := layout.Inset{Left: dp(gtx, margin), Right: dp(gtx, margin)}
 		switch {
@@ -1057,9 +1051,16 @@ func (u *UI) layoutImage(gtx C, r image.Rectangle, m *model.Message, img *imgEnt
 	if m.Media != model.MediaVideo && m.Media != model.MediaGIF {
 		return
 	}
-	c := r.Min.Add(r.Size().Div(2))
-	rad := gtx.Dp(26)
-	fillCircle(gtx, c, rad, argb(0x000000, 0x80))
+	playButton(gtx, r.Min.Add(r.Size().Div(2)), gtx.Dp(26), argb(0x000000, 0x80))
+	if m.Duration > 0 {
+		d := record(gtx, u.label(11.5, fmt.Sprintf("%d:%02d", m.Duration/60, m.Duration%60), rgb(0xffffff)).Layout)
+		d.at(gtx, r.Min.X+gtx.Dp(8), r.Max.Y-d.size.Y-gtx.Dp(6))
+	}
+}
+
+// playButton draws a round play button centered on c.
+func playButton(gtx C, c image.Point, rad int, bg color.NRGBA) {
+	fillCircle(gtx, c, rad, bg)
 	var tri clip.Path
 	tri.Begin(gtx.Ops)
 	s := float32(rad) * 0.45
@@ -1069,10 +1070,6 @@ func (u *UI) layoutImage(gtx C, r image.Rectangle, m *model.Message, img *imgEnt
 	tri.LineTo(cf.Add(f32.Pt(-s*0.6, s)))
 	tri.Close()
 	paint.FillShape(gtx.Ops, rgb(0xffffff), clip.Outline{Path: tri.End()}.Op())
-	if m.Duration > 0 {
-		d := record(gtx, u.label(11.5, fmt.Sprintf("%d:%02d", m.Duration/60, m.Duration%60), rgb(0xffffff)).Layout)
-		d.at(gtx, r.Min.X+gtx.Dp(8), r.Max.Y-d.size.Y-gtx.Dp(6))
-	}
 }
 
 // layoutSticker draws a sticker without a bubble, with the time on a chip.
@@ -1082,11 +1079,18 @@ func (u *UI) layoutSticker(gtx C, m *model.Message) D {
 	img := u.messageImage(m, sz*2)
 	r := image.Rect(0, 0, sz, sz)
 	if img != nil && img.state == imgReady {
+		pic, size := img.op, img.size
+		if img.animated {
+			b, chat, id := u.backend, m.ChatID, m.ID
+			if f, ok := u.stickerFrame("m:"+chat+"/"+id, sz*2, func() []byte { return b.MediaData(chat, id) }); ok {
+				pic, size = f, f.Size()
+			}
+		}
 		// Stickers keep their aspect ratio inside the square.
-		s := min(float32(sz)/float32(img.size.X), float32(sz)/float32(img.size.Y))
-		w, h := int(float32(img.size.X)*s), int(float32(img.size.Y)*s)
+		s := min(float32(sz)/float32(size.X), float32(sz)/float32(size.Y))
+		w, h := int(float32(size.X)*s), int(float32(size.Y)*s)
 		dst := image.Rect((sz-w)/2, (sz-h)/2, (sz-w)/2+w, (sz-h)/2+h)
-		paintCover(gtx, img.op, img.size, dst)
+		paintCover(gtx, pic, size, dst)
 	} else {
 		fillRRect(gtx, r, gtx.Dp(12), argb(0x808080, 0x30))
 	}

@@ -300,9 +300,7 @@ func (u *UI) forwardPanel(gtx C) D {
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
-			l := material.List(u.th, &d.list)
-			l.AnchorStrategy = material.Overlay
-			return l.Layout(gtx, len(chats), func(gtx C, i int) D {
+			return u.scrollList(gtx, &d.list, len(chats), func(gtx C, i int) D {
 				c := chats[i]
 				on := indexOf(d.picked, c.ID) >= 0
 				cl := u.btn("fwd:" + c.ID)

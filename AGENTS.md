@@ -79,6 +79,21 @@ Gotchas already found in the pinned version (v0.10.x):
 - `widget.Editor` paints all its text in one color. Colored spans (the composer's
   @mentions) are drawn over it: see `paintMentions`. `Editor.Regions` reuses the slice
   you pass it, so don't use it to append.
+- Gio makes only its window thread DPI aware on Windows. While a drag holds the mouse
+  capture, Windows then reports the pointer in DPI-unaware coordinates (divided by the
+  display scale), so every dragged thing lagged the pointer. `dpi_windows.go` makes the
+  whole process per-monitor aware at init.
+- `material.List`'s scrollbar turns thumb drags into "scroll by N items" against a length
+  re-estimated from the visible rows, so the thumb drifts from the pointer. Use
+  `u.scrollList` (`internal/ui/scrollbar.go`) for every list.
+- `golang.org/x/image/webp` can't read animated WebP. Animated stickers go through
+  `internal/webpanim`; `stickerFrame` (`player.go`) plays the ones on screen.
+- Videos use the OS's decoder, never a bundled codec (`internal/video`). The Windows
+  backend calls COM through `syscall.SyscallN` without cgo: convert pointers to
+  `uintptr` inside the `SyscallN` argument list, and read `double` results from `r2`
+  (Go returns XMM0 there). Media Foundation's memory goes back only with `MFShutdown`,
+  so each player starts and shuts it down. The viewer's video UI is `videoview.go`;
+  `WAZZAP_DEMO_VIDEO=<file.mp4>` makes `-demo` play that file.
 - `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
 - `gtx.Disabled()` blocks `gtx.Execute` too, so a disabled context can't ask for the
@@ -118,6 +133,9 @@ internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated)
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
+internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
+internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
+                   other systems return ErrUnsupported and open the system's player app
 internal/memtrim/  gives memory back to the OS after 30 s without a frame (see ui.Run)
 patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
 ```

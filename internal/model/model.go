@@ -291,7 +291,10 @@ type SyncEvent struct{ Percent int }
 type AvatarEvent struct{ ID string }
 
 // MediaEvent reports that a message's media finished downloading.
-type MediaEvent struct{ ChatID, MsgID string }
+type MediaEvent struct {
+	ChatID, MsgID string
+	Failed        bool // the download failed; a NoticeEvent says why
+}
 
 // InfoEvent reports that the info panel details of a chat changed.
 type InfoEvent struct{ ChatID string }
@@ -366,6 +369,12 @@ type Backend interface {
 	// SaveMedia saves a message's picture or file to the Downloads folder
 	// in the background; a NoticeEvent reports the result.
 	SaveMedia(m *Message)
+	// PlayMedia opens a video in the system's video player, downloading it
+	// first in the background; a NoticeEvent reports failures.
+	PlayMedia(m *Message)
+	// VideoFile returns the path of a downloaded video, or "" while it
+	// downloads in the background; a MediaEvent announces the end.
+	VideoFile(m *Message) string
 
 	// Chat list actions. Each is followed by a ChatEvent (or ChatsEvent).
 	SetArchived(chatID string, archived bool)

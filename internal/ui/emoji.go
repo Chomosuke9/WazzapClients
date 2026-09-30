@@ -369,11 +369,7 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
-			l := material.List(u.th, &e.list)
-			l.AnchorStrategy = material.Overlay
-			l.Indicator.Color = p.TextSecondary
-			l.Indicator.Color.A = 0x50
-			return l.Layout(gtx, len(rows)+1, func(gtx C, i int) D {
+			return u.scrollList(gtx, &e.list, len(rows)+1, func(gtx C, i int) D {
 				if i == len(rows) {
 					return D{Size: image.Pt(0, gtx.Dp(56))} // room for the tabs
 				}
@@ -484,9 +480,8 @@ func (u *UI) layoutStickerTab(gtx C) D {
 	cell := gtx.Dp(110)
 	cols := max(2, (w-gtx.Dp(24))/cell)
 	n := (len(e.stickers) + cols - 1) / cols
-	l := material.List(u.th, &e.list)
 	return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D {
-		return l.Layout(gtx, n+1, func(gtx C, row int) D {
+		return u.scrollList(gtx, &e.list, n+1, func(gtx C, row int) D {
 			if row == n {
 				return D{Size: image.Pt(0, gtx.Dp(56))}
 			}

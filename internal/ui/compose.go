@@ -422,8 +422,7 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 	defer clip.UniformRRect(rect, r).Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(image.Pt(w-2*pad, h-2*pad))
 	t := op.Offset(image.Pt(pad, pad)).Push(gtx.Ops)
-	l := material.List(u.th, &u.conv.mentionList)
-	l.Layout(gtx, len(ms.members), func(gtx C, i int) D {
+	u.scrollList(gtx, &u.conv.mentionList, len(ms.members), func(gtx C, i int) D {
 		m := ms.members[i]
 		cl := u.btn("mention:" + m.ID)
 		return clickable(gtx, cl, func(gtx C) D {

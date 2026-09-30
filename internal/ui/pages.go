@@ -9,7 +9,6 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
-	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
@@ -58,17 +57,6 @@ func (u *UI) headerButton(c *widget.Clickable, ic *icon.Icon, size unit.Dp) layo
 // sectionLabel is a small gray heading inside a list ("Recent", "Viewed").
 func (u *UI) sectionLabel(gtx C, txt string, in layout.Inset, o labelOpts) D {
 	return in.Layout(gtx, u.label(15.2, txt, u.pal.TextSecondary, o).Layout)
-}
-
-// scrollList lays out a vertical list with WhatsApp's thin overlay scrollbar.
-func (u *UI) scrollList(gtx C, l *widget.List, n int, el layout.ListElement) D {
-	ls := material.List(u.th, l)
-	ls.AnchorStrategy = material.Overlay
-	ls.Indicator.Color = u.pal.TextSecondary
-	ls.Indicator.Color.A = 0x50
-	ls.Indicator.MinorWidth = 5
-	ls.Indicator.CornerRadius = 3
-	return ls.Layout(gtx, n, el)
 }
 
 // emptyPane is the right-hand placeholder of the Status, Channels,

@@ -212,14 +212,8 @@ func (u *UI) filteredChats() []*model.Chat {
 
 func (u *UI) layoutChatList(gtx C) D {
 	chats := u.sidebar.visible
-	l := material.List(u.th, &u.sidebar.list)
-	l.AnchorStrategy = material.Overlay
-	l.Indicator.Color = u.pal.TextSecondary
-	l.Indicator.Color.A = 0x50
-	l.Indicator.MinorWidth = 5
-	l.Indicator.CornerRadius = 3
 	o := &u.sidebar.order
-	return l.Layout(gtx, len(chats), func(gtx C, i int) D {
+	return u.scrollList(gtx, &u.sidebar.list, len(chats), func(gtx C, i int) D {
 		c := chats[i]
 		dy, a, moving := o.at(c.ID)
 		if !moving {
