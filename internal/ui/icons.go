@@ -88,6 +88,8 @@ var (
 	icReply         = icon.Reply
 	icReplyPrivate  = icon.ThreeP
 	icCopy          = icon.ContentCopy
+	icOpenInNew     = icon.OpenInNew
+	icUnsupported   = icon.DisabledByDefaultFill
 	icForward       = icon.Forward
 	icCheckBox      = icon.CheckBox
 	icCheckBoxEmpty = icon.CheckBoxOutlineBlank

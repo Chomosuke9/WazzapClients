@@ -113,6 +113,7 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_messages ADD COLUMN buttons TEXT NOT NULL DEFAULT ''`, // JSON buttonsInfo
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -236,6 +237,7 @@ type storedMsg struct {
 	quoteID    string
 	mentions   []string
 	mediaBlob  []byte // marshaled waE2E media message
+	buttons    *buttonsInfo
 }
 
 func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error {
@@ -246,20 +248,20 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 	}
 	_, err := x.ExecContext(ctx, `
 		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, duration, text,
-			receipt, quote_sender, quote_text, quote_media, quote_id, mentions, forwarded, thumb, media_blob)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			receipt, quote_sender, quote_text, quote_media, quote_id, mentions, forwarded, thumb, media_blob, buttons)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
 			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
 			duration = excluded.duration, text = excluded.text,
 			receipt = MAX(wz_messages.receipt, excluded.receipt),
 			quote_sender = excluded.quote_sender, quote_text = excluded.quote_text,
 			quote_media = excluded.quote_media, quote_id = excluded.quote_id, mentions = excluded.mentions,
-			forwarded = excluded.forwarded,
+			forwarded = excluded.forwarded, buttons = excluded.buttons,
 			thumb = COALESCE(excluded.thumb, wz_messages.thumb),
 			media_blob = COALESCE(excluded.media_blob, wz_messages.media_blob)`,
 		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
 		m.Duration, m.Text, int(m.Receipt), m.quoteJID, qt, qm, m.quoteID, strings.Join(m.mentions, ","),
-		boolInt(m.Forwarded), m.Thumb, m.mediaBlob)
+		boolInt(m.Forwarded), m.Thumb, m.mediaBlob, m.buttons.marshal())
 	if err != nil {
 		return err
 	}
@@ -292,7 +294,7 @@ func (s *msgStore) setReaction(ctx context.Context, chat, id, emoji string) erro
 
 func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?, media = 0, text = '', thumb = NULL, media_blob = NULL,
-		quote_sender = '', quote_text = '', quote_media = 0, quote_id = '', pinned = 0 WHERE chat = ? AND id = ?`, int(model.KindDeleted), chat, id)
+		quote_sender = '', quote_text = '', quote_media = 0, quote_id = '', pinned = 0, buttons = '' WHERE chat = ? AND id = ?`, int(model.KindDeleted), chat, id)
 	return err
 }
 
@@ -316,10 +318,11 @@ func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.
 type rawMsg struct {
 	*model.Message
 	senderJID, senderPush, legacyName, quoteJID, quoteID, mentions string
+	buttons                                                        *buttonsInfo
 }
 
 const msgColumns = `chat, id, sender_jid, sender_push, sender_name, from_me, ts, kind, media, duration, text, receipt,
-	quote_sender, quote_text, quote_media, quote_id, mentions, reaction, starred, pinned, forwarded, thumb`
+	quote_sender, quote_text, quote_media, quote_id, mentions, reaction, starred, pinned, forwarded, thumb, buttons`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -336,10 +339,11 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		reaction            string
 		starred, pinned     int
 		forwarded           int
+		buttons             string
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &r.legacyName, &fromMe, &ts, &kind, &media, &m.Duration,
 		&m.Text, &receipt, &r.quoteJID, &quoteText, &quoteMedia, &r.quoteID, &r.mentions, &reaction,
-		&starred, &pinned, &forwarded, &thumb)
+		&starred, &pinned, &forwarded, &thumb, &buttons)
 	if err != nil {
 		return r, err
 	}
@@ -355,6 +359,8 @@ func scanMessage(sc scanner) (rawMsg, error) {
 	if quoteText != "" || r.quoteJID != "" || quoteMedia != 0 {
 		m.Quote = &model.Quote{ID: r.quoteID, SenderID: r.quoteJID, Text: quoteText, Media: model.Media(quoteMedia)}
 	}
+	r.buttons = parseButtons(buttons)
+	r.buttons.apply(&m)
 	r.Message = &m
 	return r, nil
 }

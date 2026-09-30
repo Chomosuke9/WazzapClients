@@ -182,6 +182,15 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			m.Quote.Text = raw.Text
 		}
 	}
+	return b.storeAndSend(jid, sm, msg, nil)
+}
+
+// storeAndSend stores an outgoing message as pending, sends it in the
+// background and returns it.
+//
+// If the server rejects msg and fallback is given, fallback is sent instead.
+func (b *Backend) storeAndSend(jid types.JID, sm storedMsg, msg, fallback *waE2E.Message) *model.Message {
+	ctx, chatID, m := b.ctx, sm.ChatID, sm.Message
 	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
 		b.log.Errorf("store chat %s: %v", chatID, err)
 	}
@@ -189,7 +198,7 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		b.log.Errorf("store outgoing message: %v", err)
 	}
 	b.emitChat(chatID)
-	b.sendAsync(chatID, jid, m.ID, msg)
+	b.sendAsyncOr(chatID, jid, m.ID, msg, fallback)
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		return b.resolve(ctx, r, jid.Server == types.GroupServer)
 	}
@@ -199,9 +208,19 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 
 // sendAsync sends msg in the background and marks it sent when done.
 func (b *Backend) sendAsync(chatID string, jid types.JID, id string, msg *waE2E.Message) {
+	b.sendAsyncOr(chatID, jid, id, msg, nil)
+}
+
+// sendAsyncOr is sendAsync that sends fallback instead when the server
+// rejects msg.
+func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg, fallback *waE2E.Message) {
 	cli := b.client()
 	go func() {
 		_, err := cli.SendMessage(b.ctx, jid, msg, whatsmeow.SendRequestExtra{ID: id})
+		if err != nil && fallback != nil {
+			b.log.Warnf("send to %s: %v; sending the fallback", chatID, err)
+			_, err = cli.SendMessage(b.ctx, jid, fallback, whatsmeow.SendRequestExtra{ID: id})
+		}
 		if err != nil {
 			b.log.Errorf("send to %s: %v", chatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't send the message."})

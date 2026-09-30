@@ -202,6 +202,17 @@ func demo(now time.Time) []*demoChat {
 		{ID: "budi", Name: "Budi Santoso", Presence: "last seen today at 08:12", Messages: []*model.Message{
 			txt(false, day(0, 8, 2), "Bro, jadi futsal nanti malam?"), {FromMe: true, Text: "Jadi, jam 8 ya", Time: day(0, 8, 10), Receipt: model.Delivered},
 		}},
+		{ID: "shop", Name: "Kopi Senja", Presence: "Business account", Messages: []*model.Message{
+			{Text: "*Order #4821 is ready* ☕\nYour iced latte is waiting at the counter.", Footer: "Kopi Senja · Jl. Braga 12",
+				Time: day(0, 7, 55), Buttons: []model.Button{
+					{Kind: model.ButtonReply, Label: "On my way", Value: "otw"},
+					{Kind: model.ButtonCopy, Label: "Copy code", Value: "KS-4821"},
+					{Kind: model.ButtonURL, Label: "Track order", Value: "https://example.com/track/4821"},
+				}},
+			{Kind: model.KindUnsupported, Time: day(0, 7, 56)},
+			{Text: "Eh, `/setting` isn't a command I know 😅\n\n> Say it in plain words, like \"turn off greetings\"\n> or \"add a rule\".\n\n**Menu** today:\n- Iced latte\n- ~Croissant~ _sold out_\n1. Pick up at the counter\n2. Show code `KS-4821`\n\n```\nQuiz for you - 1/3\n```",
+				Time: day(0, 7, 57)},
+		}},
 		{ID: "mom", Name: "Mama", Favorite: true, Presence: "online", Messages: []*model.Message{
 			txt(false, day(1, 20, 1), "Sudah makan belum?"), txt(true, day(1, 20, 30), "Sudah ma 😊"),
 		}},

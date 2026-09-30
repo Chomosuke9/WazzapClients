@@ -34,6 +34,7 @@ type content struct {
 	blob     []byte // marshaled media message, for downloads
 	bg       uint32 // ARGB background of a text status
 	ctx      *waE2E.ContextInfo
+	buttons  *buttonsInfo // footer and buttons of business messages
 }
 
 func marshal(m proto.Message) []byte {
@@ -154,6 +155,14 @@ func describe(m *waE2E.Message) content {
 	case m.GetInteractiveResponseMessage() != nil:
 		e := m.GetInteractiveResponseMessage()
 		return content{text: e.GetBody().GetText(), ctx: e.GetContextInfo()}
+	case m.GetButtonsMessage() != nil:
+		return describeButtons(m.GetButtonsMessage())
+	case m.GetTemplateMessage() != nil:
+		return describeTemplate(m.GetTemplateMessage())
+	case m.GetInteractiveMessage() != nil:
+		return describeInteractive(m.GetInteractiveMessage())
+	case m.GetListMessage() != nil:
+		return describeList(m.GetListMessage())
 	case m.GetGroupInviteMessage() != nil:
 		e := m.GetGroupInviteMessage()
 		return content{text: "Group invite: " + e.GetGroupName(), ctx: e.GetContextInfo()}
@@ -213,8 +222,13 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	}
 
 	c := describe(m)
-	if c.text == "" && c.media == model.MediaNone {
-		return p, false
+	if c.text == "" && c.media == model.MediaNone && c.buttons.empty() {
+		if !hasContent(m) {
+			return p, false
+		}
+		// Something the app can't show: say so instead of dropping it.
+		b.log.Infof("unsupported message %s in %s: %s", evt.Info.ID, chat, fieldNames(m))
+		c = content{kind: model.KindUnsupported}
 	}
 	msg := p.msg.Message
 	msg.ID = evt.Info.ID
@@ -232,6 +246,10 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	p.msg.senderJID = evt.Info.Sender.ToNonAD().String()
 	p.msg.senderPush = evt.Info.PushName
 	p.msg.mediaBlob = c.blob
+	if !c.buttons.empty() {
+		p.msg.buttons = c.buttons
+		c.buttons.apply(msg)
+	}
 	p.msg.mentions = append([]string(nil), c.ctx.GetMentionedJID()...)
 	if c.ctx.GetNonJIDMentions() > 0 {
 		p.msg.mentions = append(p.msg.mentions, mentionAll)
@@ -261,8 +279,11 @@ func (b *Backend) parseQuote(ctx context.Context, m *storedMsg, ci *waE2E.Contex
 		switch {
 		case ok:
 			quote.Text, quote.Media = orig.Text, orig.Media
-			if orig.Kind == model.KindDeleted {
+			switch orig.Kind {
+			case model.KindDeleted:
 				quote.Text = "This message was deleted"
+			case model.KindUnsupported:
+				quote.Text = "This message couldn't load"
 			}
 			if m.quoteJID == "" {
 				m.quoteJID = orig.senderJID

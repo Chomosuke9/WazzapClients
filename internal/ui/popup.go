@@ -211,7 +211,9 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		add(menuItem{key: "save", ic: icDownload, label: "Save as…", run: func() { b.SaveMedia(m) }})
 	}
 	if !deleted {
-		add(menuItem{key: "forward", ic: icForward, label: "Forward", run: func() { u.openForward([]*model.Message{m}) }})
+		if m.Kind != model.KindUnsupported {
+			add(menuItem{key: "forward", ic: icForward, label: "Forward", run: func() { u.openForward([]*model.Message{m}) }})
+		}
 		if !isChannelID(c.ID) {
 			if m.Pinned {
 				add(menuItem{key: "pin", ic: icPin, label: "Unpin", run: func() { b.PinMessage(m, false) }})

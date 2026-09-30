@@ -68,6 +68,13 @@ func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool) {
 	b.emit(model.MessageEvent{Msg: &cp})
 }
 
+func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
+	if i < 0 || i >= len(m.Buttons) || m.Buttons[i].Kind != model.ButtonReply {
+		return nil
+	}
+	return b.Send(m.ChatID, model.Draft{Text: m.Buttons[i].Label, Reply: m})
+}
+
 func (b *Backend) SendSticker(chatID string, s *model.Message) { b.copyTo(s, chatID, false) }
 
 func (b *Backend) Stickers() []*model.Message { return nil }

@@ -109,6 +109,9 @@ internal/mock/     demo Backend with fake chats (used by -demo and cmd/screensho
   messages in `wz_*` tables of the same SQLite file (`%AppData%\WazzapClients\wazzap.db`).
 - Never call into hypermeow's device store inside a `wz_*` write transaction. It writes
   to the same SQLite file and would block until the busy timeout (see `onHistory`).
+- Don't drop messages the app can't show: `parse` stores them as `KindUnsupported` ("This
+  message couldn't load"). Add harmless protocol fields to `noContentFields`
+  (`internal/wa/interactive.go`) instead. Business message buttons live there too.
 - One-to-one chats are keyed by LID when a mapping is known (`canonical`), because
   hypermeow treats the LID as the stable identity.
 - Channels (newsletters) are stored like chats in `wz_chats`/`wz_messages`, plus their

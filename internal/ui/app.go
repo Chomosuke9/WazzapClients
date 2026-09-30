@@ -100,6 +100,10 @@ type UI struct {
 		key string
 		at  time.Duration
 	}
+	lastButton struct { // see pressButton
+		key string
+		at  time.Time
+	}
 	pendingCopy string // clipboard text waiting for a frame
 	focus       any    // editor to focus next frame (see requestFocus)
 	focusReq    bool
@@ -138,8 +142,11 @@ type UI struct {
 		flash            string          // message highlighted after a jump
 		flashUntil       time.Time
 		composerH        int
-		members          *model.ChatInfo // group members for @mentions
-		membersFor       string
+		// scrollTo is a scroll position requested while the list may be
+		// laying out (from a click inside a message); see scrollMessages.
+		scrollTo   *layout.Position
+		members    *model.ChatInfo // group members for @mentions
+		membersFor string
 	}
 }
 
@@ -363,6 +370,7 @@ func (u *UI) Layout(gtx C) D {
 	u.layoutDialog(gtx)
 	u.layoutToast(gtx)
 	u.trackMouse(gtx)
+	u.flushClipboard(gtx) // copies requested during this frame's layout
 	return D{Size: sz}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"time"
 
 	"gioui.org/f32"
@@ -198,12 +199,21 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	margin := max(gtx.Dp(12), min(gtx.Dp(63), width*13/100))
 	maxBubble := min(width*69/100, width-2*margin)
 
+	if p := u.conv.scrollTo; p != nil {
+		u.conv.list.Position, u.conv.list.ScrollToEnd = *p, *p == (layout.Position{})
+		u.conv.scrollTo = nil
+	}
 	l := material.List(u.th, &u.conv.list)
 	l.AnchorStrategy = material.Overlay
 	l.Indicator.Color = u.pal.TextSecondary
 	l.Indicator.Color.A = 0x50
 	l.Indicator.MinorWidth = 5
 	gtx.Constraints.Min = gtx.Constraints.Max
+	defer func() {
+		if u.conv.scrollTo != nil {
+			gtx.Execute(op.InvalidateCmd{}) // requested while laying out
+		}
+	}()
 	return l.Layout(gtx, len(rows), func(gtx C, i int) D {
 		r := rows[i]
 		in := layout.Inset{Left: dp(gtx, margin), Right: dp(gtx, margin)}
@@ -485,6 +495,15 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		bg, quoteBg, textCol, metaCol, secondary = p.BubbleOut, p.QuoteOut, p.TextOut, p.MetaOut, p.SecondaryOut
 	}
 	isImg := m.Kind == model.KindImage
+	footerText, buttons := m.Footer, m.Buttons
+	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported {
+		footerText, buttons = "", nil
+	}
+	for i := range buttons {
+		if u.btn("mbtn:" + m.ID + ":" + itoa(i)).Clicked(gtx) {
+			u.pressButton(m, i)
+		}
+	}
 
 	padL, padR, padT, padB := gtx.Dp(9), gtx.Dp(8), gtx.Dp(6), gtx.Dp(8)
 	if isImg {
@@ -495,7 +514,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
 
 	// Timestamp and receipt ticks.
-	metaOnImage := isImg && m.Text == ""
+	metaOnImage := isImg && m.Text == "" && footerText == ""
 	var tickCol *color.NRGBA
 	if metaOnImage {
 		white := rgb(0xffffff)
@@ -539,6 +558,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 			text = "You deleted this message"
 		}
 		lead = iconW(icBlock, 19, secondary)
+	case m.Kind == model.KindUnsupported:
+		text, textCol, italic = "This message couldn't load. Open the message on your phone to view it.", secondary, true
+		lead = iconW(icUnsupported, 19, secondary)
 	case !isImg && m.Media != model.MediaNone:
 		lead = iconW(mediaIcon(m.Media), 20, secondary)
 		text = mediaLabel(m)
@@ -568,18 +590,50 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		if isImg {
 			tgtx.Constraints.Max.X = imgW - 2*textInset
 		}
-		spans := u.richSpans(text, textSize, textCol, italic)
-		plain := font.Font{Typeface: typeface}
-		if prefix != "" {
-			spans = append([]styledtext.SpanStyle{{Font: plain, Size: textSize, Color: textCol, Content: prefix}}, spans...)
+		suffix := ""
+		if footerText == "" {
+			// The meta sits at the end of the last line, or of the footer.
+			suffix = " " + string(spacer)
 		}
-		spans = append(spans, styledtext.SpanStyle{Font: plain, Size: textSize, Color: textCol, Content: " " + string(spacer)})
-		st := styledtext.Text(u.th.Shaper, spans...)
-		st.LineHeight, st.LineHeightScale = 22, 1
-		body = record(tgtx, func(gtx C) D { return st.Layout(gtx, nil) })
+		body = record(tgtx, func(gtx C) D {
+			return u.layoutRich(gtx, text, textSize, textCol, secondary, italic, prefix, suffix)
+		})
 		contentW = max(contentW, body.size.X+2*textInset)
 	} else if !isImg {
 		contentW = max(contentW, meta.size.X)
+	}
+
+	// A business message's footer, with the meta at its end.
+	var footer part
+	if footerText != "" {
+		const size = unit.Sp(13)
+		nbsp := u.nbspWidth(gtx, size)
+		spacer := strings.Repeat(" ", int(float32(meta.size.X+gtx.Dp(8))/nbsp)+1)
+		plain := font.Font{Typeface: typeface}
+		st := styledtext.Text(u.th.Shaper,
+			styledtext.SpanStyle{Font: plain, Size: size, Color: secondary, Content: footerText},
+			styledtext.SpanStyle{Font: plain, Size: size, Color: secondary, Content: " " + spacer})
+		st.LineHeight, st.LineHeightScale = 18, 1
+		fgtx := cgtx
+		if isImg {
+			fgtx.Constraints.Max.X = imgW - 2*textInset
+		}
+		footer = record(fgtx, func(gtx C) D { return st.Layout(gtx, nil) })
+		contentW = max(contentW, footer.size.X+2*textInset)
+	}
+
+	// Buttons span the bubble below its content, one per row.
+	btnH := gtx.Dp(44)
+	var btnLabels []part
+	for _, b := range buttons {
+		lgtx := cgtx
+		lgtx.Constraints.Max.X = max(0, inner-gtx.Dp(26))
+		lb := record(lgtx, u.label(15, b.Label, p.BubbleButton, labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+		btnLabels = append(btnLabels, lb)
+		contentW = max(contentW, min(inner, lb.size.X+gtx.Dp(26+32)))
+	}
+	if len(buttons) > 0 {
+		contentW = max(contentW, min(inner, gtx.Dp(240)))
 	}
 
 	var fwd part
@@ -675,17 +729,58 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 			t.Pop()
 		}
 		y += body.size.Y
-		meta.at(gtx, contentW-meta.size.X-textInset, y-meta.size.Y+gtx.Dp(4))
+		if footerText == "" {
+			meta.at(gtx, contentW-meta.size.X-textInset, y-meta.size.Y+gtx.Dp(4))
+			if isImg {
+				y += gtx.Dp(5)
+			}
+		}
+	}
+	switch {
+	case footerText != "":
+		y += gtx.Dp(2)
+		footer.at(gtx, textInset, y)
+		y += footer.size.Y
+		meta.at(gtx, contentW-meta.size.X-textInset, y-meta.size.Y+gtx.Dp(3))
 		if isImg {
 			y += gtx.Dp(5)
 		}
-	} else if !isImg {
+	case text == "" && !isImg:
 		meta.at(gtx, contentW-meta.size.X, y)
 		y += meta.size.Y
 	}
+	w := contentW + padL + padR
+	if len(buttons) > 0 {
+		y += padB
+		line := max(1, gtx.Dp(1))
+		for i, lb := range btnLabels {
+			top := y + i*btnH
+			fillRect(gtx, image.Rect(-padL, top, w-padL, top+line), p.BubbleLine)
+			ic := icReply
+			switch buttons[i].Kind {
+			case model.ButtonURL:
+				ic = icOpenInNew
+			case model.ButtonCopy:
+				ic = icCopy
+			}
+			rowW := lb.size.X + gtx.Dp(26)
+			x := -padL + (w-rowW)/2
+			it := op.Offset(image.Pt(x, top+(btnH-gtx.Dp(20))/2)).Push(gtx.Ops)
+			drawIcon(gtx, ic, 20, p.BubbleButton)
+			it.Pop()
+			lb.at(gtx, x+gtx.Dp(26), top+(btnH-lb.size.Y)/2)
+			func() {
+				t := op.Offset(image.Pt(-padL, top)).Push(gtx.Ops)
+				defer t.Pop()
+				bg := gtx
+				bg.Constraints = layout.Exact(image.Pt(w, btnH))
+				clickable(bg, u.btn("mbtn:"+m.ID+":"+itoa(i)), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+			}()
+		}
+		y += len(buttons)*btnH - padB
+	}
 	content := macro.Stop()
 
-	w := contentW + padL + padR
 	h := y + padT + padB
 	u.paintBubble(gtx, w, h, bg, out, tail)
 	t := op.Offset(image.Pt(padL, padT)).Push(gtx.Ops)

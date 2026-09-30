@@ -22,7 +22,26 @@ const (
 	KindImage        // photo or video: thumbnail/picture above an optional caption
 	KindDeleted      // "This message was deleted"
 	KindSticker      // borderless picture
+	// KindUnsupported is a message of a type the app can't show.
+	KindUnsupported
 )
+
+// ButtonKind is what a message button does.
+type ButtonKind int
+
+const (
+	ButtonReply ButtonKind = iota // sends a quick reply
+	ButtonURL                     // opens a link
+	ButtonCopy                    // copies a code
+)
+
+// Button is one of the buttons under a business or bot message.
+type Button struct {
+	Kind  ButtonKind
+	Label string
+	// Value is the reply's ID, the link or the code to copy.
+	Value string
+}
 
 // Media identifies attachment types, for preview icons and labels.
 type Media int
@@ -68,6 +87,10 @@ type Message struct {
 	// Starred and Pinned mirror the message menu's Star and Pin.
 	Starred, Pinned bool
 	Forwarded       bool
+	// Footer is the small print under a business message's text, and
+	// Buttons its buttons.
+	Footer  string
+	Buttons []Button
 	// Thumb is a small JPEG preview for image and video messages.
 	Thumb []byte
 	// ImageA and ImageB are gradient colors used by demo data instead of Thumb.
@@ -323,6 +346,9 @@ type Backend interface {
 	Open(chatID string)
 	// Send queues a text message and returns it in its pending state.
 	Send(chatID string, d Draft) *Message
+	// PressButton answers a message's quick-reply button (Buttons[i]) and
+	// returns the answer in its pending state, or nil.
+	PressButton(m *Message, i int) *Message
 	// SendSticker sends a sticker that was received before, again.
 	SendSticker(chatID string, sticker *Message)
 	// Stickers lists recently received stickers, newest first.

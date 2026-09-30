@@ -253,7 +253,9 @@ func (t TextStyle) Layout(gtx layout.Context, spanFn func(gtx layout.Context, id
 			for i, shape := range lineShapes {
 				// lay out this span
 				span = spans[i+lineStartIndex]
-				shape.offset.Y = overallSize.Y
+				// Align the spans' baselines, not their tops, so a span
+				// in another font (monospace) doesn't sit higher.
+				shape.offset.Y = overallSize.Y + lineAscent - shape.ascent
 				span.Layout(gtx, shape)
 
 				if spanFn == nil {

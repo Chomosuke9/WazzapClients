@@ -239,6 +239,9 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 	dims := u.chatRow(gtx, c, rowOpts{
 		click:    click,
 		selected: (u.selected != nil && c.ID == u.selected.ID && u.selPage == u.page) || (u.ctx.kind == ctxChat && u.ctx.chatID == c.ID),
+		// The chevron's button covers part of the row, so the row counts
+		// as hovered while the chevron is.
+		hovered: chev.Hovered(),
 	})
 	if u.rightClick(gtx, "chat:"+c.ID, dims.Size) {
 		u.openChatMenu(c)
@@ -263,6 +266,7 @@ type rowOpts struct {
 	avatarW  unit.Dp       // left edge of the avatar within the row (default 12)
 	textGap  unit.Dp       // space between avatar and text (default 16)
 	verified bool          // blue badge after the name
+	hovered  bool          // hovered through a button drawn over the row
 }
 
 // chatRow draws one row of the chat list: avatar, name and time, then the
@@ -287,7 +291,7 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 		return clickable(gtx, click, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			bg := p.Panel
-			hovered := click.Hovered()
+			hovered := click.Hovered() || o.hovered
 			switch {
 			case o.selected:
 				bg = p.Selected
@@ -472,6 +476,9 @@ func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, hovered
 			if last.FromMe {
 				txt = "You deleted this message"
 			}
+		case last.Kind == model.KindUnsupported:
+			children = append(children, small(icUnsupported, p.TextSecondary, 17, 4))
+			txt, italic = "This message couldn't load", true
 		case last.Media != model.MediaNone:
 			col := p.TextSecondary
 			if last.Media == model.MediaVoice && !last.FromMe && c.Unread > 0 {

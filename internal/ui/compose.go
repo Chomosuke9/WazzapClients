@@ -101,6 +101,13 @@ func (u *UI) pickedMessages() []*model.Message {
 	return out
 }
 
+// scrollMessages scrolls the message list on the next layout; the zero
+// Position means the newest message. Changing the list's position directly
+// while it lays out (a click inside a message) would scroll to the top.
+func (u *UI) scrollMessages(p layout.Position) {
+	u.conv.scrollTo = &p // layoutMessages redraws for it
+}
+
 // jumpTo scrolls to a message and flashes it.
 func (u *UI) jumpTo(id string) {
 	if u.selected == nil {
@@ -108,8 +115,7 @@ func (u *UI) jumpTo(id string) {
 	}
 	for i, r := range u.rows(u.selected) {
 		if r.msg != nil && r.msg.ID == id {
-			u.conv.list.Position = layout.Position{First: max(0, i-2)}
-			u.conv.list.ScrollToEnd = false
+			u.scrollMessages(layout.Position{First: max(0, i-2)})
 			u.conv.flash, u.conv.flashUntil = id, u.now().Add(1500*time.Millisecond)
 			return
 		}
@@ -179,8 +185,7 @@ func (u *UI) sendComposer() {
 		}
 		u.upsertMessage(m)
 	}
-	u.conv.list.Position = layout.Position{} // jump to the newest message
-	u.conv.list.ScrollToEnd = true
+	u.scrollMessages(layout.Position{}) // jump to the newest message
 }
 
 // mentionState describes an "@query" being typed before the caret.
