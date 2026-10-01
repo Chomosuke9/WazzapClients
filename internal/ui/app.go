@@ -52,6 +52,7 @@ type UI struct {
 	chats     []*model.Chat
 	selected  *model.Chat
 	selPage   page             // page the selected chat was opened from
+	away      bool             // window unfocused or minimized (see markSeen)
 	msgs      []*model.Message // loaded window of the selected chat
 	msgsVer   int              // bumped whenever msgs changes
 	images    *imageCache
@@ -357,6 +358,28 @@ func (u *UI) open(c *model.Chat) {
 	u.attach.files = nil
 }
 
+// markSeen marks the open chat read while it is on screen and the window
+// has focus, as WhatsApp does: messages that arrive in it never count as
+// unread, and ones that came while the window was away are read on return.
+// It reports whether it marked anything.
+func (u *UI) markSeen() bool {
+	c := u.selected
+	if c == nil || u.away || u.selPage != u.page || u.page == pageStatus || u.page == pageSettings {
+		return false
+	}
+	// An open channel is a copy (channelChat); new posts count in u.channels.
+	if ch := u.channelByID(c.ID); ch != nil && ch.Unread > 0 {
+		ch.Unread = 0
+		c.Unread = 1
+	}
+	if c.Unread <= 0 {
+		return false
+	}
+	c.Unread = 0
+	u.backend.Open(c.ID)
+	return true
+}
+
 // Run drives the window event loop until the window is closed.
 func Run(w *app.Window, b model.Backend) error {
 	u := New(b)
@@ -381,6 +404,7 @@ func Run(w *app.Window, b model.Backend) error {
 			u.deco.Maximized = e.Config.Mode == app.Maximized
 			if f := e.Config.Focused && e.Config.Mode != app.Minimized; f != focused {
 				focused = f
+				u.away = !f
 				if f {
 					away.Stop()
 				} else {
@@ -434,6 +458,11 @@ func (u *UI) Layout(gtx C) D {
 	u.flushClipboard(gtx)
 	u.update(gtx)
 	u.layoutMain(gtx)
+	// After layout, so it marks only the chat this frame showed (a click
+	// may have left it); the next frame drops the badge.
+	if u.markSeen() {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	u.layoutMenu(gtx)
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
@@ -877,10 +906,6 @@ func (u *UI) upsertMessage(m *model.Message) {
 	u.msgs = append(u.msgs, nil)
 	copy(u.msgs[i+1:], u.msgs[i:])
 	u.msgs[i] = m
-	if !m.FromMe {
-		u.selected.Unread = 0
-		u.backend.Open(m.ChatID)
-	}
 }
 
 func (u *UI) applyReceipt(e model.ReceiptEvent) {
