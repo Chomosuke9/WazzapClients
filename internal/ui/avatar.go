@@ -3,7 +3,6 @@ package ui
 import (
 	"image"
 
-	"gioui.org/op/clip"
 	"gioui.org/unit"
 )
 
@@ -53,7 +52,7 @@ func (u *UI) avatarOf(gtx C, id string, kind avatarKind, size unit.Dp) D {
 	if id != "" {
 		b := u.backend
 		if e := u.images.get("a:"+id, avatarPx, func() []byte { return b.Avatar(id) }); e.state == imgReady {
-			defer clip.UniformRRect(r, radius).Push(gtx.Ops).Pop()
+			defer roundShape(px, px, radius).Push(gtx.Ops).Pop()
 			paintCover(gtx, e.op, e.size, r)
 			return dims
 		}

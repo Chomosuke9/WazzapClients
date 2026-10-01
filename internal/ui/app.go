@@ -292,6 +292,17 @@ func (u *UI) Preview() {
 	u.conn = model.ConnEvent{State: model.StateOnline}
 }
 
+// ScrollChatList scrolls the chat list by dy px and reports whether it can
+// scroll further that way (used by cmd/memprobe).
+func (u *UI) ScrollChatList(dy int) bool {
+	l := &u.sidebar.list.List
+	l.Position.Offset += dy
+	if dy < 0 {
+		return l.Position.First > 0 || l.Position.Offset > 0
+	}
+	return l.Position.BeforeEnd
+}
+
 // SetMe sets the user's own name and JID (used for screenshots).
 func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 
@@ -474,6 +485,7 @@ const (
 // Layout draws one frame: custom title bar, then either the login screen or
 // nav rail | chat list | conversation.
 func (u *UI) Layout(gtx C) D {
+	trimShapes()
 	u.applyEvents()
 	if a := u.deco.Update(gtx); a != 0 && u.window != nil {
 		u.window.Perform(a)

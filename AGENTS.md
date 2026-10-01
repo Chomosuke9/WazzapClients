@@ -129,6 +129,13 @@ Gotchas already found in the pinned version (v0.10.x):
   real ones and the method order from the system metadata, e.g.
   `[Windows.UI.Notifications.ToastNotification].GetInterfaces() | % { $_.FullName + " " + $_.GUID }`
   after loading the type with `, Windows.UI.Notifications, ContentType = WindowsRuntime`.
+- Gio keys a path's GPU data by where the path was recorded, so a `clip.RRect`,
+  `clip.Ellipse` or `clip.Path` built into the frame's ops is tessellated and uploaded
+  to a new GPU buffer every frame. Shapes from `roundShape` (`memo.go`) are recorded
+  once per size and drawn anywhere; `fillCircle` and `paintRRect` use them.
+- Don't set a Go memory limit (`SetMemoryLimit`/`GOMEMLIMIT`). Once a long session's
+  live heap nears it, the GC runs back to back on several cores, and scrolling the
+  chat list went from ~5 to ~100 s of CPU (`memprobe -scroll 1200 -ballast 60`).
 - A rectangle clip under a transform that isn't a whole-pixel offset becomes a path
   too, and text outlines are rebuilt. `moveBy` rounds to whole pixels; `pushFx` counts
   real scales in `fxDepth`, under which `paintRRect` draws one path (no seams).
@@ -274,6 +281,9 @@ go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/wazzap -background  # start in the tray, without a window
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
 go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
+# Scroll the chat list for 1200 frames and print frame times, CPU and GCs; -ballast
+# adds live heap like a long session's, -cpuprofile writes a profile:
+go run ./cmd/memprobe -data <copy> -scroll 1200 -ballast 60 -cpuprofile cpu.pprof
 go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).

@@ -7,6 +7,8 @@
 //
 //	go run ./cmd/memprobe -data "$APPDATA/WazzapClients"
 //	go run ./cmd/memprobe -demo -heapprofile heap.pprof
+//	go run ./cmd/memprobe -demo -passes 3 -cpuprofile cpu.pprof
+//	go run ./cmd/memprobe -data <copy> -scroll 1200 -cpuprofile cpu.pprof
 //
 // Point -data at a copy of the data directory while the app is running.
 package main
@@ -79,10 +81,12 @@ func main() {
 	demo := flag.Bool("demo", false, "use demo chats instead of -data")
 	heapProfile := flag.String("heapprofile", "", "write a heap profile after visiting everything")
 	passes := flag.Int("passes", 1, "times to visit every chat and page; later passes show what caches keep")
+	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the passes (or of -scroll)")
+	scroll := flag.Int("scroll", 0, "instead of visiting chats, scroll the chat list up and down for this many frames")
+	ballastMB := flag.Int("ballast", 0, "keep this many MB of extra live heap, as a long session's backend does")
 	flag.Parse()
 	// As cmd/wazzap does.
 	rdebug.SetGCPercent(50)
-	rdebug.SetMemoryLimit(96 << 20)
 
 	var backend model.Backend
 	switch {
@@ -97,7 +101,23 @@ func main() {
 	default:
 		log.Fatal("need -data or -demo")
 	}
+	ballast = makeBallast(*ballastMB)
 	report("start")
+	startProfile := func() {
+		if *cpuProfile == "" {
+			return
+		}
+		f, err := os.Create(*cpuProfile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal(err)
+		}
+	}
+	if *scroll == 0 {
+		startProfile()
+	}
 	go func() {
 		w := new(app.Window)
 		w.Option(app.Title("memprobe"), app.Size(unit.Dp(1200), unit.Dp(780)), app.Decorated(false))
@@ -117,11 +137,18 @@ func main() {
 				u.Layout(gtx)
 				t1 := time.Now()
 				e.Frame(gtx.Ops)
-				if frame >= 30 && trimmed == 0 {
+				if frame >= 30 && trimmed == 0 && (*scroll == 0 || frame > 60) {
 					times.add(t1.Sub(t0), time.Since(t0))
 				}
 				frame++
 				w.Invalidate()
+				if *scroll > 0 {
+					if frame == 60 {
+						startProfile()
+					}
+					scrollFrame(u, frame, *scroll, &times)
+					continue
+				}
 				switch {
 				case frame == 30:
 					report("first paint")
@@ -147,6 +174,7 @@ func main() {
 						pass, step = pass+1, -1
 					default:
 						times.report(pass)
+						pprof.StopCPUProfile()
 						report("visited all")
 						runtime.GC()
 						if *heapProfile != "" {
@@ -164,6 +192,52 @@ func main() {
 		}
 	}()
 	app.Main()
+}
+
+// ballast is live heap that stands in for what a long session holds:
+// small objects full of pointers, which the GC has to scan.
+var ballast []*ballastNode
+
+type ballastNode struct {
+	next *ballastNode
+	s    string
+	_    [40]byte
+}
+
+func makeBallast(mb int) []*ballastNode {
+	n := mb << 20 / 64
+	b := make([]*ballastNode, n)
+	for i := range b {
+		b[i] = &ballastNode{s: "x"}
+		if i > 0 {
+			b[i].next = b[i-1]
+		}
+	}
+	return b
+}
+
+// scrollDir is the chat list's scroll direction in -scroll mode.
+var scrollDir = 1
+
+// scrollFrame drives -scroll: it scrolls the chat list 12 px a frame (a
+// brisk wheel scroll at 60 Hz), turning around at either end, and
+// reports after n frames.
+func scrollFrame(u *ui.UI, frame, n int, times *frameTimes) {
+	switch {
+	case frame == 30:
+		report("first paint")
+		u.Select(0)
+	case frame > 60 && frame <= 60+n:
+		if !u.ScrollChatList(12 * scrollDir) {
+			scrollDir = -scrollDir
+		}
+	case frame > 60+n:
+		times.report(1)
+		pprof.StopCPUProfile()
+		runtime.KeepAlive(ballast)
+		report("scrolled")
+		os.Exit(0)
+	}
 }
 
 func writeHeapProfile(path string) {

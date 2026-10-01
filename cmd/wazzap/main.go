@@ -33,13 +33,11 @@ func main() {
 	flag.Parse()
 	*embedding = *embedding || slices.Contains(flag.Args(), "/Embedding")
 	// A chat app idles most of the time; trade a little CPU during bursts
-	// (history sync) for a smaller heap.
+	// (history sync) for a smaller heap. No memory limit: a long session's
+	// live heap can come near any fixed one, and then the GC runs back to
+	// back on several cores, every frame of a scroll (see memprobe
+	// -ballast). Idle trims (memtrim) give the memory back instead.
 	rdebug.SetGCPercent(50)
-	// A soft cap: near it the GC runs more often and returns memory to the
-	// OS. The live heap is well below it; GOMEMLIMIT overrides it.
-	if os.Getenv("GOMEMLIMIT") == "" {
-		rdebug.SetMemoryLimit(96 << 20)
-	}
 	if *pprofAddr != "" {
 		go func() { log.Println(http.ListenAndServe(*pprofAddr, nil)) }()
 	}

@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"image"
 	"image/color"
+	"math"
 	"strings"
 
+	"gioui.org/f32"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -48,6 +52,88 @@ func cachedGlyph(gtx C, k glyphKey, draw func(gtx C) D) D {
 	}
 	g.call.Add(gtx.Ops)
 	return g.dims
+}
+
+// Shapes recorded once. Gio keys the GPU data of a path by where the path
+// was recorded, so a path built into the frame's ops is tessellated and
+// uploaded to a new GPU buffer on every frame, while one recorded in ops
+// that outlive the frame is uploaded once and reused while it is drawn
+// every frame (that is how text glyphs are cached). Only the scale part of
+// the transform is in the key: a shape can be drawn anywhere.
+type shapeKey struct {
+	kind    shapeKind
+	w, h, r int
+}
+
+type shapeKind uint8
+
+const (
+	shapeRound   shapeKind = iota // clip.UniformRRect at the origin
+	shapeOutside                  // see roundCorner; w is the inset
+)
+
+var shapes struct {
+	ops op.Ops
+	m   map[shapeKey]clip.Op
+}
+
+// maxShapes bounds the shape cache; trimShapes empties it beyond that.
+const maxShapes = 512
+
+// roundShape returns a w×h rounded rectangle at the origin with radius r,
+// recorded once. With r = w/2 = h/2 it is a circle.
+func roundShape(w, h, r int) clip.Op {
+	k := shapeKey{shapeRound, w, h, r}
+	if c, ok := shapes.m[k]; ok {
+		return c
+	}
+	c := clip.UniformRRect(image.Rect(0, 0, w, h), r).Op(&shapes.ops)
+	putShape(k, c)
+	return c
+}
+
+// outsideShape is the corner square at the origin without the quarter
+// disc of radius rad whose square starts at (o, o); see roundCorner.
+func outsideShape(o, rad int) clip.Op {
+	k := shapeKey{shapeOutside, o, 0, rad}
+	if c, ok := shapes.m[k]; ok {
+		return c
+	}
+	// The same curve as clip.RRect.
+	const iq = 1 - 4*(math.Sqrt2-1)/3
+	of, rf := float32(o), float32(rad)
+	var p clip.Path
+	p.Begin(&shapes.ops)
+	p.MoveTo(f32.Pt(0, 0))
+	p.LineTo(f32.Pt(of+rf, 0))
+	p.LineTo(f32.Pt(of+rf, of))
+	p.CubeTo(f32.Pt(of+rf*iq, of), f32.Pt(of, of+rf*iq), f32.Pt(of, of+rf))
+	p.LineTo(f32.Pt(0, of+rf))
+	p.Close()
+	c := clip.Outline{Path: p.End()}.Op()
+	putShape(k, c)
+	return c
+}
+
+func putShape(k shapeKey, c clip.Op) {
+	if shapes.m == nil {
+		shapes.m = make(map[shapeKey]clip.Op)
+	}
+	shapes.m[k] = c
+}
+
+// trimShapes empties the shape cache once it has grown past maxShapes
+// (shapes of sizes that went away). It runs before a frame is laid out:
+// the shapes are referenced from the frame's ops until it is drawn.
+func trimShapes() {
+	if len(shapes.m) > maxShapes {
+		dropShapes()
+	}
+}
+
+func dropShapes() {
+	shapes.m = nil
+	shapes.ops = op.Ops{}
 }
 
 // memo is a string-keyed cache that is dropped when it grows too big,

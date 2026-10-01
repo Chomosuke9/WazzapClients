@@ -466,6 +466,7 @@ func dropCaches() {
 	richBlocks.m = nil
 	readMoreCuts.m = nil
 	icon.FlushCache()
+	dropShapes()
 }
 
 // appIcon draws the app's icon: a white chat bubble on WhatsApp green.
