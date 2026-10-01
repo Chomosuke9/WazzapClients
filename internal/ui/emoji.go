@@ -394,6 +394,9 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 								if h := u.hover(gtx, cl); h > 0 {
 									fillRRect(gtx, image.Rect(0, 0, cellW, pitch), gtx.Dp(8), faded(p.PopupHover, h))
 								}
+								if u.layoutEmojiImage(gtx, ch, gtx.Sp(29), image.Pt(cellW, pitch)) {
+									return D{Size: image.Pt(cellW, pitch)}
+								}
 								return centerIn2(gtx, cellW, pitch, u.label(29, ch, p.Text).Layout)
 							})
 						}))

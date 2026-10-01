@@ -13,7 +13,6 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // stickers
 
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
@@ -66,7 +65,35 @@ func newImageCache(limit, budget int) *imageCache {
 // decodeSlots limits how many images decode at once. A full-size photo
 // takes tens of MB while it decodes, and opening a chat full of them
 // would otherwise decode them all in parallel and grow the heap for good.
-var decodeSlots = make(chan struct{}, 2)
+// A big picture takes every slot and decodes alone: Go's JPEG decoder
+// keeps all of a progressive JPEG's coefficients (most WhatsApp photos
+// are progressive), about 7.5 bytes a pixel, 93 MB for 12 megapixels.
+var (
+	decodeSlots = make(chan struct{}, 2)
+	decodeBig   sync.Mutex // held while a big decode gathers its slots
+)
+
+// bigDecode is the pixel count from which a picture decodes alone.
+const bigDecode = 4 << 20
+
+// acquireDecode waits for decode slots for data, and returns how to give
+// them back.
+func acquireDecode(data []byte) (release func()) {
+	n := 1
+	if c, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil && c.Width*c.Height >= bigDecode {
+		n = cap(decodeSlots)
+		decodeBig.Lock()
+		defer decodeBig.Unlock()
+	}
+	for range n {
+		decodeSlots <- struct{}{}
+	}
+	return func() {
+		for range n {
+			<-decodeSlots
+		}
+	}
+}
 
 // get returns the entry for key, loading it in the background (load may
 // block; it runs on its own goroutine) when it isn't cached yet.
@@ -84,9 +111,9 @@ func (c *imageCache) get(key string, maxSide int, load func() []byte) *imgEntry 
 	c.m[key] = e
 	go func() {
 		data := load()
-		decodeSlots <- struct{}{}
+		release := acquireDecode(data)
 		img, animated := decodeScaled(data, maxSide)
-		<-decodeSlots
+		release()
 		c.mu.Lock()
 		e.loadedAt = time.Now()
 		if img == nil {
@@ -183,12 +210,11 @@ func decodeScaled(data []byte, maxSide int) (img image.Image, animated bool) {
 	if s := max(w, h); s > maxSide {
 		w, h = max(1, w*maxSide/s), max(1, h*maxSide/s)
 	}
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	if w == b.Dx() && h == b.Dy() {
-		draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)
-	} else {
-		xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Src, nil)
+	if w != b.Dx() || h != b.Dy() {
+		return shrink(src, w, h), animated
 	}
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)
 	return dst, animated
 }
 
