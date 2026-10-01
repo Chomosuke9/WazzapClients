@@ -85,6 +85,10 @@ type UI struct {
 		chats, calls, status, channels, communities, archived, media, profile widget.Clickable
 	}
 
+	files  fileState   // documents and audio on disk
+	voice  voiceState  // the audio message playing
+	attach attachState // files picked to send
+
 	menu       menuState
 	filterMenu filterMenuState
 
@@ -349,6 +353,8 @@ func (u *UI) open(c *model.Chat) {
 	u.hideViewer()
 	u.closePicker()
 	u.picker.anim.snap(false)
+	u.stopVoice()
+	u.attach.files = nil
 }
 
 // Run drives the window event loop until the window is closed.
@@ -731,6 +737,7 @@ func (u *UI) applyEvents() {
 				u.forgetViewerImage(e.MsgID)
 			}
 			u.videoDownloaded(e)
+			u.fileDownloaded(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.DeletedEvent:
@@ -746,6 +753,8 @@ func (u *UI) applyEvents() {
 			}
 		case model.StatusEvent:
 			u.statuses = u.backend.Statuses()
+		case model.StickersEvent:
+			u.picker.stickersOK = [3]bool{} // reloaded when next drawn
 		case model.ChannelsEvent:
 			u.channels = u.backend.Channels()
 			u.suggested = u.backend.SuggestedChannels()
@@ -895,7 +904,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "msgmenu", "emoji", "viewer", "forward", "reply", "delete" or "select".
+// "msgmenu", "emoji", "sticker", "viewer", "forward", "reply", "delete",
+// "select", "attach", "poll", "contacts" or "tray".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -923,6 +933,9 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	case "emoji":
 		u.openPicker(pickComposer, nil)
+	case "sticker":
+		u.openPicker(pickComposer, nil)
+		u.picker.tab, u.picker.stickerSet = tabSticker, u.defaultStickerSet()
 	case "viewer":
 		if img != nil {
 			u.openViewer(img)
@@ -943,6 +956,16 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		if lastIn != nil {
 			u.startSelect(lastIn)
 		}
+	case "attach":
+		u.openAttachMenu()
+	case "poll":
+		u.openPoll()
+	case "contacts":
+		u.openContactPicker()
+	case "tray":
+		u.attach.files = []model.Attachment{{Path: "beach.jpg", Media: model.MediaImage},
+			{Path: "Quarterly report.pdf", Media: model.MediaDocument}}
+		u.conv.composer.SetText("From last weekend")
 	case "mention", "mentioned":
 		// The mention picker, or a draft with picked mentions.
 		ed := &u.conv.composer

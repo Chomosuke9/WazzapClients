@@ -65,7 +65,7 @@ func (u *UI) syncVideo(m *model.Message) {
 // loadVideo opens the video, or waits for its download.
 func (u *UI) loadVideo(m *model.Message) {
 	vv := &u.viewer.video
-	path := u.backend.VideoFile(m)
+	path := u.backend.MediaFile(m)
 	if path == "" {
 		vv.loading = true // videoDownloaded continues
 		return
@@ -110,7 +110,7 @@ func (u *UI) toggleVideo(gtx C, m *model.Message) {
 	vv.lastMove = gtx.Now
 	switch {
 	case vv.external:
-		u.backend.PlayMedia(m)
+		u.backend.OpenMedia(m)
 		u.toast("Opening video…")
 	case vv.player != nil:
 		if st := vv.player.Status(); st.Paused || st.Ended {

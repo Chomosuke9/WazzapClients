@@ -36,6 +36,8 @@ type Player struct {
 	done   chan struct{}
 	once   sync.Once
 
+	audio bool // no picture: OpenAudio
+
 	mu    sync.Mutex
 	st    Status
 	want  image.Point // largest frame the app will draw
@@ -64,6 +66,16 @@ type command struct {
 // there is a new frame or the status changed.
 func Open(path string, notify func()) (*Player, error) {
 	p := &Player{notify: notify, cmds: make(chan command, 16), done: make(chan struct{}), ready: -1, shown: -1}
+	if err := start(p, path); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// OpenAudio is Open for a sound file. The player then sets nothing up to
+// draw pictures with, and Frame always returns nil.
+func OpenAudio(path string, notify func()) (*Player, error) {
+	p := &Player{notify: notify, cmds: make(chan command, 16), done: make(chan struct{}), ready: -1, shown: -1, audio: true}
 	if err := start(p, path); err != nil {
 		return nil, err
 	}

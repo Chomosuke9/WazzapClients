@@ -3,6 +3,7 @@ package mock
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -86,7 +87,7 @@ func (b *Backend) SendSticker(chatID string, s, reply *model.Message) {
 	b.copyTo(s, chatID, false, quoteOf(reply))
 }
 
-func (b *Backend) Stickers() []*model.Message { return nil }
+func (b *Backend) Stickers(model.StickerSet) []*model.Message { return nil }
 
 func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	for _, c := range chatIDs {
@@ -140,18 +141,75 @@ func (b *Backend) SaveMedia(*model.Message) {
 	b.emit(model.NoticeEvent{Text: "Demo mode doesn't save files."})
 }
 
-func (b *Backend) PlayMedia(*model.Message) {
-	b.emit(model.NoticeEvent{Text: "Demo mode doesn't play videos."})
+// copyOf returns a copy of the stored message behind m.
+func (b *Backend) copyOf(m *model.Message) *model.Message {
+	cp := *b.find(m)
+	return &cp
 }
 
-// VideoFile plays the file named by $WAZZAP_DEMO_VIDEO, to try the player.
-func (b *Backend) VideoFile(m *model.Message) string {
-	if p := os.Getenv("WAZZAP_DEMO_VIDEO"); p != "" {
+func (b *Backend) OpenMedia(*model.Message) {
+	b.emit(model.NoticeEvent{Text: "Demo mode doesn't open files."})
+}
+
+// MediaFile plays the file named by $WAZZAP_DEMO_VIDEO (videos) or
+// $WAZZAP_DEMO_AUDIO (voice and audio messages), to try the players.
+func (b *Backend) MediaFile(m *model.Message) string {
+	if p := b.demoFile(m); p != "" {
 		return p
 	}
-	b.emit(model.NoticeEvent{Text: "Demo mode doesn't play videos."})
+	b.emit(model.NoticeEvent{Text: "Demo mode doesn't download files."})
 	b.emit(model.MediaEvent{ChatID: m.ChatID, MsgID: m.ID, Failed: true})
 	return ""
+}
+
+func (b *Backend) HasMediaFile(m *model.Message) bool { return b.demoFile(m) != "" }
+
+func (b *Backend) demoFile(m *model.Message) string {
+	switch m.Media {
+	case model.MediaVideo, model.MediaGIF:
+		return os.Getenv("WAZZAP_DEMO_VIDEO")
+	case model.MediaVoice, model.MediaAudio:
+		return os.Getenv("WAZZAP_DEMO_AUDIO")
+	}
+	return ""
+}
+
+// SendFile sends a file in name only: its content isn't read.
+func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *model.Message {
+	m := b.Send(chatID, d)
+	b.update(m, func(x *model.Message) {
+		x.Media, x.FileName = a.Media, filepath.Base(a.Path)
+		if st, err := os.Stat(a.Path); err == nil {
+			x.FileSize = st.Size()
+		}
+		switch a.Media {
+		case model.MediaImage, model.MediaVideo:
+			x.Kind, x.ImageA, x.ImageB = model.KindImage, 0x5f6f7f, 0x9fafbf
+		case model.MediaDocument:
+			if x.Text == "" {
+				x.Text = x.FileName
+			}
+		}
+	})
+	return b.copyOf(m)
+}
+
+func (b *Backend) SendContacts(chatID string, ids []string) *model.Message {
+	var names []string
+	for _, id := range ids {
+		if c := b.chat(id); c != nil {
+			names = append(names, c.Name)
+		}
+	}
+	m := b.Send(chatID, model.Draft{Text: strings.Join(names, ", ")})
+	b.update(m, func(x *model.Message) { x.Media = model.MediaContact })
+	return b.copyOf(m)
+}
+
+func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
+	m := b.Send(chatID, model.Draft{Text: p.Question})
+	b.update(m, func(x *model.Message) { x.Media = model.MediaPoll })
+	return b.copyOf(m)
 }
 
 func (b *Backend) setChat(id string, f func(*model.Chat)) {

@@ -78,9 +78,10 @@ type menuItem struct {
 	key     string
 	ic      *icon.Icon
 	label   string
-	sub     string // second line, e.g. "Muted always"
-	arrow   bool   // opens a submenu
-	check   int    // 1 checked box, -1 empty box, 0 none
+	sub     string      // second line, e.g. "Muted always"
+	arrow   bool        // opens a submenu
+	check   int         // 1 checked box, -1 empty box, 0 none
+	col     color.NRGBA // the icon's color, if not the text's
 	divider bool
 	run     func()
 }
@@ -92,6 +93,7 @@ const (
 	ctxChat
 	ctxMessage
 	ctxViewer // the media viewer's ⋮ menu
+	ctxAttach // the composer's attach menu
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -285,6 +287,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			}
 		case ctxViewer:
 			items = u.viewerMenuItems()
+		case ctxAttach:
+			if u.selected != nil && u.selected.ID == m.chatID {
+				items = u.attachMenuItems(u.selected)
+			}
 		}
 		if items == nil {
 			u.ctx = ctxMenu{} // its chat went away
@@ -342,6 +348,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		pos.Y = max(reactH+gtx.Dp(8), sz.Y-gtx.Dp(8)-menu.size.Y)
 	}
 	pos.Y = max(pos.Y, reactH+gtx.Dp(8))
+	if m.kind == ctxAttach {
+		// It opens upwards from the attach button.
+		pos = image.Pt(max(gtx.Dp(8), m.at.X-gtx.Dp(24)), max(gtx.Dp(8), m.at.Y-gtx.Dp(30)-menu.size.Y))
+	}
 	// It grows out of the corner nearest to where it was opened.
 	origin := image.Pt(min(max(m.at.X, pos.X), pos.X+menu.size.X), min(max(m.at.Y, pos.Y), pos.Y+menu.size.Y))
 	defer pushPopup(gtx, v, origin).Pop()
@@ -512,8 +522,11 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 		if ic != nil {
 			sz := gtx.Dp(22)
 			col := p.Text
-			if it.check == 1 {
+			switch {
+			case it.check == 1:
 				col = p.Green
+			case it.col.A > 0:
+				col = it.col
 			}
 			t := op.Offset(image.Pt(gtx.Dp(26)-sz/2, (dims.Size.Y-sz)/2)).Push(gtx.Ops)
 			drawIcon(gtx, ic, 22, col)

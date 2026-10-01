@@ -93,6 +93,16 @@ type Message struct {
 	Buttons []Button
 	// Thumb is a small JPEG preview for image and video messages.
 	Thumb []byte
+	// FileName, FileSize (bytes), FileType (MIME type) and Pages describe a
+	// document or audio file. A document's Text is its caption, or its file
+	// name when it has none.
+	FileName string
+	FileSize int64
+	FileType string
+	Pages    int
+	// Waveform is a voice message's loudness over time: up to 64 samples
+	// from 0 to 100.
+	Waveform []byte
 	// ImageA and ImageB are gradient colors used by demo data instead of Thumb.
 	ImageA, ImageB uint32
 }
@@ -140,6 +150,22 @@ type Draft struct {
 	// MentionAdmins means Text contains "@<group JID>", shown as "@admin";
 	// Mentions then lists the group's admins.
 	MentionAdmins bool
+}
+
+// Attachment is a file to send.
+type Attachment struct {
+	Path string
+	// Media is how it is sent: MediaImage, MediaVideo, MediaAudio or
+	// MediaDocument (any file, as is).
+	Media Media
+}
+
+// Poll is a poll to send.
+type Poll struct {
+	Question string
+	Options  []string
+	// Multiple lets voters pick more than one option.
+	Multiple bool
 }
 
 // ChatList is a custom chat list ("Add to list").
@@ -317,6 +343,9 @@ type ChannelsEvent struct{}
 // CommunitiesEvent reports that the community structure changed.
 type CommunitiesEvent struct{}
 
+// StickersEvent reports that the recent or favourite stickers changed.
+type StickersEvent struct{}
+
 // NoticeEvent is a short message for a toast ("Saved to Downloads").
 type NoticeEvent struct{ Text string }
 
@@ -342,7 +371,17 @@ func (StatusEvent) isEvent()      {}
 func (ChannelsEvent) isEvent()    {}
 func (CommunitiesEvent) isEvent() {}
 func (NoticeEvent) isEvent()      {}
+func (StickersEvent) isEvent()    {}
 func (DeletedEvent) isEvent()     {}
+
+// StickerSet is a tab of the sticker picker.
+type StickerSet int
+
+const (
+	StickersRecent   StickerSet = iota // sent recently, from any of the account's devices
+	StickersFavorite                   // favourited on any device
+	StickersReceived                   // received in chats
+)
 
 // Backend is everything the UI needs from a WhatsApp connection.
 //
@@ -373,8 +412,8 @@ type Backend interface {
 	// SendSticker sends a sticker that was received before, again, as a
 	// reply to reply if it isn't nil.
 	SendSticker(chatID string, sticker, reply *Message)
-	// Stickers lists recently received stickers, newest first.
-	Stickers() []*Message
+	// Stickers lists one of the sticker picker's sets, newest first.
+	Stickers(set StickerSet) []*Message
 	// Forward sends copies of messages to other chats.
 	Forward(msgs []*Message, chatIDs []string)
 	// React sets (or, with "", removes) your reaction to a message.
@@ -388,12 +427,24 @@ type Backend interface {
 	// SaveMedia saves a message's picture or file to the Downloads folder
 	// in the background; a NoticeEvent reports the result.
 	SaveMedia(m *Message)
-	// PlayMedia opens a video in the system's video player, downloading it
-	// first in the background; a NoticeEvent reports failures.
-	PlayMedia(m *Message)
-	// VideoFile returns the path of a downloaded video, or "" while it
-	// downloads in the background; a MediaEvent announces the end.
-	VideoFile(m *Message) string
+	// OpenMedia opens a video, voice message, audio file or document with
+	// the system's app for it, downloading it first in the background; a
+	// NoticeEvent reports failures.
+	OpenMedia(m *Message)
+	// MediaFile returns the path of a downloaded video, voice message,
+	// audio file or document, or "" while it downloads in the background;
+	// a MediaEvent announces the end.
+	MediaFile(m *Message) string
+	// HasMediaFile reports whether MediaFile has the file already.
+	HasMediaFile(m *Message) bool
+	// SendFile sends a file, with the draft's text as its caption (and its
+	// reply and mentions), and returns it in its pending state. The upload
+	// runs in the background.
+	SendFile(chatID string, a Attachment, d Draft) *Message
+	// SendContacts shares contacts (one-to-one chat IDs) as contact cards.
+	SendContacts(chatID string, contactIDs []string) *Message
+	// SendPoll sends a poll.
+	SendPoll(chatID string, p Poll) *Message
 
 	// Chat list actions. Each is followed by a ChatEvent (or ChatsEvent).
 	SetArchived(chatID string, archived bool)
