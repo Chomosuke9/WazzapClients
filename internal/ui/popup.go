@@ -384,9 +384,14 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		pos.Y = max(reactH+gtx.Dp(8), sz.Y-gtx.Dp(8)-menu.size.Y)
 	}
 	pos.Y = max(pos.Y, reactH+gtx.Dp(8))
-	if m.kind == ctxAttach || m.kind == ctxQuality {
-		// It opens upwards from the attach (or quality) button.
+	switch m.kind {
+	case ctxAttach:
+		// It opens upwards from the attach button.
 		pos = image.Pt(max(gtx.Dp(8), m.at.X-gtx.Dp(24)), max(gtx.Dp(8), m.at.Y-gtx.Dp(30)-menu.size.Y))
+	case ctxQuality:
+		// It hangs under the send view's HD button.
+		x := min(m.at.X-menu.size.X/2, sz.X-gtx.Dp(8)-menu.size.X)
+		pos = image.Pt(max(gtx.Dp(8), x), m.at.Y+gtx.Dp(26))
 	}
 	// It grows out of the corner nearest to where it was opened.
 	origin := image.Pt(min(max(m.at.X, pos.X), pos.X+menu.size.X), min(max(m.at.Y, pos.Y), pos.Y+menu.size.Y))

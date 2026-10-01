@@ -132,6 +132,15 @@ Gotchas already found in the pinned version (v0.10.x):
 - A rectangle clip under a transform that isn't a whole-pixel offset becomes a path
   too, and text outlines are rebuilt. `moveBy` rounds to whole pixels; `pushFx` counts
   real scales in `fxDepth`, under which `paintRRect` draws one path (no seams).
+- Gio clips a color-emoji bitmap to the bitmap's own size (about 136x128) before
+  scaling it to the font size, so above ~109 px only its top left corner shows. The
+  photo editor lays text and emoji out at most `markTextPx` tall and scales them up.
+- Key events go to whoever asks for them first in a frame. `updatePaste` reads Ctrl+V
+  before the composer does: files or a picture on the clipboard (`internal/osclip`)
+  open the send view, and anything else is handed back with `clipboard.ReadCmd`.
+- Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
+  OLE wants it registered on the window's own thread, so the window is subclassed and
+  the registration posted to it; the callbacks run on that thread and only queue.
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -147,7 +156,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    settings), conversation and composer, contact/group info panel, and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
-                   (viewer.go); replies, @mentions and select mode live in compose.go;
+                   (viewer.go); the send view for picked, pasted and dropped files
+                   (sendview.go), its photo editor (mediaedit.go) and the rendering of
+                   edits and the send queue (editrender.go); replies, @mentions and
+                   select mode live in compose.go;
                    document cards and the voice/audio player in files.go; selecting message
                    text in textsel.go; the composer's formatting toolbar in formatbar.go; the attach
                    menu, file tray and poll dialog in attach.go; animation helpers in anim.go
@@ -161,6 +173,7 @@ internal/webpanim/ animated WebP (animated stickers), decoded one frame at a tim
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
+internal/osclip/   files and pictures on the system clipboard (Gio's carries only text)
 internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or
                    osascript elsewhere), run on its own goroutine
 internal/memtrim/  gives memory back to the OS after 10 s without a frame (see ui.Run)
@@ -270,7 +283,8 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (chatmenu, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
-# delete, select, mention, mentioned) into <out>/overlay-<name>.png:
+# delete, select, mention, mentioned; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
+# WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and
 # closing (Esc) below. Also info, message, reorder, typing, and hover (the pointer at -at):

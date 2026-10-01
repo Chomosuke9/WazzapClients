@@ -70,7 +70,16 @@ func (u *UI) layoutConversation(gtx C) D {
 	c := u.selected
 	u.conv.selV = u.conv.selAnim.step(gtx, u.conv.selecting, durGrow)
 	pinned := u.conv.pinned
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	// The send view covers the conversation; once it's all in, the chat
+	// underneath isn't drawn at all.
+	sv := u.sendViewStep(gtx)
+	u.conv.editorElsewhere = sv > 0
+	if sv >= 1 {
+		u.layoutSendView(gtx, sv)
+		u.layoutDropHint(gtx)
+		return D{Size: gtx.Constraints.Max}
+	}
+	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D { return u.layoutConvHeader(gtx, c) }),
 		layout.Rigid(func(gtx C) D {
 			if pinned == nil {
@@ -100,7 +109,7 @@ func (u *UI) layoutConversation(gtx C) D {
 			t := op.Offset(image.Pt(0, sz.Y-cd.Size.Y)).Push(gtx.Ops)
 			composer.Add(gtx.Ops)
 			t.Pop()
-			if u.picker.shown() && u.picker.mode == pickComposer {
+			if u.picker.shown() && u.picker.mode == pickComposer && sv == 0 {
 				// Deferred so it draws (and takes clicks) above everything.
 				m := op.Record(gtx.Ops)
 				u.layoutPicker(gtx, image.Pt(gtx.Dp(12), sz.Y-cd.Size.Y+gtx.Dp(4)), sz.X-gtx.Dp(24))
@@ -109,6 +118,11 @@ func (u *UI) layoutConversation(gtx C) D {
 			return D{Size: sz}
 		}),
 	)
+	if sv > 0 {
+		u.layoutSendView(gtx, sv)
+	}
+	u.layoutDropHint(gtx)
+	return d
 }
 
 func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {

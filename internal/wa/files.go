@@ -377,7 +377,7 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		b.log.Errorf("store outgoing file: %v", err)
 	}
 	b.emitChat(chatID)
-	go b.uploadAndSend(jid, sm, up, d.Text, ci)
+	go b.uploadAndSend(jid, sm, up, d.Text, ci, a.ViewOnce)
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		return b.resolve(ctx, r, jid.Server == types.GroupServer)
 	}
@@ -471,7 +471,7 @@ var mediaTypes = map[model.Media]whatsmeow.MediaType{
 }
 
 // uploadAndSend uploads a stored pending file, then sends it.
-func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption string, ci *waE2E.ContextInfo) {
+func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption string, ci *waE2E.ContextInfo, viewOnce bool) {
 	m := sm.Message
 	fail := func(err error) {
 		b.log.Errorf("send file %s to %s: %v", m.FileName, m.ChatID, err)
@@ -513,6 +513,9 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 		if caption != "" {
 			e.Caption = proto.String(caption)
 		}
+		if viewOnce {
+			e.ViewOnce = proto.Bool(true)
+		}
 		msg, inner = &waE2E.Message{ImageMessage: e}, e
 	case model.MediaVideo:
 		e := &waE2E.VideoMessage{
@@ -523,6 +526,9 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 		}
 		if caption != "" {
 			e.Caption = proto.String(caption)
+		}
+		if viewOnce {
+			e.ViewOnce = proto.Bool(true)
 		}
 		msg, inner = &waE2E.Message{VideoMessage: e}, e
 	case model.MediaAudio:
@@ -545,6 +551,9 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 			e.Caption = proto.String(caption)
 			msg = &waE2E.Message{DocumentWithCaptionMessage: &waE2E.FutureProofMessage{Message: msg}}
 		}
+	}
+	if viewOnce && (msg.ImageMessage != nil || msg.VideoMessage != nil) {
+		msg = &waE2E.Message{ViewOnceMessageV2: &waE2E.FutureProofMessage{Message: msg}}
 	}
 	if ci != nil && len(ci.GroupMentions) > 0 {
 		msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}

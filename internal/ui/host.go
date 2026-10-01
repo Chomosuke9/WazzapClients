@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/app"
@@ -138,9 +139,14 @@ type host struct {
 	ack     chan struct{}    // an event was handled
 	ops     op.Ops
 	focused bool
-	idle    *time.Timer // memory trims, see idleTrim
-	away    *time.Timer
-	bgTrim  *time.Timer // the trim while there is no window
+	hwnd    uintptr // the window's handle on Windows, once known
+	// Files dragged over the window (see desktop.EnableDrop): dragging is
+	// set while a drag with files is over it, and drops gets the paths.
+	dragging atomic.Bool
+	drops    chan []string
+	idle     *time.Timer // memory trims, see idleTrim
+	away     *time.Timer
+	bgTrim   *time.Timer // the trim while there is no window
 
 	// The size the next window opens at.
 	size      image.Point // in dp; zero for the default
@@ -377,11 +383,36 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 		e.Frame(gtx.Ops)
 		h.idle.Reset(idleTrim)
 	default:
-		if hwnd := windowHandle(e); hwnd != 0 {
+		if hwnd := windowHandle(e); hwnd != 0 && hwnd != h.hwnd {
+			h.hwnd = hwnd
 			desktop.SetWindowIcon(hwnd, appIcon)
+			h.enableDrop(hwnd)
 		}
 	}
 	return false, nil
+}
+
+// enableDrop lets files be dropped on the window. The handler runs on
+// the window's thread, so it only queues the files and asks for a frame.
+func (h *host) enableDrop(hwnd uintptr) {
+	if h.drops == nil {
+		h.drops = make(chan []string, 8)
+	}
+	win, drops := h.win, h.drops
+	redraw := func() { go win.Invalidate() }
+	desktop.EnableDrop(hwnd, desktop.DropHandler{
+		Over: func(on bool) {
+			h.dragging.Store(on)
+			redraw()
+		},
+		Drop: func(paths []string) {
+			select {
+			case drops <- paths:
+			default:
+			}
+			redraw()
+		},
+	})
 }
 
 // closeWindow lets go of a destroyed window and what only it used.
@@ -390,6 +421,8 @@ func (h *host) closeWindow() {
 	h.away.Stop()
 	h.u.shutdown()
 	h.win, h.u, h.events, h.ack, h.queue = nil, nil, nil, nil, nil
+	h.hwnd = 0
+	h.dragging.Store(false)
 	h.ops = op.Ops{}
 	h.focused = false
 	dropCaches()

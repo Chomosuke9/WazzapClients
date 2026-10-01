@@ -137,11 +137,34 @@ func (u *UI) sendComposer() {
 		u.pickMention(0)
 		return
 	}
-	txt := trimSpace(u.conv.composer.Text())
-	if txt == "" && len(u.attach.files) == 0 {
+	if len(u.attach.files) > 0 {
+		// Each file goes with its own caption.
+		u.sendAttachments()
+		u.scrollMessages(layout.Position{})
 		return
 	}
-	d := model.Draft{Text: txt, Reply: u.conv.reply}
+	txt := trimSpace(u.conv.composer.Text())
+	if txt == "" {
+		return
+	}
+	d := u.draftFrom(txt)
+	d.Reply = u.conv.reply
+	u.conv.composer.SetText("")
+	u.conv.reply = nil
+	u.conv.mentions = nil
+	if m := u.backend.Send(u.selected.ID, d); m != nil {
+		if u.chatByID(m.ChatID) == nil {
+			u.chats = append(u.chats, u.selected)
+		}
+		u.upsertMessage(m)
+	}
+	u.scrollMessages(layout.Position{}) // jump to the newest message
+}
+
+// draftFrom makes a message of composer text, turning the picked
+// mentions in it into the protocol's.
+func (u *UI) draftFrom(txt string) model.Draft {
+	d := model.Draft{Text: txt}
 	// Longer names first, so "@Al" doesn't eat the start of "@Alice".
 	refs := append([]mentionRef(nil), u.conv.mentions...)
 	sort.SliceStable(refs, func(a, b int) bool { return len(refs[a].name) > len(refs[b].name) })
@@ -180,19 +203,7 @@ func (u *UI) sendComposer() {
 		d.Text = strings.ReplaceAll(d.Text, at, "@"+user)
 		addJID(mr.jid)
 	}
-	u.conv.composer.SetText("")
-	u.conv.reply = nil
-	u.conv.mentions = nil
-	if len(u.attach.files) > 0 {
-		// The text is the caption of the first file.
-		u.sendAttachments(d)
-	} else if m := u.backend.Send(u.selected.ID, d); m != nil {
-		if u.chatByID(m.ChatID) == nil {
-			u.chats = append(u.chats, u.selected)
-		}
-		u.upsertMessage(m)
-	}
-	u.scrollMessages(layout.Position{}) // jump to the newest message
+	return d
 }
 
 // mentionState describes an "@query" being typed before the caret.
@@ -445,17 +456,6 @@ func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
 // layoutComposer is the floating message box at the bottom of a chat, or
 // the select bar in select mode. Switching between them cross-fades.
 func (u *UI) layoutComposer(gtx C) D {
-	if u.conv.emoji.Clicked(gtx) {
-		if u.picker.open {
-			u.closePicker()
-		} else {
-			u.openPicker(pickComposer, nil)
-		}
-	}
-	if u.conv.attach.Clicked(gtx) {
-		u.openAttachMenu()
-	}
-	u.updateAttach()
 	if u.conv.selecting {
 		return fadeW(gtx, easeOut(u.conv.selV), u.layoutSelectBar)
 	}
@@ -483,7 +483,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	if rv == 0 {
 		c.replyGhost = nil
 	}
-	hasText := trimSpace(c.composer.Text()) != "" || len(u.attach.files) > 0
+	hasText := trimSpace(c.composer.Text()) != "" && !c.editorElsewhere
 	sv := easeOut(c.sendAnim.step(gtx, hasText, durSwitch))
 	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -500,7 +500,6 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		}
 		m := op.Record(gtx.Ops)
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(u.layoutAttachTray),
 			layout.Rigid(func(gtx C) D {
 				ghost := c.replyGhost
 				if ghost == nil {
@@ -543,45 +542,16 @@ func (u *UI) layoutComposerBox(gtx C) D {
 							}),
 							layout.Rigid(layout.Spacer{Width: 10}.Layout),
 							layout.Flexed(1, func(gtx C) D {
-								u.formatKeys(gtx)
-								pad := gtx.Dp(8)
-								rowMin := gtx.Constraints.Min.Y
-								m := op.Record(gtx.Ops)
-								var ed D
-								dims := layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
-									gtx.Constraints.Min.X = gtx.Constraints.Max.X
-									gtx.Constraints.Max.Y = gtx.Dp(140)
-									hint := "Type a message"
-									if len(u.attach.files) > 0 {
-										hint = "Add a caption"
+								if c.editorElsewhere {
+									// The send view has the editor; this is
+									// only seen while it slides.
+									txt, col := u.attach.draft, p.Text
+									if txt == "" {
+										txt, col = "Type a message", p.ComposerHint
 									}
-									e := material.Editor(u.th, &u.conv.composer, hint)
-									e.TextSize = 16
-									e.Color = p.Text
-									e.HintColor = p.ComposerHint
-									e.SelectionColor = argb(0x53bdeb, 0x60)
-									// Formatting and mentions are drawn over the
-									// editor, which then paints its text clear.
-									txt := u.conv.composer.Text()
-									rich := u.composerRich(txt)
-									if rich {
-										e.Color = color.NRGBA{}
-									}
-									ed = e.Layout(gtx)
-									if rich {
-										u.paintComposerText(gtx, e, txt, ed.Size)
-									}
-									u.layoutFormatBar(gtx, &u.conv.composer)
-									return ed
-								})
-								call := m.Stop()
-								// Clicks around the text, up to the row's edges,
-								// go to the editor too.
-								ext := max(0, (rowMin-dims.Size.Y)/2)
-								area := image.Rectangle{Min: image.Pt(0, -ext), Max: image.Pt(dims.Size.X, dims.Size.Y+ext)}
-								u.composerArea(gtx, area, image.Pt(0, pad), ed.Size)
-								call.Add(gtx.Ops)
-								return dims
+									return vcenter(gtx, gtx.Constraints.Min.Y, u.label(16, txt, col).Layout)
+								}
+								return u.layoutComposerEditor(gtx, "Type a message")
 							}),
 							layout.Rigid(layout.Spacer{Width: 8}.Layout),
 							layout.Rigid(func(gtx C) D {
@@ -623,6 +593,49 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		u.conv.composerH = dims.Size.Y + gtx.Dp(18)
 		return dims
 	})
+}
+
+// layoutComposerEditor lays out the composer's editor, which is also the
+// send view's caption field: formatting and mentions drawn over it, the
+// format bar, and clicks around the text. gtx.Constraints.Min.Y is the
+// height of the row it's in.
+func (u *UI) layoutComposerEditor(gtx C, hint string) D {
+	p := u.pal
+	u.formatKeys(gtx)
+	pad := gtx.Dp(8)
+	rowMin := gtx.Constraints.Min.Y
+	m := op.Record(gtx.Ops)
+	var ed D
+	dims := layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		gtx.Constraints.Min.Y = 0
+		gtx.Constraints.Max.Y = gtx.Dp(140)
+		e := material.Editor(u.th, &u.conv.composer, hint)
+		e.TextSize = 16
+		e.Color = p.Text
+		e.HintColor = p.ComposerHint
+		e.SelectionColor = argb(0x53bdeb, 0x60)
+		// Formatting and mentions are drawn over the editor, which then
+		// paints its text clear.
+		txt := u.conv.composer.Text()
+		rich := u.composerRich(txt)
+		if rich {
+			e.Color = color.NRGBA{}
+		}
+		ed = e.Layout(gtx)
+		if rich {
+			u.paintComposerText(gtx, e, txt, ed.Size)
+		}
+		u.layoutFormatBar(gtx, &u.conv.composer)
+		return ed
+	})
+	call := m.Stop()
+	// Clicks around the text, up to the row's edges, go to the editor too.
+	ext := max(0, (rowMin-dims.Size.Y)/2)
+	area := image.Rectangle{Min: image.Pt(0, -ext), Max: image.Pt(dims.Size.X, dims.Size.Y+ext)}
+	u.composerArea(gtx, area, image.Pt(0, pad), ed.Size)
+	call.Add(gtx.Ops)
+	return dims
 }
 
 // layoutSelectBar replaces the composer while selecting messages.

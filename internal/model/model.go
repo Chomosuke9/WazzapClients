@@ -161,6 +161,8 @@ type Attachment struct {
 	Media Media
 	// Quality is how a photo is scaled and compressed.
 	Quality Quality
+	// ViewOnce sends a photo or video that can be opened only once.
+	ViewOnce bool
 }
 
 // Quality is the size a photo is sent at.

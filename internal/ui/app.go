@@ -4,7 +4,9 @@ package ui
 import (
 	"image"
 	"image/color"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"gioui.org/app"
@@ -146,12 +148,15 @@ type UI struct {
 		composer            widget.Editor
 		video, search, menu widget.Clickable
 		attach, emoji, send widget.Clickable
-		header              widget.Clickable
-		rows                []convRow
-		rowsFor             *model.Chat
-		rowsVer             int
-		wallpaper           wallpaper
-		nbsp                map[int]float32 // NBSP advance per text size in px
+		// editorElsewhere is set while the send view shows: the
+		// composer's editor is its caption field.
+		editorElsewhere bool
+		header          widget.Clickable
+		rows            []convRow
+		rowsFor         *model.Chat
+		rowsVer         int
+		wallpaper       wallpaper
+		nbsp            map[int]float32 // NBSP advance per text size in px
 
 		reply            *model.Message // message being replied to
 		mentions         []mentionRef   // @mentions picked for the draft
@@ -395,7 +400,7 @@ func (u *UI) open(c *model.Chat) {
 	u.closePicker()
 	u.picker.anim.snap(false)
 	u.stopVoice()
-	u.attach.files = nil
+	u.dropAttachments()
 }
 
 // markSeen marks the open chat read while it is on screen and the window
@@ -475,7 +480,7 @@ func (u *UI) Layout(gtx C) D {
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
 	u.layoutViewer(gtx)
-	if u.picker.shown() && u.picker.mode == pickReaction {
+	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
 	u.layoutCtxMenu(gtx)
@@ -686,6 +691,18 @@ func (u *UI) update(gtx C) {
 	if ms := u.mentionQuery(); ms == nil {
 		u.conv.mentionDismissed = ""
 	}
+	if u.conv.emoji.Clicked(gtx) {
+		if u.picker.open {
+			u.closePicker()
+		} else {
+			u.openPicker(pickComposer, nil)
+		}
+	}
+	if u.conv.attach.Clicked(gtx) {
+		u.openAttachMenu()
+	}
+	u.updateAttach()
+	u.updatePaste(gtx)
 	for {
 		ev, ok := u.conv.composer.Update(gtx)
 		if !ok {
@@ -714,6 +731,20 @@ func (u *UI) escape() {
 	case u.mentionQuery() != nil:
 		ms := u.mentionQuery()
 		u.conv.mentionDismissed = string([]rune(u.conv.composer.Text())[ms.start:ms.end])
+	case len(u.attach.files) > 0:
+		// The send view: stop typing, put the tool down, drop the
+		// selection, then close.
+		ed := &u.attach.ed
+		switch {
+		case ed.typing >= 0:
+			u.finishTyping()
+		case ed.tool != toolNone:
+			u.setTool(ed.tool)
+		case ed.sel >= 0:
+			ed.sel = -1
+		default:
+			u.closeSendView(false)
+		}
 	case u.conv.selecting:
 		u.endSelect()
 	case u.conv.reply != nil:
@@ -1009,10 +1040,24 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openPoll()
 	case "contacts":
 		u.openContactPicker()
-	case "tray", "quality":
-		u.attach.files = []model.Attachment{{Path: "beach.jpg", Media: model.MediaImage},
-			{Path: "Quarterly report.pdf", Media: model.MediaDocument}}
+	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter":
+		// $WAZZAP_DEMO_PHOTO is a real photo to show.
+		photo := os.Getenv("WAZZAP_DEMO_PHOTO")
+		if photo == "" {
+			photo = "beach.jpg"
+		}
+		u.addFiles(u.selected.ID, []*attachFile{
+			{Attachment: model.Attachment{Path: photo, Media: model.MediaImage}},
+			{Attachment: model.Attachment{Path: "Quarterly report.pdf", Media: model.MediaDocument}}})
+		u.attach.anim.snap(true)
 		u.conv.composer.SetText("From last weekend")
+		switch name {
+		case "senddoc":
+			u.showFile(1)
+		case "sendedit", "sendcrop", "sendfilter":
+			// The edit waits for the photo to decode (see demoEdit).
+			u.attach.demoEdit = strings.TrimPrefix(name, "send")
+		}
 		if name == "quality" {
 			u.openQualityMenu()
 		}
