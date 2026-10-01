@@ -712,9 +712,9 @@ func (u *UI) applyEvents() {
 			u.applyReceipt(e)
 		case model.TypingEvent:
 			if c := u.chatByID(e.ChatID); c != nil {
-				c.Typing = ""
+				c.Typing, c.TypingID = "", ""
 				if e.Typing {
-					c.Typing = e.Who
+					c.Typing, c.TypingID = e.Who, e.WhoID
 				}
 			}
 		case model.PresenceEvent:
@@ -776,7 +776,7 @@ func (u *UI) chatByID(id string) *model.Chat {
 // keepLive copies UI-only live fields (typing, presence) from the old copy.
 func keepLive(dst, src *model.Chat) {
 	if dst.Typing == "" {
-		dst.Typing = src.Typing
+		dst.Typing, dst.TypingID = src.Typing, src.TypingID
 	}
 	if dst.Presence == "" {
 		dst.Presence = src.Presence
@@ -841,7 +841,7 @@ func (u *UI) upsertMessage(m *model.Message) {
 			c.Time = m.Time
 		}
 		if !m.FromMe {
-			c.Typing = ""
+			c.Typing, c.TypingID = "", ""
 		}
 		u.sortChats()
 		u.sidebar.order.pending = true

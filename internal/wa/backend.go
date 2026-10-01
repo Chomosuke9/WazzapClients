@@ -456,11 +456,12 @@ func (b *Backend) handle(evt any) {
 
 	case *events.ChatPresence:
 		chat := b.canonical(ctx, e.Chat)
-		who := ""
+		who, whoID := "", ""
 		if e.IsGroup {
 			who = b.senderName(ctx, e.Sender, "", "")
+			whoID = b.canonical(ctx, e.Sender.ToNonAD()).String()
 		}
-		b.emit(model.TypingEvent{ChatID: chat.String(), Who: who, Typing: e.State == types.ChatPresenceComposing})
+		b.emit(model.TypingEvent{ChatID: chat.String(), Who: who, WhoID: whoID, Typing: e.State == types.ChatPresenceComposing})
 	case *events.Presence:
 		text := "online"
 		if e.Unavailable {

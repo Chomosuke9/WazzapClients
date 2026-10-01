@@ -125,6 +125,7 @@ type Chat struct {
 	Time     time.Time // last activity, used for ordering
 	Last     *Message
 	Typing   string // who is typing; empty when nobody is
+	TypingID string // in groups, the ID of who is typing
 	Presence string // header subtitle, e.g. "online"
 }
 
@@ -310,6 +311,7 @@ type ReceiptEvent struct {
 type TypingEvent struct {
 	ChatID string
 	Who    string
+	WhoID  string // in groups
 	Typing bool
 }
 

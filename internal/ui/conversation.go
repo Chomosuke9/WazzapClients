@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ const (
 	rowDate rowKind = iota
 	rowEncryption
 	rowMessage
+	rowTyping // someone typing, after the newest message
 )
 
 // convRow is one entry of the message list: a day separator, the
@@ -249,6 +251,9 @@ func (u *UI) appearing(gtx C, id string, w layout.Widget) D {
 func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	u.pageMessages(c)
 	rows := u.rows(c)
+	if c.Typing != "" && !u.conv.newerMore {
+		rows = append(rows[:len(rows):len(rows)], convRow{kind: rowTyping, first: true})
+	}
 	width := gtx.Constraints.Max.X
 	margin := max(gtx.Dp(12), min(gtx.Dp(63), width*13/100))
 	maxBubble := min(width*69/100, width-2*margin)
@@ -308,6 +313,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 					return layout.N.Layout(gtx, func(gtx C) D { return u.systemChip(gtx, r.date) })
 				case r.kind == rowEncryption:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
+				case r.kind == rowTyping:
+					return u.layoutTyping(gtx, c, margin)
 				default:
 					return u.layoutMessageRow(gtx, c, r, maxBubble, margin)
 				}
@@ -322,6 +329,40 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		u.conv.heights[i] = dims.Size.Y
 		return dims
 	})
+}
+
+// layoutTyping draws the bubble with three bouncing dots that shows
+// someone is typing, with their avatar in groups.
+func (u *UI) layoutTyping(gtx C, c *model.Chat, margin int) D {
+	p := u.pal
+	w, h := gtx.Dp(58), gtx.Dp(34)
+	u.paintBubble(gtx, w, h, p.BubbleIn, false, true)
+	// Each dot rises and falls in turn, then all rest: a wave.
+	const period, step, rise = 1300 * time.Millisecond, 160 * time.Millisecond, 520 * time.Millisecond
+	var t time.Duration
+	if !gtx.Now.IsZero() {
+		t = time.Duration(gtx.Now.UnixNano())
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(time.Second / 30)})
+	}
+	r, gap, amp := gtx.Dp(3.5), gtx.Dp(5), float32(gtx.Dp(4))
+	x0 := (w - 6*r - 2*gap) / 2
+	for i := range 3 {
+		ph := (t - time.Duration(i)*step) % period
+		if ph < 0 {
+			ph += period
+		}
+		y := 0
+		if ph < rise {
+			y = int(amp * float32(math.Sin(math.Pi*float64(ph)/float64(rise))))
+		}
+		fillCircle(gtx, image.Pt(x0+r+i*(2*r+gap), h/2-y), r, p.MetaIn)
+	}
+	if c.IsGroup {
+		t := op.Offset(image.Pt(-min(gtx.Dp(40), margin), 0)).Push(gtx.Ops)
+		u.avatar(gtx, c.TypingID, c.Typing, false, 29)
+		t.Pop()
+	}
+	return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
 }
 
 // layoutMessageRow draws one message with its interactions: the hover
