@@ -61,7 +61,7 @@ type Backend struct {
 	infoMu      sync.Mutex
 	infoFetched map[string]bool // info panels refreshed this session
 
-	statusPriv statusPrivacy
+	statusPriv   statusPrivacy
 	searchMu     sync.Mutex
 	searchCancel context.CancelFunc // the running SearchMessages
 }

@@ -206,6 +206,17 @@ func (p *parser) point() (f32.Point, error) {
 	return f32.Pt(x, y), err
 }
 
+// Mirrored returns the icon flipped left to right (an arrow pointing the
+// other way).
+func (ic *Icon) Mirrored() *Icon {
+	flip := func(p f32.Point) f32.Point { return f32.Pt(1-p.X, p.Y) }
+	m := &Icon{segs: make([]seg, len(ic.segs))}
+	for i, s := range ic.segs {
+		m.segs[i] = seg{op: s.op, a: flip(s.a), b: flip(s.b)}
+	}
+	return m
+}
+
 // Path builds the icon outline scaled to size×size pixels at the origin.
 func (ic *Icon) Path(ops *op.Ops, size float32) clip.PathSpec {
 	var p clip.Path

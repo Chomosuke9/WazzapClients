@@ -96,6 +96,7 @@ var (
 	icOpenInNew     = icon.OpenInNew
 	icUnsupported   = icon.DisabledByDefaultFill
 	icForward       = icon.Forward
+	icNext          = icon.ArrowBack.Mirrored()
 	icCheckBox      = icon.CheckBox
 	icCheckBoxEmpty = icon.CheckBoxOutlineBlank
 	icStarFill      = icon.StarFill

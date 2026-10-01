@@ -171,7 +171,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    formatting toolbar in formatbar.go; the attach
                    menu, file tray and poll dialog in attach.go; animation helpers in anim.go;
                    chat actions shared by menus and info panels (mute choices, lists,
-                   clear/exit/delete confirms) in chatactions.go
+                   clear/exit/delete confirms) in chatactions.go; the New chat panel and the
+                   New group flow (also "Create a similar group") in newchat.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji

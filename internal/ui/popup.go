@@ -116,6 +116,8 @@ const (
 	ctxLists      // a chat's "Add to list" checkboxes, on their own
 	ctxStatusAdd  // the Status page's ⊕: post photos and videos, or text
 	ctxStatusMenu // the Status page's ⋮
+	ctxGroupPhoto // the new group's picture
+	ctxGroupTimer // the new group's disappearing messages
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -312,6 +314,14 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		case ctxQuality:
 			if len(u.attach.files) > 0 && u.attach.chatID == m.chatID {
 				items = u.qualityMenuItems()
+			}
+		case ctxGroupPhoto:
+			if u.newChat.step == ncGroup {
+				items = u.groupPhotoItems()
+			}
+		case ctxGroupTimer:
+			if u.newChat.step == ncGroup {
+				items = u.groupTimerItems()
 			}
 		case ctxMute:
 			if c := u.chatByID(m.chatID); c != nil {

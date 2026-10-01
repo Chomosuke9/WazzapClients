@@ -258,6 +258,23 @@ type BusinessHours struct {
 	Open, Close int
 }
 
+// Contact is a saved contact who is on WhatsApp.
+type Contact struct {
+	ID    string // the one-to-one chat ID
+	Name  string
+	Phone string // formatted, when known
+}
+
+// NewGroup is a group to create.
+type NewGroup struct {
+	Name    string
+	Members []string // one-to-one chat IDs; you are added anyway
+	// Photo is the group's picture, a JPEG, or nil.
+	Photo []byte
+	// Disappearing is the disappearing-messages timer in seconds (0 = off).
+	Disappearing uint32
+}
+
 // CommonGroup is a group you share with a contact.
 type CommonGroup struct {
 	ID   string
@@ -450,6 +467,22 @@ type SearchEvent struct {
 	Msgs          []*Message
 }
 
+// PhoneEvent answers Backend.LookupPhone. ID is the number's chat ID, or
+// "" when it isn't on WhatsApp; Err is set when the check failed.
+type PhoneEvent struct {
+	Phone string // as passed to LookupPhone
+	ID    string
+	Name  string // a name to show, when known
+	Err   string
+}
+
+// GroupCreatedEvent answers Backend.CreateGroup: ChatID is the new group,
+// or "" when it couldn't be created (Err says why).
+type GroupCreatedEvent struct {
+	ChatID string
+	Err    string
+}
+
 // DeletedEvent reports that messages were removed from a chat (deleted for
 // you, or the chat was cleared). IDs is nil when the whole chat was cleared.
 type DeletedEvent struct {
@@ -457,24 +490,26 @@ type DeletedEvent struct {
 	IDs    []string
 }
 
-func (ConnEvent) isEvent()        {}
-func (ChatsEvent) isEvent()       {}
-func (ChatEvent) isEvent()        {}
-func (MessageEvent) isEvent()     {}
-func (ReceiptEvent) isEvent()     {}
-func (TypingEvent) isEvent()      {}
-func (PresenceEvent) isEvent()    {}
-func (SyncEvent) isEvent()        {}
-func (AvatarEvent) isEvent()      {}
-func (MediaEvent) isEvent()       {}
-func (InfoEvent) isEvent()        {}
-func (StatusEvent) isEvent()      {}
-func (ChannelsEvent) isEvent()    {}
-func (CommunitiesEvent) isEvent() {}
-func (NoticeEvent) isEvent()      {}
-func (StickersEvent) isEvent()    {}
-func (DeletedEvent) isEvent()     {}
-func (SearchEvent) isEvent()      {}
+func (ConnEvent) isEvent()         {}
+func (ChatsEvent) isEvent()        {}
+func (ChatEvent) isEvent()         {}
+func (MessageEvent) isEvent()      {}
+func (ReceiptEvent) isEvent()      {}
+func (TypingEvent) isEvent()       {}
+func (PresenceEvent) isEvent()     {}
+func (SyncEvent) isEvent()         {}
+func (AvatarEvent) isEvent()       {}
+func (MediaEvent) isEvent()        {}
+func (InfoEvent) isEvent()         {}
+func (StatusEvent) isEvent()       {}
+func (ChannelsEvent) isEvent()     {}
+func (CommunitiesEvent) isEvent()  {}
+func (NoticeEvent) isEvent()       {}
+func (PhoneEvent) isEvent()        {}
+func (GroupCreatedEvent) isEvent() {}
+func (StickersEvent) isEvent()     {}
+func (DeletedEvent) isEvent()      {}
+func (SearchEvent) isEvent()       {}
 
 // StickerSet is a tab of the sticker picker.
 type StickerSet int
@@ -571,6 +606,14 @@ type Backend interface {
 	// ClearChat deletes a chat's messages; DeleteChat removes the chat too.
 	ClearChat(chatID string)
 	DeleteChat(chatID string)
+	// Contacts lists your saved contacts who are on WhatsApp, by name.
+	Contacts() []*Contact
+	// LookupPhone checks in the background whether a phone number (digits
+	// with the country code) is on WhatsApp; a PhoneEvent answers.
+	LookupPhone(phone string)
+	// CreateGroup creates a group in the background; a GroupCreatedEvent
+	// answers, after a ChatEvent for the new chat.
+	CreateGroup(g NewGroup)
 	// LeaveGroup exits a group.
 	LeaveGroup(chatID string)
 	// SetBlocked blocks or unblocks a contact. An InfoEvent follows, and a

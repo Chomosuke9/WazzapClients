@@ -129,6 +129,8 @@ type UI struct {
 	railSel  switcher[*widget.Clickable]   // the active rail button
 	pageSeen page                          // page shown last frame, to notice switches
 
+	newChat newChatState // the New chat panel over the chat list
+
 	sidebar struct {
 		newChat, menu, back widget.Clickable
 		more                widget.Clickable // collapsed filter chips
@@ -355,6 +357,7 @@ func (u *UI) setPage(pg page) {
 		}
 	}
 	u.page = pg
+	u.closeNewChat()
 	u.settings.detail = 0
 	u.hideInfo()
 	u.hideChatSearch()
@@ -604,7 +607,13 @@ func (u *UI) layoutPageSidebar(gtx C) D {
 	case pageCalls:
 		return u.layoutCallsList(gtx)
 	}
-	return u.layoutSidebar(gtx)
+	if u.newChatCovers() {
+		u.layoutNewChat(gtx)
+		return D{Size: gtx.Constraints.Max}
+	}
+	d := u.layoutSidebar(gtx)
+	u.layoutNewChat(gtx)
+	return d
 }
 
 // layoutRightPane draws the open conversation (with the info panel beside
@@ -720,7 +729,9 @@ func (u *UI) update(gtx C) {
 		u.setPage(pageChats)
 		u.sidebar.list.Position = layout.Position{}
 	}
+	u.updateNewChat(gtx)
 	if u.rail.chats.Clicked(gtx) || u.sidebar.back.Clicked(gtx) {
+		u.newChat.step = ncNone
 		u.sidebar.showArchived = false
 		u.setPage(pageChats)
 		u.sidebar.list.Position = layout.Position{}
@@ -826,6 +837,8 @@ func (u *UI) escape() {
 		}
 	case u.search.open:
 		u.search.open = false
+	case u.newChat.open():
+		u.newChatBack()
 	case u.conv.selecting:
 		u.endSelect()
 	case u.conv.reply != nil:
@@ -894,6 +907,10 @@ func (u *UI) applyEvents() {
 			u.fileDownloaded(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
+		case model.PhoneEvent:
+			u.phoneEvent(e)
+		case model.GroupCreatedEvent:
+			u.groupCreated(e)
 		case model.DeletedEvent:
 			u.searchChatChanged(e.ChatID)
 			if u.selected != nil && u.selected.ID == e.ChatID {
@@ -1062,12 +1079,11 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
-// from claude/post-status-41zv01
-// "select", "attach", "poll", "contacts", "tray", or on the Status page
-// "statusadd", "statusmenu", "statusprivacy", "statustext" and "statussend".
-// Upstream main
-// "select", "attach", "poll", "contacts", "tray", "search" (the search
-// panel, with $WAZZAP_DEMO_SEARCH typed in) or "membersearch".
+// "select", "attach", "poll", "contacts", "tray", "search" (the search panel, with
+// $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
+// "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
+// "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
+// open chat) or "newgroup".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1154,6 +1170,28 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openPoll()
 	case "contacts":
 		u.openContactPicker()
+	case "newchat", "newnumber":
+		u.openNewChat()
+		if name == "newnumber" {
+			u.newChat.search.SetText("+62 812 5550 0199")
+		}
+		u.newChat.snap()
+	case "newmembers", "newgroup":
+		var members []model.Contact
+		if info := u.backend.Info(u.selected.ID); info != nil {
+			for _, m := range info.Members {
+				if !m.Me {
+					members = append(members, model.Contact{ID: m.ID, Name: m.Name})
+				}
+			}
+		}
+		u.openNewGroup(members)
+		if name == "newgroup" {
+			u.newChat.step = ncGroup
+			u.newChat.name.SetText("Product Team offsite")
+			u.newChat.disappearing = 7 * 86400
+		}
+		u.newChat.snap()
 	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter":
 		// $WAZZAP_DEMO_PHOTO is a real photo to show.
 		photo := os.Getenv("WAZZAP_DEMO_PHOTO")
