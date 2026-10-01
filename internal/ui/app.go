@@ -36,13 +36,15 @@ var filterNames = [...]string{"All", "Unread", "Favourites", "Groups"}
 // It is only touched from the window goroutine; backend updates arrive
 // through Backend.Poll.
 type UI struct {
-	th     *material.Theme
-	pal    *Palette
-	dark   bool
-	now    func() time.Time
-	window *app.Window // nil when rendering headless
-	host   *host       // nil when rendering headless (see Run)
-	deco   widget.Decorations
+	th   *material.Theme
+	pal  *Palette
+	dark bool
+	// doodles draws the wallpaper's doodles behind conversations.
+	doodles bool
+	now     func() time.Time
+	window  *app.Window // nil when rendering headless
+	host    *host       // nil when rendering headless (see Run)
+	deco    widget.Decorations
 	// winWidth is the window width in px, for panels sized relative to it.
 	winWidth int
 
@@ -229,6 +231,11 @@ type UI struct {
 func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: time.Now, backend: b, syncPct: -1}
 	u.SetDark(true)
+	u.doodles = true
+	if b != nil { // nil in some tests
+		u.SetDark(b.Pref(prefTheme) != "light")
+		u.doodles = prefOn(b, prefDoodles)
+	}
 	u.images = newImageCache(240, 32<<20)
 	u.emojiImgs = newImageCache(600, 4<<20)
 	u.clicks.m = make(map[string]*clickEntry)
@@ -247,7 +254,7 @@ func New(b model.Backend) *UI {
 	u.sidebar.rows = make(map[string]*widget.Clickable)
 	u.conv.list.Axis = layout.Vertical
 	u.conv.list.ScrollToEnd = true
-	u.conv.composer.Submit = true
+	u.conv.composer.Submit = b == nil || prefOn(b, prefEnterSend)
 	u.conv.mentionList.Axis = layout.Vertical
 	u.hovered = make(map[string]bool)
 	return u
@@ -302,18 +309,21 @@ func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 
 // ShowPage switches the navigation rail to one of "chats", "archived",
 // "calls", "status", "channels", "communities" or "settings", or opens
-// the "general" or "notifications" settings.
+// one of the settingsViews.
 func (u *UI) ShowPage(name string) {
 	pages := map[string]page{"chats": pageChats, "archived": pageChats, "calls": pageCalls, "status": pageStatus,
-		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings,
-		"general": pageSettings, "notifications": pageSettings}
+		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings}
+	v, isSetting := settingsViews[name]
+	if isSetting {
+		pages[name] = pageSettings
+	}
 	u.setPage(pages[name])
 	u.sidebar.showArchived = name == "archived"
-	switch name {
-	case "general":
-		u.openSettings(settingGeneral)
-	case "notifications":
-		u.openSettings(settingNotifications)
+	if isSetting {
+		u.openSettings(v.category)
+		if v.sub != "" {
+			u.openSettingsSub(v.sub)
+		}
 	}
 }
 
@@ -791,6 +801,7 @@ func (u *UI) update(gtx C) {
 	}
 	u.updateAttach()
 	u.updatePaste(gtx)
+	u.ctrlEnterKeys(gtx)
 	for {
 		ev, ok := u.conv.composer.Update(gtx)
 		if !ok {
@@ -802,6 +813,25 @@ func (u *UI) update(gtx C) {
 	}
 	if u.conv.send.Clicked(gtx) {
 		u.sendComposer()
+	}
+}
+
+// ctrlEnterKeys sends the composer's message on Ctrl+Enter while Enter
+// adds a line (see setEnterSend).
+func (u *UI) ctrlEnterKeys(gtx C) {
+	ed := &u.conv.composer
+	if ed.Submit {
+		return
+	}
+	for {
+		ev, ok := gtx.Event(key.Filter{Focus: ed, Name: key.NameReturn, Required: key.ModShortcut},
+			key.Filter{Focus: ed, Name: key.NameEnter, Required: key.ModShortcut})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			u.sendComposer()
+		}
 	}
 }
 
@@ -846,7 +876,7 @@ func (u *UI) escape() {
 	case u.status.viewer.isOpen():
 		u.status.viewer.close()
 	case u.page == pageSettings && u.settings.detail != 0:
-		u.settings.detail = 0
+		u.settingsBack()
 	}
 }
 
@@ -895,6 +925,14 @@ func (u *UI) applyEvents() {
 			}
 		case model.AvatarEvent:
 			u.images.forget("a:" + e.ID)
+		case model.AccountEvent:
+			a := u.backend.Account()
+			if a.Name != "" {
+				u.me = a.Name
+			}
+			if s := &u.settings; s.detail != 0 {
+				s.account, s.stale = a, true
+			}
 		case model.MediaEvent:
 			u.images.forget("m:" + e.ChatID + "/" + e.MsgID)
 			if e.ChatID == statusChatID {

@@ -41,7 +41,7 @@ func main() {
 	memprofile := flag.String("memprofile", "", "write a heap profile after rendering")
 	data := flag.String("data", "", "in -compare mode, render this session's stored chats (no network)")
 	chatName := flag.String("chatname", "", "in -compare mode with -data, open the chat with this name")
-	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, general, notifications, info or contact")
+	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, general, profile, account, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, help, info or contact")
 	contact := flag.String("contact", "vivy@lid", "in -compare mode with -view contact, the group member whose contact info opens")
 	infoScroll := flag.Int("infoscroll", 0, "in -compare mode with -view info, first visible item of the info panel")
 	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")

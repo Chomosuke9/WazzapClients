@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/polymorfa/hypermeow"
@@ -64,6 +66,9 @@ type Backend struct {
 	statusPriv   statusPrivacy
 	searchMu     sync.Mutex
 	searchCancel context.CancelFunc // the running SearchMessages
+
+	accountMu      sync.Mutex  // guards the cached account details
+	accountFetched atomic.Bool // account details refreshed this session
 }
 
 var _ model.Backend = (*Backend)(nil)
@@ -445,8 +450,10 @@ func (b *Backend) emitAllChats() {
 // handle runs on hypermeow's event goroutine.
 func (b *Backend) handle(evt any) {
 	ctx := b.ctx
+	b.onAccountEvent(evt)
 	switch e := evt.(type) {
 	case *events.Connected:
+		b.accountFetched.Store(false)
 		cli := b.client()
 		var meID string
 		if cli.Store.ID != nil {
@@ -921,6 +928,9 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		}
 	}
 	b.onRecentStickers(data.GetRecentStickers())
+	if gs := data.GetGlobalSettings(); gs != nil && gs.DisappearingModeDuration != nil {
+		_ = b.store.setMetaValue(ctx, defaultTimerKey, strconv.Itoa(int(gs.GetDisappearingModeDuration())))
+	}
 	b.log.Infof("history sync %s: %d conversations, progress %d%%",
 		data.GetSyncType(), len(convs), data.GetProgress())
 	if data.GetSyncType() == waHistorySync.HistorySync_PUSH_NAME {

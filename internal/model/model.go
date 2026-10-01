@@ -483,6 +483,10 @@ type GroupCreatedEvent struct {
 	Err    string
 }
 
+// AccountEvent reports that your profile, privacy settings or blocked
+// contacts (Backend.Account) changed.
+type AccountEvent struct{}
+
 // DeletedEvent reports that messages were removed from a chat (deleted for
 // you, or the chat was cleared). IDs is nil when the whole chat was cleared.
 type DeletedEvent struct {
@@ -510,6 +514,7 @@ func (GroupCreatedEvent) isEvent() {}
 func (StickersEvent) isEvent()     {}
 func (DeletedEvent) isEvent()      {}
 func (SearchEvent) isEvent()       {}
+func (AccountEvent) isEvent()      {}
 
 // StickerSet is a tab of the sticker picker.
 type StickerSet int
@@ -659,6 +664,22 @@ type Backend interface {
 	FollowChannel(id string)
 	// Communities lists the user's communities.
 	Communities() []*Community
+	// Account returns your profile and settings as last fetched. Fresh
+	// ones are fetched in the background, once a session and again when
+	// they change, and announced with an AccountEvent.
+	Account() *Account
+	// SetProfileName and SetAbout change your name and about text,
+	// SetProfilePhoto your picture (from a file; "" removes it). An
+	// AccountEvent follows, or a NoticeEvent on failure.
+	SetProfileName(name string)
+	SetAbout(about string)
+	SetProfilePhoto(path string)
+	// SetPrivacy changes one of your privacy settings (a Privacy* key)
+	// to one of its values (a Who* value).
+	SetPrivacy(key, value string)
+	// SetDefaultTimer sets the disappearing messages timer of new chats
+	// (0 turns it off).
+	SetDefaultTimer(d time.Duration)
 	// Retry restarts pairing after the QR codes expired.
 	Retry()
 	// Logout unlinks this device and returns to the QR screen.
@@ -702,3 +723,44 @@ func FoldRune(r rune) rune {
 	}
 	return m
 }
+
+// Account is your own profile, account details and privacy settings.
+type Account struct {
+	ID       string // your JID
+	Phone    string // in international format, with a leading +
+	LID      string
+	Name     string
+	About    string
+	Username string
+	// Linked is when this device was linked; zero when not known.
+	Linked time.Time
+	// Privacy maps Privacy* keys to Who* values. A key that's missing
+	// isn't known yet.
+	Privacy map[string]string
+	// DefaultTimer is the disappearing messages timer of new chats, when
+	// TimerKnown.
+	DefaultTimer time.Duration
+	TimerKnown   bool
+	// Blocked lists blocked contacts, once BlockedKnown.
+	Blocked      []Contact
+	BlockedKnown bool
+}
+
+// Privacy settings, the keys of Account.Privacy.
+const (
+	PrivacyLastSeen     = "last"
+	PrivacyOnline       = "online"
+	PrivacyPhoto        = "profile"
+	PrivacyAbout        = "status"
+	PrivacyGroups       = "groupadd"
+	PrivacyReadReceipts = "readreceipts"
+)
+
+// Who can see or do something, the values of Account.Privacy.
+const (
+	WhoEveryone       = "all"
+	WhoContacts       = "contacts"
+	WhoContactsExcept = "contact_blacklist"
+	WhoNobody         = "none"
+	WhoSameAsLastSeen = "match_last_seen" // PrivacyOnline only
+)
