@@ -676,12 +676,20 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	case m.Kind == model.KindUnsupported:
 		text, textCol, italic = "This message couldn't load. Open the message on your phone to view it.", secondary, true
 		lead = iconW(icUnsupported, 19, secondary)
+	case hasAttachment(m):
+		text = attachmentCaption(m) // under the document card or player
 	case !isImg && m.Media != model.MediaNone:
 		lead = iconW(mediaIcon(m.Media), 20, secondary)
 		text = mediaLabel(m)
 		if m.Media == model.MediaVoice {
 			text = "Voice message · " + mediaLabel(m)
 		}
+	}
+	var att part // document card or audio player
+	if hasAttachment(m) {
+		cols := bubbleColors{bg: bg, card: quoteBg, text: textCol, secondary: secondary}
+		att = record(cgtx, func(gtx C) D { return u.layoutAttachment(gtx, c, m, inner, meta.size.X, meta.size.Y, cols) })
+		contentW = max(contentW, att.size.X)
 	}
 	leadW := 0
 	if lead != nil {
@@ -820,6 +828,15 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		}()
 		y += quote.size.Y + gtx.Dp(5)
 	}
+	if att.size.Y > 0 {
+		att.at(gtx, 0, y)
+		y += att.size.Y
+		if text == "" && footerText == "" {
+			meta.at(gtx, contentW-meta.size.X, y-meta.size.Y)
+		} else {
+			y += gtx.Dp(4)
+		}
+	}
 	if isImg {
 		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, img)
 		func() {
@@ -860,7 +877,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		if isImg {
 			y += gtx.Dp(5)
 		}
-	case text == "" && !isImg:
+	case text == "" && !isImg && att.size.Y == 0:
 		meta.at(gtx, contentW-meta.size.X, y)
 		y += meta.size.Y
 	}

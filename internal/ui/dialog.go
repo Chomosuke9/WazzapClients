@@ -22,6 +22,7 @@ const (
 	dialogNone dialogKind = iota
 	dialogConfirm
 	dialogForward
+	dialogPoll
 )
 
 type dialogButton struct {
@@ -41,13 +42,16 @@ type dialogState struct {
 	closing bool // fading out
 	anim    tween
 
-	// Forward picker.
-	fwd    []*model.Message
-	picked []string // chat IDs, in the order they were picked
-	search widget.Editor
-	list   widget.List
-	chats  []*model.Chat // matching chats, a buffer reused every frame
-	bar    tween         // the send bar, shown once a chat is picked
+	// Forward picker, which also picks contacts to share.
+	contacts bool
+	fwd      []*model.Message
+	picked   []string // chat IDs, in the order they were picked
+	search   widget.Editor
+	list     widget.List
+	chats    []*model.Chat // matching chats, a buffer reused every frame
+	bar      tween         // the send bar, shown once a chat is picked
+
+	poll pollState
 }
 
 // isOpen reports whether a dialog is open and not fading out.
@@ -139,6 +143,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.confirmPanel)
 	case dialogForward:
 		panel = record(gtx, u.forwardPanel)
+	case dialogPoll:
+		panel = record(gtx, u.pollPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
@@ -258,14 +264,26 @@ func (u *UI) forwardPanel(gtx C) D {
 		u.closeDialog()
 	}
 	if u.btn("fwd:send").Clicked(gtx) && len(d.picked) > 0 && d.isOpen() {
-		u.backend.Forward(d.fwd, d.picked)
-		u.endSelect()
+		if d.contacts {
+			if u.selected != nil {
+				if m := u.backend.SendContacts(u.selected.ID, d.picked); m != nil {
+					u.upsertMessage(m)
+					u.scrollMessages(layout.Position{})
+				}
+			}
+		} else {
+			u.backend.Forward(d.fwd, d.picked)
+			u.endSelect()
+		}
 		u.closeDialog()
 	}
 	bar := easeOut(d.bar.step(gtx, len(d.picked) > 0, durGrow))
 	q := strings.ToLower(trimSpace(d.search.Text()))
 	chats := d.chats[:0] // reused every frame
 	for _, c := range u.chats {
+		if d.contacts && (c.IsGroup || c.Self || isChannelID(c.ID)) {
+			continue // only people can be shared
+		}
 		if q == "" || strings.Contains(strings.ToLower(c.Name), q) {
 			chats = append(chats, c)
 		}
@@ -280,6 +298,10 @@ func (u *UI) forwardPanel(gtx C) D {
 			}
 		}
 	}
+	title := "Forward message to"
+	if d.contacts {
+		title = "Share contacts"
+	}
 	w := min(gtx.Dp(460), gtx.Constraints.Max.X-gtx.Dp(32))
 	h := min(gtx.Dp(640), gtx.Constraints.Max.Y-gtx.Dp(48))
 	gtx.Constraints = layout.Exact(image.Pt(w, h))
@@ -291,7 +313,7 @@ func (u *UI) forwardPanel(gtx C) D {
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("fwd:close"), icClose, 40, 24, p.IconStrong) }),
 						layout.Rigid(layout.Spacer{Width: 12}.Layout),
-						layout.Flexed(1, u.label(18, "Forward message to", p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+						layout.Flexed(1, u.label(18, title, p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
 					)
 				})
 			})

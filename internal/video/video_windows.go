@@ -261,10 +261,13 @@ func (w *winPlayer) open(path string) error {
 		uintptr(unsafe.Pointer(&mfMediaEngineCallback)), uintptr(unsafe.Pointer(w.notify)))
 	syscall.SyscallN(attrs.vtbl[vSetUINT32], uintptr(unsafe.Pointer(attrs)),
 		uintptr(unsafe.Pointer(&mfMediaEngineVideoOutputFormat)), dxgiFormatB8G8R8A8)
-	if w.initGPU() {
+	switch {
+	case w.p.audio:
+		// Sound only: no Direct3D device or WIC bitmap to draw into.
+	case w.initGPU():
 		syscall.SyscallN(attrs.vtbl[vSetUnknown], uintptr(unsafe.Pointer(attrs)),
 			uintptr(unsafe.Pointer(&mfMediaEngineDXGIManager)), uintptr(unsafe.Pointer(w.manager)))
-	} else {
+	default:
 		hr, _, _ = procCoCreateInstance.Call(uintptr(unsafe.Pointer(&clsidWICImagingFactory)), 0, clsctxInprocServer,
 			uintptr(unsafe.Pointer(&iidIWICImagingFactory)), uintptr(unsafe.Pointer(&w.wic)))
 		if failed(hr) {
@@ -420,7 +423,7 @@ func (w *winPlayer) poll() bool {
 	st.Pos = seconds(math.Float64frombits(uint64(pos)))
 	st.Dur = seconds(math.Float64frombits(uint64(dur)))
 	st.Paused, st.Ended = paused != 0, ended != 0
-	if st.Ready {
+	if st.Ready && !w.p.audio {
 		var cx, cy uint32
 		syscall.SyscallN(w.engine.vtbl[vGetNativeVideoSize], e, uintptr(unsafe.Pointer(&cx)), uintptr(unsafe.Pointer(&cy)))
 		st.Size = image.Pt(int(cx), int(cy))
