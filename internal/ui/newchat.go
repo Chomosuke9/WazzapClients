@@ -156,7 +156,9 @@ func (u *UI) newChatBack() {
 
 // closeNewChat closes the panel at once (when another page is chosen).
 func (u *UI) closeNewChat() {
-	u.newChat = newChatState{photos: u.newChat.photos}
+	// photoN goes on counting, so a later group's picture never shows
+	// an earlier one cached under the same key.
+	u.newChat = newChatState{photos: u.newChat.photos, photoN: u.newChat.photoN}
 }
 
 // updateNewChat handles the panel's buttons and results.
@@ -174,6 +176,7 @@ func (u *UI) updateNewChat(gtx C) {
 		case r.err != nil:
 			u.toast("Couldn't use this picture.")
 		case !r.none && nc.step == ncGroup:
+			u.images.forget("ngp:" + itoa(nc.photoN))
 			nc.photo = r.data
 			nc.photoN++
 		}
@@ -309,7 +312,8 @@ func (u *UI) phoneEvent(e model.PhoneEvent) {
 	}
 	nc.lookup = ""
 	switch {
-	case !nc.open():
+	case nc.step != ncChat || phoneDigits(nc.search.Text()) != e.Phone:
+		// The search moved on while the number was checked.
 	case e.Err != "":
 		u.toast(e.Err)
 	case e.ID == "":

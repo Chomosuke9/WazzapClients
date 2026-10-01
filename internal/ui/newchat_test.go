@@ -106,9 +106,25 @@ func TestPhoneLookup(t *testing.T) {
 	u := New(mock.New())
 	u.Start(func() {})
 	u.openNewChat()
+	u.newChat.search.SetText("+62 812 5550 0199")
 	u.lookupPhone("6281255500199")
 	u.applyEvents()
 	if u.newChat.open() || u.selected == nil || u.selected.ID != "6281255500199@s.whatsapp.net" {
+		t.Fatalf("panel open %v, chat %+v", u.newChat.open(), u.selected)
+	}
+}
+
+// TestPhoneLookupStale checks that an answer for a number no longer typed
+// doesn't open its chat.
+func TestPhoneLookupStale(t *testing.T) {
+	u := New(mock.New())
+	u.Start(func() {})
+	u.openNewChat()
+	u.newChat.search.SetText("6281255500199")
+	u.lookupPhone("6281255500199")
+	u.newChat.search.SetText("Rina")
+	u.applyEvents()
+	if !u.newChat.open() || u.selected != nil {
 		t.Fatalf("panel open %v, chat %+v", u.newChat.open(), u.selected)
 	}
 }
