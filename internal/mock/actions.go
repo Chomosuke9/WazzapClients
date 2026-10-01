@@ -79,7 +79,7 @@ func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
 
 func (b *Backend) SendSticker(chatID string, s *model.Message) { b.copyTo(s, chatID, false) }
 
-func (b *Backend) Stickers() []*model.Message { return nil }
+func (b *Backend) Stickers(model.StickerSet) []*model.Message { return nil }
 
 func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	for _, c := range chatIDs {

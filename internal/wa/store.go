@@ -121,7 +121,7 @@ var migrations = []string{
 }
 
 func (s *msgStore) init(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+	if _, err := s.db.ExecContext(ctx, schema+stickerSchema); err != nil {
 		return err
 	}
 	for _, m := range migrations {
@@ -170,7 +170,7 @@ func (s *msgStore) migrateLegacyMedia(ctx context.Context) error {
 
 func (s *msgStore) wipe(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats; DELETE FROM wz_meta;
-		DELETE FROM wz_status; DELETE FROM wz_channels; DELETE FROM wz_lists; DELETE FROM wz_list_chats;`)
+		DELETE FROM wz_status; DELETE FROM wz_channels; DELETE FROM wz_lists; DELETE FROM wz_list_chats; DELETE FROM wz_stickers;`)
 	return err
 }
 
@@ -314,6 +314,10 @@ func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.
 	if chat == statusChat {
 		err = s.db.QueryRowContext(ctx, `SELECT media, media_blob FROM wz_status WHERE id = ?`, id).Scan(&media, &blob)
 		return
+	}
+	if chat == stickerChat {
+		blob, err = s.stickerBlob(ctx, id)
+		return model.MediaSticker, blob, err
 	}
 	err = s.db.QueryRowContext(ctx, `SELECT media, media_blob FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
 		Scan(&media, &blob)

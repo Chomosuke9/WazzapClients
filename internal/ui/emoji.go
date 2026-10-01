@@ -87,17 +87,22 @@ const (
 
 // emojiPicker is the panel above the composer (or for "+" reactions).
 type emojiPicker struct {
-	open     bool
-	mode     pickMode
-	target   *model.Message // message to react to
-	tab      pickTab
-	search   widget.Editor
-	list     widget.List
-	scrim    widget.Clickable
-	active   int // highlighted category
-	stickers []*model.Message
-	recent   []string
-	loaded   bool
+	open   bool
+	mode   pickMode
+	target *model.Message // message to react to
+	tab    pickTab
+	search widget.Editor
+	list   widget.List
+	scrim  widget.Clickable
+	active int // highlighted category
+	recent []string
+	loaded bool
+
+	stickerSet  model.StickerSet
+	stickers    [3][]*model.Message // per StickerSet
+	stickersOK  [3]bool             // stickers[i] is loaded
+	stickerSel  switcher[int]
+	stickerLine follower
 
 	anim      tween // opening and closing
 	catSel    switcher[int]
@@ -118,6 +123,7 @@ func (u *UI) openPicker(mode pickMode, target *model.Message) {
 	e.list.Axis = layout.Vertical
 	e.list.Position = layout.Position{}
 	e.catSel, e.underline, e.tabSel = switcher[int]{}, follower{}, switcher[pickTab]{} // no sliding from last time
+	e.stickerSel, e.stickerLine = switcher[int]{}, follower{}
 	if !e.loaded {
 		e.loaded = true
 		e.recent = strings.Fields(u.backend.Pref("recent_emoji"))
@@ -314,33 +320,11 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 	e.catSel.step(gtx, e.active, durSwitch)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			// Category tabs with a green underline under the active one.
-			gtx.Constraints.Min.X = w
-			tabW := w / len(emojiCategories)
-			h := gtx.Dp(57)
-			for ci, c := range emojiCategories {
-				ci, c := ci, c
-				t := op.Offset(image.Pt(ci*tabW, 0)).Push(gtx.Ops)
-				cg := gtx
-				cg.Constraints = layout.Exact(image.Pt(tabW, h))
-				cl := u.btn("cat:" + itoa(ci+1))
-				clickable(cg, cl, func(gtx C) D {
-					isz := gtx.Dp(26)
-					icT := op.Offset(image.Pt((tabW-isz)/2, gtx.Dp(29)-isz/2)).Push(gtx.Ops)
-					// Icon colors are cached per color: cross-fade two icons
-					// instead of animating the color.
-					drawIcon(gtx, c.ic, 26, p.Icon)
-					withOpacity(gtx, max(u.hover(gtx, cl), e.catSel.of(ci)), func() { drawIcon(gtx, c.ic, 26, p.Text) })
-					icT.Pop()
-					return D{Size: gtx.Constraints.Max}
-				})
-				t.Pop()
+			ics := make([]*icon.Icon, len(emojiCategories))
+			for i, c := range emojiCategories {
+				ics[i] = c.ic
 			}
-			// The underline slides to the active category.
-			x := int(e.underline.step(gtx, float32(e.active*tabW), durSlide))
-			bw := gtx.Dp(27)
-			fillRRect(gtx, image.Rect(x+(tabW-bw)/2, gtx.Dp(49), x+(tabW+bw)/2, gtx.Dp(52)), gtx.Dp(2), p.Green)
-			return D{Size: image.Pt(w, h)}
+			return u.pickerHeader(gtx, "cat:", ics, e.active, &e.catSel, &e.underline)
 		}),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 15, Right: 15, Top: 6, Bottom: 6}.Layout(gtx, func(gtx C) D {
@@ -415,8 +399,9 @@ func (u *UI) pickerTabs(gtx C) {
 	for i := range 3 {
 		if u.btn("ptab:" + itoa(i+1)).Clicked(gtx) {
 			e.tab = pickTab(i)
-			if e.tab == tabSticker && e.stickers == nil {
-				e.stickers = u.backend.Stickers()
+			if e.tab == tabSticker {
+				e.stickerSet = u.defaultStickerSet()
+				e.list.Position = layout.Position{}
 			}
 		}
 	}
@@ -468,53 +453,135 @@ func (u *UI) pickerTabs(gtx C) {
 	}
 }
 
+// pickerHeader draws a row of icon tabs with a green underline that slides
+// to the active one. Tab i is the button prefix+(i+1).
+func (u *UI) pickerHeader(gtx C, prefix string, ics []*icon.Icon, active int, sel *switcher[int], line *follower) D {
+	p := u.pal
+	w := gtx.Constraints.Max.X
+	gtx.Constraints.Min.X = w
+	tabW := w / len(emojiCategories) // the same pitch on every tab
+	h := gtx.Dp(57)
+	for i, ic := range ics {
+		t := op.Offset(image.Pt(i*tabW, 0)).Push(gtx.Ops)
+		cg := gtx
+		cg.Constraints = layout.Exact(image.Pt(tabW, h))
+		cl := u.btn(prefix + itoa(i+1))
+		clickable(cg, cl, func(gtx C) D {
+			isz := gtx.Dp(26)
+			icT := op.Offset(image.Pt((tabW-isz)/2, gtx.Dp(29)-isz/2)).Push(gtx.Ops)
+			// Icon colors are cached per color: cross-fade two icons
+			// instead of animating the color.
+			drawIcon(gtx, ic, 26, p.Icon)
+			withOpacity(gtx, max(u.hover(gtx, cl), sel.of(i)), func() { drawIcon(gtx, ic, 26, p.Text) })
+			icT.Pop()
+			return D{Size: gtx.Constraints.Max}
+		})
+		t.Pop()
+	}
+	x := int(line.step(gtx, float32(active*tabW), durSlide))
+	bw := gtx.Dp(27)
+	fillRRect(gtx, image.Rect(x+(tabW-bw)/2, gtx.Dp(49), x+(tabW+bw)/2, gtx.Dp(52)), gtx.Dp(2), p.Green)
+	return D{Size: image.Pt(w, h)}
+}
+
+// stickerSets are the sticker tab's own tabs, in model.StickerSet order.
+var stickerSets = []struct {
+	ic    *icon.Icon
+	empty string
+}{
+	{icClock, "Stickers you send show up here."},
+	{icStar, "Stickers you favourite in WhatsApp show up here."},
+	{icBubble, "Stickers you receive show up here."},
+}
+
+// stickerList returns a sticker set, loading it on first use.
+func (u *UI) stickerList(set model.StickerSet) []*model.Message {
+	e := &u.picker
+	if !e.stickersOK[set] {
+		e.stickers[set], e.stickersOK[set] = u.backend.Stickers(set), true
+	}
+	return e.stickers[set]
+}
+
+// defaultStickerSet is the first non-empty set, like WhatsApp opening on
+// recents.
+func (u *UI) defaultStickerSet() model.StickerSet {
+	for set := range model.StickerSet(len(stickerSets)) {
+		if len(u.stickerList(set)) > 0 {
+			return set
+		}
+	}
+	return model.StickersRecent
+}
+
 func (u *UI) layoutStickerTab(gtx C) D {
 	e := &u.picker
 	p := u.pal
-	if len(e.stickers) == 0 {
-		return u.pickerMessage(gtx, "Stickers you receive show up here.")
+	for i := range stickerSets {
+		if u.btn("stset:"+itoa(i+1)).Clicked(gtx) && e.stickerSet != model.StickerSet(i) {
+			e.stickerSet = model.StickerSet(i)
+			e.list.Position = layout.Position{}
+		}
 	}
-	for _, s := range e.stickers {
+	stickers := u.stickerList(e.stickerSet)
+	for _, s := range stickers {
 		if u.btn("sticker:"+s.ChatID+"/"+s.ID).Clicked(gtx) && u.selected != nil {
 			u.backend.SendSticker(u.selected.ID, s)
 			u.closePicker()
 			return D{}
 		}
 	}
+	e.stickerSel.step(gtx, int(e.stickerSet), durSwitch)
 	w := gtx.Constraints.Max.X
 	cell := gtx.Dp(110)
 	cols := max(2, (w-gtx.Dp(24))/cell)
-	n := (len(e.stickers) + cols - 1) / cols
-	return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D {
-		return u.scrollList(gtx, &e.list, n+1, func(gtx C, row int) D {
-			if row == n {
-				return D{Size: image.Pt(0, gtx.Dp(56))}
+	n := (len(stickers) + cols - 1) / cols
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D {
+			ics := make([]*icon.Icon, len(stickerSets))
+			for i, s := range stickerSets {
+				ics[i] = s.ic
 			}
-			var children []layout.FlexChild
-			for i := row * cols; i < min((row+1)*cols, len(e.stickers)); i++ {
-				s := e.stickers[i]
-				children = append(children, layout.Rigid(func(gtx C) D {
-					cl := u.btn("sticker:" + s.ChatID + "/" + s.ID)
-					return clickable(gtx, cl, func(gtx C) D {
-						if h := u.hover(gtx, cl); h > 0 {
-							fillRRect(gtx, image.Rect(0, 0, cell, cell), gtx.Dp(10), faded(p.PopupHover, h))
-						}
-						img := u.messageImage(s, cell*2)
-						if img != nil && img.state == imgReady {
-							pad := gtx.Dp(8)
-							in := cell - 2*pad
-							sc := min(float32(in)/float32(img.size.X), float32(in)/float32(img.size.Y))
-							iw, ih := int(float32(img.size.X)*sc), int(float32(img.size.Y)*sc)
-							min := image.Pt((cell-iw)/2, (cell-ih)/2)
-							paintCover(gtx, img.op, img.size, image.Rectangle{Min: min, Max: min.Add(image.Pt(iw, ih))})
-						}
-						return D{Size: image.Pt(cell, cell)}
-					})
-				}))
+			return u.pickerHeader(gtx, "stset:", ics, int(e.stickerSet), &e.stickerSel, &e.stickerLine)
+		}),
+		layout.Flexed(1, func(gtx C) D {
+			if len(stickers) == 0 {
+				gtx.Constraints.Max.Y -= gtx.Dp(56) // above the tabs
+				gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+				return u.pickerMessage(gtx, stickerSets[e.stickerSet].empty)
 			}
-			return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return layout.Flex{}.Layout(gtx, children...) })
-		})
-	})
+			return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
+				return u.scrollList(gtx, &e.list, n+1, func(gtx C, row int) D {
+					if row == n {
+						return D{Size: image.Pt(0, gtx.Dp(56))}
+					}
+					var children []layout.FlexChild
+					for i := row * cols; i < min((row+1)*cols, len(stickers)); i++ {
+						s := stickers[i]
+						children = append(children, layout.Rigid(func(gtx C) D {
+							cl := u.btn("sticker:" + s.ChatID + "/" + s.ID)
+							return clickable(gtx, cl, func(gtx C) D {
+								if h := u.hover(gtx, cl); h > 0 {
+									fillRRect(gtx, image.Rect(0, 0, cell, cell), gtx.Dp(10), faded(p.PopupHover, h))
+								}
+								img := u.messageImage(s, cell*2)
+								if img != nil && img.state == imgReady {
+									pad := gtx.Dp(8)
+									in := cell - 2*pad
+									sc := min(float32(in)/float32(img.size.X), float32(in)/float32(img.size.Y))
+									iw, ih := int(float32(img.size.X)*sc), int(float32(img.size.Y)*sc)
+									min := image.Pt((cell-iw)/2, (cell-ih)/2)
+									paintCover(gtx, img.op, img.size, image.Rectangle{Min: min, Max: min.Add(image.Pt(iw, ih))})
+								}
+								return D{Size: image.Pt(cell, cell)}
+							})
+						}))
+					}
+					return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return layout.Flex{}.Layout(gtx, children...) })
+				})
+			})
+		}),
+	)
 }
 
 // centerIn2 draws w centered in a w×h px box.

@@ -752,6 +752,8 @@ func (u *UI) applyEvents() {
 			}
 		case model.StatusEvent:
 			u.statuses = u.backend.Statuses()
+		case model.StickersEvent:
+			u.picker.stickersOK = [3]bool{} // reloaded when next drawn
 		case model.ChannelsEvent:
 			u.channels = u.backend.Channels()
 			u.suggested = u.backend.SuggestedChannels()
@@ -901,8 +903,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "msgmenu", "emoji", "viewer", "forward", "reply", "delete", "select",
-// "attach", "poll", "contacts" or "tray".
+// "msgmenu", "emoji", "sticker", "viewer", "forward", "reply", "delete",
+// "select", "attach", "poll", "contacts" or "tray".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -930,6 +932,9 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	case "emoji":
 		u.openPicker(pickComposer, nil)
+	case "sticker":
+		u.openPicker(pickComposer, nil)
+		u.picker.tab, u.picker.stickerSet = tabSticker, u.defaultStickerSet()
 	case "viewer":
 		if img != nil {
 			u.openViewer(img)

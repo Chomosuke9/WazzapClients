@@ -211,6 +211,9 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool) bo
 	var msg *waE2E.Message
 	media, blob, _ := b.store.mediaBlob(ctx, src.ChatID, src.ID)
 	raw, ok := b.store.message(ctx, src.ChatID, src.ID)
+	if src.ChatID == stickerChat {
+		raw, ok = rawMsg{Message: &model.Message{Kind: model.KindSticker, Media: model.MediaSticker}}, true
+	}
 	if !ok {
 		return false
 	}
@@ -266,41 +269,14 @@ func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	}
 }
 
-// SendSticker implements model.Backend.
+// SendSticker implements model.Backend. The sticker becomes a recent one.
 func (b *Backend) SendSticker(chatID string, sticker *model.Message) {
-	if b.connected() != nil {
-		b.sendCopy(sticker, chatID, false)
+	if b.connected() == nil || !b.sendCopy(sticker, chatID, false) {
+		return
 	}
-}
-
-// Stickers implements model.Backend: recently received stickers, one per file.
-func (b *Backend) Stickers() []*model.Message {
-	rows, err := b.db.QueryContext(b.ctx, `SELECT chat, id, media_blob FROM wz_messages
-		WHERE media = ? AND media_blob IS NOT NULL ORDER BY ts DESC LIMIT 400`, int(model.MediaSticker))
-	if err != nil {
-		return nil
+	if _, blob, err := b.store.mediaBlob(b.ctx, sticker.ChatID, sticker.ID); err == nil {
+		b.recentSticker(blob, time.Now(), sticker.ChatID, sticker.ID)
 	}
-	defer rows.Close()
-	seen := map[string]bool{}
-	var out []*model.Message
-	for rows.Next() && len(out) < 60 {
-		var chat, id string
-		var blob []byte
-		if rows.Scan(&chat, &id, &blob) != nil {
-			continue
-		}
-		var s waE2E.StickerMessage
-		if proto.Unmarshal(blob, &s) != nil || s.GetIsAnimated() {
-			continue // animated stickers only show their first frame
-		}
-		key := string(s.GetFileSHA256())
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, &model.Message{ID: id, ChatID: chat, Kind: model.KindSticker, Media: model.MediaSticker})
-	}
-	return out
 }
 
 // React implements model.Backend.
