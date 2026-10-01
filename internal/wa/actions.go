@@ -62,6 +62,9 @@ func (b *Backend) connected() *whatsmeow.Client {
 // context. Media keep their original (downloadable) message; everything
 // else is quoted as text.
 func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.Message {
+	if chatID == statusChat {
+		return b.store.statusMessage(ctx, id)
+	}
 	r, ok := b.store.message(ctx, chatID, id)
 	if !ok {
 		return &waE2E.Message{Conversation: proto.String("")}

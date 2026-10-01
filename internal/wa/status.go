@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"os"
 	"sort"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/polymorfa/hypermeow/proto/waWeb"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -91,16 +93,58 @@ func (s *msgStore) setStatusViewed(ctx context.Context, ids []string) error {
 	return err
 }
 
+// statusMessage rebuilds a stored status update for a reply's context:
+// media keep their original (downloadable) message, text keeps its
+// background color.
+func (s *msgStore) statusMessage(ctx context.Context, id string) *waE2E.Message {
+	var (
+		media int
+		text  string
+		bg    int64
+		blob  []byte
+	)
+	err := s.db.QueryRowContext(ctx, `SELECT media, text, bg, media_blob FROM wz_status WHERE id = ?`, id).
+		Scan(&media, &text, &bg, &blob)
+	if err != nil {
+		return &waE2E.Message{Conversation: proto.String("")}
+	}
+	if len(blob) > 0 {
+		if m := mediaMessage(model.Media(media), blob); m != nil {
+			return m
+		}
+	}
+	et := &waE2E.ExtendedTextMessage{Text: proto.String(text)}
+	if bg != 0 {
+		et.BackgroundArgb = proto.Uint32(uint32(bg))
+	}
+	return &waE2E.Message{ExtendedTextMessage: et}
+}
+
 type statusRow struct {
 	sender, push string
 	fromMe       bool
 	u            *model.StatusUpdate
 }
 
-// recentStatuses returns updates newer than since, oldest first. Old ones
-// are deleted on the way.
+// dropStatuses deletes updates older than before and returns their IDs.
+func (s *msgStore) dropStatuses(ctx context.Context, before time.Time) []string {
+	rows, err := s.db.QueryContext(ctx, `DELETE FROM wz_status WHERE ts < ? RETURNING id`, before.Unix())
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// recentStatuses returns updates newer than since, oldest first.
 func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statusRow, error) {
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_status WHERE ts < ?`, since.Add(-statusTTL).Unix())
 	rows, err := s.db.QueryContext(ctx, `SELECT id, sender, push, from_me, ts, media, text, bg, thumb, viewed
 		FROM wz_status WHERE ts >= ? ORDER BY ts`, since.Unix())
 	if err != nil {
@@ -144,7 +188,15 @@ func (b *Backend) onStatus(e *events.Message) {
 // Statuses implements model.Backend.
 func (b *Backend) Statuses() []*model.StatusThread {
 	ctx := b.ctx
-	rows, err := b.store.recentStatuses(ctx, time.Now().Add(-statusTTL))
+	since := time.Now().Add(-statusTTL)
+	// Old updates go, with their downloaded pictures and videos.
+	for _, id := range b.store.dropStatuses(ctx, since) {
+		path := b.mediaPath(statusChat, id)
+		for _, p := range []string{path, path + ".failed", path + ".mp4"} {
+			_ = os.Remove(p)
+		}
+	}
+	rows, err := b.store.recentStatuses(ctx, since)
 	if err != nil {
 		b.log.Errorf("load statuses: %v", err)
 		return nil
