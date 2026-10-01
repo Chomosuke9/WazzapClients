@@ -5,6 +5,7 @@ package wa
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -542,7 +543,15 @@ func (b *Backend) handle(evt any) {
 
 	case *events.PushName, *events.Contact, *events.BusinessName:
 		b.names.clear()
+	case *events.AppStateSyncError:
+		if errors.Is(e.Error, appstate.ErrMismatchingLTHash) {
+			b.requestAppStateRecovery(e.Name)
+		}
 	case *events.AppStateSyncComplete:
+		if e.Recovery {
+			b.log.Infof("app state %s repaired by the phone (v%d)", e.Name, e.Version)
+			_ = b.store.setMetaValue(ctx, appStateResyncKey+":"+string(e.Name), time.Now().Format(time.RFC3339))
+		}
 		// Contact names arrive through app state; re-title chats once they're in.
 		b.names.clear()
 		b.refreshChatNames()
@@ -588,13 +597,44 @@ func clearedUpTo(r *waSyncAction.SyncActionMessageRange, at time.Time) (int64, b
 	return 0, false
 }
 
+// appStateResyncKey marks resyncAppStateOnce as done, in wz_meta. v2 also
+// picks up lists and favourites, which older versions ignored; v3 favourite
+// stickers; v4 again, for the ones v3 dropped.
+const appStateResyncKey = "appstate_resynced_v4"
+
+// recoveryGap is how long to wait before asking the phone again to repair
+// the same app state collection.
+const recoveryGap = time.Hour
+
+// requestAppStateRecovery asks the phone for a fresh copy of an app state
+// collection whose sync data no longer verifies (an LTHash mismatch), as
+// WhatsApp's own linked devices do. Until then the collection can't sync,
+// and WhatsApp rejects every change sent to it. The copy arrives as an
+// AppStateSyncComplete with Recovery set.
+func (b *Backend) requestAppStateRecovery(name appstate.WAPatchName) {
+	key := "appstate_recovery:" + string(name)
+	if t, err := time.Parse(time.RFC3339, b.store.meta(b.ctx, key)); err == nil && time.Since(t) < recoveryGap {
+		return
+	}
+	cli := b.client()
+	if cli == nil {
+		return
+	}
+	_ = b.store.setMetaValue(b.ctx, key, time.Now().Format(time.RFC3339))
+	go func() {
+		if _, err := cli.SendPeerMessage(b.ctx, whatsmeow.BuildAppStateRecoveryRequest(name)); err != nil {
+			b.log.Warnf("ask phone to repair app state %s: %v", name, err)
+			return
+		}
+		b.log.Infof("asked the phone to repair app state %s", name)
+	}()
+}
+
 // resyncAppStateOnce refetches all app state (pins, mutes, archives,
 // contacts) once per session database. Sessions linked before app state
 // events were enabled never received their pins and mutes.
 func (b *Backend) resyncAppStateOnce() {
-	// v2 also picks up lists and favourites, which older versions ignored;
-	// v3 favourite stickers; v4 again, for the ones v3 dropped.
-	const key = "appstate_resynced_v4"
+	key := appStateResyncKey
 	if b.store.meta(b.ctx, key) != "" {
 		return
 	}
