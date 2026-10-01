@@ -100,7 +100,7 @@ type spanResults struct {
 	endedWithNewline bool
 }
 
-func (t TextStyle) iterateSpan(gtx layout.Context, maxWidth int, span SpanStyle, truncate bool) (op.CallOp, textIterator) {
+func (t TextStyle) iterateSpan(gtx layout.Context, maxWidth int, span SpanStyle, truncate bool, policy text.WrapPolicy) (op.CallOp, textIterator) {
 	var glyphs [32]text.Glyph
 	maxLines := 0
 	if truncate {
@@ -117,7 +117,7 @@ func (t TextStyle) iterateSpan(gtx layout.Context, maxWidth int, span SpanStyle,
 		MaxWidth:        maxWidth,
 		Truncator:       "\u200b", // Unicode zero-width space.
 		Locale:          gtx.Locale,
-		WrapPolicy:      t.WrapPolicy.textPolicy(),
+		WrapPolicy:      policy,
 		LineHeight:      lineHeight,
 		LineHeightScale: t.LineHeightScale,
 	}, span.Content)
@@ -136,8 +136,8 @@ func (t TextStyle) iterateSpan(gtx layout.Context, maxWidth int, span SpanStyle,
 	return macro.Stop(), ti
 }
 
-func (t TextStyle) layoutSpan(gtx layout.Context, maxWidth int, span SpanStyle) spanResults {
-	call, ti := t.iterateSpan(gtx, maxWidth, span, true)
+func (t TextStyle) layoutSpan(gtx layout.Context, maxWidth int, span SpanStyle, lineEmpty bool) spanResults {
+	call, ti := t.iterateSpan(gtx, maxWidth, span, true, t.WrapPolicy.textPolicy())
 	runesDisplayed := ti.runes
 	multiLine := runesDisplayed < utf8.RuneCountInString(span.Content)
 	endedWithNewline := ti.hasNewline
@@ -154,13 +154,30 @@ func (t TextStyle) layoutSpan(gtx layout.Context, maxWidth int, span SpanStyle) 
 			endedWithNewline = true
 			runesDisplayed++
 		} else if runesDisplayed == 0 && t.WrapPolicy == WrapWords {
-			// If we're only wrapping on word boundaries, we failed to display any runes whatsoever,
-			// and it wasn't due to a hard newline, we need to line-wrap without truncation to discover
-			// the word that doesn't fit on the line.
-			call, ti = t.iterateSpan(gtx, maxWidth, span, false)
+			// The next word doesn't fit on the line. After other text, it
+			// moves to the next line. On a line of its own, it is wider
+			// than any line, so it breaks between graphemes (like CSS's
+			// overflow-wrap: break-word). Upstream laid the rest of the
+			// paragraph out here, untruncated: its lines all painted, but
+			// counted as one, so the text overflowed below its box.
+			if !lineEmpty {
+				return spanResults{call: call, width: maxWidth + 1, runes: 0, multiLine: true}
+			}
+			call, ti = t.iterateSpan(gtx, maxWidth, span, true, text.WrapGraphemes)
+			if ti.runes == 0 {
+				// Not even one grapheme fits: show it anyway, overflowing.
+				call, ti = t.iterateSpan(gtx, 1<<20, span, true, text.WrapGraphemes)
+			}
 			runesDisplayed = ti.runes
 			multiLine = runesDisplayed < utf8.RuneCountInString(span.Content)
 			endedWithNewline = ti.hasNewline
+			if multiLine {
+				r, _ := utf8.DecodeRuneInString(span.Content[byteOffset(span.Content, runesDisplayed):])
+				if r == '\n' {
+					endedWithNewline = true
+					runesDisplayed++
+				}
+			}
 		}
 	}
 	return spanResults{
@@ -216,7 +233,7 @@ func (t TextStyle) Layout(gtx layout.Context, spanFn func(gtx layout.Context, id
 		// constrain the width of the line to the remaining space
 		maxWidth := gtx.Constraints.Max.X - lineDims.X
 
-		res := t.layoutSpan(gtx, maxWidth, span)
+		res := t.layoutSpan(gtx, maxWidth, span, lineDims.X == 0)
 
 		// forceToNextLine handles the case in which the first segment of the new span does not fit
 		// AND there is already content on the current line. If there is no content on the line,
@@ -336,4 +353,14 @@ func (t TextStyle) Layout(gtx layout.Context, spanFn func(gtx layout.Context, id
 	}
 
 	return layout.Dimensions{Size: gtx.Constraints.Constrain(overallSize)}
+}
+
+// byteOffset returns the byte offset of the n-th rune of s.
+func byteOffset(s string, n int) int {
+	i := 0
+	for ; n > 0 && i < len(s); n-- {
+		_, sz := utf8.DecodeRuneInString(s[i:])
+		i += sz
+	}
+	return i
 }

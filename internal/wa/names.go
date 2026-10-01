@@ -218,22 +218,31 @@ func groupMention(jid, subject string) string {
 }
 
 // replaceMentions turns "@123456" into "@Name" for every mentioned JID.
-func (b *Backend) replaceMentions(ctx context.Context, text, mentions string) string {
+func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions string) string {
 	for _, s := range strings.Split(mentions, ",") {
 		switch {
 		case s == mentionAll:
-			text = strings.ReplaceAll(text, "@all", mention("all"))
+			text = strings.ReplaceAll(text, "@all", markedMention(model.MentionNotifies, "all"))
 			continue
 		case strings.HasPrefix(s, groupMentionPrefix):
 			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
-			text = strings.ReplaceAll(text, "@"+jid, mention(subject))
+			m := mention(subject)
+			if jid == chatID {
+				// A group mentioning itself is "@admin" (see Send).
+				m = markedMention(model.MentionAdmins, subject)
+			}
+			text = strings.ReplaceAll(text, "@"+jid, m)
 			continue
 		}
 		j, err := types.ParseJID(s)
 		if err != nil || j.User == "" {
 			continue
 		}
-		text = strings.ReplaceAll(text, "@"+j.User, mention(b.senderName(ctx, j, "", "")))
+		m := mention(b.senderName(ctx, j, "", ""))
+		if b.isMe(j.ToNonAD()) {
+			m = markedMention(model.MentionNotifies, "You")
+		}
+		text = strings.ReplaceAll(text, "@"+j.User, m)
 	}
 	return text
 }
@@ -248,9 +257,9 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 		m.Quote.Sender = b.senderNameStr(ctx, r.quoteJID, "", "")
 	}
 	if r.mentions != "" {
-		m.Text = b.replaceMentions(ctx, m.Text, r.mentions)
+		m.Text = b.replaceMentions(ctx, m.ChatID, m.Text, r.mentions)
 		if m.Quote != nil {
-			m.Quote.Text = b.replaceMentions(ctx, m.Quote.Text, r.mentions)
+			m.Quote.Text = b.replaceMentions(ctx, m.ChatID, m.Quote.Text, r.mentions)
 		}
 	} else if strings.Contains(m.Text, "@") {
 		m.Text = b.guessMentions(ctx, m.Text)
@@ -261,6 +270,12 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 // mention formats a resolved @mention. The Unicode isolate marks around it
 // are invisible; the UI uses them to highlight the whole name.
 func mention(name string) string { return "\u2068@" + name + "\u2069" }
+
+// markedMention is a mention whose kind mark (model.MentionNotifies or
+// model.MentionAdmins) tells the UI whom it notifies.
+func markedMention(kind rune, name string) string {
+	return "\u2068" + string(kind) + "@" + name + "\u2069"
+}
 
 var mentionRe = regexp.MustCompile(`@(\d{6,})`)
 
@@ -273,7 +288,7 @@ func (b *Backend) guessMentions(ctx context.Context, text string) string {
 		for _, server := range []string{types.HiddenUserServer, types.DefaultUserServer} {
 			j := types.NewJID(user, server)
 			if b.isMe(j) {
-				return mention("You")
+				return markedMention(model.MentionNotifies, "You")
 			}
 			n := b.lookup(ctx, j)
 			if name := first(n.saved, n.business, tilde(n.push)); name != "" {

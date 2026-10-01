@@ -564,7 +564,7 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 	}
 	var dims D
 	if m.Kind == model.KindSticker {
-		dims = u.layoutSticker(gtx, m)
+		dims = u.layoutStickerMessage(gtx, c, m, r.first, maxW)
 	} else {
 		dims = u.layoutBubble(gtx, c, m, r.first, maxW)
 	}
@@ -718,8 +718,27 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 			// The meta sits at the end of the last line, or of the footer.
 			suffix = " " + string(spacer)
 		}
+		o := richOpts{italic: italic, prefix: prefix, suffix: suffix}
+		if lead == nil {
+			if !out {
+				o.pills = pillMe
+				if c.IsGroup && strings.ContainsRune(text, model.MentionAdmins) && u.amAdmin(c.ID) {
+					o.pills |= pillAdmin
+				}
+			}
+			more := u.btn("more:" + m.ID)
+			if more.Clicked(gtx) {
+				if u.conv.expanded == nil {
+					u.conv.expanded = make(map[string]int)
+				}
+				u.conv.expanded[m.ID]++
+			}
+			if cut, ok := readMore(text, u.conv.expanded[m.ID]); ok {
+				text, o.more = cut, more
+			}
+		}
 		body = record(tgtx, func(gtx C) D {
-			return u.layoutRich(gtx, text, textSize, textCol, secondary, italic, prefix, suffix)
+			return u.layoutRich(gtx, text, textSize, textCol, secondary, o)
 		})
 		contentW = max(contentW, body.size.X+2*textInset)
 	} else if !isImg {
@@ -773,12 +792,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 
 	var quote part
 	if m.Quote != nil {
-		var qm *model.Message
-		for _, x := range u.msgs {
-			if x.ID == m.Quote.ID {
-				qm = x
-			}
-		}
+		qm := u.quotedMessage(m.Quote)
 		qw := min(inner, max(contentW, gtx.Dp(180)))
 		quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, qw, qm) })
 		contentW = max(contentW, quote.size.X)
@@ -1086,6 +1100,77 @@ func playButton(gtx C, c image.Point, rad int, bg color.NRGBA) {
 	tri.LineTo(cf.Add(f32.Pt(-s*0.6, s)))
 	tri.Close()
 	paint.FillShape(gtx.Ops, rgb(0xffffff), clip.Outline{Path: tri.End()}.Op())
+}
+
+// quotedMessage returns the loaded message a reply quotes, or nil.
+func (u *UI) quotedMessage(q *model.Quote) *model.Message {
+	for _, x := range u.msgs {
+		if x.ID == q.ID {
+			return x
+		}
+	}
+	return nil
+}
+
+// layoutStickerMessage draws a sticker. A sticker that replies to a
+// message has the quote in a small bubble above it, like WhatsApp.
+func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail bool, maxW int) D {
+	if m.Quote == nil {
+		return u.layoutSticker(gtx, m)
+	}
+	p := u.pal
+	out := m.FromMe
+	bg, quoteBg, secondary := p.BubbleIn, p.QuoteIn, p.TextSecondary
+	if out {
+		bg, quoteBg, secondary = p.BubbleOut, p.QuoteOut, p.SecondaryOut
+	}
+	if u.btn("quote:"+m.ID).Clicked(gtx) && m.Quote.ID != "" {
+		u.jumpTo(m.Quote.ID)
+	}
+	sticker := record(gtx, func(gtx C) D { return u.layoutSticker(gtx, m) })
+	pad := gtx.Dp(3)
+	qw := min(maxW-2*pad, max(sticker.size.X, gtx.Dp(220)))
+	cgtx := gtx
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(qw, 1<<20)}
+	var sender part
+	hasSender := c.IsGroup && !out && tail && m.Sender != ""
+	if hasSender {
+		col := p.Senders[hashIndex(m.SenderID+m.Sender, len(p.Senders))]
+		sender = record(cgtx, u.label(13, m.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+	}
+	quote := record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, qw, u.quotedMessage(m.Quote)) })
+
+	content := op.Record(gtx.Ops)
+	y := 0
+	if hasSender {
+		sender.at(gtx, gtx.Dp(6), gtx.Dp(3))
+		y += sender.size.Y + gtx.Dp(6)
+	}
+	quote.at(gtx, 0, y)
+	func() {
+		t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+		defer t.Pop()
+		qg := gtx
+		qg.Constraints = layout.Exact(quote.size)
+		clickable(qg, u.btn("quote:"+m.ID), func(gtx C) D { return D{Size: quote.size} })
+	}()
+	y += quote.size.Y
+	call := content.Stop()
+
+	bw, bh := qw+2*pad, y+2*pad
+	w := max(bw, sticker.size.X)
+	bx, sx := 0, 0
+	if out {
+		bx, sx = w-bw, w-sticker.size.X
+	}
+	t := op.Offset(image.Pt(bx, 0)).Push(gtx.Ops)
+	u.paintBubble(gtx, bw, bh, bg, out, tail)
+	op.Offset(image.Pt(pad, pad)).Add(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	gap := gtx.Dp(4)
+	sticker.at(gtx, sx, bh+gap)
+	return D{Size: image.Pt(w, bh+gap+sticker.size.Y)}
 }
 
 // layoutSticker draws a sticker without a bubble, with the time on a chip.

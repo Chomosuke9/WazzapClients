@@ -7,6 +7,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/styledtext"
 )
 
@@ -76,7 +77,7 @@ func displayText(s string) string {
 	clean := true
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if (c < 0x20 && c != '\n') || c == 0x7f || (c == 0xe2 && i+2 < len(s) && s[i+1] == 0x81 && (s[i+2] == 0xa8 || s[i+2] == 0xa9)) {
+		if (c < 0x20 && c != '\n') || c == 0x7f || (c == 0xe2 && i+2 < len(s) && s[i+1] == 0x81 && (s[i+2] == 0xa8 || s[i+2] == 0xa9 || s[i+2] == 0xa2 || s[i+2] == 0xa3)) {
 			clean = false
 			break
 		}
@@ -90,7 +91,7 @@ func displayText(s string) string {
 			return ' '
 		case r == '\n':
 			return r
-		case r < 0x20, r == 0x7f, r == mentionStart, r == mentionEnd:
+		case r < 0x20, r == 0x7f, r == mentionStart, r == mentionEnd, r == model.MentionNotifies, r == model.MentionAdmins:
 			return -1
 		}
 		return r
@@ -111,25 +112,26 @@ type richKey struct {
 	size   unit.Sp
 	col    color.NRGBA
 	italic bool
+	pills  pillFor
 }
 
 type richBlock struct {
-	kind         blockKind
-	marker       string
-	spans        []styledtext.SpanStyle
-	code, strike []bool
+	kind   blockKind
+	marker string
+	spans  []styledtext.SpanStyle
+	deco   []spanDeco
 }
 
 var richBlocks = memo[richKey, []richBlock]{limit: 600}
 
 // parsedRich returns a text's blocks with their styled spans, parsed once.
 // The spans must not be modified.
-func (u *UI) parsedRich(text string, size unit.Sp, col color.NRGBA, italic bool) []richBlock {
-	return richBlocks.get(richKey{text, size, col, italic}, func() []richBlock {
+func (u *UI) parsedRich(text string, size unit.Sp, col color.NRGBA, italic bool, pills pillFor) []richBlock {
+	return richBlocks.get(richKey{text, size, col, italic, pills}, func() []richBlock {
 		var out []richBlock
 		for _, b := range parseBlocks(text) {
-			spans, code, strike := u.richSpans(b.text, size, col, italic)
-			out = append(out, richBlock{b.kind, b.marker, spans, code, strike})
+			spans, deco := u.richSpans(b.text, size, col, italic, pills)
+			out = append(out, richBlock{b.kind, b.marker, spans, deco})
 		}
 		return out
 	})

@@ -128,6 +128,15 @@ type Chat struct {
 	Presence string // header subtitle, e.g. "online"
 }
 
+// Message text shows a resolved @mention as "\u2068@Name\u2069" (Unicode
+// isolate marks, invisible). A mark right after U+2068 says whom it notifies.
+const (
+	// MentionNotifies marks a mention that notifies you: of you, or @all.
+	MentionNotifies = '\u2063'
+	// MentionAdmins marks "@admin", which notifies the group's admins.
+	MentionAdmins = '\u2062'
+)
+
 // Draft is an outgoing text message.
 type Draft struct {
 	Text string
@@ -400,8 +409,9 @@ type Backend interface {
 	// PressButton answers a message's quick-reply button (Buttons[i]) and
 	// returns the answer in its pending state, or nil.
 	PressButton(m *Message, i int) *Message
-	// SendSticker sends a sticker that was received before, again.
-	SendSticker(chatID string, sticker *Message)
+	// SendSticker sends a sticker that was received before, again, as a
+	// reply to reply if it isn't nil.
+	SendSticker(chatID string, sticker, reply *Message)
 	// Stickers lists one of the sticker picker's sets, newest first.
 	Stickers(set StickerSet) []*Message
 	// Forward sends copies of messages to other chats.

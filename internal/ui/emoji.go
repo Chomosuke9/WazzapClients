@@ -526,7 +526,8 @@ func (u *UI) layoutStickerTab(gtx C) D {
 	stickers := u.stickerList(e.stickerSet)
 	for _, s := range stickers {
 		if u.btn("sticker:"+s.ChatID+"/"+s.ID).Clicked(gtx) && u.selected != nil {
-			u.backend.SendSticker(u.selected.ID, s)
+			u.backend.SendSticker(u.selected.ID, s, u.conv.reply)
+			u.conv.reply = nil
 			u.closePicker()
 			return D{}
 		}

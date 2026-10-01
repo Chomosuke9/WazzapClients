@@ -11,7 +11,9 @@ import (
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/unit"
+	"gioui.org/widget"
 
+	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/styledtext"
 )
 
@@ -133,26 +135,57 @@ func plainText(s string) string {
 	for _, r := range parseFormatting(s) {
 		b.WriteString(r.text)
 	}
-	return strings.NewReplacer("⁨", "", "⁩", "").Replace(b.String())
+	return mentionMarks.Replace(b.String())
 }
 
 var linkRe = regexp.MustCompile(`https?://[^\s\x{2068}\x{2069}]+|www\.[^\s\x{2068}\x{2069}]+`)
 
+// spanDeco is what layoutSpans draws around a span besides its text.
+type spanDeco uint8
+
+const (
+	decoCode   spanDeco = 1 << iota // inline code, on a tinted background
+	decoStrike                      // struck through
+	decoPill                        // a mention of you, on a rounded tint
+)
+
+// pillFor says which mentions get a pill: the ones that notify you.
+type pillFor uint8
+
+const (
+	pillMe    pillFor = 1 << iota // "@You" and "@all"
+	pillAdmin                     // "@admin", when you are an admin
+)
+
+// pilled reports whether a mention, which starts with its kind mark if it
+// has one, is drawn as a pill.
+func (pf pillFor) pilled(mention string) bool {
+	r, _ := utf8.DecodeRuneInString(mention)
+	switch r {
+	case model.MentionNotifies:
+		return pf&pillMe != 0
+	case model.MentionAdmins:
+		return pf&pillAdmin != 0
+	}
+	return false
+}
+
+// mentionMarks are the invisible marks around and inside a mention.
+var mentionMarks = strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "", string(model.MentionAdmins), "")
+
 // richSpans turns message text into styled spans: WhatsApp formatting,
-// highlighted mentions and links.
-//
-// code reports which spans are inline code, strike which are struck through.
-func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool) (spans []styledtext.SpanStyle, code, strike []bool) {
+// highlighted mentions and links. deco has each span's decorations.
+func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, pills pillFor) (spans []styledtext.SpanStyle, deco []spanDeco) {
 	p := u.pal
 	base := font.Font{Typeface: typeface}
 	if italic {
 		base.Style = font.Italic
 	}
-	var isCode, isStrike bool
+	var cur spanDeco
 	add := func(s string, f font.Font, c color.NRGBA) {
 		if s != "" {
 			spans = append(spans, styledtext.SpanStyle{Font: f, Size: size, Color: c, Content: displayText(s)})
-			code, strike = append(code, isCode), append(strike, isStrike)
+			deco = append(deco, cur)
 		}
 	}
 	for _, r := range parseFormatting(text) {
@@ -163,7 +196,14 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool) 
 		if r.style&styleItalic != 0 {
 			f.Style = font.Italic
 		}
-		isCode, isStrike = r.style&styleCode != 0, r.style&styleStrike != 0
+		cur = 0
+		if r.style&styleCode != 0 {
+			cur |= decoCode
+		}
+		if r.style&styleStrike != 0 {
+			cur |= decoStrike
+		}
+		isCode := cur&decoCode != 0
 		rest := r.text
 		if r.style&(styleMono|styleCode) != 0 {
 			f.Typeface = monoTypeface
@@ -190,7 +230,16 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool) 
 			}
 			mf := f
 			mf.Weight = max(mf.Weight, font.Medium)
-			add(rest[:j], mf, p.Green)
+			name := rest[:j]
+			if pills.pilled(name) {
+				// NBSPs pad the name inside its pill, and keep it on one line.
+				prev := cur
+				cur |= decoPill
+				add("\u00a0"+strings.ReplaceAll(mentionMarks.Replace(name), " ", "\u00a0")+"\u00a0", mf, p.Green)
+				cur = prev
+			} else {
+				add(mentionMarks.Replace(name), mf, p.Green)
+			}
 			if j < len(rest) {
 				rest = rest[j+len(string(mentionEnd)):]
 			} else {
@@ -198,7 +247,7 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool) 
 			}
 		}
 	}
-	return spans, code, strike
+	return spans, deco
 }
 
 const monoTypeface = "Consolas, Cascadia Mono, Courier New, monospace"
@@ -253,24 +302,43 @@ func parseBlocks(s string) []textBlock {
 	return out
 }
 
-// layoutRich lays out message text with WhatsApp formatting. prefix and
-// suffix are spans before the first and after the last block: the indent
-// for a leading icon and the room for the time.
-func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.NRGBA, italic bool, prefix, suffix string) D {
+// richOpts are layoutRich's options besides the text and its colors.
+type richOpts struct {
+	italic bool
+	pills  pillFor
+	// prefix and suffix are spans before the first and after the last
+	// block: the indent for a leading icon and the room for the time.
+	prefix, suffix string
+	// more, if set, ends the text with a "Read more" link that clicks it.
+	more *widget.Clickable
+}
+
+// layoutRich lays out message text with WhatsApp formatting.
+func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.NRGBA, o richOpts) D {
 	plain := font.Font{Typeface: typeface}
-	blocks := u.parsedRich(text, size, col, italic)
+	blocks := u.parsedRich(text, size, col, o.italic, o.pills)
 	maxW := gtx.Constraints.Max.X
 	y, w := 0, 0
 	for i, b := range blocks {
 		// The parsed spans are cached: cap them so appends copy.
-		spans, code, strike := b.spans[:len(b.spans):len(b.spans)], b.code[:len(b.code):len(b.code)], b.strike[:len(b.strike):len(b.strike)]
-		if i == 0 && prefix != "" {
-			spans = append([]styledtext.SpanStyle{{Font: plain, Size: size, Color: col, Content: prefix}}, spans...)
-			code, strike = append([]bool{false}, code...), append([]bool{false}, strike...)
+		spans, deco := b.spans[:len(b.spans):len(b.spans)], b.deco[:len(b.deco):len(b.deco)]
+		if i == 0 && o.prefix != "" {
+			spans = append([]styledtext.SpanStyle{{Font: plain, Size: size, Color: col, Content: o.prefix}}, spans...)
+			deco = append([]spanDeco{0}, deco...)
 		}
-		if i == len(blocks)-1 && suffix != "" {
-			spans = append(spans, styledtext.SpanStyle{Font: plain, Size: size, Color: col, Content: suffix})
-			code, strike = append(code, false), append(strike, false)
+		link := -1
+		if i == len(blocks)-1 {
+			if o.more != nil {
+				link = len(spans)
+				medium := plain
+				medium.Weight = font.Medium
+				spans = append(spans, styledtext.SpanStyle{Font: medium, Size: size, Color: u.pal.TickRead, Content: readMoreLabel})
+				deco = append(deco, 0)
+			}
+			if o.suffix != "" {
+				spans = append(spans, styledtext.SpanStyle{Font: plain, Size: size, Color: col, Content: o.suffix})
+				deco = append(deco, 0)
+			}
 		}
 		indent := 0
 		var marker part
@@ -289,7 +357,15 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 		if len(spans) == 0 {
 			body.size.Y = gtx.Sp(22) // an empty line
 		} else {
-			body = record(bgtx, func(gtx C) D { return u.layoutSpans(gtx, spans, code, strike) })
+			var onSpan func(gtx C, idx int, d D)
+			if link >= 0 {
+				onSpan = func(gtx C, idx int, d D) {
+					if idx == link {
+						clickable(gtx, o.more, func(gtx C) D { return D{Size: d.Size} })
+					}
+				}
+			}
+			body = record(bgtx, func(gtx C) D { return u.layoutSpans(gtx, spans, deco, onSpan) })
 		}
 		switch b.kind {
 		case blockQuote:
@@ -305,22 +381,19 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 	return D{Size: image.Pt(w, y)}
 }
 
-// layoutSpans draws styled text with 22sp lines, plus the background of
-// inline code and strike-through lines.
-func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, code, strike []bool) D {
+// layoutSpans draws styled text with 22sp lines, plus the decorations of
+// deco (code and pill backgrounds, strike-through lines). onSpan, if set,
+// is called for each span (or each line of one) after it is drawn.
+func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, onSpan func(gtx C, idx int, d D)) D {
 	st := styledtext.Text(u.th.Shaper, spans...)
 	st.LineHeight, st.LineHeightScale = 22, 1
-	has := func(flags []bool) bool {
-		for _, f := range flags {
-			if f {
-				return true
-			}
-		}
-		return false
+	var all spanDeco
+	for _, d := range deco {
+		all |= d
 	}
-	if has(code) {
-		// Lay the text out once, invisibly, to paint the code backgrounds
-		// under the real text.
+	if all&(decoCode|decoPill) != 0 {
+		// Lay the text out once, invisibly, to paint the backgrounds under
+		// the real text.
 		hidden := make([]styledtext.SpanStyle, len(spans))
 		copy(hidden, spans)
 		for i := range hidden {
@@ -329,19 +402,27 @@ func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, code, strike []boo
 		ht := st
 		ht.Styles = hidden
 		ht.Layout(gtx, func(gtx C, idx int, d D) {
-			if code[idx] {
-				r := image.Rectangle{Max: d.Size}
-				r.Min.Y, r.Max.Y = gtx.Dp(1), d.Size.Y-gtx.Dp(1)
+			// Center the box on the text, not on the font's ascent and
+			// descent, which differ between fonts (Consolas, Segoe UI).
+			em := float32(gtx.Sp(spans[idx].Size))
+			r := image.Rect(0, d.Baseline-int(em*0.98+0.5), d.Size.X, d.Baseline+int(em*0.26+0.5))
+			switch {
+			case deco[idx]&decoCode != 0:
 				fillRRect(gtx, r, gtx.Dp(4), u.pal.CodeBg)
+			case deco[idx]&decoPill != 0:
+				fillRRect(gtx, r, r.Dy()/2, u.pal.MentionPill)
 			}
 		})
 	}
-	var fn func(gtx C, idx int, d D)
-	if has(strike) {
+	fn := onSpan
+	if all&decoStrike != 0 {
 		fn = func(gtx C, idx int, d D) {
-			if strike[idx] {
+			if deco[idx]&decoStrike != 0 {
 				y := d.Baseline - gtx.Sp(spans[idx].Size)*3/10
 				fillRect(gtx, image.Rect(0, y, d.Size.X, y+max(1, gtx.Dp(1))), spans[idx].Color)
+			}
+			if onSpan != nil {
+				onSpan(gtx, idx, d)
 			}
 		}
 	}
@@ -359,4 +440,109 @@ func (u *UI) addLinks(s string, f font.Font, col color.NRGBA, add func(string, f
 		add(s[loc[0]:loc[1]], f, u.pal.TickRead)
 		s = s[loc[1]:]
 	}
+}
+
+// Long messages show their start and a "Read more" link, like WhatsApp.
+// Each click shows readMoreStep times as much again.
+const (
+	readMoreRunes = 700 // shown at first
+	readMoreLines = 16
+	readMoreStep  = 4
+	readMoreLabel = "Read\u00a0more"
+)
+
+// readMoreCut returns the part of a message's text to show after clicks
+// "Read more" clicks, and whether there is more. It cuts at a word
+// boundary, never inside a mention, and closes an open ``` block.
+func readMoreCut(s string, clicks int) (string, bool) {
+	maxRunes, maxLines := readMoreRunes, readMoreLines
+	for range clicks {
+		if maxRunes > len(s) {
+			return s, false
+		}
+		maxRunes, maxLines = maxRunes*readMoreStep, maxLines*readMoreStep
+	}
+	// Leave a little slack, so "Read more" never reveals only a few words.
+	if utf8.RuneCountInString(s) <= maxRunes*5/4 && strings.Count(s, "\n") < maxLines*5/4 {
+		return s, false
+	}
+	cut, runes, lines := len(s), 0, 0
+	for i, r := range s {
+		if runes == maxRunes {
+			cut = i
+			break
+		}
+		if r == '\n' {
+			if lines++; lines == maxLines {
+				cut = i
+				break
+			}
+		}
+		runes++
+	}
+	if cut == len(s) {
+		return s, false
+	}
+	t := s[:cut]
+	if s[cut] != '\n' {
+		// Back up to the last space, unless the word is very long.
+		if i := strings.LastIndexAny(t, " \n\t"); i > 0 && utf8.RuneCountInString(t[i:]) < 40 {
+			t = t[:i]
+		}
+	}
+	if strings.Count(t, string(mentionStart)) > strings.Count(t, string(mentionEnd)) {
+		t = t[:strings.LastIndex(t, string(mentionStart))]
+	}
+	t = strings.TrimRightFunc(t, unicode.IsSpace)
+	if strings.Count(t, "```")%2 == 1 {
+		t += "```"
+	}
+	return closeFormatting(t, s) + "…\u00a0", true
+}
+
+// closeFormatting closes the *bold*, _italic_, ~strike~ or `code` that a
+// cut through full left open in its start t, so the shown start is styled
+// as it is in the whole text. It adds up to two markers (nested styles).
+func closeFormatting(t, full string) string {
+	want := plainText(full)
+	fits := func(c string) bool { return strings.HasPrefix(want, plainText(t+c)) }
+	if fits("") {
+		return t
+	}
+	markers := []string{"*", "_", "~", "`"}
+	for _, a := range markers {
+		if fits(a) {
+			return t + a
+		}
+	}
+	for _, a := range markers {
+		for _, b := range markers {
+			if a != b && fits(a+b) {
+				return t + a + b
+			}
+		}
+	}
+	return t
+}
+
+type readMoreKey struct {
+	text   string
+	clicks int
+}
+
+type readMoreVal struct {
+	text string
+	more bool
+}
+
+// readMoreCuts caches readMoreCut, which parses the text.
+var readMoreCuts = memo[readMoreKey, readMoreVal]{limit: 100}
+
+// readMore is readMoreCut, cached.
+func readMore(s string, clicks int) (string, bool) {
+	v := readMoreCuts.get(readMoreKey{s, clicks}, func() readMoreVal {
+		t, more := readMoreCut(s, clicks)
+		return readMoreVal{t, more}
+	})
+	return v.text, v.more
 }

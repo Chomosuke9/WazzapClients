@@ -296,7 +296,7 @@ func (b *Backend) draftContext(chatID string, d model.Draft, sm *storedMsg) *waE
 	if d.Reply == nil && len(d.Mentions) == 0 && !d.MentionAll && !d.MentionAdmins {
 		return nil
 	}
-	ctx, m := b.ctx, sm.Message
+	m := sm.Message
 	ci := &waE2E.ContextInfo{MentionedJID: d.Mentions}
 	if d.MentionAll {
 		// "@all" is rendered by WhatsApp when nonJIDMentions is set.
@@ -310,20 +310,8 @@ func (b *Backend) draftContext(chatID string, d model.Draft, sm *storedMsg) *waE
 		sm.mentions = append(sm.mentions, groupMention(chatID, "admin"))
 	}
 	if r := d.Reply; r != nil {
-		sender := b.senderOf(r)
-		ci.StanzaID = proto.String(r.ID)
-		ci.Participant = proto.String(sender.String())
-		ci.QuotedMessage = b.quotedMessage(ctx, r.ChatID, r.ID)
-		if r.ChatID != chatID {
-			// "Reply privately" quotes a group message in a one-to-one chat.
-			ci.RemoteJID = proto.String(r.ChatID)
-		}
-		m.Quote = &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media}
-		// Store the raw quoted text, not the display text with resolved names.
-		if raw, ok := b.store.message(ctx, r.ChatID, r.ID); ok {
-			m.Quote.Text = raw.Text
-		}
-		sm.quoteJID, sm.quoteID = sender.String(), r.ID
+		m.Quote = b.quote(chatID, r, ci)
+		sm.quoteJID, sm.quoteID = m.Quote.SenderID, r.ID
 	}
 	return ci
 }

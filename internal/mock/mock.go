@@ -221,7 +221,12 @@ func demo(now time.Time) []*demoChat {
 		Presence: "Andre, Bima, Clara, Dewi, You", Typing: "Clara",
 		Messages: []*model.Message{
 			grp("Andre", day(0, 9, 2), "Standup in 5"),
-			grp("Clara", day(0, 9, 30), "Release candidate is up on staging"),
+			grp("Andre", day(0, 9, 4), "Webhook payload from yesterday's failed upload:\n```json\n"+demoPayload+"\n```"),
+			grp("Dewi", day(0, 9, 12), "⁨\u2063@all⁩ demo for the client moves to 3pm"),
+			grp("Dewi", day(0, 9, 13), "⁨\u2062@admin⁩ can someone approve the staging deploy?"),
+			grp("Clara", day(0, 9, 30), "Release candidate is up on staging. ⁨\u2063@You⁩ can you check the release notes? ⁨@Bima⁩ too"),
+			{Sender: "Bima", SenderID: "bima", Kind: model.KindSticker, Media: model.MediaSticker, Time: day(0, 9, 31),
+				Quote: &model.Quote{Sender: "Clara", Text: "Release candidate is up on staging. ⁨\u2063@You⁩ can you check the release notes? ⁨@Bima⁩ too"}},
 			grp("Bima", day(0, 9, 34), "Nice, I'll run the smoke tests"),
 			{Sender: "Clara", Media: model.MediaDocument, Text: "Release notes v2.4.pdf", Time: day(0, 9, 36),
 				FileName: "Release notes v2.4.pdf", FileSize: 1_284_000, FileType: "application/pdf", Pages: 3},
@@ -285,3 +290,27 @@ func demo(now time.Time) []*demoChat {
 	}
 	return chats
 }
+
+// demoPayload is a long message with words wider than a bubble.
+const demoPayload = `{
+  "key": {
+    "id": "ACD80DE0EC2275EECAB1B4A487615253",
+    "remoteJid": "120363425908525988@g.us",
+    "fromMe": false
+  },
+  "message": {
+    "imageMessage": {
+      "URL": "https://mmg.whatsapp.net/v/t62.7118-24/796144583_4522803077960082_8ccb=11-4&oh=01_Q5Aa5gH7L8XOkHm8",
+      "mimetype": "image/jpeg",
+      "fileSHA256": "/yAxP7afG0KX+ig1w8S/mtcK4KvdGRP2HhcMuIa8FFA=",
+      "fileLength": "44840",
+      "height": 704,
+      "width": 699,
+      "mediaKey": "EWbkHEbqabqw2xi13RSWqfDqOlAr6QFNP7O0Y2Vb5mE=",
+      "fileEncSHA256": "jhsPv3LYM8PU30c5M977a/sMI/T2PG3SJ0la1zuPrVI=",
+      "directPath": "/v/t62.7118-24/796144583_4522803077960082_8ccb=11-4&oh=01_Q5Aa5gH7L8XOkHm8",
+      "mediaKeyTimestamp": "1790817086",
+      "JPEGThumbnail": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEABsbGxscGx4hIR4qLSgtKj04MzM4PV1CR0JHQl2NWGdYWGdYjX2Xe3N7l33gsJycsOD/2c7Z//////////////////////////////////8BGxsbGxwbHiEhHiotKC0qPTgzMzg9XUJHQkdCXY1YZ1hYZ1iNfZd7c3uXfeCwnJyw4P/Zztn////////////////////////////////////"
+    }
+  }
+}`
