@@ -45,7 +45,10 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		return u.conv.rows
 	}
 	now := u.now()
-	rows := []convRow{{kind: rowEncryption}}
+	var rows []convRow
+	if !u.conv.olderMore {
+		rows = append(rows, convRow{kind: rowEncryption}) // the start of the chat
+	}
 	var prev *model.Message
 	for _, m := range u.msgs {
 		newDay := prev == nil || !sameDay(prev.Time, m.Time)
@@ -64,12 +67,7 @@ func (u *UI) rows(c *model.Chat) []convRow {
 func (u *UI) layoutConversation(gtx C) D {
 	c := u.selected
 	u.conv.selV = u.conv.selAnim.step(gtx, u.conv.selecting, durGrow)
-	var pinned *model.Message
-	for _, m := range u.msgs {
-		if m.Pinned && m.Kind != model.KindDeleted {
-			pinned = m
-		}
-	}
+	pinned := u.conv.pinned
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D { return u.layoutConvHeader(gtx, c) }),
 		layout.Rigid(func(gtx C) D {
@@ -249,6 +247,7 @@ func (u *UI) appearing(gtx C, id string, w layout.Widget) D {
 }
 
 func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
+	u.pageMessages(c)
 	rows := u.rows(c)
 	width := gtx.Constraints.Max.X
 	margin := max(gtx.Dp(12), min(gtx.Dp(63), width*13/100))

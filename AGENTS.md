@@ -164,6 +164,9 @@ patches/           go-text memory patch and apply.sh, which builds third_party/ 
 - Don't drop messages the app can't show: `parse` stores them as `KindUnsupported` ("This
   message couldn't load"). Add harmless protocol fields to `noContentFields`
   (`internal/wa/interactive.go`) instead. Business message buttons live there too.
+- `u.msgs` is a window of the open chat, not all of it: pages of 100 load as the list
+  nears either end, and at most 400 stay loaded (`internal/ui/paging.go`). Don't assume a
+  message is in `u.msgs`; `jumpTo` loads the messages around one that isn't.
 - One-to-one chats are keyed by LID when a mapping is known (`canonical`), because
   hypermeow treats the LID as the stable identity.
 - Channels (newsletters) are stored like chats in `wz_chats`/`wz_messages`, plus their

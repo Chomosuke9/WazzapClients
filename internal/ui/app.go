@@ -30,9 +30,6 @@ const (
 
 var filterNames = [...]string{"All", "Unread", "Favourites", "Groups"}
 
-// messageWindow is how many recent messages are loaded when a chat opens.
-const messageWindow = 300
-
 // UI holds all interface state. Everything is redrawn from it every frame.
 // It is only touched from the window goroutine; backend updates arrive
 // through Backend.Poll.
@@ -159,9 +156,13 @@ type UI struct {
 		composerH        int
 		// scrollTo is a scroll position requested while the list may be
 		// laying out (from a click inside a message); see scrollMessages.
-		scrollTo   *layout.Position
-		members    *model.ChatInfo // group members for @mentions
-		membersFor string
+		scrollTo *layout.Position
+		// olderMore and newerMore report stored messages past either end
+		// of msgs (see paging.go).
+		olderMore, newerMore bool
+		pinned               *model.Message  // shown in the pinned banner
+		members              *model.ChatInfo // group members for @mentions
+		membersFor           string
 
 		// Animations. A ghost is what a part showed before it went away,
 		// drawn while it fades out.
@@ -334,8 +335,7 @@ func (u *UI) open(c *model.Chat) {
 		u.hideInfo()
 	}
 	u.selected = c
-	u.msgs = u.backend.Messages(c.ID, messageWindow)
-	u.msgsVer++
+	u.loadLatest()
 	c.Unread = 0
 	u.backend.Open(c.ID)
 	u.conv.list.Position = layout.Position{}
@@ -734,8 +734,7 @@ func (u *UI) applyEvents() {
 			u.toast(e.Text)
 		case model.DeletedEvent:
 			if u.selected != nil && u.selected.ID == e.ChatID {
-				u.msgs = u.backend.Messages(e.ChatID, messageWindow)
-				u.msgsVer++
+				u.reloadMessages()
 			}
 		case model.InfoEvent:
 			if u.conv.membersFor == e.ChatID {
@@ -792,8 +791,7 @@ func (u *UI) setChats(chats []*model.Chat) {
 			return
 		}
 		u.selected = sel
-		u.msgs = u.backend.Messages(sel.ID, messageWindow)
-		u.msgsVer++
+		u.reloadMessages()
 	}
 }
 
@@ -841,14 +839,27 @@ func (u *UI) upsertMessage(m *model.Message) {
 	if u.selected == nil || u.selected.ID != m.ChatID {
 		return
 	}
-	u.msgsVer++
+	if m.Pinned || u.conv.pinned != nil && u.conv.pinned.ID == m.ID {
+		u.conv.pinned = u.backend.PinnedMessage(m.ChatID)
+	}
 	for i, old := range u.msgs {
 		if old.ID == m.ID {
 			u.msgs[i] = m
+			u.msgsVer++
 			return
 		}
 	}
 	i := sort.Search(len(u.msgs), func(i int) bool { return u.msgs[i].Time.After(m.Time) })
+	switch {
+	case i == len(u.msgs) && u.conv.newerMore && m.FromMe:
+		// What you send shows with the newest messages.
+		u.loadLatest()
+		u.upsertMessage(m)
+		return
+	case i == 0 && u.conv.olderMore, i == len(u.msgs) && u.conv.newerMore:
+		return // not loaded yet; it loads with its page
+	}
+	u.msgsVer++
 	if i == len(u.msgs) && u.now().Sub(m.Time) < time.Minute {
 		// A new message slides in at the bottom (history arrives older).
 		u.anims.start(animKey{id: m.ID, tag: tagAppear})

@@ -291,6 +291,28 @@ func (b *Backend) chat(jid string) *model.Chat {
 
 func (b *Backend) Messages(chatID string, limit int) []*model.Message {
 	raw, err := b.store.messages(b.ctx, chatID, limit)
+	return b.resolveMessages(chatID, raw, err)
+}
+
+func (b *Backend) MessagesBefore(chatID, id string, limit int) []*model.Message {
+	raw, err := b.store.messagesBefore(b.ctx, chatID, id, limit)
+	return b.resolveMessages(chatID, raw, err)
+}
+
+func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
+	raw, err := b.store.messagesFrom(b.ctx, chatID, id, limit)
+	return b.resolveMessages(chatID, raw, err)
+}
+
+func (b *Backend) PinnedMessage(chatID string) *model.Message {
+	r, ok := b.store.pinnedMessage(b.ctx, chatID)
+	if !ok {
+		return nil
+	}
+	return b.resolveMessages(chatID, []rawMsg{r}, nil)[0]
+}
+
+func (b *Backend) resolveMessages(chatID string, raw []rawMsg, err error) []*model.Message {
 	if err != nil {
 		b.log.Errorf("load messages for %s: %v", chatID, err)
 	}

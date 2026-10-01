@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -104,6 +105,10 @@ func (u *UI) pickedMessages() []*model.Message {
 // Position means the newest message. Changing the list's position directly
 // while it lays out (a click inside a message) would scroll to the top.
 func (u *UI) scrollMessages(p layout.Position) {
+	if p == (layout.Position{}) && u.conv.newerMore {
+		u.loadLatest()
+		return
+	}
 	u.conv.scrollTo = &p // layoutMessages redraws for it
 	u.conv.glide = glide{}
 }
@@ -113,14 +118,16 @@ func (u *UI) jumpTo(id string) {
 	if u.selected == nil {
 		return
 	}
-	for i, r := range u.rows(u.selected) {
-		if r.msg != nil && r.msg.ID == id {
-			u.conv.glide = glide{first: max(0, i-2), pending: true}
-			u.conv.flash, u.conv.flashUntil = id, u.now().Add(flashTime)
-			return
-		}
+	i := slices.IndexFunc(u.rows(u.selected), func(r convRow) bool { return r.msg != nil && r.msg.ID == id })
+	if i < 0 {
+		i = u.loadAround(id)
 	}
-	u.toast("That message isn't loaded.")
+	if i < 0 {
+		u.toast("That message isn't available.")
+		return
+	}
+	u.conv.glide = glide{first: max(0, i-2), pending: true}
+	u.conv.flash, u.conv.flashUntil = id, u.now().Add(flashTime)
 }
 
 // sendComposer sends the composer text with its reply and mentions.
