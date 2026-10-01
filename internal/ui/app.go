@@ -272,6 +272,8 @@ func (u *UI) setCommunities(list []*model.Community) {
 		u.inCommunity = map[string]*model.Community{}
 	}
 	clear(u.inCommunity)
+	// A group joining or leaving a community changes its row's height.
+	clear(u.sidebar.order.heights)
 	for _, c := range list {
 		if c.Announcements != "" {
 			u.inCommunity[c.Announcements] = c
