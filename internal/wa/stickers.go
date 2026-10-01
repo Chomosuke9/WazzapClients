@@ -129,7 +129,7 @@ func (b *Backend) Stickers(set model.StickerSet) []*model.Message {
 // receivedStickers lists recently received stickers, one per file.
 func (b *Backend) receivedStickers() []*model.Message {
 	rows, err := b.db.QueryContext(b.ctx, `SELECT chat, id, media_blob FROM wz_messages
-		WHERE media = ? AND media_blob IS NOT NULL ORDER BY ts DESC LIMIT 400`, int(model.MediaSticker))
+		WHERE media = ? AND from_me = 0 AND media_blob IS NOT NULL ORDER BY ts DESC LIMIT 400`, int(model.MediaSticker))
 	if err != nil {
 		return nil
 	}
