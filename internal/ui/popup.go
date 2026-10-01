@@ -81,6 +81,8 @@ type menuItem struct {
 	sub     string      // second line, e.g. "Muted always"
 	arrow   bool        // opens a submenu
 	check   int         // 1 checked box, -1 empty box, 0 none
+	tick    bool        // a check mark on the right: the chosen option
+	note    bool        // explanatory text under the options, wrapped
 	col     color.NRGBA // the icon's color, if not the text's
 	divider bool
 	run     func()
@@ -92,8 +94,9 @@ const (
 	ctxNone ctxKind = iota
 	ctxChat
 	ctxMessage
-	ctxViewer // the media viewer's ⋮ menu
-	ctxAttach // the composer's attach menu
+	ctxViewer  // the media viewer's ⋮ menu
+	ctxAttach  // the composer's attach menu
+	ctxQuality // the attach tray's photo quality menu
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -291,6 +294,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			if u.selected != nil && u.selected.ID == m.chatID {
 				items = u.attachMenuItems(u.selected)
 			}
+		case ctxQuality:
+			if u.selected != nil && u.selected.ID == m.chatID {
+				items = u.qualityMenuItems()
+			}
 		}
 		if items == nil {
 			u.ctx = ctxMenu{} // its chat went away
@@ -348,8 +355,8 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		pos.Y = max(reactH+gtx.Dp(8), sz.Y-gtx.Dp(8)-menu.size.Y)
 	}
 	pos.Y = max(pos.Y, reactH+gtx.Dp(8))
-	if m.kind == ctxAttach {
-		// It opens upwards from the attach button.
+	if m.kind == ctxAttach || m.kind == ctxQuality {
+		// It opens upwards from the attach (or quality) button.
 		pos = image.Pt(max(gtx.Dp(8), m.at.X-gtx.Dp(24)), max(gtx.Dp(8), m.at.Y-gtx.Dp(30)-menu.size.Y))
 	}
 	// It grows out of the corner nearest to where it was opened.
@@ -427,6 +434,10 @@ func (u *UI) menuPanel(gtx C, prefix string, items []menuItem) D {
 		if it.divider {
 			continue
 		}
+		if it.note {
+			w = max(w, gtx.Dp(300)) // it wraps to the menu's width
+			continue
+		}
 		l := record(gtx, u.label(15, it.label, p.Text, labelOpts{maxLines: 1}).Layout)
 		extra := 49 + 24
 		if it.arrow {
@@ -434,6 +445,9 @@ func (u *UI) menuPanel(gtx C, prefix string, items []menuItem) D {
 		}
 		if it.ic == nil && it.check == 0 {
 			extra = 24 + 24
+		}
+		if it.tick {
+			extra += 36
 		}
 		w = max(w, l.size.X+gtx.Dp(unit.Dp(extra)))
 	}
@@ -468,6 +482,10 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 		fillRect(gtx, image.Rect(gtx.Dp(14), y, gtx.Constraints.Max.X-gtx.Dp(14), y+max(1, gtx.Dp(1))), p.PopupDivider)
 		return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
 	}
+	if it.note {
+		return layout.Inset{Left: 24, Right: 20, Top: 8, Bottom: 8}.Layout(gtx,
+			u.label(13, it.label, p.PopupSub, labelOpts{}).Layout)
+	}
 	content := func(gtx C) D {
 		h := gtx.Dp(40)
 		if it.sub != "" {
@@ -496,10 +514,13 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 						)
 					}),
 					layout.Rigid(func(gtx C) D {
-						if !it.arrow {
-							return D{}
+						switch {
+						case it.arrow:
+							return drawIcon(gtx, icSubmenu, 20, p.Text)
+						case it.tick:
+							return layout.Inset{Left: 12}.Layout(gtx, iconW(icTick, 22, p.Green))
 						}
-						return drawIcon(gtx, icSubmenu, 20, p.Text)
+						return D{}
 					}),
 				)
 			})

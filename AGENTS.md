@@ -90,7 +90,7 @@ Gotchas already found in the pinned version (v0.10.x):
   (70 KB each) for good. The emoji picker draws its emojis as pictures from
   `u.emojiImgs` instead (`emojiimg.go`); scrolling it through Labels pinned ~70 MB.
 - `x/image/draw`'s `CatmullRom` allocates dst width x src height x 32 bytes (157 MB to fit
-  a 12 MP photo to a screen). Downscale with `shrink` (`shrink.go`). Go's JPEG decoder
+  a 12 MP photo to a screen). Downscale with `photo.Shrink` (`internal/photo`). Go's JPEG decoder
   keeps all of a progressive JPEG's coefficients (~7.5 bytes/pixel), so big pictures
   decode one at a time (`acquireDecode`).
 - `golang.org/x/image/webp` can't read animated WebP. Animated stickers go through
@@ -144,6 +144,7 @@ internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated)
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
+internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.

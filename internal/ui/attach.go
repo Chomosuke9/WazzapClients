@@ -15,6 +15,7 @@ import (
 
 	"github.com/chomosuke9/wazzapclients/internal/filepick"
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
@@ -27,6 +28,19 @@ type attachState struct {
 	files   []model.Attachment
 	results chan pickResult // from the file dialog's goroutine
 	picking bool            // a file dialog is open
+
+	// quality is how photos are sent. est holds, per photo, what each
+	// quality makes of it, for the quality menu; estimating a photo
+	// decodes it, so it waits until the menu opens.
+	quality   model.Quality
+	est       map[string]*photoEst
+	estimates chan photoEst
+}
+
+type photoEst struct {
+	path string
+	photo.Estimate
+	ready bool // false while it is being worked out
 }
 
 type pickResult struct {
@@ -164,7 +178,116 @@ func (u *UI) updateAttach() {
 		}
 	default:
 	}
+	for {
+		select {
+		case e := <-a.estimates:
+			if a.est[e.path] != nil {
+				*a.est[e.path] = e
+			}
+			continue
+		default:
+		}
+		break
+	}
+	if len(a.files) == 0 {
+		a.est = nil // nothing left to estimate for
+	}
 }
+
+// hasPhotos reports whether a picked file goes out as a photo.
+func (a *attachState) hasPhotos() bool {
+	for _, f := range a.files {
+		if f.Media == model.MediaImage {
+			return true
+		}
+	}
+	return false
+}
+
+// openQualityMenu opens the photo quality menu above the pointer (the
+// tray's quality button), and starts estimating the photos' sizes.
+func (u *UI) openQualityMenu() {
+	if u.selected == nil {
+		return
+	}
+	u.ctx = ctxMenu{kind: ctxQuality, chatID: u.selected.ID, at: u.mouse}
+	a := &u.attach
+	if a.est == nil {
+		a.est = map[string]*photoEst{}
+	}
+	if a.estimates == nil {
+		a.estimates = make(chan photoEst, 16)
+	}
+	var paths []string
+	for _, f := range a.files {
+		if f.Media == model.MediaImage && a.est[f.Path] == nil {
+			a.est[f.Path] = &photoEst{path: f.Path}
+			paths = append(paths, f.Path)
+		}
+	}
+	if len(paths) == 0 {
+		return
+	}
+	notify, out := u.images.invalidate, a.estimates
+	go func() {
+		for _, path := range paths {
+			e := photoEst{path: path, ready: true}
+			if data, err := os.ReadFile(path); err == nil {
+				release := acquireDecode(data)
+				e.Estimate, _ = photo.Estimates(data)
+				release()
+			}
+			out <- e
+			if notify != nil {
+				notify()
+			}
+		}
+	}()
+}
+
+// qualityMenuItems mirrors WhatsApp's photo quality menu, plus Raw.
+func (u *UI) qualityMenuItems() []menuItem {
+	a := &u.attach
+	if !a.hasPhotos() {
+		return nil
+	}
+	item := func(key, label string, q model.Quality) menuItem {
+		return menuItem{key: key, label: label, sub: a.qualitySub(q), tick: a.quality == q, run: func() { a.quality = q }}
+	}
+	return []menuItem{
+		item("std", "Standard quality", model.QualityStandard),
+		item("hd", "HD quality", model.QualityHD),
+		item("raw", "Raw quality", model.QualityRaw),
+		{divider: true},
+		{note: true, label: "HD photos are clearer. Standard photos use less storage space and are faster to send. Raw photos are sent as they are."},
+	}
+}
+
+// qualitySub is a quality's size, "116 kB · 1600 x 900", or the total
+// size for several photos.
+func (a *attachState) qualitySub(q model.Quality) string {
+	n, total := 0, 0
+	var one *photoEst
+	for _, f := range a.files {
+		if f.Media != model.MediaImage {
+			continue
+		}
+		e := a.est[f.Path]
+		if e == nil || !e.ready {
+			return "…"
+		}
+		n, total, one = n+1, total+e.Bytes[q], e
+	}
+	switch {
+	case n == 0 || total == 0:
+		return ""
+	case n == 1:
+		return formatSize(int64(total)) + " · " + itoa(one.W[q]) + " x " + itoa(one.H[q])
+	}
+	return formatSize(int64(total)) + " · " + itoa(n) + " photos"
+}
+
+var qualityNames = [...]string{model.QualityStandard: "Standard", model.QualityHD: "HD", model.QualityRaw: "Raw"}
 
 // sendAttachments sends the picked files; the first one carries the draft
 // (caption, reply and mentions).
@@ -172,6 +295,7 @@ func (u *UI) sendAttachments(d model.Draft) {
 	files := u.attach.files
 	u.attach.files = nil
 	for i, a := range files {
+		a.Quality = u.attach.quality
 		dd := d
 		if i > 0 {
 			dd = model.Draft{}
@@ -194,6 +318,9 @@ func (u *UI) layoutAttachTray(gtx C) D {
 			a.files = append(a.files[:i:i], a.files[i+1:]...)
 		}
 	}
+	if u.btn("attach:quality").Clicked(gtx) {
+		u.openQualityMenu()
+	}
 	if len(a.files) == 0 {
 		return D{}
 	}
@@ -201,18 +328,47 @@ func (u *UI) layoutAttachTray(gtx C) D {
 		maxW := gtx.Constraints.Max.X
 		gap := gtx.Dp(8)
 		chipW := min(maxW, gtx.Dp(250))
+		chipH := gtx.Dp(52)
 		x, y, rowH := 0, 0, 0
-		for i, f := range a.files {
-			chip := record(gtx, func(gtx C) D { return u.attachChip(gtx, i, f, chipW) })
+		place := func(chip part) {
 			if x > 0 && x+chip.size.X > maxW {
 				x, y = 0, y+rowH+gap
 				rowH = 0
 			}
-			chip.at(gtx, x, y)
+			chip.at(gtx, x, y+max(0, chipH-chip.size.Y)/2)
 			x += chip.size.X + gap
-			rowH = max(rowH, chip.size.Y)
+			rowH = max(rowH, chip.size.Y, chipH)
+		}
+		for i, f := range a.files {
+			place(record(gtx, func(gtx C) D { return u.attachChip(gtx, i, f, chipW) }))
+		}
+		if a.hasPhotos() {
+			place(record(gtx, u.qualityButton))
 		}
 		return D{Size: image.Pt(maxW, y+rowH)}
+	})
+}
+
+// qualityButton opens the photo quality menu; it shows the quality.
+func (u *UI) qualityButton(gtx C) D {
+	p := u.pal
+	c := u.btn("attach:quality")
+	return clickable(gtx, c, func(gtx C) D {
+		gtx.Constraints.Min = image.Point{}
+		content := record(gtx, func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(u.label(14, qualityNames[u.attach.quality], p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+				layout.Rigid(iconW(icDropDown, 20, p.Icon)),
+			)
+		})
+		h := gtx.Dp(32)
+		size := image.Pt(content.size.X+gtx.Dp(14+6), h)
+		fillRRect(gtx, image.Rectangle{Max: size}, h/2, p.QuoteIn)
+		if hv := u.hover(gtx, c); hv > 0 {
+			fillRRect(gtx, image.Rectangle{Max: size}, h/2, faded(p.PopupHover, hv))
+		}
+		content.at(gtx, gtx.Dp(14), (h-content.size.Y)/2)
+		return D{Size: size}
 	})
 }
 

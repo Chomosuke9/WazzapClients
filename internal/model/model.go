@@ -159,7 +159,22 @@ type Attachment struct {
 	// Media is how it is sent: MediaImage, MediaVideo, MediaAudio or
 	// MediaDocument (any file, as is).
 	Media Media
+	// Quality is how a photo is scaled and compressed.
+	Quality Quality
 }
+
+// Quality is the size a photo is sent at.
+type Quality int
+
+const (
+	// QualityStandard fits a photo in 1600 px, compressed: small and
+	// quick to send, like WhatsApp's default.
+	QualityStandard Quality = iota
+	// QualityHD fits it in 4096 px, less compressed.
+	QualityHD
+	// QualityRaw sends a JPEG or PNG file as it is.
+	QualityRaw
+)
 
 // Poll is a poll to send.
 type Poll struct {

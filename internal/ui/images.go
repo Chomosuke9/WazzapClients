@@ -15,6 +15,7 @@ import (
 	"gioui.org/op/paint"
 	_ "golang.org/x/image/webp" // stickers
 
+	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
 
@@ -211,7 +212,7 @@ func decodeScaled(data []byte, maxSide int) (img image.Image, animated bool) {
 		w, h = max(1, w*maxSide/s), max(1, h*maxSide/s)
 	}
 	if w != b.Dx() || h != b.Dy() {
-		return shrink(src, w, h), animated
+		return photo.Shrink(src, w, h), animated
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)

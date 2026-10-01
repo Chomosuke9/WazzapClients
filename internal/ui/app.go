@@ -987,10 +987,13 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openPoll()
 	case "contacts":
 		u.openContactPicker()
-	case "tray":
+	case "tray", "quality":
 		u.attach.files = []model.Attachment{{Path: "beach.jpg", Media: model.MediaImage},
 			{Path: "Quarterly report.pdf", Media: model.MediaDocument}}
 		u.conv.composer.SetText("From last weekend")
+		if name == "quality" {
+			u.openQualityMenu()
+		}
 	case "mention", "mentioned":
 		// The mention picker, or a draft with picked mentions.
 		ed := &u.conv.composer
