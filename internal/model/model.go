@@ -431,6 +431,12 @@ type Backend interface {
 	SendSticker(chatID string, sticker, reply *Message)
 	// Stickers lists one of the sticker picker's sets, newest first.
 	Stickers(set StickerSet) []*Message
+	// FavoriteSticker reports whether a sticker message's file is one of
+	// your favourite stickers.
+	FavoriteSticker(m *Message) bool
+	// SetFavoriteSticker adds a sticker message's file to your favourite
+	// stickers, or removes it, and syncs that to your phone.
+	SetFavoriteSticker(m *Message, fav bool)
 	// Forward sends copies of messages to other chats.
 	Forward(msgs []*Message, chatIDs []string)
 	// React sets (or, with "", removes) your reaction to a message.

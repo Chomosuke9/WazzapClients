@@ -22,6 +22,7 @@ type Backend struct {
 	meName string
 	prefs  map[string]string
 	lists  []*model.ChatList
+	favs   map[string]bool // favourite stickers, by message
 	extras
 }
 

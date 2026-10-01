@@ -105,6 +105,7 @@ type ctxMenu struct {
 	kind   ctxKind
 	chatID string
 	msg    *model.Message
+	fav    bool        // msg is a favourite sticker
 	at     image.Point // where it was opened, in content coordinates
 	scrim  widget.Clickable
 	lists  bool // "Add to list" submenu open
@@ -125,6 +126,9 @@ func (u *UI) openChatMenu(c *model.Chat) {
 
 func (u *UI) openMessageMenu(m *model.Message) {
 	u.ctx = ctxMenu{kind: ctxMessage, chatID: m.ChatID, msg: m, at: u.mouse}
+	if m.Media == model.MediaSticker && m.Kind != model.KindDeleted {
+		u.ctx.fav = u.backend.FavoriteSticker(m)
+	}
 }
 
 func (u *UI) closeMenu() { u.ctx.closing = true }
@@ -238,6 +242,13 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 			add(menuItem{key: "star", ic: icStar, label: "Unstar", run: func() { b.Star(m, false) }})
 		} else {
 			add(menuItem{key: "star", ic: icStar, label: "Star", run: func() { b.Star(m, true) }})
+		}
+		if m.Media == model.MediaSticker && !isChannelID(c.ID) {
+			if u.ctx.fav {
+				add(menuItem{key: "favsticker", ic: icHeart, label: "Remove from Favourites", run: func() { b.SetFavoriteSticker(m, false) }})
+			} else {
+				add(menuItem{key: "favsticker", ic: icHeart, label: "Add to Favourites", run: func() { b.SetFavoriteSticker(m, true) }})
+			}
 		}
 	}
 	add(menuItem{divider: true})

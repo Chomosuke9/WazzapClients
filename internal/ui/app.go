@@ -942,17 +942,19 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "msgmenu", "emoji", "sticker", "viewer", "forward", "reply", "delete",
+// "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
 // "select", "attach", "poll", "contacts" or "tray".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
 	u.mouse = image.Pt(x, y)
-	var lastIn, lastOut, img *model.Message
+	var lastIn, lastOut, img, sticker *model.Message
 	for _, m := range u.msgs {
 		switch {
 		case m.Kind == model.KindImage:
 			img = m
+		case m.Media == model.MediaSticker && !m.FromMe:
+			sticker = m
 		}
 		if m.FromMe {
 			lastOut = m
@@ -968,6 +970,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "msgmenu":
 		if lastIn != nil {
 			u.openMessageMenu(lastIn)
+		}
+	case "stickermenu":
+		if sticker != nil {
+			u.openMessageMenu(sticker)
 		}
 	case "emoji":
 		u.openPicker(pickComposer, nil)

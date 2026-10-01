@@ -97,6 +97,16 @@ func (b *Backend) SendSticker(chatID string, s, reply *model.Message) {
 
 func (b *Backend) Stickers(model.StickerSet) []*model.Message { return nil }
 
+func (b *Backend) FavoriteSticker(m *model.Message) bool { return b.favs[m.ChatID+"/"+m.ID] }
+
+func (b *Backend) SetFavoriteSticker(m *model.Message, fav bool) {
+	if b.favs == nil {
+		b.favs = map[string]bool{}
+	}
+	b.favs[m.ChatID+"/"+m.ID] = fav
+	b.emit(model.StickersEvent{})
+}
+
 func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	for _, c := range chatIDs {
 		for _, m := range msgs {
