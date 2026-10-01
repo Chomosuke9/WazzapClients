@@ -254,10 +254,10 @@ func (a *attachState) hasPhotos() bool {
 // openQualityMenu opens the photo quality menu above the pointer (the
 // tray's quality button), and starts estimating the photos' sizes.
 func (u *UI) openQualityMenu() {
-	if u.selected == nil {
+	if len(u.attach.files) == 0 {
 		return
 	}
-	u.ctx = ctxMenu{kind: ctxQuality, chatID: u.selected.ID, at: u.mouse}
+	u.ctx = ctxMenu{kind: ctxQuality, chatID: u.attach.chatID, at: u.mouse}
 	a := &u.attach
 	if a.est == nil {
 		a.est = map[string]*photoEst{}
@@ -346,8 +346,20 @@ func (u *UI) addFiles(chatID string, files []*attachFile) {
 	if len(files) == 0 {
 		return
 	}
-	if u.selected == nil || u.selected.ID != chatID || isChannelID(chatID) || (len(a.files) > 0 && a.chatID != chatID) {
+	if chatID == statusChatID {
+		if u.page != pageStatus {
+			// The Status page was left while the file dialog was open.
+			removeTemps(files)
+			return
+		}
+		files = u.statusFiles(files)
+	}
+	if len(a.files) > 0 && a.chatID != chatID || chatID != statusChatID &&
+		(u.selected == nil || u.selected.ID != chatID || isChannelID(chatID)) {
 		removeTemps(files)
+		return
+	}
+	if len(files) == 0 {
 		return
 	}
 	if len(a.files)+len(files) > maxAttach {
@@ -388,7 +400,8 @@ func classify(path string) model.Media {
 
 // attachPaths adds dropped or pasted files to the open chat's send view.
 func (u *UI) attachPaths(paths []string) {
-	if u.selected == nil || isChannelID(u.selected.ID) || u.selPage != u.page {
+	statusPage := u.page == pageStatus && (len(u.attach.files) == 0 || u.attach.chatID == statusChatID)
+	if !statusPage && (u.selected == nil || isChannelID(u.selected.ID) || u.selPage != u.page) {
 		u.toast("Open a chat to send files to it.")
 		return
 	}
@@ -404,6 +417,11 @@ func (u *UI) attachPaths(paths []string) {
 	}
 	if skipped > 0 {
 		u.toast("Folders can't be sent.")
+	}
+	if statusPage {
+		// Dropped on the Status page, they become status updates.
+		u.addFiles(statusChatID, files)
+		return
 	}
 	u.addFiles(u.selected.ID, files)
 }
@@ -576,14 +594,22 @@ func (u *UI) sendAttachments() {
 	if f := a.current(); f != nil {
 		f.caption = u.conv.composer.Text()
 	}
+	status := a.chatID == statusChatID
 	for i, f := range a.files {
+		if status {
+			// A caption has no mentions or reply.
+			u.queueSend(a.chatID, f, model.Draft{Text: trimSpace(f.caption)})
+			continue
+		}
 		d := u.draftFrom(trimSpace(f.caption))
 		if i == 0 {
 			d.Reply = u.conv.reply
 		}
 		u.queueSend(a.chatID, f, d)
 	}
-	u.conv.reply, u.conv.mentions = nil, nil
+	if !status {
+		u.conv.reply, u.conv.mentions = nil, nil
+	}
 	u.closeSendView(true)
 	u.flushOutbox()
 }

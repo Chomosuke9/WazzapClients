@@ -162,6 +162,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    edits and the send queue (editrender.go); replies, @mentions and
                    select mode live in compose.go;
                    document cards and the voice/audio player in files.go; selecting message
+                   text in textsel.go; the composer's formatting toolbar in formatbar.go; the attach
+                   menu, file tray and poll dialog in attach.go; posting your own status
+                   (its menus, the text composer, photos through the send view) in statuspost.go;
+                   animation helpers in anim.go;
                    text in textsel.go; searching a chat's messages (the panel that takes the info
                    panel's place) and a group's members in chatsearch.go; the composer's
                    formatting toolbar in formatbar.go; the attach

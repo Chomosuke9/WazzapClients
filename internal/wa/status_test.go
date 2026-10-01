@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
+	"github.com/polymorfa/hypermeow/types"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -51,5 +52,43 @@ func TestStatusQuoteAndExpiry(t *testing.T) {
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Errorf("expired status video kept: %v", err)
+	}
+}
+
+func TestAudienceOf(t *testing.T) {
+	jids := []types.JID{types.NewJID("1", types.DefaultUserServer), types.NewJID("2", types.DefaultUserServer)}
+	for _, c := range []struct {
+		in   types.StatusPrivacy
+		want model.StatusPrivacy
+	}{
+		{types.StatusPrivacy{Type: types.StatusPrivacyTypeContacts}, model.StatusPrivacy{Audience: model.AudienceContacts}},
+		{types.StatusPrivacy{Type: types.StatusPrivacyTypeBlacklist, List: jids}, model.StatusPrivacy{Audience: model.AudienceExcept, Count: 2}},
+		{types.StatusPrivacy{Type: types.StatusPrivacyTypeWhitelist, List: jids[:1]}, model.StatusPrivacy{Audience: model.AudienceOnly, Count: 1}},
+	} {
+		if got := *audienceOf(c.in); got != c.want {
+			t.Errorf("%s: got %+v, want %+v", c.in.Type, got, c.want)
+		}
+	}
+}
+
+func TestPendingStatusDroppedOnStart(t *testing.T) {
+	b := testBackend(t)
+	now := time.Now()
+	for _, id := range []string{"sent", "unsent"} {
+		if !b.storeStatus(storedStatus{id: id, sender: "me@lid", fromMe: true, ts: now, c: content{text: id}}) {
+			t.Fatal("couldn't store", id)
+		}
+	}
+	// "sent" went out; the app quit while "unsent" was on its way.
+	if _, err := b.db.Exec(`DELETE FROM wz_meta WHERE key = ?`, pendingStatus+"sent"); err != nil {
+		t.Fatal(err)
+	}
+	b.dropPendingStatuses(b.ctx)
+	threads := b.Statuses()
+	if len(threads) != 1 || len(threads[0].Updates) != 1 || threads[0].Updates[0].ID != "sent" {
+		t.Fatalf("statuses after restart = %+v", threads)
+	}
+	if v := b.store.meta(b.ctx, pendingStatus+"unsent"); v != "" {
+		t.Errorf("the pending mark stayed: %q", v)
 	}
 }

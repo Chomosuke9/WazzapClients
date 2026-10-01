@@ -37,6 +37,7 @@ type dialogState struct {
 	kind    dialogKind
 	title   string
 	body    string
+	bodyFn  func() string // a body that can change while it's open, instead of body
 	buttons []dialogButton
 	scrim   widget.Clickable
 	closing bool // fading out
@@ -187,11 +188,15 @@ func (u *UI) confirmPanel(gtx C) D {
 				return l.Layout(gtx)
 			}),
 		}
-		if d.body != "" {
+		body := d.body
+		if d.bodyFn != nil {
+			body = d.bodyFn()
+		}
+		if body != "" {
 			children = append(children,
 				layout.Rigid(layout.Spacer{Height: 12}.Layout),
 				layout.Rigid(func(gtx C) D {
-					l := u.label(14.5, d.body, p.TextSecondary)
+					l := u.label(14.5, body, p.TextSecondary)
 					l.MaxLines = 0
 					return l.Layout(gtx)
 				}))

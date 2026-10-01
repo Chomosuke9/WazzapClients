@@ -293,6 +293,30 @@ type StatusThread struct {
 // Last returns the newest update.
 func (t *StatusThread) Last() *StatusUpdate { return t.Updates[len(t.Updates)-1] }
 
+// StatusPost is a status update to post: Text on a Background color, or
+// a photo or video (File) with Text as its caption.
+type StatusPost struct {
+	Text       string
+	Background uint32 // ARGB, for text
+	File       *Attachment
+}
+
+// StatusAudience is who sees your status updates, as set on your phone.
+type StatusAudience int
+
+const (
+	AudienceContacts StatusAudience = iota // all your contacts
+	AudienceExcept                         // your contacts except some
+	AudienceOnly                           // only some contacts
+)
+
+// StatusPrivacy is your status privacy setting. Count is how many contacts
+// the "except" or "only" list holds.
+type StatusPrivacy struct {
+	Audience StatusAudience
+	Count    int
+}
+
 // Viewed reports whether every update has been seen.
 func (t *StatusThread) Viewed() bool {
 	for _, u := range t.Updates {
@@ -576,6 +600,14 @@ type Backend interface {
 	Statuses() []*StatusThread
 	// ViewStatus marks a status update as seen.
 	ViewStatus(threadID, statusID string)
+	// PostStatus posts a status update. It shows in your own thread at
+	// once (a StatusEvent follows) while it uploads and sends in the
+	// background; a NoticeEvent reports failure.
+	PostStatus(p StatusPost)
+	// StatusPrivacy returns who sees your status updates, or nil while it
+	// isn't known yet: it is fetched in the background and announced with
+	// a StatusEvent.
+	StatusPrivacy() *StatusPrivacy
 	// Channels lists followed channels, newest activity first.
 	Channels() []*Channel
 	// SuggestedChannels lists channels to follow.

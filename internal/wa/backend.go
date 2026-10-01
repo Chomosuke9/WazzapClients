@@ -61,6 +61,7 @@ type Backend struct {
 	infoMu      sync.Mutex
 	infoFetched map[string]bool // info panels refreshed this session
 
+	statusPriv statusPrivacy
 	searchMu     sync.Mutex
 	searchCancel context.CancelFunc // the running SearchMessages
 }
@@ -151,6 +152,7 @@ func (b *Backend) Start(notify func()) {
 	b.mu.Lock()
 	b.notify = notify
 	b.mu.Unlock()
+	b.dropPendingStatuses(b.ctx)
 	go b.run()
 	// WhatsApp rate-limits profile picture queries, so space them out.
 	go b.avatars.run(b.ctx, 250*time.Millisecond)

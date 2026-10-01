@@ -359,6 +359,11 @@ func (u *UI) setPage(pg page) {
 	u.hideInfo()
 	u.hideChatSearch()
 	u.status.viewer.close()
+	u.closeStatusText()
+	if u.postingStatus() {
+		// Status updates are only written on the Status page.
+		u.closeSendView(false)
+	}
 }
 
 // SelectName opens the first chat with the given name.
@@ -514,6 +519,7 @@ func (u *UI) Layout(gtx C) D {
 	u.layoutMenu(gtx)
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
+	u.layoutStatusText(gtx)
 	u.layoutViewer(gtx)
 	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
@@ -609,6 +615,16 @@ func (u *UI) layoutRightPane(gtx C) D {
 			return u.layoutConversation(gtx)
 		}
 		return u.layoutWithInfo(gtx)
+	}
+	if u.page == pageStatus && u.attach.chatID == statusChatID {
+		// Photos and videos to post cover the pane like a chat's send view.
+		if sv := u.sendViewStep(gtx); sv > 0 {
+			if sv < 1 {
+				u.layoutPlaceholder(gtx)
+			}
+			u.layoutSendView(gtx, sv)
+			return D{Size: gtx.Constraints.Max}
+		}
 	}
 	d := u.layoutPlaceholder(gtx)
 	u.veil(gtx, image.Rectangle{Max: d.Size}, u.pal.Panel, easeOut(u.pageIn.v)) // fades in with the page
@@ -785,6 +801,8 @@ func (u *UI) escape() {
 		u.closeMenu()
 	case u.dialog.isOpen():
 		u.closeDialog()
+	case u.status.text.isOpen():
+		u.closeStatusText()
 	case u.picker.open:
 		u.closePicker()
 	case u.viewer.open:
@@ -1044,6 +1062,10 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
+// from claude/post-status-41zv01
+// "select", "attach", "poll", "contacts", "tray", or on the Status page
+// "statusadd", "statusmenu", "statusprivacy", "statustext" and "statussend".
+// Upstream main
 // "select", "attach", "poll", "contacts", "tray", "search" (the search
 // panel, with $WAZZAP_DEMO_SEARCH typed in) or "membersearch".
 // Menus open at (x, y) px in content coordinates.
@@ -1152,6 +1174,29 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 		if name == "quality" {
 			u.openQualityMenu()
+		}
+	case "statusadd", "statusmenu", "statusprivacy", "statustext", "statussend":
+		// Posting a status, from the Status page.
+		u.setPage(pageStatus)
+		switch name {
+		case "statusadd":
+			u.openStatusAdd()
+		case "statusmenu":
+			u.ctx = ctxMenu{kind: ctxStatusMenu, at: u.mouse}
+		case "statusprivacy":
+			u.openStatusPrivacy()
+		case "statustext":
+			u.openStatusText()
+			u.status.text.ed.SetText("Off to the beach this weekend 🌊")
+			u.status.text.anim.snap(true)
+		case "statussend":
+			photo := os.Getenv("WAZZAP_DEMO_PHOTO")
+			if photo == "" {
+				photo = "beach.jpg"
+			}
+			u.addFiles(statusChatID, []*attachFile{{Attachment: model.Attachment{Path: photo, Media: model.MediaImage}}})
+			u.attach.anim.snap(true)
+			u.conv.composer.SetText("Sunday at the beach")
 		}
 	case "mention", "mentioned":
 		// The mention picker, or a draft with picked mentions.
