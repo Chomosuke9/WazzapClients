@@ -218,10 +218,11 @@ func (u *UI) layoutChatList(gtx C) D {
 		dy, a, moving := o.at(c.ID)
 		if !moving {
 			d := u.layoutChatRow(gtx, c)
-			o.rowH = d.Size.Y
+			o.measured(c.ID, d.Size.Y)
 			return d
 		}
 		row := record(gtx, func(gtx C) D { return u.layoutChatRow(gtx, c) })
+		o.measured(c.ID, row.size.Y)
 		withOpacity(gtx, a, func() { row.at(gtx, 0, dy) })
 		return D{Size: row.size}
 	})
@@ -232,10 +233,28 @@ func (u *UI) layoutChatList(gtx C) D {
 // up fades in at its new place while the rows above it make room.
 type chatOrder struct {
 	prev    []string       // chat IDs as drawn last frame
-	shift   map[string]int // moving rows: their old place, in rows from the new one
+	shift   map[string]int // moving rows: their old place, in px from the new one
 	pending bool           // the order may have changed since the last frame
 	anim    tween
+	// Rows differ in height (a community's groups are taller), so each
+	// row's last drawn height is kept; rowH is the last one drawn, for
+	// rows not drawn yet.
+	heights map[string]int
 	rowH    int
+}
+
+func (o *chatOrder) measured(id string, h int) {
+	if o.heights == nil {
+		o.heights = make(map[string]int)
+	}
+	o.heights[id], o.rowH = h, h
+}
+
+func (o *chatOrder) height(id string) int {
+	if h, ok := o.heights[id]; ok {
+		return h
+	}
+	return o.rowH
 }
 
 // fadeInRow is the shift of a row that fades in instead of sliding.
@@ -245,20 +264,25 @@ const fadeInRow = 1 << 20
 func (o *chatOrder) update(gtx C, visible []*model.Chat) {
 	if o.pending && len(o.prev) > 0 {
 		was := make(map[string]int, len(o.prev))
+		wasY := make(map[string]int, len(o.prev))
+		y := 0
 		for i, id := range o.prev {
-			was[id] = i
+			was[id], wasY[id] = i, y
+			y += o.height(id)
 		}
 		if o.shift == nil {
 			o.shift = make(map[string]int)
 		}
 		clear(o.shift)
+		y = 0
 		for i, c := range visible {
 			switch j, ok := was[c.ID]; {
 			case !ok || j-i > 1:
 				o.shift[c.ID] = fadeInRow
 			case j != i:
-				o.shift[c.ID] = j - i
+				o.shift[c.ID] = wasY[c.ID] - y
 			}
+			y += o.height(c.ID)
 		}
 		if len(o.shift) > 0 {
 			o.anim.snap(false)
@@ -285,7 +309,7 @@ func (o *chatOrder) at(id string) (dy int, alpha float32, moving bool) {
 	if s == fadeInRow {
 		return 0, e, true
 	}
-	return int(float32(s*o.rowH) * (1 - e)), 1, true
+	return int(float32(s) * (1 - e)), 1, true
 }
 
 func (u *UI) rowClick(c *model.Chat) *widget.Clickable {
