@@ -90,4 +90,28 @@ func TestStickerSync(t *testing.T) {
 	if n != 2 { // c has no mark left
 		t.Fatalf("%d stickers stored, want 2", n)
 	}
+
+	// A SET without isFavorite is a favourite, and one whose index isn't a
+	// readable hash is keyed by its encrypted file.
+	enc := sha("d.enc")
+	b.onStickerAppState(&events.AppState{
+		Index: []string{appstate.IndexFavoriteSticker, "not-a-hash"},
+		SyncActionValue: &waSyncAction.SyncActionValue{
+			StickerAction: &waSyncAction.StickerAction{DirectPath: proto.String("/v/d"), FileEncSHA256: enc}},
+	})
+	got := ids(b.Stickers(model.StickersFavorite))
+	if len(got) != 2 || got[0] != encStickerPrefix+hex.EncodeToString(enc) {
+		t.Fatalf("favourites with an unhashed one = %v", got)
+	}
+
+	// Once downloaded, it's filed under its real plaintext hash.
+	b.rehashSticker(got[0], []byte("d"))
+	got = ids(b.Stickers(model.StickersFavorite))
+	if len(got) != 2 || got[0] != hex.EncodeToString(sha("d")) {
+		t.Fatalf("favourites after rehash = %v", got)
+	}
+	_, blob, _ = b.store.mediaBlob(b.ctx, stickerChat, got[0])
+	if m := mediaMessage(model.MediaSticker, blob); string(m.GetStickerMessage().GetFileSHA256()) != string(sha("d")) {
+		t.Fatalf("rehashed blob lacks its hash")
+	}
 }

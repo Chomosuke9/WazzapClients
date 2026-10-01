@@ -569,8 +569,8 @@ func (b *Backend) updateChat(j types.JID, field string, v any, quiet bool) {
 // events were enabled never received their pins and mutes.
 func (b *Backend) resyncAppStateOnce() {
 	// v2 also picks up lists and favourites, which older versions ignored;
-	// v3 favourite stickers.
-	const key = "appstate_resynced_v3"
+	// v3 favourite stickers; v4 again, for the ones v3 dropped.
+	const key = "appstate_resynced_v4"
 	if b.store.meta(b.ctx, key) != "" {
 		return
 	}

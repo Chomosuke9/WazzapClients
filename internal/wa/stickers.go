@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"os"
@@ -36,6 +37,10 @@ CREATE TABLE IF NOT EXISTS wz_stickers (
 	favorite  INTEGER NOT NULL DEFAULT 0  -- favourited at (unix seconds), 0 = not a favourite
 );
 `
+
+// encStickerPrefix starts the key of a synced sticker whose plaintext hash
+// is unknown; the rest is its encrypted file's SHA-256 (hex).
+const encStickerPrefix = "enc-"
 
 // stickerListMax is how many stickers a picker tab shows.
 const stickerListMax = 60
@@ -82,8 +87,11 @@ func (s *msgStore) stickerBlob(ctx context.Context, hash string) (blob []byte, e
 // stickerHashByEnc finds the plaintext hash of a sticker by its encrypted
 // file's hash, from the stickers received in chats.
 func (s *msgStore) stickerHashByEnc(ctx context.Context, enc []byte) []byte {
-	rows, err := s.db.QueryContext(ctx, `SELECT media_blob FROM wz_messages WHERE media = ? AND media_blob IS NOT NULL`,
-		int(model.MediaSticker))
+	if len(enc) == 0 {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT media_blob FROM wz_messages WHERE media = ? AND media_blob IS NOT NULL
+		UNION ALL SELECT blob FROM wz_stickers`, int(model.MediaSticker))
 	if err != nil {
 		return nil
 	}
@@ -224,15 +232,29 @@ func (b *Backend) onStickerAppState(e *events.AppState) {
 			return
 		}
 		sha := decodeHash(e.Index[1])
+		if string(sha) == string(a.GetFileEncSHA256()) {
+			sha = nil // the index named the encrypted file
+		}
 		if sha == nil {
 			sha = b.store.stickerHashByEnc(b.ctx, a.GetFileEncSHA256())
 		}
-		if sha == nil {
-			b.log.Debugf("favourite sticker %q: unknown file hash", e.Index[1])
+		var hash string
+		switch {
+		case sha != nil:
+			hash = hex.EncodeToString(sha)
+		case len(a.GetFileEncSHA256()) == 32:
+			// Without the plaintext hash the download is still checked by
+			// its MAC (see download); key it by the encrypted file instead.
+			b.log.Infof("favourite sticker %q: no plaintext hash, keyed by its encrypted file", e.Index[1])
+			hash = encStickerPrefix + hex.EncodeToString(a.GetFileEncSHA256())
+		default:
+			b.log.Infof("favourite sticker %q: no file hash", e.Index[1])
 			return
 		}
-		hash := hex.EncodeToString(sha)
-		if !a.GetIsFavorite() {
+		// A favourite is a SET mutation; unfavouriting may be a REMOVE (which
+		// hypermeow doesn't emit) or a SET with isFavorite false. A SET that
+		// leaves isFavorite out is a favourite.
+		if a.IsFavorite != nil && !a.GetIsFavorite() {
 			_ = b.store.unmarkSticker(b.ctx, hash, "favorite")
 			b.emit(model.StickersEvent{})
 			return
@@ -252,6 +274,38 @@ func (b *Backend) onStickerAppState(e *events.AppState) {
 			b.emit(model.StickersEvent{})
 		}
 	}
+}
+
+// rehashSticker files a downloaded synced sticker whose content doesn't
+// match its key (an enc- placeholder, or an index that named another hash)
+// under its real plaintext hash, merging it with any row already there, so
+// it can be sent and deduplicated like any other.
+func (b *Backend) rehashSticker(oldKey string, data []byte) {
+	ctx := b.ctx
+	var m waE2E.StickerMessage
+	var recentTS, fav int64
+	var blob []byte
+	if b.db.QueryRowContext(ctx, `SELECT blob, recent_ts, favorite FROM wz_stickers WHERE hash = ?`, oldKey).
+		Scan(&blob, &recentTS, &fav) != nil || proto.Unmarshal(blob, &m) != nil {
+		return
+	}
+	sum := sha256.Sum256(data)
+	m.FileSHA256 = sum[:]
+	key := hex.EncodeToString(sum[:])
+	path := b.mediaPath(stickerChat, key)
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		b.log.Warnf("save sticker: %v", err)
+		return
+	}
+	if err := b.store.putSticker(ctx, b.db, key, &m, recentTS, fav); err != nil {
+		b.log.Warnf("rehash sticker: %v", err)
+		return
+	}
+	if key != oldKey {
+		_, _ = b.db.ExecContext(ctx, `DELETE FROM wz_stickers WHERE hash = ?`, oldKey)
+	}
+	b.emit(model.StickersEvent{})
 }
 
 func stickerFromAction(a *waSyncAction.StickerAction, sha []byte) *waE2E.StickerMessage {

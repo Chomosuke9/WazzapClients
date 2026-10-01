@@ -302,6 +302,12 @@ func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 
 // SendSticker implements model.Backend. The sticker becomes a recent one.
 func (b *Backend) SendSticker(chatID string, sticker, reply *model.Message) {
+	if sticker.ChatID == stickerChat && strings.HasPrefix(sticker.ID, encStickerPrefix) {
+		// Its plaintext hash, which a sent sticker carries, is known only
+		// once it has downloaded and been re-keyed (rehashSticker).
+		b.emit(model.NoticeEvent{Text: "This sticker is still loading."})
+		return
+	}
 	if b.connected() == nil || !b.sendCopy(sticker, chatID, false, reply) {
 		return
 	}
