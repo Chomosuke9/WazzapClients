@@ -456,11 +456,13 @@ func (b *Backend) handle(evt any) {
 
 	case *events.ChatPresence:
 		chat := b.canonical(ctx, e.Chat)
-		who := ""
+		// Who must not be empty: the UI reads an empty Typing as nobody.
+		who, whoID := b.chatName(ctx, chat), ""
 		if e.IsGroup {
 			who = b.senderName(ctx, e.Sender, "", "")
+			whoID = b.canonical(ctx, e.Sender.ToNonAD()).String()
 		}
-		b.emit(model.TypingEvent{ChatID: chat.String(), Who: who, Typing: e.State == types.ChatPresenceComposing})
+		b.emit(model.TypingEvent{ChatID: chat.String(), Who: who, WhoID: whoID, Typing: e.State == types.ChatPresenceComposing})
 	case *events.Presence:
 		text := "online"
 		if e.Unavailable {

@@ -124,6 +124,18 @@ func (b *Backend) lookup(ctx context.Context, j types.JID) contactNames {
 	return n
 }
 
+// storedPush returns the newest push name stored with j's messages, under
+// its LID or its phone JID.
+func (b *Backend) storedPush(ctx context.Context, j types.JID) string {
+	alt := ""
+	if cli := b.client(); cli != nil {
+		if a, err := cli.Store.GetAltJID(ctx, j); err == nil && !a.IsEmpty() {
+			alt = a.ToNonAD().String()
+		}
+	}
+	return b.store.lastPush(ctx, j.String(), alt)
+}
+
 // formatPhone renders a phone number the way WhatsApp does for Indonesian
 // mobile numbers ("+62 812-3456-7890"); other countries get "+<digits>",
 // since proper grouping needs a numbering-plan database.
@@ -187,6 +199,12 @@ func (b *Backend) senderName(ctx context.Context, j types.JID, push, legacy stri
 	n := b.lookup(ctx, j)
 	if n.push == "" {
 		n.push = push
+	}
+	if n.saved == "" && n.business == "" && n.push == "" {
+		// The device store keeps only push names it saw arrive. Messages
+		// stored with this person's push name know it too (mentions of
+		// someone whose messages came from history, for one).
+		n.push = b.storedPush(ctx, j)
 	}
 	if allDigits(legacy) || strings.HasPrefix(legacy, "+") {
 		legacy = ""
@@ -291,7 +309,11 @@ func (b *Backend) guessMentions(ctx context.Context, text string) string {
 				return markedMention(model.MentionNotifies, "You")
 			}
 			n := b.lookup(ctx, j)
-			if name := first(n.saved, n.business, tilde(n.push)); name != "" {
+			name := first(n.saved, n.business, tilde(n.push))
+			if name == "" {
+				name = tilde(b.storedPush(ctx, j))
+			}
+			if name != "" {
 				return mention(name)
 			}
 		}
