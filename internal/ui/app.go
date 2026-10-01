@@ -497,6 +497,7 @@ func (u *UI) Layout(gtx C) D {
 		return D{Size: sz}
 	}
 	u.applyFocus(gtx)
+	u.expireMutes(gtx)
 	u.flushClipboard(gtx)
 	u.update(gtx)
 	u.layoutMain(gtx)

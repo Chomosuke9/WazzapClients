@@ -77,6 +77,11 @@ func TestInfoActions(t *testing.T) {
 	if c := u.chatByID("family"); !c.Muted || c.MuteUntil.Sub(time.Now()) < 7*time.Hour {
 		t.Errorf("Mute for 8 hours left muted=%v until %v", c.Muted, c.MuteUntil)
 	}
+	now = now.Add(9 * time.Hour)
+	frame()
+	if c := u.chatByID("family"); c.Muted {
+		t.Error("the mute outlasted its 8 hours")
+	}
 	for range 30 {
 		frame()
 	}

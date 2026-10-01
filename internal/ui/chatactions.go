@@ -3,6 +3,8 @@ package ui
 import (
 	"time"
 
+	"gioui.org/op"
+
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -44,6 +46,24 @@ func (u *UI) muteMenuItems(c *model.Chat) []menuItem {
 		menuItem{divider: true},
 		menuItem{note: true, label: "Muted chats still notify you when you're mentioned or replied to."},
 	)
+}
+
+// expireMutes unmutes the chats whose timed mute has ended, which the
+// backend doesn't announce, and wakes the window when the next one ends.
+func (u *UI) expireMutes(gtx C) {
+	var next time.Time
+	for _, c := range u.chats {
+		switch {
+		case !c.Muted || c.MuteUntil.IsZero():
+		case !gtx.Now.Before(c.MuteUntil):
+			c.Muted, c.MuteUntil = false, time.Time{}
+		case next.IsZero() || c.MuteUntil.Before(next):
+			next = c.MuteUntil
+		}
+	}
+	if !next.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: next})
+	}
 }
 
 // openListsMenu opens the "Add to list" checkboxes at the pointer. It stays
