@@ -195,24 +195,13 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		}
 		u.openNewGroup(members)
 	}
-	// The actions at the bottom of the panel are spaced a little wider.
-	tall := infoGeom
-	tall.height = 65.5
-	action := func(key string, it listItem) layout.Widget {
-		return func(gtx C) D { return u.layoutListItem(gtx, u.btn("info:"+key), it, tall) }
-	}
-	notif := "All messages"
-	notifIc := icBell
-	if c.Muted {
-		notif, notifIc = "Muted always", icMuted
-	}
 	disappearing := "Off"
 	if d := info.Disappearing; d > 0 {
 		disappearing = durationLabel(d)
 	}
 	rows = append(rows,
 		item("starred", listItem{ic: icStar, title: "Starred messages"}),
-		item("notif", listItem{ic: notifIc, title: "Notification settings", sub: notif}),
+		u.infoNotifRow(c, "All messages"),
 		item("theme", listItem{ic: icPalette, title: "Chat theme"}),
 		item("encryption", listItem{ic: icLockOutline, title: "Encryption", sub: "Messages are end-to-end encrypted. Click to learn more."}),
 		item("disappearing", listItem{glyph: disappearingIcon, title: "Disappearing messages", sub: disappearing}),
@@ -253,13 +242,19 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 	}
 	rows = append(rows,
 		func(gtx C) D { return layout.Spacer{Height: 1}.Layout(gtx) },
-		action("changes", listItem{ic: icList, title: "See member changes"}),
-		action("fav", listItem{ic: icHeart, title: "Add to favourites"}),
-		action("list", listItem{ic: icAddToList, title: "Add to list"}),
-		action("clear", listItem{ic: icClear, title: "Clear chat", danger: true}),
-		action("exit", listItem{ic: icLogout, title: "Exit group", danger: true}),
-		action("report", listItem{ic: icThumbDown, title: "Report group", danger: true}),
+		u.infoRow("changes", listItem{ic: icList, title: "See member changes"}, nil),
 	)
+	// Actions on the chat need it in the chat list.
+	if chat := u.chatByID(c.ID); chat != nil {
+		id, name := chat.ID, info.Name
+		rows = append(rows,
+			u.infoFavRow(chat),
+			u.infoRow("list", listItem{ic: icAddToList, title: "Add to list"}, func() { u.openListsMenu(chat) }),
+			u.infoRow("clear", listItem{ic: icClear, title: "Clear chat", danger: true}, func() { u.confirmClearChat(id) }),
+			u.infoRow("exit", listItem{ic: icLogout, title: "Exit group", danger: true}, func() { u.confirmExitGroup(id, name) }),
+		)
+	}
+	rows = append(rows, u.infoRow("report", listItem{ic: icThumbDown, title: "Report group", danger: true}, u.reportUnsupported))
 	if !info.Created.IsZero() {
 		by := ""
 		if info.CreatedBy != "" {
@@ -272,6 +267,48 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		})
 	}
 	return rows
+}
+
+// infoRow is one of the taller rows at the bottom of an info panel. run
+// may be nil while the row does nothing yet.
+func (u *UI) infoRow(key string, it listItem, run func()) layout.Widget {
+	g := infoGeom
+	g.height = 65.5
+	return func(gtx C) D {
+		b := u.btn("info:" + key)
+		if b.Clicked(gtx) && run != nil {
+			run()
+		}
+		return u.layoutListItem(gtx, b, it, g)
+	}
+}
+
+// infoFavRow adds the chat to favourites or takes it out.
+func (u *UI) infoFavRow(chat *model.Chat) layout.Widget {
+	title := "Add to favourites"
+	if chat.Favorite {
+		title = "Remove from favourites"
+	}
+	id, fav := chat.ID, chat.Favorite
+	return u.infoRow("fav", listItem{ic: icHeart, title: title}, func() { u.backend.SetFavorite(id, !fav) })
+}
+
+// infoNotifRow shows how the chat notifies and opens the mute choices.
+// unmuted is its subtitle while the chat isn't muted.
+func (u *UI) infoNotifRow(c *model.Chat, unmuted string) layout.Widget {
+	sub, ic := unmuted, icBell
+	if c.Muted {
+		sub, ic = muteStatus(c), icMuted
+	}
+	return func(gtx C) D {
+		b := u.btn("info:notif")
+		if b.Clicked(gtx) {
+			if chat := u.chatByID(c.ID); chat != nil {
+				u.openMuteMenu(chat)
+			}
+		}
+		return u.layoutListItem(gtx, b, listItem{ic: ic, title: "Notification settings", sub: sub}, infoGeom)
+	}
 }
 
 func durationLabel(secs uint32) string {

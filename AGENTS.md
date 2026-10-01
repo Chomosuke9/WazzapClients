@@ -163,9 +163,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    select mode live in compose.go;
                    document cards and the voice/audio player in files.go; selecting message
                    text in textsel.go; the composer's formatting toolbar in formatbar.go; the attach
-                   menu, file tray and poll dialog in attach.go; the New chat panel and the
-                   New group flow (also "Create a similar group") in newchat.go; animation
-                   helpers in anim.go
+                   menu, file tray and poll dialog in attach.go; animation helpers in anim.go;
+                   chat actions shared by menus and info panels (mute choices, lists,
+                   clear/exit/delete confirms) in chatactions.go; the New chat panel and the
+                   New group flow (also "Create a similar group") in newchat.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
@@ -286,7 +287,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
-# Render one overlay with demo data (chatmenu, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
+# Render one overlay with demo data (chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
 # delete, select, mention, mentioned; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots

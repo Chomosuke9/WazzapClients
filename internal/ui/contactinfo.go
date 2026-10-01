@@ -51,18 +51,13 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 	item := func(key string, it listItem) layout.Widget {
 		return func(gtx C) D { return u.layoutListItem(gtx, u.btn("info:"+key), it, infoGeom) }
 	}
-	notif := ""
-	notifIc := icBell
-	if c.Muted {
-		notif, notifIc = "Muted always", icMuted
-	}
 	disappearing := "Off"
 	if d := info.Disappearing; d > 0 {
 		disappearing = durationLabel(d)
 	}
 	rows = append(rows,
 		item("starred", listItem{ic: icStar, title: "Starred messages"}),
-		item("notif", listItem{ic: notifIc, title: "Notification settings", sub: notif}),
+		u.infoNotifRow(c, ""),
 		item("disappearing", listItem{glyph: disappearingIcon, title: "Disappearing messages", sub: disappearing}),
 		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: "Off"}),
 		item("theme", listItem{ic: icPalette, title: "Chat theme"}),
@@ -91,34 +86,17 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 	}
 
 	// Actions. Those about the chat itself need one to exist.
-	tall := infoGeom
-	tall.height = 65.5
-	action := func(key string, it listItem, run func()) layout.Widget {
-		return func(gtx C) D {
-			b := u.btn("info:" + key)
-			if b.Clicked(gtx) && run != nil {
-				run()
-			}
-			return u.layoutListItem(gtx, b, it, tall)
-		}
-	}
+	action := u.infoRow
 	b := u.backend
 	id, name := c.ID, info.Name
 	chat := u.chatByID(id)
 	rows = append(rows, u.infoDivider(12, 8))
 	if chat != nil {
-		fav := "Add to favourites"
-		if chat.Favorite {
-			fav = "Remove from favourites"
-		}
 		rows = append(rows,
-			action("fav", listItem{ic: icHeart, title: fav}, func() { b.SetFavorite(id, !chat.Favorite) }),
-			action("list", listItem{ic: icAddToList, title: "Add to list"}, nil),
+			u.infoFavRow(chat),
+			action("list", listItem{ic: icAddToList, title: "Add to list"}, func() { u.openListsMenu(chat) }),
 			action("export", listItem{ic: icDownload, title: "Export chat"}, func() { b.ExportChat(id) }),
-			action("clear", listItem{ic: icClear, title: "Clear chat", danger: true}, func() {
-				u.confirm("Clear this chat?", "Messages will only be removed from this device and your devices on the newer versions of WhatsApp.",
-					dialogButton{label: "Clear chat", primary: true, run: func() { b.ClearChat(id) }})
-			}),
+			action("clear", listItem{ic: icClear, title: "Clear chat", danger: true}, func() { u.confirmClearChat(id) }),
 		)
 	}
 	if info.Blocked {
@@ -133,19 +111,9 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 	if info.Business != nil {
 		report = "Report business"
 	}
-	rows = append(rows, action("report", listItem{ic: icThumbDown, title: report, danger: true}, func() {
-		u.toast("Reporting isn't supported in this app yet. Report from your phone.")
-	}))
+	rows = append(rows, action("report", listItem{ic: icThumbDown, title: report, danger: true}, u.reportUnsupported))
 	if chat != nil {
-		rows = append(rows, action("delete", listItem{ic: icDelete, title: "Delete chat", danger: true}, func() {
-			u.confirm("Delete this chat?", "Messages will be removed from this device and your other linked devices.",
-				dialogButton{label: "Delete chat", primary: true, danger: true, run: func() {
-					if u.selected != nil && u.selected.ID == id {
-						u.closeChat()
-					}
-					b.DeleteChat(id)
-				}})
-		}))
+		rows = append(rows, action("delete", listItem{ic: icDelete, title: "Delete chat", danger: true}, func() { u.confirmDeleteChat(id) }))
 	}
 	return append(rows, func(gtx C) D { return layout.Spacer{Height: 24}.Layout(gtx) })
 }

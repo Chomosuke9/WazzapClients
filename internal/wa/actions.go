@@ -639,13 +639,18 @@ func (b *Backend) SetArchived(chatID string, archived bool) {
 	})
 }
 
-func (b *Backend) SetMuted(chatID string, muted bool) {
+func (b *Backend) SetMuted(chatID string, muted bool, d time.Duration) {
 	v := int64(0)
-	if muted {
+	var end *int64
+	switch {
+	case muted && d > 0:
+		v = time.Now().Add(d).Unix()
+		end = proto.Int64(v * 1000) // milliseconds
+	case muted:
 		v = -1
 	}
 	b.chatAction(chatID, "muted_until", v, func(j types.JID) appstate.PatchInfo {
-		return appstate.BuildMute(j, muted, 0)
+		return appstate.BuildMuteAbs(j, muted, end)
 	})
 }
 
