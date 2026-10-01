@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -144,6 +145,18 @@ func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
 		return nil
 	}
 	return append([]*model.Message(nil), m[i:min(len(m), i+limit)]...)
+}
+
+func (b *Backend) SearchMessages(chatID, query string, limit int) []*model.Message {
+	q := strings.ToLower(query)
+	var out []*model.Message
+	m := b.msgs[chatID]
+	for i := len(m) - 1; i >= 0 && len(out) < limit; i-- {
+		if m[i].Kind != model.KindDeleted && strings.Contains(strings.ToLower(m[i].Text), q) {
+			out = append(out, m[i])
+		}
+	}
+	return out
 }
 
 func (b *Backend) PinnedMessage(chatID string) *model.Message {

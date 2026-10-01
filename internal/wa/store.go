@@ -447,6 +447,21 @@ func (s *msgStore) pinnedMessage(ctx context.Context, chat string) (rawMsg, bool
 	return m, err == nil
 }
 
+// searchMessages returns up to limit messages of a chat whose text
+// contains query, newest first. SQLite's LIKE ignores case for ASCII
+// letters only; deleted and unsupported messages are left out.
+func (s *msgStore) searchMessages(ctx context.Context, chat, query string, limit int) ([]rawMsg, error) {
+	pat := "%" + likeEscaper.Replace(query) + "%"
+	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
+		SELECT *, rowid AS rid FROM wz_messages
+		WHERE chat = ? AND kind NOT IN (?, ?) AND text LIKE ? ESCAPE '\'
+		ORDER BY ts DESC, rid DESC LIMIT ?
+	)`, chat, int(model.KindDeleted), int(model.KindUnsupported), pat, limit)
+}
+
+// likeEscaper escapes LIKE's wildcards (with ESCAPE '\').
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
 func (s *msgStore) queryMessages(ctx context.Context, q string, args ...any) ([]rawMsg, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {

@@ -306,6 +306,11 @@ func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
 	return b.resolveMessages(chatID, raw, err)
 }
 
+func (b *Backend) SearchMessages(chatID, query string, limit int) []*model.Message {
+	raw, err := b.store.searchMessages(b.ctx, chatID, query, limit)
+	return b.resolveMessages(chatID, raw, err)
+}
+
 func (b *Backend) PinnedMessage(chatID string) *model.Message {
 	r, ok := b.store.pinnedMessage(b.ctx, chatID)
 	if !ok {

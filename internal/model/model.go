@@ -467,6 +467,9 @@ type Backend interface {
 	// MessagesFrom returns up to limit messages from message id (included)
 	// on, oldest first. It returns none when id isn't stored.
 	MessagesFrom(chatID, id string, limit int) []*Message
+	// SearchMessages returns up to limit messages of a chat whose text
+	// contains query (ignoring case), newest first.
+	SearchMessages(chatID, query string, limit int) []*Message
 	// PinnedMessage returns the chat's most recently pinned message, or nil.
 	PinnedMessage(chatID string) *Message
 	// Open is called when the user opens a chat: mark it read, subscribe to presence.
