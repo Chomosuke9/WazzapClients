@@ -23,7 +23,7 @@ type menuState struct {
 func (u *UI) updateMenu(gtx C) {
 	m := &u.menu
 	if m.theme.Clicked(gtx) {
-		u.SetDark(!u.dark)
+		u.setTheme(!u.dark)
 		m.open = false
 	}
 	if m.logout.Clicked(gtx) {

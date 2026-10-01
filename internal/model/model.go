@@ -258,6 +258,23 @@ type BusinessHours struct {
 	Open, Close int
 }
 
+// Contact is a saved contact who is on WhatsApp.
+type Contact struct {
+	ID    string // the one-to-one chat ID
+	Name  string
+	Phone string // formatted, when known
+}
+
+// NewGroup is a group to create.
+type NewGroup struct {
+	Name    string
+	Members []string // one-to-one chat IDs; you are added anyway
+	// Photo is the group's picture, a JPEG, or nil.
+	Photo []byte
+	// Disappearing is the disappearing-messages timer in seconds (0 = off).
+	Disappearing uint32
+}
+
 // CommonGroup is a group you share with a contact.
 type CommonGroup struct {
 	ID   string
@@ -292,6 +309,30 @@ type StatusThread struct {
 
 // Last returns the newest update.
 func (t *StatusThread) Last() *StatusUpdate { return t.Updates[len(t.Updates)-1] }
+
+// StatusPost is a status update to post: Text on a Background color, or
+// a photo or video (File) with Text as its caption.
+type StatusPost struct {
+	Text       string
+	Background uint32 // ARGB, for text
+	File       *Attachment
+}
+
+// StatusAudience is who sees your status updates, as set on your phone.
+type StatusAudience int
+
+const (
+	AudienceContacts StatusAudience = iota // all your contacts
+	AudienceExcept                         // your contacts except some
+	AudienceOnly                           // only some contacts
+)
+
+// StatusPrivacy is your status privacy setting. Count is how many contacts
+// the "except" or "only" list holds.
+type StatusPrivacy struct {
+	Audience StatusAudience
+	Count    int
+}
 
 // Viewed reports whether every update has been seen.
 func (t *StatusThread) Viewed() bool {
@@ -426,6 +467,26 @@ type SearchEvent struct {
 	Msgs          []*Message
 }
 
+// PhoneEvent answers Backend.LookupPhone. ID is the number's chat ID, or
+// "" when it isn't on WhatsApp; Err is set when the check failed.
+type PhoneEvent struct {
+	Phone string // as passed to LookupPhone
+	ID    string
+	Name  string // a name to show, when known
+	Err   string
+}
+
+// GroupCreatedEvent answers Backend.CreateGroup: ChatID is the new group,
+// or "" when it couldn't be created (Err says why).
+type GroupCreatedEvent struct {
+	ChatID string
+	Err    string
+}
+
+// AccountEvent reports that your profile, privacy settings or blocked
+// contacts (Backend.Account) changed.
+type AccountEvent struct{}
+
 // DeletedEvent reports that messages were removed from a chat (deleted for
 // you, or the chat was cleared). IDs is nil when the whole chat was cleared.
 type DeletedEvent struct {
@@ -433,24 +494,27 @@ type DeletedEvent struct {
 	IDs    []string
 }
 
-func (ConnEvent) isEvent()        {}
-func (ChatsEvent) isEvent()       {}
-func (ChatEvent) isEvent()        {}
-func (MessageEvent) isEvent()     {}
-func (ReceiptEvent) isEvent()     {}
-func (TypingEvent) isEvent()      {}
-func (PresenceEvent) isEvent()    {}
-func (SyncEvent) isEvent()        {}
-func (AvatarEvent) isEvent()      {}
-func (MediaEvent) isEvent()       {}
-func (InfoEvent) isEvent()        {}
-func (StatusEvent) isEvent()      {}
-func (ChannelsEvent) isEvent()    {}
-func (CommunitiesEvent) isEvent() {}
-func (NoticeEvent) isEvent()      {}
-func (StickersEvent) isEvent()    {}
-func (DeletedEvent) isEvent()     {}
-func (SearchEvent) isEvent()      {}
+func (ConnEvent) isEvent()         {}
+func (ChatsEvent) isEvent()        {}
+func (ChatEvent) isEvent()         {}
+func (MessageEvent) isEvent()      {}
+func (ReceiptEvent) isEvent()      {}
+func (TypingEvent) isEvent()       {}
+func (PresenceEvent) isEvent()     {}
+func (SyncEvent) isEvent()         {}
+func (AvatarEvent) isEvent()       {}
+func (MediaEvent) isEvent()        {}
+func (InfoEvent) isEvent()         {}
+func (StatusEvent) isEvent()       {}
+func (ChannelsEvent) isEvent()     {}
+func (CommunitiesEvent) isEvent()  {}
+func (NoticeEvent) isEvent()       {}
+func (PhoneEvent) isEvent()        {}
+func (GroupCreatedEvent) isEvent() {}
+func (StickersEvent) isEvent()     {}
+func (DeletedEvent) isEvent()      {}
+func (SearchEvent) isEvent()       {}
+func (AccountEvent) isEvent()      {}
 
 // StickerSet is a tab of the sticker picker.
 type StickerSet int
@@ -547,6 +611,14 @@ type Backend interface {
 	// ClearChat deletes a chat's messages; DeleteChat removes the chat too.
 	ClearChat(chatID string)
 	DeleteChat(chatID string)
+	// Contacts lists your saved contacts who are on WhatsApp, by name.
+	Contacts() []*Contact
+	// LookupPhone checks in the background whether a phone number (digits
+	// with the country code) is on WhatsApp; a PhoneEvent answers.
+	LookupPhone(phone string)
+	// CreateGroup creates a group in the background; a GroupCreatedEvent
+	// answers, after a ChatEvent for the new chat.
+	CreateGroup(g NewGroup)
 	// LeaveGroup exits a group.
 	LeaveGroup(chatID string)
 	// SetBlocked blocks or unblocks a contact. An InfoEvent follows, and a
@@ -576,6 +648,14 @@ type Backend interface {
 	Statuses() []*StatusThread
 	// ViewStatus marks a status update as seen.
 	ViewStatus(threadID, statusID string)
+	// PostStatus posts a status update. It shows in your own thread at
+	// once (a StatusEvent follows) while it uploads and sends in the
+	// background; a NoticeEvent reports failure.
+	PostStatus(p StatusPost)
+	// StatusPrivacy returns who sees your status updates, or nil while it
+	// isn't known yet: it is fetched in the background and announced with
+	// a StatusEvent.
+	StatusPrivacy() *StatusPrivacy
 	// Channels lists followed channels, newest activity first.
 	Channels() []*Channel
 	// SuggestedChannels lists channels to follow.
@@ -584,6 +664,22 @@ type Backend interface {
 	FollowChannel(id string)
 	// Communities lists the user's communities.
 	Communities() []*Community
+	// Account returns your profile and settings as last fetched. Fresh
+	// ones are fetched in the background, once a session and again when
+	// they change, and announced with an AccountEvent.
+	Account() *Account
+	// SetProfileName and SetAbout change your name and about text,
+	// SetProfilePhoto your picture (from a file; "" removes it). An
+	// AccountEvent follows, or a NoticeEvent on failure.
+	SetProfileName(name string)
+	SetAbout(about string)
+	SetProfilePhoto(path string)
+	// SetPrivacy changes one of your privacy settings (a Privacy* key)
+	// to one of its values (a Who* value).
+	SetPrivacy(key, value string)
+	// SetDefaultTimer sets the disappearing messages timer of new chats
+	// (0 turns it off).
+	SetDefaultTimer(d time.Duration)
 	// Retry restarts pairing after the QR codes expired.
 	Retry()
 	// Logout unlinks this device and returns to the QR screen.
@@ -627,3 +723,44 @@ func FoldRune(r rune) rune {
 	}
 	return m
 }
+
+// Account is your own profile, account details and privacy settings.
+type Account struct {
+	ID       string // your JID
+	Phone    string // in international format, with a leading +
+	LID      string
+	Name     string
+	About    string
+	Username string
+	// Linked is when this device was linked; zero when not known.
+	Linked time.Time
+	// Privacy maps Privacy* keys to Who* values. A key that's missing
+	// isn't known yet.
+	Privacy map[string]string
+	// DefaultTimer is the disappearing messages timer of new chats, when
+	// TimerKnown.
+	DefaultTimer time.Duration
+	TimerKnown   bool
+	// Blocked lists blocked contacts, once BlockedKnown.
+	Blocked      []Contact
+	BlockedKnown bool
+}
+
+// Privacy settings, the keys of Account.Privacy.
+const (
+	PrivacyLastSeen     = "last"
+	PrivacyOnline       = "online"
+	PrivacyPhoto        = "profile"
+	PrivacyAbout        = "status"
+	PrivacyGroups       = "groupadd"
+	PrivacyReadReceipts = "readreceipts"
+)
+
+// Who can see or do something, the values of Account.Privacy.
+const (
+	WhoEveryone       = "all"
+	WhoContacts       = "contacts"
+	WhoContactsExcept = "contact_blacklist"
+	WhoNobody         = "none"
+	WhoSameAsLastSeen = "match_last_seen" // PrivacyOnline only
+)

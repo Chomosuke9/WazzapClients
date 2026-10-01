@@ -36,13 +36,15 @@ var filterNames = [...]string{"All", "Unread", "Favourites", "Groups"}
 // It is only touched from the window goroutine; backend updates arrive
 // through Backend.Poll.
 type UI struct {
-	th     *material.Theme
-	pal    *Palette
-	dark   bool
-	now    func() time.Time
-	window *app.Window // nil when rendering headless
-	host   *host       // nil when rendering headless (see Run)
-	deco   widget.Decorations
+	th   *material.Theme
+	pal  *Palette
+	dark bool
+	// doodles draws the wallpaper's doodles behind conversations.
+	doodles bool
+	now     func() time.Time
+	window  *app.Window // nil when rendering headless
+	host    *host       // nil when rendering headless (see Run)
+	deco    widget.Decorations
 	// winWidth is the window width in px, for panels sized relative to it.
 	winWidth int
 
@@ -128,6 +130,8 @@ type UI struct {
 	pageIn   tween                         // the page content fading in after a switch
 	railSel  switcher[*widget.Clickable]   // the active rail button
 	pageSeen page                          // page shown last frame, to notice switches
+
+	newChat newChatState // the New chat panel over the chat list
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
@@ -227,6 +231,11 @@ type UI struct {
 func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: time.Now, backend: b, syncPct: -1}
 	u.SetDark(true)
+	u.doodles = true
+	if b != nil { // nil in some tests
+		u.SetDark(b.Pref(prefTheme) != "light")
+		u.doodles = prefOn(b, prefDoodles)
+	}
 	u.images = newImageCache(240, 32<<20)
 	u.emojiImgs = newImageCache(600, 4<<20)
 	u.clicks.m = make(map[string]*clickEntry)
@@ -245,7 +254,7 @@ func New(b model.Backend) *UI {
 	u.sidebar.rows = make(map[string]*widget.Clickable)
 	u.conv.list.Axis = layout.Vertical
 	u.conv.list.ScrollToEnd = true
-	u.conv.composer.Submit = true
+	u.conv.composer.Submit = b == nil || prefOn(b, prefEnterSend)
 	u.conv.mentionList.Axis = layout.Vertical
 	u.hovered = make(map[string]bool)
 	return u
@@ -300,18 +309,21 @@ func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 
 // ShowPage switches the navigation rail to one of "chats", "archived",
 // "calls", "status", "channels", "communities" or "settings", or opens
-// the "general" or "notifications" settings.
+// one of the settingsViews.
 func (u *UI) ShowPage(name string) {
 	pages := map[string]page{"chats": pageChats, "archived": pageChats, "calls": pageCalls, "status": pageStatus,
-		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings,
-		"general": pageSettings, "notifications": pageSettings}
+		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings}
+	v, isSetting := settingsViews[name]
+	if isSetting {
+		pages[name] = pageSettings
+	}
 	u.setPage(pages[name])
 	u.sidebar.showArchived = name == "archived"
-	switch name {
-	case "general":
-		u.openSettings(settingGeneral)
-	case "notifications":
-		u.openSettings(settingNotifications)
+	if isSetting {
+		u.openSettings(v.category)
+		if v.sub != "" {
+			u.openSettingsSub(v.sub)
+		}
 	}
 }
 
@@ -355,10 +367,16 @@ func (u *UI) setPage(pg page) {
 		}
 	}
 	u.page = pg
+	u.closeNewChat()
 	u.settings.detail = 0
 	u.hideInfo()
 	u.hideChatSearch()
 	u.status.viewer.close()
+	u.closeStatusText()
+	if u.postingStatus() {
+		// Status updates are only written on the Status page.
+		u.closeSendView(false)
+	}
 }
 
 // SelectName opens the first chat with the given name.
@@ -514,6 +532,7 @@ func (u *UI) Layout(gtx C) D {
 	u.layoutMenu(gtx)
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
+	u.layoutStatusText(gtx)
 	u.layoutViewer(gtx)
 	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
@@ -598,7 +617,13 @@ func (u *UI) layoutPageSidebar(gtx C) D {
 	case pageCalls:
 		return u.layoutCallsList(gtx)
 	}
-	return u.layoutSidebar(gtx)
+	if u.newChatCovers() {
+		u.layoutNewChat(gtx)
+		return D{Size: gtx.Constraints.Max}
+	}
+	d := u.layoutSidebar(gtx)
+	u.layoutNewChat(gtx)
+	return d
 }
 
 // layoutRightPane draws the open conversation (with the info panel beside
@@ -609,6 +634,16 @@ func (u *UI) layoutRightPane(gtx C) D {
 			return u.layoutConversation(gtx)
 		}
 		return u.layoutWithInfo(gtx)
+	}
+	if u.page == pageStatus && u.attach.chatID == statusChatID {
+		// Photos and videos to post cover the pane like a chat's send view.
+		if sv := u.sendViewStep(gtx); sv > 0 {
+			if sv < 1 {
+				u.layoutPlaceholder(gtx)
+			}
+			u.layoutSendView(gtx, sv)
+			return D{Size: gtx.Constraints.Max}
+		}
 	}
 	d := u.layoutPlaceholder(gtx)
 	u.veil(gtx, image.Rectangle{Max: d.Size}, u.pal.Panel, easeOut(u.pageIn.v)) // fades in with the page
@@ -704,7 +739,9 @@ func (u *UI) update(gtx C) {
 		u.setPage(pageChats)
 		u.sidebar.list.Position = layout.Position{}
 	}
+	u.updateNewChat(gtx)
 	if u.rail.chats.Clicked(gtx) || u.sidebar.back.Clicked(gtx) {
+		u.newChat.step = ncNone
 		u.sidebar.showArchived = false
 		u.setPage(pageChats)
 		u.sidebar.list.Position = layout.Position{}
@@ -764,6 +801,7 @@ func (u *UI) update(gtx C) {
 	}
 	u.updateAttach()
 	u.updatePaste(gtx)
+	u.ctrlEnterKeys(gtx)
 	for {
 		ev, ok := u.conv.composer.Update(gtx)
 		if !ok {
@@ -778,6 +816,25 @@ func (u *UI) update(gtx C) {
 	}
 }
 
+// ctrlEnterKeys sends the composer's message on Ctrl+Enter while Enter
+// adds a line (see setEnterSend).
+func (u *UI) ctrlEnterKeys(gtx C) {
+	ed := &u.conv.composer
+	if ed.Submit {
+		return
+	}
+	for {
+		ev, ok := gtx.Event(key.Filter{Focus: ed, Name: key.NameReturn, Required: key.ModShortcut},
+			key.Filter{Focus: ed, Name: key.NameEnter, Required: key.ModShortcut})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			u.sendComposer()
+		}
+	}
+}
+
 // escape closes the topmost overlay, like WhatsApp's Esc.
 func (u *UI) escape() {
 	switch {
@@ -785,6 +842,8 @@ func (u *UI) escape() {
 		u.closeMenu()
 	case u.dialog.isOpen():
 		u.closeDialog()
+	case u.status.text.isOpen():
+		u.closeStatusText()
 	case u.picker.open:
 		u.closePicker()
 	case u.viewer.open:
@@ -808,6 +867,8 @@ func (u *UI) escape() {
 		}
 	case u.search.open:
 		u.search.open = false
+	case u.newChat.open():
+		u.newChatBack()
 	case u.conv.selecting:
 		u.endSelect()
 	case u.conv.reply != nil:
@@ -815,7 +876,7 @@ func (u *UI) escape() {
 	case u.status.viewer.isOpen():
 		u.status.viewer.close()
 	case u.page == pageSettings && u.settings.detail != 0:
-		u.settings.detail = 0
+		u.settingsBack()
 	}
 }
 
@@ -864,6 +925,14 @@ func (u *UI) applyEvents() {
 			}
 		case model.AvatarEvent:
 			u.images.forget("a:" + e.ID)
+		case model.AccountEvent:
+			a := u.backend.Account()
+			if a.Name != "" {
+				u.me = a.Name
+			}
+			if s := &u.settings; s.detail != 0 {
+				s.account, s.stale = a, true
+			}
 		case model.MediaEvent:
 			u.images.forget("m:" + e.ChatID + "/" + e.MsgID)
 			if e.ChatID == statusChatID {
@@ -876,6 +945,10 @@ func (u *UI) applyEvents() {
 			u.fileDownloaded(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
+		case model.PhoneEvent:
+			u.phoneEvent(e)
+		case model.GroupCreatedEvent:
+			u.groupCreated(e)
 		case model.DeletedEvent:
 			u.searchChatChanged(e.ChatID)
 			if u.selected != nil && u.selected.ID == e.ChatID {
@@ -1044,8 +1117,11 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
-// "select", "attach", "poll", "contacts", "tray", "search" (the search
-// panel, with $WAZZAP_DEMO_SEARCH typed in) or "membersearch".
+// "select", "attach", "poll", "contacts", "tray", "search" (the search panel, with
+// $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
+// "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
+// "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
+// open chat) or "newgroup".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1132,6 +1208,28 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openPoll()
 	case "contacts":
 		u.openContactPicker()
+	case "newchat", "newnumber":
+		u.openNewChat()
+		if name == "newnumber" {
+			u.newChat.search.SetText("+62 812 5550 0199")
+		}
+		u.newChat.snap()
+	case "newmembers", "newgroup":
+		var members []model.Contact
+		if info := u.backend.Info(u.selected.ID); info != nil {
+			for _, m := range info.Members {
+				if !m.Me {
+					members = append(members, model.Contact{ID: m.ID, Name: m.Name})
+				}
+			}
+		}
+		u.openNewGroup(members)
+		if name == "newgroup" {
+			u.newChat.step = ncGroup
+			u.newChat.name.SetText("Product Team offsite")
+			u.newChat.disappearing = 7 * 86400
+		}
+		u.newChat.snap()
 	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter":
 		// $WAZZAP_DEMO_PHOTO is a real photo to show.
 		photo := os.Getenv("WAZZAP_DEMO_PHOTO")
@@ -1152,6 +1250,29 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 		if name == "quality" {
 			u.openQualityMenu()
+		}
+	case "statusadd", "statusmenu", "statusprivacy", "statustext", "statussend":
+		// Posting a status, from the Status page.
+		u.setPage(pageStatus)
+		switch name {
+		case "statusadd":
+			u.openStatusAdd()
+		case "statusmenu":
+			u.ctx = ctxMenu{kind: ctxStatusMenu, at: u.mouse}
+		case "statusprivacy":
+			u.openStatusPrivacy()
+		case "statustext":
+			u.openStatusText()
+			u.status.text.ed.SetText("Off to the beach this weekend 🌊")
+			u.status.text.anim.snap(true)
+		case "statussend":
+			photo := os.Getenv("WAZZAP_DEMO_PHOTO")
+			if photo == "" {
+				photo = "beach.jpg"
+			}
+			u.addFiles(statusChatID, []*attachFile{{Attachment: model.Attachment{Path: photo, Media: model.MediaImage}}})
+			u.attach.anim.snap(true)
+			u.conv.composer.SetText("Sunday at the beach")
 		}
 	case "mention", "mentioned":
 		// The mention picker, or a draft with picked mentions.

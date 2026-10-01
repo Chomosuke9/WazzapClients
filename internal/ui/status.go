@@ -24,6 +24,7 @@ type statusState struct {
 	menu, add widget.Clickable
 	list      widget.List
 	viewer    statusViewer
+	text      statusTextState // writing a text status
 }
 
 // statusTime formats a status timestamp: "Today at 06:45", "Yesterday at
@@ -73,8 +74,11 @@ func (u *UI) layoutStatusList(gtx C) D {
 		}
 	}
 	now := u.now()
-	if u.status.add.Clicked(gtx) && mine != nil {
-		u.status.viewer.show(mine)
+	if u.status.add.Clicked(gtx) {
+		u.openStatusAdd()
+	}
+	if u.status.menu.Clicked(gtx) {
+		u.ctx = ctxMenu{kind: ctxStatusMenu, at: u.mouse}
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -112,9 +116,15 @@ func (u *UI) layoutStatusList(gtx C) D {
 func (u *UI) statusRow(gtx C, key string, t *model.StatusThread, title, sub string, height unit.Dp, mine bool) D {
 	p := u.pal
 	c := u.btn(key)
-	if c.Clicked(gtx) && t != nil {
-		u.status.viewer.show(t)
-		gtx.Execute(op.InvalidateCmd{})
+	if c.Clicked(gtx) {
+		switch {
+		case t != nil:
+			u.status.viewer.show(t)
+			gtx.Execute(op.InvalidateCmd{})
+		case mine:
+			// Nothing posted yet: "Click to add status update".
+			u.openStatusAdd()
+		}
 	}
 	return layout.Inset{Left: 8, Right: 18}.Layout(gtx, func(gtx C) D {
 		return clickable(gtx, c, func(gtx C) D {

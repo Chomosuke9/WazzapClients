@@ -131,6 +131,10 @@ func (u *UI) jumpTo(id string) {
 
 // sendComposer sends the composer text with its reply and mentions.
 func (u *UI) sendComposer() {
+	if u.postingStatus() {
+		u.sendAttachments()
+		return
+	}
 	if u.selected == nil {
 		return
 	}
@@ -217,7 +221,7 @@ type mentionState struct {
 // mentionQuery returns the mention being typed in a group chat, or nil.
 func (u *UI) mentionQuery() *mentionState {
 	c := u.selected
-	if c == nil || !c.IsGroup {
+	if c == nil || !c.IsGroup || u.postingStatus() {
 		return nil
 	}
 	ed := &u.conv.composer

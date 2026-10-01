@@ -28,9 +28,14 @@ type wallKey struct {
 	cell int
 }
 
-func (wp *wallpaper) layout(gtx C, bg, doodle color.NRGBA) D {
+// layout fills the area with bg and, with doodles, the doodle pattern.
+func (wp *wallpaper) layout(gtx C, bg, doodle color.NRGBA, doodles bool) D {
 	sz := gtx.Constraints.Max
 	fillRect(gtx, image.Rectangle{Max: sz}, bg)
+	if !doodles {
+		*wp = wallpaper{} // lets the tile go
+		return D{Size: sz}
+	}
 
 	cell := gtx.Dp(62)
 	k := wallKey{doodle, cell}
