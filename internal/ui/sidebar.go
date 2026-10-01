@@ -202,7 +202,7 @@ func (u *UI) filteredChats() []*model.Chat {
 				continue
 			}
 		}
-		if q != "" && !strings.Contains(strings.ToLower(c.Name), q) {
+		if q != "" && !strings.Contains(strings.ToLower(u.listName(c)), q) {
 			continue
 		}
 		out = append(out, c)
@@ -237,8 +237,10 @@ type chatOrder struct {
 	pending bool           // the order may have changed since the last frame
 	anim    tween
 	// Rows differ in height (a community's groups are taller), so each
-	// row's last drawn height is kept. Rows not drawn yet are guessed.
+	// row's last drawn height is kept, in px at metric. Rows not drawn
+	// yet are guessed.
 	heights map[string]int
+	metric  unit.Metric
 }
 
 func (o *chatOrder) measured(id string, h int) {
@@ -271,6 +273,11 @@ const fadeInRow = 1 << 20
 
 // update notices a new order of the visible chats and advances the slide.
 func (o *chatOrder) update(gtx C, visible []*model.Chat, guess func(id string) int) {
+	if gtx.Metric != o.metric {
+		// The window moved to a display with another scale.
+		o.metric = gtx.Metric
+		clear(o.heights)
+	}
 	if o.pending && len(o.prev) > 0 {
 		was := make(map[string]int, len(o.prev))
 		wasY := make(map[string]int, len(o.prev))
@@ -330,6 +337,15 @@ func (u *UI) rowClick(c *model.Chat) *widget.Clickable {
 	return cl
 }
 
+// listName is the name the chat list shows for c: WhatsApp lists a
+// community's announcements under the community's name and picture.
+func (u *UI) listName(c *model.Chat) string {
+	if cm := u.inCommunity[c.ID]; cm != nil && cm.Announcements == c.ID {
+		return cm.Name
+	}
+	return c.Name
+}
+
 func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 	click := u.rowClick(c)
 	chev := u.btn("rowmenu:" + c.ID)
@@ -346,10 +362,8 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 	shown := c
 	if cm := u.inCommunity[c.ID]; cm != nil {
 		if c.ID == cm.Announcements {
-			// WhatsApp lists the announcements under the community's
-			// name and picture.
 			ann := *c
-			ann.Name = cm.Name
+			ann.Name = u.listName(c)
 			shown = &ann
 			o.avatar = func(gtx C) D { return u.avatarOf(gtx, cm.ID, avatarCommunity, 52) }
 		} else {
