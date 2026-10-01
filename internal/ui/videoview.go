@@ -58,13 +58,12 @@ func (u *UI) syncVideo(m *model.Message) {
 	if vv.msgID != m.ID {
 		u.stopVideo()
 		vv.msgID = m.ID
-		u.loadVideo(m)
+		u.loadVideo(vv, m)
 	}
 }
 
 // loadVideo opens the video, or waits for its download.
-func (u *UI) loadVideo(m *model.Message) {
-	vv := &u.viewer.video
+func (u *UI) loadVideo(vv *videoView, m *model.Message) {
 	path := u.backend.MediaFile(m)
 	if path == "" {
 		vv.loading = true // videoDownloaded continues
@@ -80,28 +79,30 @@ func (u *UI) loadVideo(m *model.Message) {
 	vv.player = p
 }
 
-// stopVideo closes the viewer's video.
-func (u *UI) stopVideo() {
-	vv := &u.viewer.video
+// stop closes the video, keeping only the mute setting.
+func (vv *videoView) stop() {
 	if vv.player != nil {
 		vv.player.Close()
 	}
 	*vv = videoView{muted: vv.muted}
 }
 
-// videoDownloaded opens the viewer's video once its download ends.
+// stopVideo closes the viewer's video.
+func (u *UI) stopVideo() { u.viewer.video.stop() }
+
+// videoDownloaded opens the viewer's or the status viewer's video once its
+// download ends.
 func (u *UI) videoDownloaded(e model.MediaEvent) {
-	vv := &u.viewer.video
-	if !vv.loading || vv.msgID != e.MsgID {
-		return
+	if vv := &u.viewer.video; vv.loading && vv.msgID == e.MsgID {
+		vv.loading = false
+		if e.Failed {
+			return // the play button tries again
+		}
+		if m, _ := u.viewerMsg(u.viewerItems()); m != nil && m.ID == e.MsgID {
+			u.loadVideo(vv, m)
+		}
 	}
-	vv.loading = false
-	if e.Failed {
-		return // the play button tries again
-	}
-	if m, _ := u.viewerMsg(u.viewerItems()); m != nil && m.ID == e.MsgID {
-		u.loadVideo(m)
-	}
+	u.statusVideoDownloaded(e)
 }
 
 // toggleVideo plays or pauses the viewer's video.
@@ -119,14 +120,13 @@ func (u *UI) toggleVideo(gtx C, m *model.Message) {
 			vv.player.Pause()
 		}
 	case !vv.loading:
-		u.loadVideo(m) // after a failed download
+		u.loadVideo(vv, m) // after a failed download
 	}
 }
 
 // videoFrame returns the video's current frame, fitted to at most max
 // pixels, or nil before the first one.
-func (u *UI) videoFrame(max image.Point) *imgEntry {
-	vv := &u.viewer.video
+func (u *UI) videoFrame(vv *videoView, max image.Point) *imgEntry {
 	if vv.player == nil {
 		return nil
 	}

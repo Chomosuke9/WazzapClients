@@ -346,7 +346,7 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) im
 
 	var img *imgEntry
 	if isVideo(m) {
-		img = u.videoFrame(area.Size())
+		img = u.videoFrame(&v.video, area.Size())
 	} else if m.Media == model.MediaImage {
 		// The picture decodes to fit the area. Zoomed in, a sharper copy
 		// loads (twice that); it's dropped when zoomed out, because a
