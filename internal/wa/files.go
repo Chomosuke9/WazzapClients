@@ -484,6 +484,23 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 	}
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
 	defer cancel()
+	msg, inner, err := uploadMedia(ctx, cli, m, up, caption, ci, viewOnce)
+	if err != nil {
+		fail(err)
+		return
+	}
+	// Keep the uploaded message, so it can be forwarded, quoted and
+	// downloaded again on another device.
+	sm.mediaBlob = marshal(inner)
+	if err := b.store.putMessage(b.ctx, b.db, sm); err != nil {
+		b.log.Errorf("store sent file: %v", err)
+	}
+	b.sendAsync(m.ChatID, jid, m.ID, msg)
+}
+
+// uploadMedia uploads the file of a pending message and returns the message
+// to send, and the media message inside it to keep for downloads.
+func uploadMedia(ctx context.Context, cli *whatsmeow.Client, m *model.Message, up upload, caption string, ci *waE2E.ContextInfo, viewOnce bool) (*waE2E.Message, proto.Message, error) {
 	var (
 		res whatsmeow.UploadResponse
 		err error
@@ -494,8 +511,7 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 		res, err = uploadFile(ctx, cli, up.path, mediaTypes[m.Media])
 	}
 	if err != nil {
-		fail(err)
-		return
+		return nil, nil, err
 	}
 	var (
 		msg   *waE2E.Message
@@ -558,13 +574,7 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 	if ci != nil && len(ci.GroupMentions) > 0 {
 		msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 	}
-	// Keep the uploaded message, so it can be forwarded, quoted and
-	// downloaded again on another device.
-	sm.mediaBlob = marshal(inner)
-	if err := b.store.putMessage(b.ctx, b.db, sm); err != nil {
-		b.log.Errorf("store sent file: %v", err)
-	}
-	b.sendAsync(m.ChatID, jid, m.ID, msg)
+	return msg, inner, nil
 }
 
 // uploadFile uploads a file from disk, encrypting it through a temporary

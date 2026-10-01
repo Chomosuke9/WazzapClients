@@ -125,3 +125,26 @@ func flatten(img *image.RGBA) *image.RGBA {
 	}
 	return img
 }
+
+// Square crops the middle square out of the photo in data and scales it
+// down to at most side px, as a JPEG: a profile or group picture.
+func Square(data []byte, side int) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	b := img.Bounds()
+	s := min(b.Dx(), b.Dy())
+	crop := image.Rect(0, 0, s, s).Add(b.Min).Add(image.Pt((b.Dx()-s)/2, (b.Dy()-s)/2))
+	if sub, ok := img.(interface {
+		SubImage(image.Rectangle) image.Image
+	}); ok {
+		img = sub.SubImage(crop)
+	}
+	out := flatten(Shrink(img, min(s, side), min(s, side)))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, out, &jpeg.Options{Quality: 85}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}

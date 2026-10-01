@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/polymorfa/hypermeow"
@@ -60,6 +62,13 @@ type Backend struct {
 
 	infoMu      sync.Mutex
 	infoFetched map[string]bool // info panels refreshed this session
+
+	statusPriv   statusPrivacy
+	searchMu     sync.Mutex
+	searchCancel context.CancelFunc // the running SearchMessages
+
+	accountMu      sync.Mutex  // guards the cached account details
+	accountFetched atomic.Bool // account details refreshed this session
 }
 
 var _ model.Backend = (*Backend)(nil)
@@ -148,6 +157,7 @@ func (b *Backend) Start(notify func()) {
 	b.mu.Lock()
 	b.notify = notify
 	b.mu.Unlock()
+	b.dropPendingStatuses(b.ctx)
 	go b.run()
 	// WhatsApp rate-limits profile picture queries, so space them out.
 	go b.avatars.run(b.ctx, 250*time.Millisecond)
@@ -306,6 +316,30 @@ func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
 	return b.resolveMessages(chatID, raw, err)
 }
 
+func (b *Backend) SearchMessages(chatID, query string, limit int) {
+	ctx, cancel := context.WithCancel(b.ctx)
+	b.searchMu.Lock()
+	if b.searchCancel != nil {
+		b.searchCancel()
+	}
+	b.searchCancel = cancel
+	b.searchMu.Unlock()
+	go func() {
+		defer cancel()
+		var msgs []*model.Message
+		if key := model.SearchKey(query); key != "" {
+			raw, err := b.store.searchMessages(ctx, chatID, key, limit)
+			if ctx.Err() != nil {
+				return
+			}
+			msgs = b.resolveMessages(chatID, raw, err)
+		}
+		if ctx.Err() == nil {
+			b.emit(model.SearchEvent{ChatID: chatID, Query: query, Msgs: msgs})
+		}
+	}()
+}
+
 func (b *Backend) PinnedMessage(chatID string) *model.Message {
 	r, ok := b.store.pinnedMessage(b.ctx, chatID)
 	if !ok {
@@ -416,8 +450,10 @@ func (b *Backend) emitAllChats() {
 // handle runs on hypermeow's event goroutine.
 func (b *Backend) handle(evt any) {
 	ctx := b.ctx
+	b.onAccountEvent(evt)
 	switch e := evt.(type) {
 	case *events.Connected:
+		b.accountFetched.Store(false)
 		cli := b.client()
 		var meID string
 		if cli.Store.ID != nil {
@@ -892,6 +928,9 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		}
 	}
 	b.onRecentStickers(data.GetRecentStickers())
+	if gs := data.GetGlobalSettings(); gs != nil && gs.DisappearingModeDuration != nil {
+		_ = b.store.setMetaValue(ctx, defaultTimerKey, strconv.Itoa(int(gs.GetDisappearingModeDuration())))
+	}
 	b.log.Infof("history sync %s: %d conversations, progress %d%%",
 		data.GetSyncType(), len(convs), data.GetProgress())
 	if data.GetSyncType() == waHistorySync.HistorySync_PUSH_NAME {

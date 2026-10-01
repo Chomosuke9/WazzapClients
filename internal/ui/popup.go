@@ -109,9 +109,15 @@ const (
 	ctxNone ctxKind = iota
 	ctxChat
 	ctxMessage
-	ctxViewer  // the media viewer's ⋮ menu
-	ctxAttach  // the composer's attach menu
-	ctxQuality // the attach tray's photo quality menu
+	ctxViewer     // the media viewer's ⋮ menu
+	ctxAttach     // the composer's attach menu
+	ctxQuality    // the attach tray's photo quality menu
+	ctxMute       // a chat's mute durations
+	ctxLists      // a chat's "Add to list" checkboxes, on their own
+	ctxStatusAdd  // the Status page's ⊕: post photos and videos, or text
+	ctxStatusMenu // the Status page's ⋮
+	ctxGroupPhoto // the new group's picture
+	ctxGroupTimer // the new group's disappearing messages
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -160,13 +166,9 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 		add(menuItem{key: "archive", ic: icArchive, label: "Archive chat", run: func() { b.SetArchived(id, true) }})
 	}
 	if c.Muted {
-		sub := "Muted always"
-		if !c.MuteUntil.IsZero() {
-			sub = "Muted until " + c.MuteUntil.Format("02/01/2006 15:04")
-		}
-		add(menuItem{key: "mute", ic: icBellLine, label: "Unmute notifications", sub: sub, run: func() { b.SetMuted(id, false) }})
+		add(menuItem{key: "mute", ic: icBellLine, label: "Unmute notifications", sub: muteStatus(c), run: func() { b.SetMuted(id, false, 0) }})
 	} else {
-		add(menuItem{key: "mute", ic: icMuted, label: "Mute notifications", run: func() { b.SetMuted(id, true) }})
+		add(menuItem{key: "mute", ic: icMuted, label: "Mute notifications", run: func() { u.openMuteMenu(c) }})
 	}
 	if !c.Archived {
 		if c.Pinned {
@@ -198,26 +200,12 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 	}
 	add(menuItem{key: "lists", ic: icAddToList, label: "Add to list", arrow: true})
 	add(menuItem{divider: true})
-	add(menuItem{key: "clear", ic: icClear, label: "Clear chat", run: func() {
-		u.confirm("Clear this chat?", "Messages will only be removed from this device and your devices on the newer versions of WhatsApp.",
-			dialogButton{label: "Clear chat", primary: true, run: func() { b.ClearChat(id) }})
-	}})
+	add(menuItem{key: "clear", ic: icClear, label: "Clear chat", run: func() { u.confirmClearChat(id) }})
 	if c.IsGroup {
 		name := c.Name
-		add(menuItem{key: "exit", ic: icLogout, label: "Exit group", run: func() {
-			u.confirm("Exit \""+name+"\"?", "Only group admins will be notified that you left the group.",
-				dialogButton{label: "Exit group", primary: true, danger: true, run: func() { b.LeaveGroup(id) }})
-		}})
+		add(menuItem{key: "exit", ic: icLogout, label: "Exit group", run: func() { u.confirmExitGroup(id, name) }})
 	} else {
-		add(menuItem{key: "delete", ic: icDelete, label: "Delete chat", run: func() {
-			u.confirm("Delete this chat?", "Messages will be removed from this device and your other linked devices.",
-				dialogButton{label: "Delete chat", primary: true, danger: true, run: func() {
-					if u.selected != nil && u.selected.ID == id {
-						u.closeChat()
-					}
-					b.DeleteChat(id)
-				}})
-		}})
+		add(menuItem{key: "delete", ic: icDelete, label: "Delete chat", run: func() { u.confirmDeleteChat(id) }})
 	}
 	return items
 }
@@ -324,9 +312,29 @@ func (u *UI) layoutCtxMenu(gtx C) {
 				items = u.attachMenuItems(u.selected)
 			}
 		case ctxQuality:
-			if u.selected != nil && u.selected.ID == m.chatID {
+			if len(u.attach.files) > 0 && u.attach.chatID == m.chatID {
 				items = u.qualityMenuItems()
 			}
+		case ctxGroupPhoto:
+			if u.newChat.step == ncGroup {
+				items = u.groupPhotoItems()
+			}
+		case ctxGroupTimer:
+			if u.newChat.step == ncGroup {
+				items = u.groupTimerItems()
+			}
+		case ctxMute:
+			if c := u.chatByID(m.chatID); c != nil {
+				items = u.muteMenuItems(c)
+			}
+		case ctxLists:
+			if c := u.chatByID(m.chatID); c != nil {
+				items = u.listItems(c)
+			}
+		case ctxStatusAdd:
+			items = u.statusAddItems()
+		case ctxStatusMenu:
+			items = u.statusMenuItems()
 		}
 		if items == nil {
 			u.ctx = ctxMenu{} // its chat went away
@@ -341,6 +349,13 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			if it.arrow {
 				m.lists = !m.lists
 				continue
+			}
+			if m.kind == ctxLists {
+				// Ticking a box leaves the menu open for the next one.
+				if it.run != nil {
+					it.run()
+				}
+				break
 			}
 			u.closeMenu()
 			if it.run != nil {
