@@ -455,15 +455,7 @@ func (u *UI) commonGroupAvatar(gtx C, g model.CommonGroup) D {
 	if g.CommunityID == "" {
 		return u.avatarOf(gtx, g.ID, avatarGroup, 51)
 	}
-	box := gtx.Dp(52)
-	u.avatarOf(gtx, g.CommunityID, avatarCommunity, 33)
-	const d = unit.Dp(34)
-	dpx := gtx.Dp(d)
-	fillCircle(gtx, image.Pt(box-dpx/2, box-dpx/2), dpx/2+gtx.Dp(2.5), u.pal.Panel)
-	t := op.Offset(image.Pt(box-dpx, box-dpx)).Push(gtx.Ops)
-	u.avatarOf(gtx, g.ID, avatarGroup, d)
-	t.Pop()
-	return D{Size: image.Pt(box, box)}
+	return u.communityGroupAvatar(gtx, &model.Chat{ID: g.ID}, &model.Community{ID: g.CommunityID}, u.pal.Panel)
 }
 
 // infoIcon is an outlined "i" in a circle.

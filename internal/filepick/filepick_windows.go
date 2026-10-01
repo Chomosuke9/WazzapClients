@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -79,8 +80,12 @@ func open(title string, multiple bool, filters []Filter) ([]string, error) {
 		f.WriteString(flt.Name + "\x00" + pat + "\x00")
 	}
 	f.WriteString("\x00")
-	filter := syscall.StringToUTF16(f.String())
-	t := syscall.StringToUTF16(title)
+	// The filter has NULs inside, which syscall.StringToUTF16 panics on.
+	filter := utf16.Encode([]rune(f.String()))
+	t, err := syscall.UTF16FromString(title)
+	if err != nil {
+		return nil, err
+	}
 	buf := make([]uint16, 1<<16)
 	ofn := openFileName{
 		filter:      &filter[0],

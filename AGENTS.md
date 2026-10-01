@@ -76,9 +76,12 @@ Gotchas already found in the pinned version (v0.10.x):
 - Popups that must draw above later siblings (the emoji picker) use `op.Defer`, which
   keeps the local transform. Context menus instead open at `u.mouse`, the last pointer
   position in content coordinates.
-- `widget.Editor` paints all its text in one color. Colored spans (the composer's
-  @mentions) are drawn over it: see `paintMentions`. `Editor.Regions` reuses the slice
-  you pass it, so don't use it to append.
+- `widget.Editor` paints all its text, and its caret, in one color and one font. When the
+  composer's text has formatting or @mentions, the editor paints it transparent and
+  `paintComposerText` (`composertext.go`) draws the text and caret itself. Bold and italic
+  are faked (outline drawn twice, slant) so glyphs keep the advances the editor's caret
+  and selection use. Color-emoji bitmaps ignore the text color, so the editor still
+  paints them. `Editor.Regions` reuses the slice you pass it, so don't use it to append.
 - Gio makes only its window thread DPI aware on Windows. While a drag holds the mouse
   capture, Windows then reports the pointer in DPI-unaware coordinates (divided by the
   display scale), so every dragged thing lagged the pointer. `dpi_windows.go` makes the
@@ -90,7 +93,7 @@ Gotchas already found in the pinned version (v0.10.x):
   (70 KB each) for good. The emoji picker draws its emojis as pictures from
   `u.emojiImgs` instead (`emojiimg.go`); scrolling it through Labels pinned ~70 MB.
 - `x/image/draw`'s `CatmullRom` allocates dst width x src height x 32 bytes (157 MB to fit
-  a 12 MP photo to a screen). Downscale with `shrink` (`shrink.go`). Go's JPEG decoder
+  a 12 MP photo to a screen). Downscale with `photo.Shrink` (`internal/photo`). Go's JPEG decoder
   keeps all of a progressive JPEG's coefficients (~7.5 bytes/pixel), so big pictures
   decode one at a time (`acquireDecode`).
 - `golang.org/x/image/webp` can't read animated WebP. Animated stickers go through
@@ -118,9 +121,26 @@ Gotchas already found in the pinned version (v0.10.x):
   or a big `clip.RRect` fill, costs a screen-sized texture. Fill rounded rectangles with
   `fillRRect`/`paintRRect`, which only stencil the corners, and round a big panel's
   corner with a mask (`roundCorner`) instead of clipping it.
+- Gio's window thread waits for the UI goroutine while it delivers an event. Never
+  `SendMessage` to the window from the UI goroutine (it hangs both); post instead,
+  as `desktop.SetWindowIcon` does.
+- WinRT interfaces are called through vtables (`internal/notify`). Don't trust
+  remembered IIDs: one wrong digit is E_NOINTERFACE. Windows PowerShell 5.1 reads the
+  real ones and the method order from the system metadata, e.g.
+  `[Windows.UI.Notifications.ToastNotification].GetInterfaces() | % { $_.FullName + " " + $_.GUID }`
+  after loading the type with `, Windows.UI.Notifications, ContentType = WindowsRuntime`.
 - A rectangle clip under a transform that isn't a whole-pixel offset becomes a path
   too, and text outlines are rebuilt. `moveBy` rounds to whole pixels; `pushFx` counts
   real scales in `fxDepth`, under which `paintRRect` draws one path (no seams).
+- Gio clips a color-emoji bitmap to the bitmap's own size (about 136x128) before
+  scaling it to the font size, so above ~109 px only its top left corner shows. The
+  photo editor lays text and emoji out at most `markTextPx` tall and scales them up.
+- Key events go to whoever asks for them first in a frame. `updatePaste` reads Ctrl+V
+  before the composer does: files or a picture on the clipboard (`internal/osclip`)
+  open the send view, and anything else is handed back with `clipboard.ReadCmd`.
+- Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
+  OLE wants it registered on the window's own thread, so the window is subclassed and
+  the registration posted to it; the callbacks run on that thread and only queue.
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -137,23 +157,55 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    or business's sections in contactinfo.go), and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
-                   (viewer.go); replies, @mentions and select mode live in compose.go;
-                   document cards and the voice/audio player in files.go; the attach
+                   (viewer.go); the send view for picked, pasted and dropped files
+                   (sendview.go), its photo editor (mediaedit.go) and the rendering of
+                   edits and the send queue (editrender.go); replies, @mentions and
+                   select mode live in compose.go;
+                   document cards and the voice/audio player in files.go; selecting message
+                   text in textsel.go; the composer's formatting toolbar in formatbar.go; the attach
                    menu, file tray and poll dialog in attach.go; animation helpers in anim.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
+internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
+internal/osclip/   files and pictures on the system clipboard (Gio's carries only text)
 internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or
                    osascript elsewhere), run on its own goroutine
-internal/memtrim/  gives memory back to the OS after 30 s without a frame (see ui.Run)
+internal/memtrim/  gives memory back to the OS after 10 s without a frame (see ui.Run)
+internal/notify/   system notifications: WinRT toasts on Windows (replaced per chat, removed
+                   when read, Reply and Mark as read through a COM activator), notify-send
+                   or osascript elsewhere
+internal/desktop/  tray icon, one instance per data directory, start at login, window icon
+                   (Windows; stubs elsewhere)
 patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
 ```
+
+## Window lifecycle and notifications
+
+`ui.Run` (`internal/ui/host.go`) owns the process. Its goroutine is the UI goroutine
+for good, with or without a window: a helper goroutine waits for each window event and
+hands it over, so requests (tray, notification clicks, a second launch) are served even
+while the window is minimized and Gio draws no frames.
+
+- With the tray icon up and the user logged in, closing the window destroys it, which
+  frees its GPU textures, and drops the window's `UI` and the package caches
+  (`dropCaches`; add new package-level drawing caches there). The backend keeps running;
+  the next window gets a fresh `UI` built from the stored chats plus the latest
+  `ConnEvent`. `-background` starts without a window (start at login).
+- Every backend event goes through `host.poll`: the notifier (`notifications.go`) sees
+  them all, and the window's `UI` gets them through `hostBackend.Poll`. Only
+  `MessageEvent`s with `New` set notify; backends set it for messages that just arrived
+  (not history, edits, reactions or repeats).
+- Notification rules follow WhatsApp: one per chat, nothing while the window has focus,
+  muted and archived chats only for mentions and replies to you, removed once the chat
+  is read (here or on another device). Preferences are `Backend.Pref` keys, on unless
+  "off" (`prefNotify*`, `prefBackground`).
 
 ## Conventions
 
@@ -219,22 +271,25 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
 sh patches/apply.sh            # once after cloning: builds the patched go-text
 go run ./cmd/wazzap            # run the app (links to WhatsApp via QR code)
 go run ./cmd/wazzap -demo      # run with fake chats, no network
+go run ./cmd/wazzap -background  # start in the tray, without a window
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
 go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
 go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).
-# -view: chats, archived, status, channels, communities, settings, info, statusviewer,
-# contact (a group member's contact info: -contact <id>, default the demo business vivy@lid)
+# -view: chats, archived, status, channels, communities, settings, general,
+# notifications, info, statusviewer, contact (a group member's contact info:
+# -contact <id>, default the demo business vivy@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
-# Render one overlay with demo data (chatmenu, msgmenu, emoji, sticker, viewer, forward, reply,
-# delete, select, mention, mentioned) into <out>/overlay-<name>.png:
+# Render one overlay with demo data (chatmenu, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
+# delete, select, mention, mentioned; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
+# WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and
-# closing (Esc) below. Also info, message, reorder, and hover (the pointer at -at):
+# closing (Esc) below. Also info, message, reorder, typing, and hover (the pointer at -at):
 go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 40ms -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \

@@ -23,7 +23,8 @@ import (
 // opens the overlay, the bottom row closes it again with Esc. Besides the
 // -overlay names, "info" opens the info panel, "message" receives a message
 // and "reorder" moves a chat up the list (these two have no closing row),
-// and "hover" moves the pointer onto the -at point and then away.
+// "hover" moves the pointer onto the -at point and then away, and "typing"
+// shows someone typing, then their message replacing the bubble.
 func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) (*image.RGBA, error) {
 	const frames = 6
 	b := mock.New()
@@ -96,6 +97,8 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 		if ms := b.Messages(chat, 1); len(ms) > 0 {
 			b.Forward(ms, []string{"gym"})
 		}
+	case "typing":
+		b.SetTyping(chat, "Clara", true)
 	default:
 		u.ShowOverlay(name, x, y)
 	}
@@ -106,9 +109,15 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 	rows := [][]*image.RGBA{open}
 	if name != "message" && name != "reorder" {
 		settle()
-		if name == "hover" {
+		switch name {
+		case "hover":
 			point(w-2, h-2)
-		} else {
+		case "typing":
+			// They stop typing and their message comes right after,
+			// taking the bubble's place.
+			b.SetTyping(chat, "", false)
+			b.Receive(chat, "Clara", "Sure, sending it now")
+		default:
 			u.Escape()
 		}
 		shut, err := row()

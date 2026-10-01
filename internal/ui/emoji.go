@@ -75,6 +75,7 @@ type pickMode int
 const (
 	pickComposer pickMode = iota
 	pickReaction
+	pickMedia // an emoji or sticker to put on a photo in the send view
 )
 
 type pickTab int
@@ -128,7 +129,7 @@ func (u *UI) openPicker(mode pickMode, target *model.Message) {
 		e.loaded = true
 		e.recent = strings.Fields(u.backend.Pref("recent_emoji"))
 	}
-	if mode == pickReaction {
+	if mode != pickComposer {
 		u.requestFocus(&e.search)
 	}
 }
@@ -146,10 +147,15 @@ func (u *UI) pickEmoji(ch string) {
 	}
 	e.recent = rec
 	u.backend.SetPref("recent_emoji", strings.Join(rec, " "))
-	if e.mode == pickReaction {
+	switch e.mode {
+	case pickReaction:
 		if e.target != nil {
 			u.backend.React(e.target, ch)
 		}
+		u.closePicker()
+		return
+	case pickMedia:
+		u.placeEmoji(ch)
 		u.closePicker()
 		return
 	}
@@ -239,18 +245,22 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 
 	w := min(gtx.Dp(614), maxW)
 	h := min(gtx.Dp(604), anchor.Y-gtx.Dp(8))
+	if e.mode != pickComposer {
+		// Centered in the window: anchor isn't used.
+		h = min(gtx.Dp(604), sz.Y-gtx.Dp(16))
+	}
 	if w < gtx.Dp(200) || h < gtx.Dp(200) {
 		return
 	}
 	x, y := anchor.X, anchor.Y-h
-	if e.mode == pickReaction {
+	if e.mode != pickComposer {
 		x, y = (sz.X-w)/2, (sz.Y-h)/2
 	}
 	rect := image.Rectangle{Max: image.Pt(w, h)}.Add(image.Pt(x, y))
 	// Above the composer it rises into place; for reactions it grows from
 	// the middle.
 	ev := easeOut(v)
-	if e.mode == pickReaction {
+	if e.mode != pickComposer {
 		defer pushFx(gtx, ev, scaleAt(rect.Min.Add(rect.Size().Div(2)), lerp(0.92, 1, ev))).Pop()
 	} else {
 		defer pushFx(gtx, ev, moveBy(0, float32(gtx.Dp(16))*(1-ev))).Pop()
@@ -525,6 +535,11 @@ func (u *UI) layoutStickerTab(gtx C) D {
 	}
 	stickers := u.stickerList(e.stickerSet)
 	for _, s := range stickers {
+		if e.mode == pickMedia && u.btn("sticker:"+s.ChatID+"/"+s.ID).Clicked(gtx) {
+			u.placeSticker(gtx, s)
+			u.closePicker()
+			return D{}
+		}
 		if u.btn("sticker:"+s.ChatID+"/"+s.ID).Clicked(gtx) && u.selected != nil {
 			u.backend.SendSticker(u.selected.ID, s, u.conv.reply)
 			u.conv.reply = nil

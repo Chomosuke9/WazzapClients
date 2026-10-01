@@ -54,6 +54,14 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 	return &cp
 }
 
+// Receive delivers a message from who in chat, as if it just arrived.
+func (b *Backend) Receive(chatID, who, text string) {
+	m := &model.Message{ChatID: chatID, Sender: who, SenderID: who, Text: text, Time: b.now()}
+	b.add(m)
+	cp := *m
+	b.emit(model.MessageEvent{Msg: &cp, New: true})
+}
+
 // quoteOf returns the quote of a reply to r, or nil.
 func quoteOf(r *model.Message) *model.Quote {
 	if r == nil {
@@ -88,6 +96,16 @@ func (b *Backend) SendSticker(chatID string, s, reply *model.Message) {
 }
 
 func (b *Backend) Stickers(model.StickerSet) []*model.Message { return nil }
+
+func (b *Backend) FavoriteSticker(m *model.Message) bool { return b.favs[m.ChatID+"/"+m.ID] }
+
+func (b *Backend) SetFavoriteSticker(m *model.Message, fav bool) {
+	if b.favs == nil {
+		b.favs = map[string]bool{}
+	}
+	b.favs[m.ChatID+"/"+m.ID] = fav
+	b.emit(model.StickersEvent{})
+}
 
 func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	for _, c := range chatIDs {

@@ -22,6 +22,7 @@ type Backend struct {
 	meName string
 	prefs  map[string]string
 	lists  []*model.ChatList
+	favs   map[string]bool // favourite stickers, by message
 	extras
 }
 
@@ -79,6 +80,12 @@ func (b *Backend) Start(notify func()) {
 		me = "Me Myself"
 	}
 	b.emit(model.ConnEvent{State: model.StateOnline, Me: me, MeID: "me@lid"})
+}
+
+// SetTyping shows who as typing in chat, or stops it (for filming the
+// typing bubble).
+func (b *Backend) SetTyping(chat, who string, on bool) {
+	b.emit(model.TypingEvent{ChatID: chat, Who: who, WhoID: who, Typing: on})
 }
 
 func (b *Backend) emit(e model.Event) {

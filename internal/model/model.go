@@ -159,7 +159,24 @@ type Attachment struct {
 	// Media is how it is sent: MediaImage, MediaVideo, MediaAudio or
 	// MediaDocument (any file, as is).
 	Media Media
+	// Quality is how a photo is scaled and compressed.
+	Quality Quality
+	// ViewOnce sends a photo or video that can be opened only once.
+	ViewOnce bool
 }
+
+// Quality is the size a photo is sent at.
+type Quality int
+
+const (
+	// QualityStandard fits a photo in 1600 px, compressed: small and
+	// quick to send, like WhatsApp's default.
+	QualityStandard Quality = iota
+	// QualityHD fits it in 4096 px, less compressed.
+	QualityHD
+	// QualityRaw sends a JPEG or PNG file as it is.
+	QualityRaw
+)
 
 // Poll is a poll to send.
 type Poll struct {
@@ -341,7 +358,12 @@ type ChatsEvent struct{ Chats []*Chat }
 type ChatEvent struct{ Chat *Chat }
 
 // MessageEvent inserts or updates a message (matched by ID).
-type MessageEvent struct{ Msg *Message }
+type MessageEvent struct {
+	Msg *Message
+	// New marks a message that just arrived, which may notify: not one
+	// from history, an edit, a reaction or one seen before.
+	New bool
+}
 
 // ReceiptEvent upgrades the receipt of outgoing messages.
 type ReceiptEvent struct {
@@ -459,6 +481,12 @@ type Backend interface {
 	SendSticker(chatID string, sticker, reply *Message)
 	// Stickers lists one of the sticker picker's sets, newest first.
 	Stickers(set StickerSet) []*Message
+	// FavoriteSticker reports whether a sticker message's file is one of
+	// your favourite stickers.
+	FavoriteSticker(m *Message) bool
+	// SetFavoriteSticker adds a sticker message's file to your favourite
+	// stickers, or removes it, and syncs that to your phone.
+	SetFavoriteSticker(m *Message, fav bool)
 	// Forward sends copies of messages to other chats.
 	Forward(msgs []*Message, chatIDs []string)
 	// React sets (or, with "", removes) your reaction to a message.

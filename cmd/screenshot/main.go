@@ -41,16 +41,16 @@ func main() {
 	memprofile := flag.String("memprofile", "", "write a heap profile after rendering")
 	data := flag.String("data", "", "in -compare mode, render this session's stored chats (no network)")
 	chatName := flag.String("chatname", "", "in -compare mode with -data, open the chat with this name")
-	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, info or contact")
+	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, general, notifications, info or contact")
 	contact := flag.String("contact", "vivy@lid", "in -compare mode with -view contact, the group member whose contact info opens")
 	infoScroll := flag.Int("infoscroll", 0, "in -compare mode with -view info, first visible item of the info panel")
 	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")
 	win := flag.String("win", "", "in -compare mode, render a window of this size (W,H px) and crop it like the screenshot")
 	rightAligned := flag.Bool("right", false, "with -win, the screenshot is the window's right edge")
-	overlay := flag.String("overlay", "", "render only this overlay (chatmenu, msgmenu, emoji, viewer, forward, reply, delete, select, mention, mentioned, attach, poll, contacts, tray) to <out>/overlay-<name>.png")
+	overlay := flag.String("overlay", "", "render only this overlay (chatmenu, msgmenu, stickermenu, emoji, viewer, forward, reply, delete, select, mention, mentioned, attach, poll, contacts, tray, quality, sendedit, sendcrop, sendfilter, senddoc) to <out>/overlay-<name>.png")
 	at := flag.String("at", "600,300", "with -overlay, where menus open (x,y px)")
 	overlayChat := flag.String("ochat", "rina", "with -overlay, the demo chat to open")
-	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, info, message, reorder or hover")
+	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, info, message, reorder, hover or typing")
 	step := flag.Duration("step", 30*time.Millisecond, "with -film, time between frames")
 	flag.Parse()
 	if *memprofile != "" {
@@ -133,6 +133,7 @@ func main() {
 		{"preview-channels.png", true, "", false, true, "channels"},
 		{"preview-communities.png", true, "", false, true, "communities"},
 		{"preview-settings.png", false, "", false, true, "settings"},
+		{"preview-notifications.png", true, "", false, true, "notifications"},
 	}
 	for _, s := range shots {
 		var b *mock.Backend

@@ -5,6 +5,7 @@ package wa
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/polymorfa/hypermeow/appstate"
 	"github.com/polymorfa/hypermeow/proto/waCompanionReg"
 	"github.com/polymorfa/hypermeow/proto/waHistorySync"
+	"github.com/polymorfa/hypermeow/proto/waSyncAction"
 	"github.com/polymorfa/hypermeow/store"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
@@ -511,14 +513,22 @@ func (b *Backend) handle(evt any) {
 			b.emitChat(chat)
 		}
 	case *events.ClearChat:
+		upTo, ok := clearedUpTo(e.Action.GetMessageRange(), e.Timestamp)
+		if !ok {
+			return
+		}
 		chat := b.canonical(ctx, e.JID).String()
-		_ = b.store.clearChat(ctx, chat)
+		_ = b.store.clearChat(ctx, chat, upTo)
 		if !e.FromFullSync {
 			b.emit(model.DeletedEvent{ChatID: chat})
 			b.emitChat(chat)
 		}
 	case *events.DeleteChat:
-		_ = b.store.deleteChat(ctx, b.canonical(ctx, e.JID).String())
+		upTo, ok := clearedUpTo(e.Action.GetMessageRange(), e.Timestamp)
+		if !ok {
+			return
+		}
+		_ = b.store.deleteChat(ctx, b.canonical(ctx, e.JID).String(), upTo)
 		if !e.FromFullSync {
 			b.emitAllChats()
 		}
@@ -534,7 +544,15 @@ func (b *Backend) handle(evt any) {
 
 	case *events.PushName, *events.Contact, *events.BusinessName:
 		b.names.clear()
+	case *events.AppStateSyncError:
+		if errors.Is(e.Error, appstate.ErrMismatchingLTHash) {
+			b.requestAppStateRecovery(e.Name)
+		}
 	case *events.AppStateSyncComplete:
+		if e.Recovery {
+			b.log.Infof("app state %s repaired by the phone (v%d)", e.Name, e.Version)
+			_ = b.store.setMetaValue(ctx, appStateResyncKey+":"+string(e.Name), time.Now().Format(time.RFC3339))
+		}
 		// Contact names arrive through app state; re-title chats once they're in.
 		b.names.clear()
 		b.refreshChatNames()
@@ -575,22 +593,75 @@ func (b *Backend) updateChat(j types.JID, field string, v any, quiet bool) {
 	}
 }
 
+// clearedUpTo returns the time (unix seconds) up to which a clear or delete
+// from another device removes messages: the last message it covered, or
+// else when it happened. Messages after it stay, as on the phone. App state
+// keeps these actions for good and a full sync replays them, so deleting
+// everything would wipe a chat's newer messages on every resync.
+func clearedUpTo(r *waSyncAction.SyncActionMessageRange, at time.Time) (int64, bool) {
+	if ts := r.GetLastMessageTimestamp(); ts > 0 {
+		return ts, true
+	}
+	if !at.IsZero() && at.Unix() > 0 {
+		return at.Unix(), true
+	}
+	return 0, false
+}
+
+// appStateResyncKey marks resyncAppStateOnce as done, in wz_meta. v2 also
+// picks up lists and favourites, which older versions ignored; v3 favourite
+// stickers; v4 again, for the ones v3 dropped.
+const appStateResyncKey = "appstate_resynced_v4"
+
+// recoveryGap is how long to wait before asking the phone again to repair
+// the same app state collection.
+const recoveryGap = time.Hour
+
+// requestAppStateRecovery asks the phone for a fresh copy of an app state
+// collection whose sync data no longer verifies (an LTHash mismatch), as
+// WhatsApp's own linked devices do. Until then the collection can't sync,
+// and WhatsApp rejects every change sent to it. The copy arrives as an
+// AppStateSyncComplete with Recovery set.
+func (b *Backend) requestAppStateRecovery(name appstate.WAPatchName) {
+	key := "appstate_recovery:" + string(name)
+	if t, err := time.Parse(time.RFC3339, b.store.meta(b.ctx, key)); err == nil && time.Since(t) < recoveryGap {
+		return
+	}
+	cli := b.client()
+	if cli == nil {
+		return
+	}
+	_ = b.store.setMetaValue(b.ctx, key, time.Now().Format(time.RFC3339))
+	go func() {
+		if _, err := cli.SendPeerMessage(b.ctx, whatsmeow.BuildAppStateRecoveryRequest(name)); err != nil {
+			b.log.Warnf("ask phone to repair app state %s: %v", name, err)
+			return
+		}
+		b.log.Infof("asked the phone to repair app state %s", name)
+	}()
+}
+
 // resyncAppStateOnce refetches all app state (pins, mutes, archives,
 // contacts) once per session database. Sessions linked before app state
 // events were enabled never received their pins and mutes.
 func (b *Backend) resyncAppStateOnce() {
-	// v2 also picks up lists and favourites, which older versions ignored;
-	// v3 favourite stickers; v4 again, for the ones v3 dropped.
-	const key = "appstate_resynced_v4"
+	key := appStateResyncKey
 	if b.store.meta(b.ctx, key) != "" {
 		return
 	}
 	cli := b.client()
 	for _, name := range appstate.AllPatchNames {
+		// Remember each patch that synced, so that one which keeps failing
+		// doesn't refetch all the others on every connect.
+		done := key + ":" + string(name)
+		if b.store.meta(b.ctx, done) != "" {
+			continue
+		}
 		if err := cli.FetchAppState(b.ctx, name, true, false); err != nil {
 			b.log.Warnf("resync app state %s: %v", name, err)
 			return
 		}
+		_ = b.store.setMetaValue(b.ctx, done, time.Now().Format(time.RFC3339))
 	}
 	_ = b.store.setMetaValue(b.ctx, key, time.Now().Format(time.RFC3339))
 	b.names.clear()
@@ -608,6 +679,7 @@ func (b *Backend) onMessage(e *events.Message) {
 		return
 	}
 	chat := p.msg.ChatID
+	isNew := false
 	switch {
 	case p.revoke:
 		_ = b.store.markDeleted(ctx, chat, p.target)
@@ -629,6 +701,8 @@ func (b *Backend) onMessage(e *events.Message) {
 			name = b.chatName(ctx, chatJID)
 		}
 		_, exists := b.store.chat(ctx, chat)
+		// A message can come again (a retry); it counts and notifies once.
+		_, seen := b.store.message(ctx, chat, p.msg.ID)
 		if err := b.store.ensureChat(ctx, b.db, chat, e.Info.IsGroup, name); err != nil {
 			b.log.Errorf("store chat %s: %v", chat, err)
 			return
@@ -638,7 +712,10 @@ func (b *Backend) onMessage(e *events.Message) {
 			return
 		}
 		if !p.msg.FromMe {
-			_ = b.store.addUnread(ctx, chat)
+			if !seen {
+				_ = b.store.addUnread(ctx, chat)
+				isNew = true
+			}
 		} else if p.msg.Media == model.MediaSticker && len(p.msg.mediaBlob) > 0 {
 			b.recentSticker(p.msg.mediaBlob, p.msg.Time, "", "") // sent from another device
 		}
@@ -648,7 +725,7 @@ func (b *Backend) onMessage(e *events.Message) {
 		p.target = p.msg.ID
 	}
 	if r, ok := b.store.message(ctx, chat, p.target); ok {
-		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, e.Info.IsGroup)})
+		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, e.Info.IsGroup), New: isNew})
 		b.emitChat(chat)
 	}
 }

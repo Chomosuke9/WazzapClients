@@ -9,7 +9,10 @@ import (
 	"unicode/utf8"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -311,6 +314,8 @@ type richOpts struct {
 	prefix, suffix string
 	// more, if set, ends the text with a "Read more" link that clicks it.
 	more *widget.Clickable
+	// sel, if set, is the message whose text can be selected.
+	sel string
 }
 
 // layoutRich lays out message text with WhatsApp formatting.
@@ -318,6 +323,21 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 	plain := font.Font{Typeface: typeface}
 	blocks := u.parsedRich(text, size, col, o.italic, o.pills)
 	maxW := gtx.Constraints.Max.X
+	ts := &u.textSel
+	var tag event.Tag
+	var evs []pointer.Event
+	if o.sel != "" {
+		tag = u.btn("txt:" + o.sel) // only its address is used, as an event tag
+		evs = ts.pointerEvents(gtx, tag)
+	}
+	// Carets are only needed to select, or to show a selection.
+	track := o.sel != "" && (len(evs) > 0 || ts.id == o.sel)
+	if track {
+		ts.setPlain(text, blocks)
+		ts.carets = ts.carets[:0]
+	}
+	base := 0 // the selection position of the block's first rune
+	macro := op.Record(gtx.Ops)
 	y, w := 0, 0
 	for i, b := range blocks {
 		// The parsed spans are cached: cap them so appends copy.
@@ -347,7 +367,7 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 			indent = gtx.Dp(13)
 		case blockList:
 			marker = record(gtx, func(gtx C) D {
-				return u.layoutSpans(gtx, []styledtext.SpanStyle{{Font: plain, Size: size, Color: col, Content: b.marker}}, nil, nil)
+				return u.layoutSpans(gtx, []styledtext.SpanStyle{{Font: plain, Size: size, Color: col, Content: b.marker}}, nil, nil, nil)
 			})
 			indent = max(gtx.Dp(18), marker.size.X+gtx.Dp(6))
 		}
@@ -365,7 +385,32 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 					}
 				}
 			}
-			body = record(bgtx, func(gtx C) D { return u.layoutSpans(gtx, spans, deco, onSpan) })
+			var carets *[]styledtext.Caret
+			if track {
+				ts.tmp = ts.tmp[:0]
+				carets = &ts.tmp
+			}
+			body = record(bgtx, func(gtx C) D { return u.layoutSpans(gtx, spans, deco, onSpan, carets) })
+		}
+		if track {
+			// Keep the carets of the block's own text, not of the prefix,
+			// "Read more" or the room for the time.
+			pre, n := 0, 0
+			if i == 0 && o.prefix != "" {
+				pre = utf8.RuneCountInString(o.prefix)
+			}
+			for _, s := range b.spans {
+				n += utf8.RuneCountInString(s.Content)
+			}
+			if len(spans) == 0 {
+				ts.carets = append(ts.carets, styledtext.Caret{Rune: base, X: indent, Top: y, Bottom: y + body.size.Y})
+			}
+			for _, c := range ts.tmp {
+				if r := c.Rune - pre; r >= 0 && r <= n {
+					ts.carets = append(ts.carets, styledtext.Caret{Rune: base + r, X: indent + c.X, Top: y + c.Top, Bottom: y + c.Bottom})
+				}
+			}
+			base += n + 1
 		}
 		switch b.kind {
 		case blockQuote:
@@ -378,13 +423,29 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 		y += body.size.Y
 		w = max(w, indent+body.size.X)
 	}
+	content := macro.Stop()
+	if track {
+		ts.handle(gtx, o.sel, evs)
+		if a, b, ok := ts.span(o.sel); ok {
+			u.paintSelection(gtx, ts.carets, a, b)
+		}
+	}
+	if o.sel != "" {
+		// Under the text, so the "Read more" link takes its clicks.
+		u.selectableArea(gtx, tag, o.sel, image.Pt(w, y))
+		if ts.id == o.sel {
+			u.selectionKeys(gtx, o.sel)
+		}
+	}
+	content.Add(gtx.Ops)
 	return D{Size: image.Pt(w, y)}
 }
 
 // layoutSpans draws styled text with 22sp lines, plus the decorations of
 // deco (code and pill backgrounds, strike-through lines). onSpan, if set,
-// is called for each span (or each line of one) after it is drawn.
-func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, onSpan func(gtx C, idx int, d D)) D {
+// is called for each span (or each line of one) after it is drawn. carets,
+// if set, receives the text's caret positions.
+func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, onSpan func(gtx C, idx int, d D), carets *[]styledtext.Caret) D {
 	st := styledtext.Text(u.th.Shaper, spans...)
 	st.LineHeight, st.LineHeightScale = 22, 1
 	var all spanDeco
@@ -426,6 +487,7 @@ func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, o
 			}
 		}
 	}
+	st.Carets = carets
 	return st.Layout(gtx, fn)
 }
 

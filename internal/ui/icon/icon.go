@@ -309,3 +309,32 @@ func (ic *Icon) Rasterize(z *vector.Rasterizer, x, y, size, angle float32) {
 		z.ClosePath()
 	}
 }
+
+// Badge draws ic in fg, scale times px wide, centered on a circle of bg
+// that fills a px square. It makes pictures for outside the window: the
+// app's icon and the default profile pictures of notifications.
+func Badge(px int, bg color.NRGBA, ic *Icon, scale float32, fg color.NRGBA) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, px, px))
+	z := vector.NewRasterizer(px, px)
+	r := float32(px) / 2
+	k := 0.5523 * r // control point distance for a circle of cubics
+	z.MoveTo(2*r, r)
+	z.CubeTo(2*r, r+k, r+k, 2*r, r, 2*r)
+	z.CubeTo(r-k, 2*r, 0, r+k, 0, r)
+	z.CubeTo(0, r-k, r-k, 0, r, 0)
+	z.CubeTo(r+k, 0, 2*r, r-k, 2*r, r)
+	z.ClosePath()
+	z.Draw(img, img.Bounds(), image.NewUniform(bg), image.Point{})
+	s := float32(px) * scale
+	z.Reset(px, px)
+	ic.Rasterize(z, (float32(px)-s)/2, (float32(px)-s)/2, s, 0)
+	z.Draw(img, img.Bounds(), image.NewUniform(fg), image.Point{})
+	return img
+}
+
+// FlushCache drops the rasterized icons, for when no window draws them.
+func FlushCache() {
+	rasterMu.Lock()
+	rasterCache = map[rasterKey]paint.ImageOp{}
+	rasterMu.Unlock()
+}

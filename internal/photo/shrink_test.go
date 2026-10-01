@@ -1,4 +1,4 @@
-package ui
+package photo
 
 import (
 	"image"
@@ -21,7 +21,7 @@ func TestShrink(t *testing.T) {
 			src.SetRGBA(x, y, c)
 		}
 	}
-	dst := shrink(src, 30, 20)
+	dst := Shrink(src, 30, 20)
 	if got := dst.Bounds().Size(); got != image.Pt(30, 20) {
 		t.Fatalf("size %v", got)
 	}
@@ -49,7 +49,7 @@ func TestShrink(t *testing.T) {
 			n.SetNRGBA(x, y, c)
 		}
 	}
-	d := shrink(n, 13, 8)
+	d := Shrink(n, 13, 8)
 	for y := range 8 {
 		for x := range 13 {
 			c := d.RGBAAt(x, y)
@@ -68,7 +68,7 @@ func TestShrink(t *testing.T) {
 	for i := range yc.Cb {
 		yc.Cb[i], yc.Cr[i] = 0x80, 0x80
 	}
-	if c := shrink(yc, 20, 15).RGBAAt(7, 7); c != (color.RGBA{0x80, 0x80, 0x80, 0xff}) {
+	if c := Shrink(yc, 20, 15).RGBAAt(7, 7); c != (color.RGBA{0x80, 0x80, 0x80, 0xff}) {
 		t.Errorf("grey YCbCr came out %v", c)
 	}
 }
