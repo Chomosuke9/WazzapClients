@@ -2,8 +2,10 @@ package ui
 
 import (
 	"image"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/io/input"
@@ -46,7 +48,32 @@ func TestSelectText(t *testing.T) {
 	}
 	// The last message, "Also can you send me the villa address? My mom
 	// keeps asking", wraps after "keeps"; its time sits after "asking".
-	from, to := f32.Pt(560, 580), f32.Pt(760, 603)
+	// Text widths depend on the system's fonts, so a click on the text
+	// finds where it is, and the drag aims at its characters.
+	probe := f32.Pt(560, 580)
+	click(probe)
+	off := probe.Sub(pointF(u.textSel.lastPos))
+	plain := string(u.textSel.plain)
+	// at returns the window position of rune i's caret, nudged by dx.
+	at := func(i int, dx float32) f32.Point {
+		for _, c := range u.textSel.carets {
+			if c.Rune == i {
+				return f32.Pt(float32(c.X)+dx, float32(c.Top+c.Bottom)/2).Add(off)
+			}
+		}
+		t.Fatalf("no caret at rune %d of %q", i, plain)
+		return f32.Point{}
+	}
+	runeAt := func(sub string) int {
+		i := strings.Index(plain, sub)
+		if i < 0 {
+			t.Fatalf("%q isn't in %q", sub, plain)
+		}
+		return utf8.RuneCountInString(plain[:i])
+	}
+	now = now.Add(time.Second)
+	from := at(runeAt("can you"), 2)
+	to := at(runeAt("asking")+len("asking"), -2)
 	ev(pointer.Move, from, 0)
 	ev(pointer.Press, from, pointer.ButtonPrimary)
 	ev(pointer.Move, to, pointer.ButtonPrimary)
@@ -62,8 +89,9 @@ func TestSelectText(t *testing.T) {
 	}
 
 	now = now.Add(time.Second)
-	click(f32.Pt(720, 580)) // in "villa"
-	click(f32.Pt(720, 580))
+	villa := at(runeAt("villa")+2, 0) // in "villa"
+	click(villa)
+	click(villa)
 	if got := u.textSel.selected(u.textSel.id); got != "villa" {
 		t.Errorf("the double click selected %q, want %q", got, "villa")
 	}
