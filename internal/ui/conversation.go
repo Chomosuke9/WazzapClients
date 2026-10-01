@@ -1113,32 +1113,34 @@ func (u *UI) quotedMessage(q *model.Quote) *model.Message {
 }
 
 // layoutStickerMessage draws a sticker. A sticker that replies to a
-// message has the quote in a small bubble above it, like WhatsApp.
+// message sits in a bubble, under the quote and above its time, like
+// WhatsApp.
 func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail bool, maxW int) D {
 	if m.Quote == nil {
 		return u.layoutSticker(gtx, m)
 	}
 	p := u.pal
 	out := m.FromMe
-	bg, quoteBg, secondary := p.BubbleIn, p.QuoteIn, p.TextSecondary
+	bg, quoteBg, metaCol, secondary := p.BubbleIn, p.QuoteIn, p.MetaIn, p.TextSecondary
 	if out {
-		bg, quoteBg, secondary = p.BubbleOut, p.QuoteOut, p.SecondaryOut
+		bg, quoteBg, metaCol, secondary = p.BubbleOut, p.QuoteOut, p.MetaOut, p.SecondaryOut
 	}
 	if u.btn("quote:"+m.ID).Clicked(gtx) && m.Quote.ID != "" {
 		u.jumpTo(m.Quote.ID)
 	}
-	sticker := record(gtx, func(gtx C) D { return u.layoutSticker(gtx, m) })
-	pad := gtx.Dp(3)
-	qw := min(maxW-2*pad, max(sticker.size.X, gtx.Dp(220)))
+	pad, inset := gtx.Dp(3), gtx.Dp(8)
+	sz := min(gtx.Dp(200), maxW-2*pad-2*inset)
+	w := sz + 2*inset // the inner width
 	cgtx := gtx
-	cgtx.Constraints = layout.Constraints{Max: image.Pt(qw, 1<<20)}
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
 	var sender part
 	hasSender := c.IsGroup && !out && tail && m.Sender != ""
 	if hasSender {
 		col := p.Senders[hashIndex(m.SenderID+m.Sender, len(p.Senders))]
 		sender = record(cgtx, u.label(13, m.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
 	}
-	quote := record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, qw, u.quotedMessage(m.Quote)) })
+	quote := record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, w, u.quotedMessage(m.Quote)) })
+	meta := record(cgtx, func(gtx C) D { return u.layoutMeta(gtx, m, metaCol, nil) })
 
 	content := op.Record(gtx.Ops)
 	y := 0
@@ -1154,47 +1156,28 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 		qg.Constraints = layout.Exact(quote.size)
 		clickable(qg, u.btn("quote:"+m.ID), func(gtx C) D { return D{Size: quote.size} })
 	}()
-	y += quote.size.Y
+	y += quote.size.Y + gtx.Dp(6)
+	t := op.Offset(image.Pt(inset, y)).Push(gtx.Ops)
+	u.stickerPicture(gtx, m, sz)
+	t.Pop()
+	y += sz + gtx.Dp(4)
+	meta.at(gtx, w-meta.size.X-gtx.Dp(5), y)
+	y += meta.size.Y + gtx.Dp(2)
 	call := content.Stop()
 
-	bw, bh := qw+2*pad, y+2*pad
-	w := max(bw, sticker.size.X)
-	bx, sx := 0, 0
-	if out {
-		bx, sx = w-bw, w-sticker.size.X
-	}
-	t := op.Offset(image.Pt(bx, 0)).Push(gtx.Ops)
+	bw, bh := w+2*pad, y+2*pad
 	u.paintBubble(gtx, bw, bh, bg, out, tail)
-	op.Offset(image.Pt(pad, pad)).Add(gtx.Ops)
+	t = op.Offset(image.Pt(pad, pad)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
 	t.Pop()
-	gap := gtx.Dp(4)
-	sticker.at(gtx, sx, bh+gap)
-	return D{Size: image.Pt(w, bh+gap+sticker.size.Y)}
+	return D{Size: image.Pt(bw, bh)}
 }
 
 // layoutSticker draws a sticker without a bubble, with the time on a chip.
 func (u *UI) layoutSticker(gtx C, m *model.Message) D {
 	p := u.pal
 	sz := gtx.Dp(150)
-	img := u.messageImage(m, sz*2)
-	r := image.Rect(0, 0, sz, sz)
-	if img != nil && img.state == imgReady {
-		pic, size := img.op, img.size
-		if img.animated {
-			b, chat, id := u.backend, m.ChatID, m.ID
-			if f, ok := u.stickerFrame("m:"+chat+"/"+id, sz*2, func() []byte { return b.MediaData(chat, id) }); ok {
-				pic, size = f, f.Size()
-			}
-		}
-		// Stickers keep their aspect ratio inside the square.
-		s := min(float32(sz)/float32(size.X), float32(sz)/float32(size.Y))
-		w, h := int(float32(size.X)*s), int(float32(size.Y)*s)
-		dst := image.Rect((sz-w)/2, (sz-h)/2, (sz-w)/2+w, (sz-h)/2+h)
-		paintCover(gtx, pic, size, dst)
-	} else {
-		fillRRect(gtx, r, gtx.Dp(12), argb(0x808080, 0x30))
-	}
+	u.stickerPicture(gtx, m, sz)
 	meta := record(gtx, func(gtx C) D {
 		return u.card(gtx, 8, p.BubbleIn, func(gtx C) D {
 			return layout.Inset{Left: 6, Right: 6, Top: 2, Bottom: 3}.Layout(gtx, func(gtx C) D {
@@ -1204,6 +1187,27 @@ func (u *UI) layoutSticker(gtx C, m *model.Message) D {
 	})
 	meta.at(gtx, sz-meta.size.X, sz-meta.size.Y)
 	return D{Size: image.Pt(sz, sz)}
+}
+
+// stickerPicture draws a sticker (or its placeholder) in an sz square.
+func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
+	img := u.messageImage(m, sz*2)
+	if img == nil || img.state != imgReady {
+		fillRRect(gtx, image.Rect(0, 0, sz, sz), gtx.Dp(12), argb(0x808080, 0x30))
+		return
+	}
+	pic, size := img.op, img.size
+	if img.animated {
+		b, chat, id := u.backend, m.ChatID, m.ID
+		if f, ok := u.stickerFrame("m:"+chat+"/"+id, sz*2, func() []byte { return b.MediaData(chat, id) }); ok {
+			pic, size = f, f.Size()
+		}
+	}
+	// Stickers keep their aspect ratio inside the square.
+	s := min(float32(sz)/float32(size.X), float32(sz)/float32(size.Y))
+	w, h := int(float32(size.X)*s), int(float32(size.Y)*s)
+	dst := image.Rect((sz-w)/2, (sz-h)/2, (sz-w)/2+w, (sz-h)/2+h)
+	paintCover(gtx, pic, size, dst)
 }
 
 // gradientImage stands in for photos in demo data.
