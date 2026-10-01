@@ -81,6 +81,12 @@ func (b *Backend) Start(notify func()) {
 	b.emit(model.ConnEvent{State: model.StateOnline, Me: me, MeID: "me@lid"})
 }
 
+// SetTyping shows who as typing in chat, or stops it (for filming the
+// typing bubble).
+func (b *Backend) SetTyping(chat, who string, on bool) {
+	b.emit(model.TypingEvent{ChatID: chat, Who: who, WhoID: who, Typing: on})
+}
+
 func (b *Backend) emit(e model.Event) {
 	b.mu.Lock()
 	b.events = append(b.events, e)

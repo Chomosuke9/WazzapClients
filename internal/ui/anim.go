@@ -43,6 +43,7 @@ const (
 	durSlide    = 220 * time.Millisecond // tab underlines, chat list order
 	durAppear   = 220 * time.Millisecond // new messages
 	durScroll   = 360 * time.Millisecond // jumping to a message
+	typingGrace = 600 * time.Millisecond // the typing bubble stays after they stop
 )
 
 // popDur is how long a popup takes to open (on) or close.

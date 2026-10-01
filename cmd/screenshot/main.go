@@ -48,7 +48,7 @@ func main() {
 	overlay := flag.String("overlay", "", "render only this overlay (chatmenu, msgmenu, emoji, viewer, forward, reply, delete, select, mention, mentioned, attach, poll, contacts, tray, quality) to <out>/overlay-<name>.png")
 	at := flag.String("at", "600,300", "with -overlay, where menus open (x,y px)")
 	overlayChat := flag.String("ochat", "rina", "with -overlay, the demo chat to open")
-	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, info, message, reorder or hover")
+	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, info, message, reorder, hover or typing")
 	step := flag.Duration("step", 30*time.Millisecond, "with -film, time between frames")
 	flag.Parse()
 	if *memprofile != "" {

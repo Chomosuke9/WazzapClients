@@ -179,6 +179,13 @@ type UI struct {
 		selV         float32           // select mode's progress this frame
 		sendAnim     tween             // the mic turning into the send button
 		glide        glide             // smooth scroll to a message
+		typingAnim   tween             // the typing bubble growing in and out
+		typingFor    string            // chat typingAnim belongs to
+		typingWho    [2]string         // who is typing (name, ID), kept while it fades out
+		typingSeen   time.Time         // last frame someone was typing, for typingGrace
+		typingH      int               // the typing row's height last frame, 0 if not drawn
+		takeover     string            // new message growing from the typing bubble's room
+		takeoverH    int               // and that room in px
 		heights      map[int]int       // row heights laid out last frame, by index
 		reactions    map[string]string // reaction shown per message, to pop new ones
 		expanded     map[string]int    // "Read more" clicks per message
@@ -902,6 +909,12 @@ func (u *UI) upsertMessage(m *model.Message) {
 	if i == len(u.msgs) && u.now().Sub(m.Time) < time.Minute {
 		// A new message slides in at the bottom (history arrives older).
 		u.anims.start(animKey{id: m.ID, tag: tagAppear})
+		if !m.FromMe && u.conv.typingH > 0 && u.conv.typingFor == m.ChatID {
+			// It replaces the typing bubble on screen.
+			u.conv.takeover, u.conv.takeoverH = m.ID, u.conv.typingH
+			u.conv.typingAnim.snap(false)
+			u.conv.typingH = 0
+		}
 	}
 	u.msgs = append(u.msgs, nil)
 	copy(u.msgs[i+1:], u.msgs[i:])

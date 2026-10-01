@@ -232,18 +232,38 @@ func (u *UI) glideFrom(i, screen int) int {
 
 // appearing lays out a new message's row growing from nothing at the
 // bottom. The bubble is revealed from its top down as the rows above make
-// room, like WhatsApp.
-func (u *UI) appearing(gtx C, id string, w layout.Widget) D {
+// room, like WhatsApp. A message that replaces the typing bubble grows from
+// the room the bubble took instead, so the chat moves only once, while
+// ghost draws the bubble leaving: its growing in played backward.
+func (u *UI) appearing(gtx C, id string, w layout.Widget, ghost func(gtx C, v float32)) D {
 	k := animKey{id: id, tag: tagAppear}
 	v := u.anims.fade(gtx, k, true, durAppear, durAppear)
+	takeover := u.conv.takeover == id
+	from := 0
+	if takeover {
+		from = u.conv.takeoverH
+	}
 	if v >= 1 {
 		u.anims.stop(k)
+		if takeover {
+			u.conv.takeover = ""
+		}
 	}
-	e := easeOut(v)
+	dims := growRow(gtx, from, easeOut(v), w)
+	if g := 1 - 2*v; takeover && g > 0 {
+		// Twice as fast, so it's gone before the message shows clearly.
+		ghost(gtx, g)
+	}
+	return dims
+}
+
+// growRow lays out a row growing from height from (in px) to its full
+// height as e goes from 0 to 1, revealed from its top down and faded in.
+func growRow(gtx C, from int, e float32, w layout.Widget) D {
 	full := record(gtx, w)
 	// At least 1px: the list drops a trailing child of no height when it
 	// trims to the viewport, and would then stop following the end.
-	h := max(1, lerpInt(0, full.size.Y, e))
+	h := max(1, lerpInt(from, full.size.Y, e))
 	defer clip.Rect{Max: image.Pt(full.size.X, h)}.Push(gtx.Ops).Pop()
 	withOpacity(gtx, e, func() { full.at(gtx, 0, 0) })
 	return D{Size: image.Pt(full.size.X, h)}
@@ -252,7 +272,30 @@ func (u *UI) appearing(gtx C, id string, w layout.Widget) D {
 func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	u.pageMessages(c)
 	rows := u.rows(c)
-	if c.Typing != "" && !u.conv.newerMore {
+	// The typing bubble grows in and shrinks away like a message, instead
+	// of popping in and out. Opening a chat shows it as it is.
+	typing := c.Typing != "" && !u.conv.newerMore
+	if u.conv.typingFor != c.ID {
+		u.conv.typingFor = c.ID
+		u.conv.typingAnim.snap(typing)
+	}
+	if typing {
+		u.conv.typingWho = [2]string{c.Typing, c.TypingID}
+	}
+	// WhatsApp often says they stopped typing just before their message
+	// arrives. Keep the bubble a moment, so the message can take its place
+	// (see insertMessage) instead of the chat moving down and up again.
+	shown := typing
+	if typing || gtx.Now.IsZero() {
+		u.conv.typingSeen = gtx.Now
+	} else if left := typingGrace - gtx.Now.Sub(u.conv.typingSeen); left > 0 && u.conv.typingAnim.on {
+		shown = true
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(left)})
+	}
+	typingV := u.conv.typingAnim.step(gtx, shown, durAppear)
+	u.conv.typingH = 0
+	msgRows := len(rows)
+	if typingV > 0 {
 		rows = append(rows[:len(rows):len(rows)], convRow{kind: rowTyping, first: true})
 	}
 	width := gtx.Constraints.Max.X
@@ -295,6 +338,10 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		switch {
 		case r.kind == rowDate, r.kind == rowEncryption:
 			in.Top, in.Bottom = 10, 6
+		case r.kind == rowTyping:
+			// The newest message keeps its bottom space, so the gap above
+			// the bubble doesn't jump as it grows in.
+			in.Top, in.Bottom = 2, 8
 		case r.first:
 			in.Top = 10
 		default:
@@ -303,7 +350,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		if i == 0 {
 			in.Top += 10
 		}
-		if i == len(rows)-1 {
+		if i == msgRows-1 {
 			in.Bottom += 8
 		}
 		row := func(gtx C) D {
@@ -315,17 +362,30 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 				case r.kind == rowEncryption:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
 				case r.kind == rowTyping:
-					return u.layoutTyping(gtx, c, margin)
+					return u.layoutTyping(gtx, c.IsGroup, margin, typingV)
 				default:
 					return u.layoutMessageRow(gtx, c, r, maxBubble, margin)
 				}
 			})
 		}
 		var dims D
-		if r.kind == rowMessage && u.anims.running(animKey{id: r.msg.ID, tag: tagAppear}) {
-			dims = u.appearing(gtx, r.msg.ID, row)
-		} else {
+		switch {
+		case r.kind == rowMessage && u.anims.running(animKey{id: r.msg.ID, tag: tagAppear}):
+			dims = u.appearing(gtx, r.msg.ID, row, func(gtx C, v float32) {
+				// Where the typing row drew it: below the space the newest
+				// message kept for it (see the insets above).
+				defer op.Offset(image.Pt(margin, gtx.Dp(10))).Push(gtx.Ops).Pop()
+				withOpacity(gtx, easeOut(v), func() { u.layoutTyping(gtx, c.IsGroup, margin, v) })
+			})
+		case r.kind == rowTyping && typingV < 1:
+			dims = growRow(gtx, 0, easeOut(typingV), row)
+		default:
 			dims = row(gtx)
+		}
+		if r.kind == rowTyping {
+			// With the newest message's bottom space, which goes to the
+			// message that takes the bubble's place.
+			u.conv.typingH = dims.Size.Y + gtx.Dp(8)
 		}
 		u.conv.heights[i] = dims.Size.Y
 		return dims
@@ -333,10 +393,12 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 }
 
 // layoutTyping draws the bubble with three bouncing dots that shows
-// someone is typing, with their avatar in groups.
-func (u *UI) layoutTyping(gtx C, c *model.Chat, margin int) D {
+// someone is typing, with their avatar in groups. v is how far it has
+// grown in: the bubble pops up from its bottom corner as it does.
+func (u *UI) layoutTyping(gtx C, group bool, margin int, v float32) D {
 	p := u.pal
 	w, h := gtx.Dp(58), gtx.Dp(34)
+	defer pushFx(gtx, 1, scaleAt(image.Pt(0, h), lerp(0.6, 1, easeOutBack(v)))).Pop()
 	u.paintBubble(gtx, w, h, p.BubbleIn, false, true)
 	// Each dot rises and falls in turn, then all rest: a wave.
 	const period, step, rise = 1300 * time.Millisecond, 160 * time.Millisecond, 520 * time.Millisecond
@@ -358,9 +420,9 @@ func (u *UI) layoutTyping(gtx C, c *model.Chat, margin int) D {
 		}
 		fillCircle(gtx, image.Pt(x0+r+i*(2*r+gap), h/2-y), r, p.MetaIn)
 	}
-	if c.IsGroup {
+	if group {
 		t := op.Offset(image.Pt(-min(gtx.Dp(40), margin), 0)).Push(gtx.Ops)
-		u.avatar(gtx, c.TypingID, c.Typing, false, 29)
+		u.avatar(gtx, u.conv.typingWho[1], u.conv.typingWho[0], false, 29)
 		t.Pop()
 	}
 	return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
