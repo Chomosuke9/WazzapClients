@@ -696,7 +696,7 @@ func (b *Backend) ClearChat(chatID string) {
 		return
 	}
 	ts, key := b.lastKey(chatID)
-	_ = b.store.clearChat(b.ctx, chatID)
+	_ = b.store.clearChat(b.ctx, chatID, 0)
 	b.emit(model.DeletedEvent{ChatID: chatID})
 	b.emitChat(chatID)
 	if b.connected() == nil {
@@ -734,7 +734,7 @@ func (b *Backend) DeleteChat(chatID string) {
 		return
 	}
 	ts, key := b.lastKey(chatID)
-	_ = b.store.deleteChat(b.ctx, chatID)
+	_ = b.store.deleteChat(b.ctx, chatID, 0)
 	b.emitAllChats()
 	if b.connected() != nil {
 		b.sendAppState(appstate.BuildDeleteChat(jid, ts, key, true))
@@ -777,14 +777,22 @@ func (s *msgStore) deleteMessage(ctx context.Context, chat, id string) error {
 	return err
 }
 
-func (s *msgStore) clearChat(ctx context.Context, chat string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ? AND starred = 0`, chat)
+// clearChat deletes the chat's unstarred messages sent at or before upTo
+// (unix seconds), or all of them when upTo is 0.
+func (s *msgStore) clearChat(ctx context.Context, chat string, upTo int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ?1 AND starred = 0 AND (?2 = 0 OR ts <= ?2)`,
+		chat, upTo)
 	return err
 }
 
-func (s *msgStore) deleteChat(ctx context.Context, chat string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ?; DELETE FROM wz_chats WHERE jid = ?;
-		DELETE FROM wz_list_chats WHERE chat = ?`, chat, chat, chat)
+// deleteChat deletes the chat's messages sent at or before upTo (unix
+// seconds), or all of them when upTo is 0, and then the chat itself unless
+// newer messages are left.
+func (s *msgStore) deleteChat(ctx context.Context, chat string, upTo int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ?1 AND (?2 = 0 OR ts <= ?2);
+		DELETE FROM wz_chats WHERE jid = ?1 AND NOT EXISTS (SELECT 1 FROM wz_messages WHERE chat = ?1);
+		DELETE FROM wz_list_chats WHERE chat = ?1 AND NOT EXISTS (SELECT 1 FROM wz_chats WHERE jid = ?1)`,
+		chat, upTo)
 	return err
 }
 

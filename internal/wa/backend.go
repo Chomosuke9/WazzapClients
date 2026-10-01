@@ -17,6 +17,7 @@ import (
 	"github.com/polymorfa/hypermeow/appstate"
 	"github.com/polymorfa/hypermeow/proto/waCompanionReg"
 	"github.com/polymorfa/hypermeow/proto/waHistorySync"
+	"github.com/polymorfa/hypermeow/proto/waSyncAction"
 	"github.com/polymorfa/hypermeow/store"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
@@ -510,14 +511,22 @@ func (b *Backend) handle(evt any) {
 			b.emitChat(chat)
 		}
 	case *events.ClearChat:
+		upTo, ok := clearedUpTo(e.Action.GetMessageRange(), e.Timestamp)
+		if !ok {
+			return
+		}
 		chat := b.canonical(ctx, e.JID).String()
-		_ = b.store.clearChat(ctx, chat)
+		_ = b.store.clearChat(ctx, chat, upTo)
 		if !e.FromFullSync {
 			b.emit(model.DeletedEvent{ChatID: chat})
 			b.emitChat(chat)
 		}
 	case *events.DeleteChat:
-		_ = b.store.deleteChat(ctx, b.canonical(ctx, e.JID).String())
+		upTo, ok := clearedUpTo(e.Action.GetMessageRange(), e.Timestamp)
+		if !ok {
+			return
+		}
+		_ = b.store.deleteChat(ctx, b.canonical(ctx, e.JID).String(), upTo)
 		if !e.FromFullSync {
 			b.emitAllChats()
 		}
@@ -564,6 +573,21 @@ func (b *Backend) updateChat(j types.JID, field string, v any, quiet bool) {
 	}
 }
 
+// clearedUpTo returns the time (unix seconds) up to which a clear or delete
+// from another device removes messages: the last message it covered, or
+// else when it happened. Messages after it stay, as on the phone. App state
+// keeps these actions for good and a full sync replays them, so deleting
+// everything would wipe a chat's newer messages on every resync.
+func clearedUpTo(r *waSyncAction.SyncActionMessageRange, at time.Time) (int64, bool) {
+	if ts := r.GetLastMessageTimestamp(); ts > 0 {
+		return ts, true
+	}
+	if !at.IsZero() && at.Unix() > 0 {
+		return at.Unix(), true
+	}
+	return 0, false
+}
+
 // resyncAppStateOnce refetches all app state (pins, mutes, archives,
 // contacts) once per session database. Sessions linked before app state
 // events were enabled never received their pins and mutes.
@@ -576,10 +600,17 @@ func (b *Backend) resyncAppStateOnce() {
 	}
 	cli := b.client()
 	for _, name := range appstate.AllPatchNames {
+		// Remember each patch that synced, so that one which keeps failing
+		// doesn't refetch all the others on every connect.
+		done := key + ":" + string(name)
+		if b.store.meta(b.ctx, done) != "" {
+			continue
+		}
 		if err := cli.FetchAppState(b.ctx, name, true, false); err != nil {
 			b.log.Warnf("resync app state %s: %v", name, err)
 			return
 		}
+		_ = b.store.setMetaValue(b.ctx, done, time.Now().Format(time.RFC3339))
 	}
 	_ = b.store.setMetaValue(b.ctx, key, time.Now().Format(time.RFC3339))
 	b.names.clear()
