@@ -40,10 +40,15 @@ var (
 	icSticker    = icon.StickyNote2
 	icContact    = icon.Person
 	icHeadphones = icon.Headphones
-	icLightMode  = icon.LightMode
-	icDarkMode   = icon.DarkMode
-	icLogout     = icon.Logout
-	icBubble     = icon.ChatBubble
+
+	// The attach menu and file bubbles.
+	icDocumentFill   = icon.DescriptionFill
+	icPhotosFill     = icon.PhotoLibraryFill
+	icHeadphonesFill = icon.HeadphonesFill
+	icLightMode      = icon.LightMode
+	icDarkMode       = icon.DarkMode
+	icLogout         = icon.Logout
+	icBubble         = icon.ChatBubble
 
 	icGroupsLine    = icon.Groups
 	icAddCircle     = icon.AddCircle

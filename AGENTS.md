@@ -137,7 +137,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
                    (viewer.go); replies, @mentions and select mode live in compose.go;
-                   animation helpers in anim.go
+                   document cards and the voice/audio player in files.go; the attach
+                   menu, file tray and poll dialog in attach.go; animation helpers in anim.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
@@ -145,7 +146,10 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
-                   other systems return ErrUnsupported and open the system's player app
+                   other systems return ErrUnsupported and open the system's player app.
+                   OpenAudio plays voice messages and audio files the same way
+internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or
+                   osascript elsewhere), run on its own goroutine
 internal/memtrim/  gives memory back to the OS after 30 s without a frame (see ui.Run)
 patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
 ```

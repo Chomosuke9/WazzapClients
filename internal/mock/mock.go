@@ -223,6 +223,16 @@ func demo(now time.Time) []*demoChat {
 			grp("Andre", day(0, 9, 2), "Standup in 5"),
 			grp("Clara", day(0, 9, 30), "Release candidate is up on staging"),
 			grp("Bima", day(0, 9, 34), "Nice, I'll run the smoke tests"),
+			{Sender: "Clara", Media: model.MediaDocument, Text: "Release notes v2.4.pdf", Time: day(0, 9, 36),
+				FileName: "Release notes v2.4.pdf", FileSize: 1_284_000, FileType: "application/pdf", Pages: 3},
+			{Sender: "Andre", Media: model.MediaVoice, Duration: 42, Time: day(0, 9, 40),
+				Waveform: []byte{4, 9, 22, 41, 60, 52, 33, 70, 88, 64, 40, 21, 12, 30, 55, 79, 92, 71, 45, 28, 18, 36, 58,
+					74, 61, 39, 24, 15, 9, 27, 49, 66, 83, 95, 77, 52, 31, 19, 12, 25, 46, 68, 57, 34, 22, 14, 29, 51, 73,
+					86, 62, 38, 21, 11, 7, 18, 35, 53, 44, 26, 13, 8, 5, 3}},
+			{FromMe: true, Media: model.MediaDocument, Text: "Here are the test results", Time: day(0, 9, 52),
+				Receipt: model.Read, FileName: "smoke-tests.xlsx", FileSize: 48_200,
+				FileType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+			{FromMe: true, Media: model.MediaVoice, Duration: 7, Time: day(0, 9, 53), Receipt: model.Delivered},
 		},
 	}
 

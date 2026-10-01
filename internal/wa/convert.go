@@ -35,6 +35,7 @@ type content struct {
 	bg       uint32 // ARGB background of a text status
 	ctx      *waE2E.ContextInfo
 	buttons  *buttonsInfo // footer and buttons of business messages
+	file     fileInfo     // documents and audio
 }
 
 func marshal(m proto.Message) []byte {
@@ -109,14 +110,13 @@ func describe(m *waE2E.Message) content {
 		if e.GetPTT() {
 			media = model.MediaVoice
 		}
-		return content{media: media, duration: int(e.GetSeconds()), blob: marshal(e), ctx: e.GetContextInfo()}
+		return content{media: media, duration: int(e.GetSeconds()), blob: marshal(e), ctx: e.GetContextInfo(),
+			file: audioInfo(e)}
 	case m.GetDocumentMessage() != nil:
 		e := m.GetDocumentMessage()
-		text := e.GetFileName()
-		if text == "" {
-			text = e.GetTitle()
-		}
-		return content{text: text, media: model.MediaDocument, blob: marshal(e), ctx: e.GetContextInfo()}
+		f := documentInfo(e)
+		return content{text: first(e.GetCaption(), f.Name), media: model.MediaDocument, blob: marshal(e),
+			ctx: e.GetContextInfo(), file: f}
 	case m.GetStickerMessage() != nil:
 		e := m.GetStickerMessage()
 		return content{kind: model.KindSticker, media: model.MediaSticker, thumb: e.GetPngThumbnail(),
@@ -239,6 +239,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	msg.Text = c.text
 	msg.Time = evt.Info.Timestamp
 	msg.Thumb = c.thumb
+	c.file.apply(msg)
 	msg.Receipt = model.Sent
 	if evt.SourceWebMsg != nil && msg.FromMe {
 		msg.Receipt = webReceipt(evt.SourceWebMsg)

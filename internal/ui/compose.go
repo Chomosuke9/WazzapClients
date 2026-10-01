@@ -140,7 +140,7 @@ func (u *UI) sendComposer() {
 		return
 	}
 	txt := trimSpace(u.conv.composer.Text())
-	if txt == "" {
+	if txt == "" && len(u.attach.files) == 0 {
 		return
 	}
 	d := model.Draft{Text: txt, Reply: u.conv.reply}
@@ -185,8 +185,10 @@ func (u *UI) sendComposer() {
 	u.conv.composer.SetText("")
 	u.conv.reply = nil
 	u.conv.mentions = nil
-	m := u.backend.Send(u.selected.ID, d)
-	if m != nil {
+	if len(u.attach.files) > 0 {
+		// The text is the caption of the first file.
+		u.sendAttachments(d)
+	} else if m := u.backend.Send(u.selected.ID, d); m != nil {
 		if u.chatByID(m.ChatID) == nil {
 			u.chats = append(u.chats, u.selected)
 		}
@@ -521,6 +523,10 @@ func (u *UI) layoutComposer(gtx C) D {
 			u.openPicker(pickComposer, nil)
 		}
 	}
+	if u.conv.attach.Clicked(gtx) {
+		u.openAttachMenu()
+	}
+	u.updateAttach()
 	if u.conv.selecting {
 		return fadeW(gtx, easeOut(u.conv.selV), u.layoutSelectBar)
 	}
@@ -548,7 +554,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	if rv == 0 {
 		c.replyGhost = nil
 	}
-	hasText := trimSpace(c.composer.Text()) != ""
+	hasText := trimSpace(c.composer.Text()) != "" || len(u.attach.files) > 0
 	sv := easeOut(c.sendAnim.step(gtx, hasText, durSwitch))
 	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -565,6 +571,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		}
 		m := op.Record(gtx.Ops)
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(u.layoutAttachTray),
 			layout.Rigid(func(gtx C) D {
 				ghost := c.replyGhost
 				if ghost == nil {
@@ -610,7 +617,11 @@ func (u *UI) layoutComposerBox(gtx C) D {
 								return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
 									gtx.Constraints.Min.X = gtx.Constraints.Max.X
 									gtx.Constraints.Max.Y = gtx.Dp(140)
-									e := material.Editor(u.th, &u.conv.composer, "Type a message")
+									hint := "Type a message"
+									if len(u.attach.files) > 0 {
+										hint = "Add a caption"
+									}
+									e := material.Editor(u.th, &u.conv.composer, hint)
 									e.TextSize = 16
 									e.Color = p.Text
 									e.HintColor = p.ComposerHint

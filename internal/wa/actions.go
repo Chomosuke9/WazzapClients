@@ -130,7 +130,6 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 	if err != nil || cli == nil {
 		return nil
 	}
-	ctx := b.ctx
 	m := &model.Message{
 		ID:      cli.GenerateMessageID(),
 		ChatID:  chatID,
@@ -139,36 +138,9 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		Time:    time.Now(),
 		Receipt: model.Pending,
 	}
-	sm := storedMsg{Message: m, mentions: append([]string(nil), d.Mentions...)}
+	sm := storedMsg{Message: m}
 	msg := &waE2E.Message{Conversation: proto.String(d.Text)}
-	if d.Reply != nil || len(d.Mentions) > 0 || d.MentionAll || d.MentionAdmins {
-		ci := &waE2E.ContextInfo{MentionedJID: d.Mentions}
-		if d.MentionAll {
-			// "@all" is rendered by WhatsApp when nonJIDMentions is set.
-			ci.NonJIDMentions = proto.Uint32(1)
-			sm.mentions = append(sm.mentions, mentionAll)
-		}
-		if d.MentionAdmins {
-			// The text mentions the group itself, which WhatsApp shows under
-			// the given subject; the admins are the mentioned JIDs.
-			ci.GroupMentions = []*waE2E.GroupMention{{GroupJID: proto.String(chatID), GroupSubject: proto.String("admin")}}
-			sm.mentions = append(sm.mentions, groupMention(chatID, "admin"))
-		}
-		if r := d.Reply; r != nil {
-			sender := b.senderOf(r)
-			ci.StanzaID = proto.String(r.ID)
-			ci.Participant = proto.String(sender.String())
-			ci.QuotedMessage = b.quotedMessage(ctx, r.ChatID, r.ID)
-			if r.ChatID != chatID {
-				// "Reply privately" quotes a group message in a one-to-one chat.
-				ci.RemoteJID = proto.String(r.ChatID)
-			}
-			m.Quote = &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media}
-			if r.Kind == model.KindImage && r.Text == "" {
-				m.Quote.Media = r.Media
-			}
-			sm.quoteJID, sm.quoteID = sender.String(), r.ID
-		}
+	if ci := b.draftContext(chatID, d, &sm); ci != nil {
 		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text:                  proto.String(d.Text),
 			ContextInfo:           ci,
@@ -176,12 +148,6 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		}}
 		if d.MentionAdmins {
 			msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
-		}
-	}
-	if m.Quote != nil {
-		// Store the raw quoted text, not the display text with resolved names.
-		if raw, ok := b.store.message(ctx, d.Reply.ChatID, d.Reply.ID); ok {
-			m.Quote.Text = raw.Text
 		}
 	}
 	return b.storeAndSend(jid, sm, msg, nil)
@@ -496,6 +462,9 @@ func (b *Backend) SaveMedia(m *model.Message) {
 		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
 		defer cancel()
 		data, err := os.ReadFile(b.mediaPath(m.ChatID, m.ID))
+		if err != nil {
+			data, err = os.ReadFile(b.mediaFilePath(m))
+		}
 		media, blob, _ := b.store.mediaBlob(ctx, m.ChatID, m.ID)
 		if err != nil {
 			dl := mediaMessage(media, blob)
@@ -517,82 +486,6 @@ func (b *Backend) SaveMedia(m *model.Message) {
 		}
 		b.emit(model.NoticeEvent{Text: "Saved to " + path})
 	}()
-}
-
-// PlayMedia implements model.Backend. Videos are kept next to the other
-// media, with an extension so the system knows what plays them.
-func (b *Backend) PlayMedia(m *model.Message) {
-	path := b.mediaPath(m.ChatID, m.ID) + ".mp4"
-	if _, busy := b.playing.LoadOrStore(path, true); busy {
-		return // already downloading; it opens when done
-	}
-	go func() {
-		defer b.playing.Delete(path)
-		if _, err := os.Stat(path); err != nil {
-			if !b.downloadVideo(m, path) {
-				return
-			}
-		}
-		if err := openFile(path); err != nil {
-			b.log.Warnf("open video: %v", err)
-			b.emit(model.NoticeEvent{Text: "Couldn't open a video player."})
-		}
-	}()
-}
-
-// VideoFile implements model.Backend.
-func (b *Backend) VideoFile(m *model.Message) string {
-	path := b.mediaPath(m.ChatID, m.ID) + ".mp4"
-	if _, err := os.Stat(path); err == nil {
-		return path
-	}
-	if _, busy := b.playing.LoadOrStore(path, true); !busy {
-		go func() {
-			defer b.playing.Delete(path)
-			ok := b.downloadVideo(m, path)
-			b.emit(model.MediaEvent{ChatID: m.ChatID, MsgID: m.ID, Failed: !ok})
-		}()
-	}
-	return ""
-}
-
-// downloadVideo streams a video to path, so a big one never sits in memory.
-func (b *Backend) downloadVideo(m *model.Message, path string) bool {
-	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Minute)
-	defer cancel()
-	media, blob, _ := b.store.mediaBlob(ctx, m.ChatID, m.ID)
-	var dl whatsmeow.DownloadableMessage
-	if media == model.MediaVideo || media == model.MediaGIF {
-		v := &waE2E.VideoMessage{}
-		if proto.Unmarshal(blob, v) == nil {
-			dl = v
-		}
-	}
-	cli := b.client()
-	if dl == nil || cli == nil || !cli.IsConnected() {
-		b.emit(model.NoticeEvent{Text: "This video isn't available."})
-		return false
-	}
-	_ = os.MkdirAll(filepath.Dir(path), 0o700)
-	f, err := os.OpenFile(path+".part", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		b.emit(model.NoticeEvent{Text: "Couldn't save the video: " + err.Error()})
-		return false
-	}
-	err = cli.DownloadToFile(ctx, dl, f)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(path+".part", path)
-	}
-	if err != nil {
-		_ = os.Remove(path + ".part")
-		b.log.Infof("download video %s: %v", m.ID, err)
-		b.emit(model.NoticeEvent{Text: "Couldn't download the video."})
-		return false
-	}
-	return true
 }
 
 // openFile opens a file with the system's default app for its type.
@@ -628,7 +521,7 @@ func fileName(m *model.Message, media model.Media, blob []byte) string {
 	case model.MediaVoice:
 		return "WhatsApp Voice " + stamp + ".ogg"
 	case model.MediaAudio:
-		return "WhatsApp Audio " + stamp + ".mp3"
+		return "WhatsApp Audio " + stamp + mediaExt(m)
 	case model.MediaSticker:
 		return "WhatsApp Sticker " + stamp + ".webp"
 	}
