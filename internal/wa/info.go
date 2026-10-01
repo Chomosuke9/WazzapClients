@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,37 +75,152 @@ func (b *Backend) fetchInfo(jid types.JID) {
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 	defer cancel()
 	cli := b.client()
-	if cli == nil || !cli.IsConnected() {
+	online := cli != nil && cli.IsConnected()
+	if !online {
+		// Try again once connected.
 		b.infoMu.Lock()
 		delete(b.infoFetched, jid.String())
 		b.infoMu.Unlock()
-		return
 	}
 	info := &model.ChatInfo{ID: jid.String()}
 	if jid.Server == types.GroupServer {
+		if !online {
+			return
+		}
 		g, err := cli.GetGroupInfo(ctx, jid)
 		if err != nil {
 			b.log.Debugf("group info %s: %v", jid, err)
 			return
 		}
 		b.fillGroupInfo(ctx, info, g)
+		_ = b.store.setMembers(ctx, g)
 		b.subMu.Lock()
-		b.subtitles[jid.String()] = b.groupSubtitle(ctx, g)
+		b.subtitles[jid.String()] = b.groupSubtitle(ctx, g.Participants)
 		b.subMu.Unlock()
 	} else {
+		old := b.store.meta(ctx, "info:"+jid.String())
+		if !online && old != "" {
+			// Keep what was fetched before; only the shared groups, which
+			// are stored locally, can be refreshed.
+			_ = json.Unmarshal([]byte(old), info)
+		}
 		info.Name = b.chatName(ctx, jid)
 		info.Phone = b.lookup(ctx, jid).phone
-		users, err := cli.GetUserInfo(ctx, []types.JID{jid})
-		if err != nil {
-			b.log.Debugf("user info %s: %v", jid, err)
-		}
-		for _, u := range users {
-			info.About = u.Status
+		info.Common = b.commonGroups(ctx, jid)
+		if online {
+			b.fillContactInfo(ctx, info, jid)
+		} else if raw, _ := json.Marshal(info); string(raw) == old {
+			// Nothing new; announcing it would only fetch it again.
+			return
 		}
 	}
 	raw, _ := json.Marshal(info)
 	_ = b.store.setMetaValue(b.ctx, "info:"+jid.String(), string(raw))
 	b.emit(model.InfoEvent{ChatID: jid.String()})
+}
+
+// fillContactInfo fetches a contact's about text, business profile and
+// whether you blocked them.
+func (b *Backend) fillContactInfo(ctx context.Context, info *model.ChatInfo, jid types.JID) {
+	cli := b.client()
+	pn := types.EmptyJID
+	if jid.Server == types.DefaultUserServer {
+		pn = jid
+	} else if p, err := cli.Store.LIDs.GetPNForLID(ctx, jid); err == nil {
+		pn = p
+	}
+	info.About = ""
+	business := b.lookup(ctx, jid).business
+	isBusiness := business != ""
+	users, err := cli.GetUserInfo(ctx, []types.JID{jid})
+	if err != nil {
+		b.log.Debugf("user info %s: %v", jid, err)
+	}
+	for _, u := range users {
+		info.About = u.Status
+		if u.VerifiedName != nil {
+			isBusiness = true
+			if n := u.VerifiedName.Details.GetVerifiedName(); n != "" {
+				business = n
+			}
+		}
+	}
+	info.Business = nil
+	if isBusiness {
+		info.Business = &model.Business{Name: business}
+		var bp *types.BusinessProfile
+		for _, j := range []types.JID{pn, jid} {
+			if j.IsEmpty() {
+				continue
+			}
+			if bp, err = cli.GetBusinessProfile(ctx, j); err == nil {
+				break
+			}
+			b.log.Debugf("business profile %s: %v", j, err)
+		}
+		if bp != nil {
+			fillBusiness(info.Business, bp)
+		}
+	}
+	if list, err := cli.GetBlocklist(ctx); err == nil {
+		info.Blocked = false
+		for _, j := range list.JIDs {
+			if j.User == jid.User || (!pn.IsEmpty() && j.User == pn.User) {
+				info.Blocked = true
+			}
+		}
+	} else {
+		b.log.Debugf("blocklist: %v", err)
+	}
+}
+
+var weekdays = map[string]time.Weekday{"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday,
+	"wed": time.Wednesday, "thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday}
+
+func fillBusiness(biz *model.Business, bp *types.BusinessProfile) {
+	if len(bp.Categories) > 0 {
+		biz.Category = bp.Categories[0].Name
+	}
+	biz.Description = bp.Description
+	biz.Address = bp.Address
+	biz.Email = bp.Email
+	for _, w := range bp.Websites {
+		if w = strings.TrimSpace(w); w != "" {
+			biz.Websites = append(biz.Websites, w)
+		}
+	}
+	biz.TimeZone = bp.BusinessHoursTimeZone
+	for _, h := range bp.BusinessHours {
+		day, ok := weekdays[strings.ToLower(h.DayOfWeek)]
+		if !ok {
+			continue
+		}
+		open, _ := strconv.Atoi(h.OpenTime)
+		closing, _ := strconv.Atoi(h.CloseTime)
+		biz.Hours = append(biz.Hours, model.BusinessHours{Day: day, Mode: h.Mode, Open: open, Close: closing})
+	}
+}
+
+// commonGroups lists the groups you share with a contact, each with its
+// members like its header shows them.
+func (b *Backend) commonGroups(ctx context.Context, jid types.JID) []model.CommonGroup {
+	ids := []string{jid.String()}
+	if cli := b.client(); cli != nil {
+		if alt, err := cli.Store.GetAltJID(ctx, jid); err == nil && !alt.IsEmpty() {
+			ids = append(ids, alt.ToNonAD().String())
+		}
+	}
+	var out []model.CommonGroup
+	for _, g := range b.store.commonGroups(ctx, ids...) {
+		b.subMu.Lock()
+		sub, ok := b.subtitles[g.jid]
+		b.subMu.Unlock()
+		if !ok {
+			sub = b.groupSubtitle(ctx, b.store.members(ctx, g.jid))
+		}
+		out = append(out, model.CommonGroup{ID: g.jid, Name: g.name, Community: g.community, CommunityID: g.communityID, Members: sub})
+	}
+	return out
 }
 
 func (b *Backend) fillGroupInfo(ctx context.Context, info *model.ChatInfo, g *types.GroupInfo) {

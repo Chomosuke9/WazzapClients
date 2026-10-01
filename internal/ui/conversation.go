@@ -422,6 +422,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		sz := gtx.Dp(29)
 		t := op.Offset(image.Pt(x-min(gtx.Dp(40), margin), 0)).Push(gtx.Ops)
 		u.avatar(gtx, m.SenderID, m.Sender, false, dp(gtx, sz))
+		u.senderButton(gtx, m, image.Point{}, image.Pt(sz, sz))
 		t.Pop()
 	}
 	if !sel {
@@ -859,6 +860,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 			y += gtx.Dp(3)
 		}
 		sender.at(gtx, sx, y)
+		u.senderButton(gtx, m, image.Pt(sx, y), sender.size)
 		y += sender.size.Y + gtx.Dp(2)
 		if isImg {
 			y += gtx.Dp(3)
@@ -985,6 +987,23 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 }
 
 // paintBubble paints the bubble body and its tail (plus a 1px shadow in light mode).
+// senderButton makes a group message's sender name (or picture) open
+// their contact info.
+func (u *UI) senderButton(gtx C, m *model.Message, at, size image.Point) {
+	if m.SenderID == "" || u.conv.selecting {
+		return
+	}
+	c := u.btn("sender:" + m.ID)
+	if c.Clicked(gtx) {
+		u.openContact(m.SenderID, m.Sender)
+	}
+	t := op.Offset(at).Push(gtx.Ops)
+	sg := gtx
+	sg.Constraints = layout.Exact(size)
+	clickable(sg, c, func(gtx C) D { return D{Size: size} })
+	t.Pop()
+}
+
 func (u *UI) paintBubble(gtx C, w, h int, bg color.NRGBA, out, tail bool) {
 	r := gtx.Dp(8)
 	rr := clip.RRect{Rect: image.Rect(0, 0, w, h), NW: r, NE: r, SW: r, SE: r}
@@ -1188,6 +1207,7 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 	y := 0
 	if hasSender {
 		sender.at(gtx, gtx.Dp(6), gtx.Dp(3))
+		u.senderButton(gtx, m, image.Pt(gtx.Dp(6), gtx.Dp(3)), sender.size)
 		y += sender.size.Y + gtx.Dp(6)
 	}
 	quote.at(gtx, 0, y)

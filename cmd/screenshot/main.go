@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"strings"
 	"time"
 
 	"gioui.org/gpu/headless"
@@ -40,7 +41,8 @@ func main() {
 	memprofile := flag.String("memprofile", "", "write a heap profile after rendering")
 	data := flag.String("data", "", "in -compare mode, render this session's stored chats (no network)")
 	chatName := flag.String("chatname", "", "in -compare mode with -data, open the chat with this name")
-	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings or info")
+	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, info or contact")
+	contact := flag.String("contact", "vivy@lid", "in -compare mode with -view contact, the group member whose contact info opens")
 	infoScroll := flag.Int("infoscroll", 0, "in -compare mode with -view info, first visible item of the info panel")
 	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")
 	win := flag.String("win", "", "in -compare mode, render a window of this size (W,H px) and crop it like the screenshot")
@@ -69,7 +71,7 @@ func main() {
 	}
 
 	if *compare != "" {
-		if err := compareShot(*compare, *crop, *win, *rightAligned, *chat, *chatName, *data, *out, *view, *infoScroll, *infoOffset, float32(*scale)); err != nil {
+		if err := compareShot(*compare, *crop, *win, *rightAligned, *chat, *chatName, *contact, *data, *out, *view, *infoScroll, *infoOffset, float32(*scale)); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -126,6 +128,7 @@ func main() {
 		{"preview-login.png", true, "", true, false, ""},
 		{"preview-info.png", true, "test@g.us", false, true, "info"},
 		{"preview-contact.png", false, "rina", false, false, "info"},
+		{"preview-business.png", true, "test@g.us", false, true, "contact:vivy@lid"},
 		{"preview-status.png", true, "", false, true, "status"},
 		{"preview-channels.png", true, "", false, true, "channels"},
 		{"preview-communities.png", true, "", false, true, "communities"},
@@ -155,6 +158,10 @@ func main() {
 		case "info":
 			u.ShowInfo(0, 0)
 		default:
+			if id, ok := strings.CutPrefix(s.page, "contact:"); ok {
+				u.ShowContact(id, 0, 0)
+				break
+			}
 			u.ShowPage(s.page)
 		}
 		img, err := render(u, int(float32(*width)*float32(*scale)), int(float32(*height)*float32(*scale)), float32(*scale))
@@ -169,7 +176,7 @@ func main() {
 	}
 }
 
-func compareShot(path, crop, win string, rightAligned bool, chat, chatName, data, outDir, view string, infoScroll, infoOffset int, scale float32) error {
+func compareShot(path, crop, win string, rightAligned bool, chat, chatName, contact, data, outDir, view string, infoScroll, infoOffset int, scale float32) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -203,6 +210,8 @@ func compareShot(path, crop, win string, rightAligned bool, chat, chatName, data
 	case "chats":
 	case "info":
 		u.ShowInfo(infoScroll, infoOffset)
+	case "contact":
+		u.ShowContact(contact, infoScroll, infoOffset)
 	case "statusviewer":
 		u.ShowStatus(1)
 	default:

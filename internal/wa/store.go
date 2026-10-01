@@ -90,6 +90,14 @@ CREATE TABLE IF NOT EXISTS wz_lists (
 	ord     INTEGER NOT NULL DEFAULT 0,
 	deleted INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS wz_members (
+	chat TEXT NOT NULL, -- group JID
+	jid  TEXT NOT NULL, -- participant, usually a LID
+	pn   TEXT NOT NULL DEFAULT '', -- participant's phone-number JID, when known
+	PRIMARY KEY (chat, jid)
+);
+CREATE INDEX IF NOT EXISTS wz_members_jid ON wz_members (jid);
+CREATE INDEX IF NOT EXISTS wz_members_pn ON wz_members (pn) WHERE pn != '';
 CREATE TABLE IF NOT EXISTS wz_list_chats (
 	list TEXT NOT NULL,
 	chat TEXT NOT NULL,

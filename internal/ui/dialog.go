@@ -42,8 +42,10 @@ type dialogState struct {
 	closing bool // fading out
 	anim    tween
 
-	// Forward picker, which also picks contacts to share.
+	// Forward picker, which also picks contacts to share, or the chats to
+	// share one contact with.
 	contacts bool
+	share    string // the contact to share
 	fwd      []*model.Message
 	picked   []string // chat IDs, in the order they were picked
 	search   widget.Editor
@@ -264,7 +266,15 @@ func (u *UI) forwardPanel(gtx C) D {
 		u.closeDialog()
 	}
 	if u.btn("fwd:send").Clicked(gtx) && len(d.picked) > 0 && d.isOpen() {
-		if d.contacts {
+		if d.share != "" {
+			for _, id := range d.picked {
+				m := u.backend.SendContacts(id, []string{d.share})
+				if m != nil && u.selected != nil && u.selected.ID == id {
+					u.upsertMessage(m)
+					u.scrollMessages(layout.Position{})
+				}
+			}
+		} else if d.contacts {
 			if u.selected != nil {
 				if m := u.backend.SendContacts(u.selected.ID, d.picked); m != nil {
 					u.upsertMessage(m)
@@ -284,6 +294,9 @@ func (u *UI) forwardPanel(gtx C) D {
 		if d.contacts && (c.IsGroup || c.Self || isChannelID(c.ID)) {
 			continue // only people can be shared
 		}
+		if d.share != "" && (c.ID == d.share || isChannelID(c.ID)) {
+			continue
+		}
 		if q == "" || strings.Contains(strings.ToLower(c.Name), q) {
 			chats = append(chats, c)
 		}
@@ -299,7 +312,10 @@ func (u *UI) forwardPanel(gtx C) D {
 		}
 	}
 	title := "Forward message to"
-	if d.contacts {
+	switch {
+	case d.share != "":
+		title = "Share contact"
+	case d.contacts:
 		title = "Share contacts"
 	}
 	w := min(gtx.Dp(460), gtx.Constraints.Max.X-gtx.Dp(32))

@@ -282,6 +282,13 @@ func (u *UI) openContactPicker() {
 	u.dialog.contacts = true
 }
 
+// openShareContact opens the forward picker to send a contact's card to
+// other chats.
+func (u *UI) openShareContact(id string) {
+	u.openForward(nil)
+	u.dialog.share = id
+}
+
 // pollState is the poll being written in the poll dialog.
 type pollState struct {
 	question widget.Editor

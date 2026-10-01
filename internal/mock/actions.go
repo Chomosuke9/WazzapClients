@@ -310,3 +310,18 @@ func (b *Backend) showMentions(chatID string, d model.Draft) string {
 	}
 	return txt
 }
+
+func (b *Backend) SetBlocked(id string, blocked bool) {
+	if info := b.Info(id); info != nil {
+		info.Blocked = blocked
+		if b.infos == nil {
+			b.infos = map[string]*model.ChatInfo{}
+		}
+		b.infos[id] = info
+	}
+	b.emit(model.InfoEvent{ChatID: id})
+}
+
+func (b *Backend) ExportChat(string) {
+	b.emit(model.NoticeEvent{Text: "Demo mode doesn't export chats."})
+}

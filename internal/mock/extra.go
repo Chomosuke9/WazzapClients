@@ -63,12 +63,25 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 		}
 	}
 	if chat == nil {
-		return nil
+		// A group member you have no chat with.
+		name := ""
+		for _, ms := range b.msgs {
+			for _, m := range ms {
+				if m.SenderID == chatID {
+					name = m.Sender
+				}
+			}
+		}
+		if name == "" {
+			return nil
+		}
+		chat = &model.Chat{ID: chatID, Name: name}
 	}
 	info := &model.ChatInfo{ID: chatID, Name: chat.Name, IsGroup: chat.IsGroup}
 	if !chat.IsGroup {
 		info.Phone = "+62 812-5550-" + itoa4(len(chat.Name)*37)
 		info.About = "Hey there! I am using WhatsApp."
+		info.Common = b.commonGroups(chatID)
 		return info
 	}
 	info.Members = []model.Member{{ID: "me", Name: "You", Admin: true, Me: true}}
@@ -86,6 +99,23 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 		}
 	}
 	return info
+}
+
+// commonGroups lists the groups where id has sent a message.
+func (b *Backend) commonGroups(id string) []model.CommonGroup {
+	var out []model.CommonGroup
+	for _, c := range b.chats {
+		if !c.IsGroup {
+			continue
+		}
+		for _, m := range b.msgs[c.ID] {
+			if m.SenderID == id {
+				out = append(out, model.CommonGroup{ID: c.ID, Name: c.Name, Members: c.Presence})
+				break
+			}
+		}
+	}
+	return out
 }
 
 func itoa4(n int) string {
@@ -215,6 +245,35 @@ func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 					{ID: "m2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xdadde3},
 					{ID: "m3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x1b2330, ImageB: 0x2d3a4d},
 					{ID: "m4", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xdadde3},
+				},
+			},
+			"vivy@lid": {
+				ID: "vivy@lid", Name: "Vivy", Phone: "+62 881-0261-81996",
+				Business: &model.Business{
+					Name: "Vivy", Category: "Other business",
+					Description: "This bot is 100% free, feel free to use it however you like. Join the community below for information and updates.\n\nAlso for some reason, I decided to ignore all private chats incoming.",
+					Email:       "vivy@example.com",
+					Websites:    []string{"https://chat.whatsapp.com/ExampleInviteCode"},
+					Hours: []model.BusinessHours{
+						{Day: time.Sunday, Mode: "open_24h"}, {Day: time.Monday, Mode: "open_24h"},
+						{Day: time.Tuesday, Mode: "open_24h"}, {Day: time.Wednesday, Mode: "open_24h"},
+						{Day: time.Thursday, Mode: "open_24h"}, {Day: time.Friday, Mode: "open_24h"},
+						{Day: time.Saturday, Mode: "open_24h"},
+					},
+				},
+				MediaCount: 133,
+				Media: []*model.Message{
+					{ID: "v1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x1b2330, ImageB: 0x2d3a4d},
+					{ID: "v2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4e4dc, ImageB: 0x8a3a3a},
+					{ID: "v3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4e4dc, ImageB: 0x3a6a8a},
+					{ID: "v4", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xd88a9a},
+				},
+				Common: []model.CommonGroup{
+					{ID: "puja@g.us", Name: "Puja Qiqi Ajaib", Members: "Agus, Andrian, inilidya°~~, Mei, Radofa, Satria, Vivy, You"},
+					{ID: "chitchat@g.us", Name: "ChitChat", Community: "WazzapAgents", CommunityID: "wa@g.us", Members: "Andrian, Athar, Beolite, Fajri, Feet, Jantan, Kamil, Vivy, You"},
+					{ID: "pam@g.us", Name: "PAM : Chat Bot Only", Community: "Forum Penghitaman Anime Massal", CommunityID: "fpam@g.us", Members: "Vivy, +62 877-5228-7085, +62 831-2861-8005, You"},
+					{ID: "lab@g.us", Name: "Grup 5 Lab Komputer", Members: "Vivy, Wiliam, Yazid, +62 859-2103-5371, You"},
+					{ID: "test@g.us", Name: "test", Members: "Agus, Vivy, You"},
 				},
 			},
 		},

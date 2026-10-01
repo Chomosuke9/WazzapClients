@@ -335,10 +335,10 @@ func (b *Backend) resolveChat(ctx context.Context, rc rawChat) *model.Chat {
 
 // groupSubtitle lists participants like WhatsApp's header: saved contacts,
 // then everyone else, then "You".
-func (b *Backend) groupSubtitle(ctx context.Context, info *types.GroupInfo) string {
+func (b *Backend) groupSubtitle(ctx context.Context, participants []types.GroupParticipant) string {
 	var saved, others []string
 	me := false
-	for _, p := range info.Participants {
+	for _, p := range participants {
 		if b.isMe(p.JID) || (!p.PhoneNumber.IsEmpty() && b.isMe(p.PhoneNumber)) {
 			me = true
 			continue

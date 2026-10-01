@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -22,13 +23,25 @@ import (
 
 // infoState is the contact / group info panel beside a conversation.
 type infoState struct {
-	open       bool
-	chatID     string
-	data       *model.ChatInfo
-	list       widget.List
-	closeBtn   widget.Clickable
-	allMembers bool  // the member list is expanded
-	anim       tween // sliding in and out
+	open bool
+	// from is the open chat the panel belongs to; chatID is whose details
+	// it shows: the chat itself, or a group member.
+	from, chatID string
+	name         string // shown until the details load
+	back         []infoPage
+	data         *model.ChatInfo
+	list         widget.List
+	closeBtn     widget.Clickable
+	allMembers   bool  // the member list is expanded
+	allHours     bool  // a business's opening hours are expanded
+	anim         tween // sliding in and out
+}
+
+// infoPage is a panel to return to with the back arrow (a group's info
+// under a member's).
+type infoPage struct {
+	chatID, name string
+	pos          layout.Position
 }
 
 // shown reports whether the panel is open or still sliding away.
@@ -38,6 +51,7 @@ func (s *infoState) shown() bool { return s.open || s.anim.v > 0 }
 // under it.
 func (u *UI) hideInfo() {
 	u.info.open = false
+	u.info.back = nil
 	u.info.anim.snap(false)
 }
 
@@ -46,12 +60,51 @@ func (u *UI) hideInfo() {
 const infoMembersShown = 10
 
 func (u *UI) openInfo(chatID string) {
+	if !u.info.open || u.info.chatID != chatID {
+		u.info.back = nil
+	}
 	u.info.open = true
+	if u.selected != nil {
+		u.info.from = u.selected.ID
+	}
+	u.showInfo(chatID, "")
+}
+
+// openContact shows a person's contact info, from a sender's name in a
+// group or the group's member list. The back arrow returns to the group's
+// info when that was open.
+func (u *UI) openContact(id, name string) {
+	if id == "" || u.selected == nil {
+		return
+	}
+	switch {
+	case !u.info.open:
+		u.info.back = nil
+	case u.info.chatID != id:
+		u.info.back = append(u.info.back, infoPage{u.info.chatID, u.info.name, u.info.list.Position})
+	}
+	u.info.open = true
+	u.info.from = u.selected.ID
+	u.showInfo(id, strings.TrimPrefix(plainText(name), "~"))
+}
+
+// infoBack returns to the previous panel.
+func (u *UI) infoBack() {
+	n := len(u.info.back)
+	pg := u.info.back[n-1]
+	u.info.back = u.info.back[:n-1]
+	u.showInfo(pg.chatID, pg.name)
+	u.info.list.Position = pg.pos
+}
+
+func (u *UI) showInfo(chatID, name string) {
 	if u.info.chatID != chatID {
 		u.info.list.Position = layout.Position{}
 		u.info.allMembers = false
+		u.info.allHours = false
 	}
 	u.info.chatID = chatID
+	u.info.name = name
 	u.info.data = u.backend.Info(chatID)
 }
 
@@ -64,18 +117,33 @@ const infoPadX = 21 // left edge of dividers, the description and the footer
 func (u *UI) layoutInfo(gtx C) D {
 	p := u.pal
 	if u.info.closeBtn.Clicked(gtx) {
-		u.info.open = false
+		if len(u.info.back) > 0 {
+			u.infoBack()
+		} else {
+			u.info.open = false
+		}
 	}
-	c := u.selected
+	c := u.chatByID(u.info.chatID)
+	if c == nil {
+		// A group member you have no chat with.
+		c = &model.Chat{ID: u.info.chatID, Name: u.info.name}
+	}
 	info := u.info.data
 	if info == nil {
 		info = &model.ChatInfo{ID: c.ID, Name: c.Name, IsGroup: c.IsGroup}
 	}
-	if info.Name == "" {
+	if info.Name == "" || (c.Name != "" && !info.IsGroup) {
 		info.Name = c.Name
+	}
+	if info.Name == "" {
+		info.Name = info.Phone
 	}
 	dims := fill(gtx, p.Panel)
 	rows := u.infoRows(gtx, c, info)
+	closeIc := icClose
+	if len(u.info.back) > 0 {
+		closeIc = icBack
+	}
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			title := "Contact info"
@@ -85,7 +153,7 @@ func (u *UI) layoutInfo(gtx C) D {
 			return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
 				return layout.Inset{Left: 11.5}.Layout(gtx, func(gtx C) D {
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.info.closeBtn, icClose, 40, 25, p.IconStrong) }),
+						layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.info.closeBtn, closeIc, 40, 25, p.IconStrong) }),
 						layout.Rigid(layout.Spacer{Width: 10}.Layout),
 						layout.Flexed(1, u.label(16.5, title, p.Text, labelOpts{maxLines: 1}).Layout),
 					)
@@ -102,6 +170,9 @@ func (u *UI) layoutInfo(gtx C) D {
 // infoRows builds the panel's scrolling content.
 func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widget {
 	p := u.pal
+	if !info.IsGroup {
+		return u.contactRows(gtx, c, info)
+	}
 	rows := []layout.Widget{
 		func(gtx C) D { return u.infoProfile(gtx, c, info) },
 	}
@@ -138,19 +209,6 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		item("disappearing", listItem{glyph: disappearingIcon, title: "Disappearing messages", sub: disappearing}),
 		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: "Off"}),
 	)
-	if !info.IsGroup {
-		name := info.Name
-		rows = append(rows,
-			u.infoDivider(12, 8),
-			action("fav", listItem{ic: icHeart, title: "Add to favourites"}),
-			action("list", listItem{ic: icAddToList, title: "Add to list"}),
-			action("block", listItem{ic: icBlock, title: "Block " + name, danger: true}),
-			action("report", listItem{ic: icThumbDown, title: "Report " + name, danger: true}),
-			action("delete", listItem{ic: icDelete, title: "Delete chat", danger: true}),
-			func(gtx C) D { return layout.Spacer{Height: 24}.Layout(gtx) },
-		)
-		return rows
-	}
 	rows = append(rows,
 		item("perms", listItem{ic: icSettings, title: "Group permissions"}),
 		u.infoDivider(12, 3.2),
@@ -261,29 +319,29 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 			sub = u.label(16.8, "Group", p.TextSecondary).Layout
 		}
 	} else {
-		phone := info.Phone
-		if phone == "" {
-			phone = c.Presence
-		}
-		sub = u.label(16.8, phone, p.TextSecondary).Layout
+		sub = u.contactSubtitle(c, info)
 	}
-	actions := []struct {
+	type action struct {
 		key   string
 		ic    *icon.Icon
 		label string
-	}{{"voice", icCallLine, "Voice"}, {"video", icVideoLine, "Video"}}
-	if info.IsGroup {
-		actions = append(actions, struct {
-			key   string
-			ic    *icon.Icon
-			label string
-		}{"add", icPersonAdd, "Add"})
 	}
-	actions = append(actions, struct {
-		key   string
-		ic    *icon.Icon
-		label string
-	}{"search", icSearch, "Search"})
+	var actions []action
+	switch {
+	case !info.IsGroup && (u.selected == nil || u.selected.ID != c.ID):
+		// A group member's info offers to message them instead.
+		actions = []action{{"message", icChats, "Message"}, {"share", icForward, "Share"}}
+	case info.IsGroup:
+		actions = []action{{"voice", icCallLine, "Voice"}, {"video", icVideoLine, "Video"}, {"add", icPersonAdd, "Add"}, {"search", icSearch, "Search"}}
+	default:
+		actions = []action{{"voice", icCallLine, "Voice"}, {"video", icVideoLine, "Video"}, {"search", icSearch, "Search"}}
+	}
+	if u.btn("info-action:message").Clicked(gtx) {
+		u.openDirect(c.ID, info.Name)
+	}
+	if u.btn("info-action:share").Clicked(gtx) {
+		u.openShareContact(c.ID)
+	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(layout.Spacer{Height: 26}.Layout),
@@ -310,6 +368,10 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 			d := layout.N.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = 0
 				gtx.Constraints.Max.X = max(0, contentW-2*gtx.Dp(64))
+				if info.Business != nil {
+					// A business's profile has a smaller, bold name.
+					return u.label(20, info.Name, p.Text, labelOpts{weight: font.SemiBold, maxLines: 2, align: text.Middle}).Layout(gtx)
+				}
 				return u.label(25.5, info.Name, p.Text, labelOpts{maxLines: 2, align: text.Middle}).Layout(gtx)
 			})
 			if info.IsGroup {
@@ -321,7 +383,12 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 		}),
 		layout.Rigid(layout.Spacer{Height: 7.3}.Layout),
 		center(sub),
-		layout.Rigid(layout.Spacer{Height: 15}.Layout),
+		layout.Rigid(func(gtx C) D {
+			if info.Business != nil {
+				return layout.Spacer{Height: 19}.Layout(gtx)
+			}
+			return layout.Spacer{Height: 15}.Layout(gtx)
+		}),
 		center(func(gtx C) D {
 			var children []layout.FlexChild
 			for i, a := range actions {
@@ -492,6 +559,9 @@ func (u *UI) infoMember(gtx C, m model.Member) D {
 	it.glyph = func(gtx C, col color.NRGBA) D { return u.memberAvatar(gtx, m) }
 	key := "member:" + m.ID
 	c := u.btn(key)
+	if c.Clicked(gtx) && !m.Me {
+		u.openContact(m.ID, m.Name)
+	}
 	return u.layoutMemberItem(gtx, c, it, g, m.Me)
 }
 
