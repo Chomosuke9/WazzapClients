@@ -337,6 +337,7 @@ func (b *Backend) SetBlocked(id string, blocked bool) {
 		}
 		b.infos[id] = info
 	}
+	b.setBlockedContact(id, blocked)
 	b.emit(model.InfoEvent{ChatID: id})
 }
 

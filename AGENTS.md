@@ -162,7 +162,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    edits and the send queue (editrender.go); replies, @mentions and
                    select mode live in compose.go;
                    document cards and the voice/audio player in files.go; selecting message
-                   text in textsel.go; the composer's formatting toolbar in formatbar.go; the attach
+                   text in textsel.go; the composer's formatting toolbar in formatbar.go; the settings
+                   pages (profile, account, privacy, chats, shortcuts, help) in
+                   settingsdetail.go; the attach
                    menu, file tray and poll dialog in attach.go; animation helpers in anim.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
@@ -277,8 +279,9 @@ go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the 
 go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).
-# -view: chats, archived, status, channels, communities, settings, general,
-# notifications, info, statusviewer, contact (a group member's contact info:
+# -view: chats, archived, status, channels, communities, settings, general, profile,
+# account, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, help,
+# info, statusviewer, contact (a group member's contact info:
 # -contact <id>, default the demo business vivy@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:

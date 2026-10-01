@@ -89,7 +89,7 @@ func (u *UI) layoutConversation(gtx C) D {
 		}),
 		layout.Flexed(1, func(gtx C) D {
 			sz := gtx.Constraints.Max
-			u.conv.wallpaper.layout(gtx, u.pal.ChatBg, u.pal.Doodle)
+			u.conv.wallpaper.layout(gtx, u.pal.ChatBg, u.pal.Doodle, u.doodles)
 
 			// The composer floats over the wallpaper; the list ends above it.
 			m := op.Record(gtx.Ops)

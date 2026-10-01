@@ -27,11 +27,13 @@ func (b *Backend) SetBlocked(chatID string, blocked bool) {
 		if !blocked {
 			action, verb = events.BlocklistChangeActionUnblock, "unblock"
 		}
-		if _, err := cli.UpdateBlocklist(ctx, jid, action); err != nil {
+		list, err := cli.UpdateBlocklist(ctx, jid, action)
+		if err != nil {
 			b.log.Warnf("%s %s: %v", verb, chatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't " + verb + " the contact."})
 			return
 		}
+		b.setBlocklist(ctx, list)
 		key := "info:" + chatID
 		info := model.ChatInfo{ID: chatID}
 		if raw := b.store.meta(ctx, key); raw != "" {

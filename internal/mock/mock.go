@@ -23,6 +23,7 @@ type Backend struct {
 	prefs  map[string]string
 	lists  []*model.ChatList
 	favs   map[string]bool // favourite stickers, by message
+	acc    *model.Account  // see demoAccount
 	extras
 }
 
