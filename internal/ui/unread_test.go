@@ -47,3 +47,22 @@ func TestOpenChatStaysRead(t *testing.T) {
 		t.Errorf("back: open chat shows %d unread", c.Unread)
 	}
 }
+
+// TestOpenChannelStaysRead checks the same for a channel, whose open chat
+// is a copy of the channel.
+func TestOpenChannelStaysRead(t *testing.T) {
+	u := New(mock.New())
+	u.Start(func() {})
+	u.page = pageChannels
+	u.applyEvents()
+	if len(u.channels) == 0 {
+		t.Skip("no demo channels")
+	}
+	ch := u.channels[0]
+	u.open(channelChat(ch))
+	ch.Unread = 3 // a new post arrived
+	u.markSeen()
+	if ch.Unread != 0 {
+		t.Errorf("open channel shows %d unread", ch.Unread)
+	}
+}

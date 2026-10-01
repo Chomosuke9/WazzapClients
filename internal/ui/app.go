@@ -363,12 +363,18 @@ func (u *UI) open(c *model.Chat) {
 // unread, and ones that came while the window was away are read on return.
 func (u *UI) markSeen() {
 	c := u.selected
-	if c == nil || c.Unread <= 0 || u.away || u.selPage != u.page ||
-		u.page == pageStatus || u.page == pageSettings {
+	if c == nil || u.away || u.selPage != u.page || u.page == pageStatus || u.page == pageSettings {
 		return
 	}
-	c.Unread = 0
-	u.backend.Open(c.ID)
+	// An open channel is a copy (channelChat); new posts count in u.channels.
+	if ch := u.channelByID(c.ID); ch != nil && ch.Unread > 0 {
+		ch.Unread = 0
+		c.Unread = 1
+	}
+	if c.Unread > 0 {
+		c.Unread = 0
+		u.backend.Open(c.ID)
+	}
 }
 
 // Run drives the window event loop until the window is closed.
