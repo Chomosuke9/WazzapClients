@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,9 +45,39 @@ func TestSelectText(t *testing.T) {
 		ev(pointer.Press, p, pointer.ButtonPrimary)
 		ev(pointer.Release, p, 0)
 	}
-	// The last message, "Also can you send me the villa address? My mom
-	// keeps asking", wraps after "keeps"; its time sits after "asking".
-	from, to := f32.Pt(560, 580), f32.Pt(760, 603)
+	// The last message is "Also can you send me the villa address? My mom
+	// keeps asking". Text widths depend on the system's fonts, so the
+	// points to press are found from the text's carets: a click on the
+	// text shows where it is in the window.
+	probe := f32.Pt(560, 580)
+	click(probe)
+	if u.textSel.id == "" {
+		t.Fatal("the click missed the message's text")
+	}
+	origin := probe.Sub(layout.FPt(u.textSel.lastPos))
+	plain := []rune(string(u.textSel.plain))
+	runeAt := func(s string) int {
+		for i := range plain {
+			if strings.HasPrefix(string(plain[i:]), s) {
+				return i
+			}
+		}
+		t.Fatalf("the text %q has no %q", string(plain), s)
+		return 0
+	}
+	// caret returns the window point of the caret before rune i, moved by dx.
+	caret := func(i int, dx float32) f32.Point {
+		for _, c := range u.textSel.carets {
+			if c.Rune == i {
+				return origin.Add(f32.Pt(float32(c.X)+dx, float32(c.Top+c.Bottom)/2))
+			}
+		}
+		t.Fatalf("no caret before rune %d", i)
+		return f32.Point{}
+	}
+	from, to := caret(runeAt("can you"), 0), caret(runeAt("asking")+len("asking"), 0)
+	villa := caret(runeAt("villa"), 4)
+	now = now.Add(time.Second)
 	ev(pointer.Move, from, 0)
 	ev(pointer.Press, from, pointer.ButtonPrimary)
 	ev(pointer.Move, to, pointer.ButtonPrimary)
@@ -62,8 +93,8 @@ func TestSelectText(t *testing.T) {
 	}
 
 	now = now.Add(time.Second)
-	click(f32.Pt(720, 580)) // in "villa"
-	click(f32.Pt(720, 580))
+	click(villa)
+	click(villa)
 	if got := u.textSel.selected(u.textSel.id); got != "villa" {
 		t.Errorf("the double click selected %q, want %q", got, "villa")
 	}
