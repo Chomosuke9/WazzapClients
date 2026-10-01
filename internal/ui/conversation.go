@@ -231,7 +231,8 @@ func (u *UI) glideFrom(i, screen int) int {
 }
 
 // appearing lays out a new message's row growing from nothing at the
-// bottom, its bubble rising into place as the rows above make room.
+// bottom. The bubble is revealed from its top down as the rows above make
+// room, like WhatsApp.
 func (u *UI) appearing(gtx C, id string, w layout.Widget) D {
 	k := animKey{id: id, tag: tagAppear}
 	v := u.anims.fade(gtx, k, true, durAppear, durAppear)
@@ -244,7 +245,7 @@ func (u *UI) appearing(gtx C, id string, w layout.Widget) D {
 	// trims to the viewport, and would then stop following the end.
 	h := max(1, lerpInt(0, full.size.Y, e))
 	defer clip.Rect{Max: image.Pt(full.size.X, h)}.Push(gtx.Ops).Pop()
-	withOpacity(gtx, e, func() { full.at(gtx, 0, h-full.size.Y) })
+	withOpacity(gtx, e, func() { full.at(gtx, 0, 0) })
 	return D{Size: image.Pt(full.size.X, h)}
 }
 
