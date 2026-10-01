@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
+	"github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/appstate"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waHistorySync"
@@ -55,10 +58,18 @@ func unixSeconds(ts int64) int64 {
 
 // putSticker stores a sticker's media and marks it recent (recentTS > 0)
 // and/or favourite (fav > 0). Zero leaves that mark as it was.
+// A stored media message whose link expires later than the new one's is
+// kept: syncs repeat old links, while stickerFromChats stores fresh ones.
 func (s *msgStore) putSticker(ctx context.Context, x execer, hash string, sticker *waE2E.StickerMessage, recentTS, fav int64) error {
 	blob, err := proto.Marshal(sticker)
 	if err != nil {
 		return err
+	}
+	if old, err := s.stickerBlob(ctx, hash); err == nil {
+		var m waE2E.StickerMessage
+		if proto.Unmarshal(old, &m) == nil && linkExpiry(m.GetDirectPath()) > linkExpiry(sticker.GetDirectPath()) {
+			blob = old
+		}
 	}
 	_, err = x.ExecContext(ctx, `INSERT INTO wz_stickers (hash, blob, recent_ts, favorite) VALUES (?, ?, ?, ?)
 		ON CONFLICT (hash) DO UPDATE SET blob = excluded.blob,
@@ -66,6 +77,17 @@ func (s *msgStore) putSticker(ctx context.Context, x execer, hash string, sticke
 			favorite = CASE WHEN excluded.favorite > 0 THEN excluded.favorite ELSE wz_stickers.favorite END`,
 		hash, blob, recentTS, fav)
 	return err
+}
+
+// linkExpiry is when a media direct path stops working: its "oe" parameter,
+// in hex unix seconds. It is 0 if unknown.
+func linkExpiry(directPath string) int64 {
+	u, err := url.Parse(directPath)
+	if err != nil {
+		return 0
+	}
+	oe, _ := strconv.ParseInt(u.Query().Get("oe"), 16, 64)
+	return oe
 }
 
 // unmarkSticker clears one mark ("recent_ts" or "favorite") and forgets
@@ -179,13 +201,7 @@ func (b *Backend) recentSticker(blob []byte, ts time.Time, srcChat, srcID string
 		return
 	}
 	if srcChat != "" && srcChat != stickerChat {
-		dst := b.mediaPath(stickerChat, hash)
-		if _, err := os.Stat(dst); err != nil {
-			if data, err := os.ReadFile(b.mediaPath(srcChat, srcID)); err == nil {
-				_ = os.MkdirAll(filepath.Dir(dst), 0o700)
-				_ = os.WriteFile(dst, data, 0o600)
-			}
-		}
+		b.copyStickerFile(srcChat, srcID, hash)
 	}
 	b.emit(model.StickersEvent{})
 }
@@ -306,6 +322,143 @@ func (b *Backend) rehashSticker(oldKey string, data []byte) {
 		_, _ = b.db.ExecContext(ctx, `DELETE FROM wz_stickers WHERE hash = ?`, oldKey)
 	}
 	b.emit(model.StickersEvent{})
+}
+
+// favoriteStickerVersion is the favoriteSticker app state action's version
+// (WhatsApp Web's WAWebStickersFavoriteSyncAction).
+const favoriteStickerVersion = 7
+
+// chatSticker returns a sticker message's media message and file hash (hex).
+func (b *Backend) chatSticker(m *model.Message) (*waE2E.StickerMessage, string, bool) {
+	if m.Media != model.MediaSticker {
+		return nil, "", false
+	}
+	_, blob, err := b.store.mediaBlob(b.ctx, m.ChatID, m.ID)
+	var s waE2E.StickerMessage
+	if err != nil || proto.Unmarshal(blob, &s) != nil || len(s.GetFileSHA256()) != 32 {
+		return nil, "", false
+	}
+	s.ContextInfo = nil
+	return &s, hex.EncodeToString(s.GetFileSHA256()), true
+}
+
+// FavoriteSticker implements model.Backend.
+func (b *Backend) FavoriteSticker(m *model.Message) bool {
+	_, hash, ok := b.chatSticker(m)
+	var fav int64
+	return ok && b.db.QueryRowContext(b.ctx, `SELECT favorite FROM wz_stickers WHERE hash = ?`, hash).Scan(&fav) == nil && fav > 0
+}
+
+// SetFavoriteSticker implements model.Backend. Like WhatsApp, it sends a
+// favoriteSticker mutation (a SET with isFavorite false to unfavourite).
+func (b *Backend) SetFavoriteSticker(m *model.Message, fav bool) {
+	if b.connected() == nil {
+		return
+	}
+	s, hash, ok := b.chatSticker(m)
+	if !ok {
+		b.emit(model.NoticeEvent{Text: "This sticker can't be added to favourites."})
+		return
+	}
+	if fav {
+		if err := b.store.putSticker(b.ctx, b.db, hash, s, 0, time.Now().Unix()); err != nil {
+			b.log.Warnf("store favourite sticker: %v", err)
+			return
+		}
+		b.copyStickerFile(m.ChatID, m.ID, hash)
+	} else if err := b.store.unmarkSticker(b.ctx, hash, "favorite"); err != nil {
+		b.log.Warnf("unfavourite sticker: %v", err)
+		return
+	}
+	b.emit(model.StickersEvent{})
+	b.sendAppState(appstate.PatchInfo{
+		Type: appstate.WAPatchRegularLow,
+		Mutations: []appstate.MutationInfo{{
+			Index:   []string{appstate.IndexFavoriteSticker, base64.StdEncoding.EncodeToString(s.GetFileSHA256())},
+			Version: favoriteStickerVersion,
+			Value: &waSyncAction.SyncActionValue{StickerAction: &waSyncAction.StickerAction{
+				URL: s.URL, FileEncSHA256: s.FileEncSHA256, MediaKey: s.MediaKey, Mimetype: s.Mimetype,
+				Height: s.Height, Width: s.Width, DirectPath: s.DirectPath, FileLength: s.FileLength,
+				IsFavorite: proto.Bool(fav), IsLottie: s.IsLottie, IsAvatarSticker: s.IsAvatar,
+			}},
+		}},
+	})
+}
+
+// copyStickerFile gives a synced sticker the file of a chat message with the
+// same sticker, if that is on disk, saving a download.
+func (b *Backend) copyStickerFile(chat, id, hash string) {
+	dst := b.mediaPath(stickerChat, hash)
+	if _, err := os.Stat(dst); err == nil {
+		return
+	}
+	if data, err := os.ReadFile(b.mediaPath(chat, id)); err == nil {
+		_ = os.MkdirAll(filepath.Dir(dst), 0o700)
+		_ = os.WriteFile(dst, data, 0o600)
+	}
+}
+
+// stickerCopyTries is how many chat copies of a sticker stickerFromChats
+// downloads before it gives up.
+const stickerCopyTries = 3
+
+// stickerFromChats gets a synced sticker whose own link is dead (expired, or
+// the file is gone from WhatsApp's servers) from a chat message with the same
+// file, newest first: the file on disk, or else a download of that copy. The
+// copy's media message replaces the dead one, so sending the sticker gives
+// the recipient a link that works.
+func (b *Backend) stickerFromChats(ctx context.Context, cli *whatsmeow.Client, hash string) bool {
+	sha, err := hex.DecodeString(hash)
+	if err != nil || len(sha) != 32 {
+		return false // an enc- key: no plaintext hash to match
+	}
+	type chatCopy struct {
+		chat, id string
+		m        *waE2E.StickerMessage
+	}
+	rows, err := b.db.QueryContext(ctx, `SELECT chat, id, media_blob FROM wz_messages
+		WHERE media = ? AND media_blob IS NOT NULL ORDER BY ts DESC`, int(model.MediaSticker))
+	if err != nil {
+		return false
+	}
+	var copies []chatCopy
+	for rows.Next() {
+		var c chatCopy
+		var blob []byte
+		m := &waE2E.StickerMessage{}
+		if rows.Scan(&c.chat, &c.id, &blob) == nil && proto.Unmarshal(blob, m) == nil &&
+			string(m.GetFileSHA256()) == string(sha) {
+			c.m = m
+			copies = append(copies, c)
+		}
+	}
+	rows.Close()
+	tries := 0
+	for _, c := range copies {
+		data, err := os.ReadFile(b.mediaPath(c.chat, c.id))
+		if err != nil {
+			if tries == stickerCopyTries {
+				continue
+			}
+			tries++
+			if data, err = cli.Download(ctx, c.m); err != nil {
+				continue
+			}
+		}
+		path := b.mediaPath(stickerChat, hash)
+		_ = os.MkdirAll(filepath.Dir(path), 0o700)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			b.log.Warnf("save sticker: %v", err)
+			return false
+		}
+		c.m.ContextInfo = nil
+		if err := b.store.putSticker(ctx, b.db, hash, c.m, 0, 0); err != nil {
+			b.log.Warnf("store sticker: %v", err)
+		}
+		b.emit(model.MediaEvent{ChatID: stickerChat, MsgID: hash})
+		return true
+	}
+	return false
 }
 
 func stickerFromAction(a *waSyncAction.StickerAction, sha []byte) *waE2E.StickerMessage {

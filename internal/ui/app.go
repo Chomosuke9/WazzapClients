@@ -4,7 +4,9 @@ package ui
 import (
 	"image"
 	"image/color"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"gioui.org/app"
@@ -12,11 +14,11 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/text"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"rsc.io/qr"
 
-	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -39,6 +41,7 @@ type UI struct {
 	dark   bool
 	now    func() time.Time
 	window *app.Window // nil when rendering headless
+	host   *host       // nil when rendering headless (see Run)
 	deco   widget.Decorations
 	// winWidth is the window width in px, for panels sized relative to it.
 	winWidth int
@@ -104,6 +107,7 @@ type UI struct {
 	toastMsg  toastState
 	mouse     image.Point // last pointer position, in content coordinates
 	mouseTag  struct{}
+	mouseDown bool            // the primary button is down
 	hovered   map[string]bool // see hoverArea
 	lastPress struct {        // for double clicks, see pressArea
 		key string
@@ -113,8 +117,9 @@ type UI struct {
 		key string
 		at  time.Time
 	}
-	pendingCopy string // clipboard text waiting for a frame
-	focus       any    // editor to focus next frame (see requestFocus)
+	pendingCopy string        // clipboard text waiting for a frame
+	textSel     textSelection // selected message text
+	focus       any           // editor to focus next frame (see requestFocus)
 	focusReq    bool
 
 	anims    animStore                     // keyed fades: hovers, new messages, reactions
@@ -146,12 +151,15 @@ type UI struct {
 		composer            widget.Editor
 		video, search, menu widget.Clickable
 		attach, emoji, send widget.Clickable
-		header              widget.Clickable
-		rows                []convRow
-		rowsFor             *model.Chat
-		rowsVer             int
-		wallpaper           wallpaper
-		nbsp                map[int]float32 // NBSP advance per text size in px
+		// editorElsewhere is set while the send view shows: the
+		// composer's editor is its caption field.
+		editorElsewhere bool
+		header          widget.Clickable
+		rows            []convRow
+		rowsFor         *model.Chat
+		rowsVer         int
+		wallpaper       wallpaper
+		nbsp            map[int]float32 // NBSP advance per text size in px
 
 		reply            *model.Message // message being replied to
 		mentions         []mentionRef   // @mentions picked for the draft
@@ -182,9 +190,35 @@ type UI struct {
 		selV         float32           // select mode's progress this frame
 		sendAnim     tween             // the mic turning into the send button
 		glide        glide             // smooth scroll to a message
+		typingAnim   tween             // the typing bubble growing in and out
+		typingFor    string            // chat typingAnim belongs to
+		typingWho    [2]string         // who is typing (name, ID), kept while it fades out
+		typingSeen   time.Time         // last frame someone was typing, for typingGrace
+		typingH      int               // the typing row's height last frame, 0 if not drawn
+		takeover     string            // new message growing from the typing bubble's room
+		takeoverH    int               // and that room in px
 		heights      map[int]int       // row heights laid out last frame, by index
 		reactions    map[string]string // reaction shown per message, to pop new ones
 		expanded     map[string]int    // "Read more" clicks per message
+
+		// The formatting toolbar over a selection in the composer.
+		fmtAnim    tween
+		fmtAt      image.Point // the selection's top center, in the editor
+		fmtRegions []widget.Region
+		fmtActive  [numFmt]bool // the styles the selection has
+		// The composer's text as paintComposerText draws it.
+		richFor      string
+		richFlags    []uint8
+		richGlyphs   []text.Glyph
+		richRegions  []widget.Region
+		richRun      []text.Glyph
+		caretKey     [3]int // selection and length, to restart the blink
+		caretSince   time.Time
+		caretFocused bool
+		// composerArea takes clicks around the composer's text.
+		composerArea  struct{}
+		composerFrom  int // the caret where a press in composerArea started
+		composerPress bool
 	}
 }
 
@@ -201,6 +235,7 @@ func New(b model.Backend) *UI {
 	u.channel.search.SingleLine = true
 	u.commun.list.Axis = layout.Vertical
 	u.settings.list.Axis = layout.Vertical
+	u.settings.detailList.Axis = layout.Vertical
 	u.settings.search.SingleLine = true
 	u.sidebar.search.SingleLine = true
 	u.sidebar.list.Axis = layout.Vertical
@@ -259,12 +294,20 @@ func (u *UI) Preview() {
 func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 
 // ShowPage switches the navigation rail to one of "chats", "archived",
-// "calls", "status", "channels", "communities" or "settings".
+// "calls", "status", "channels", "communities" or "settings", or opens
+// the "general" or "notifications" settings.
 func (u *UI) ShowPage(name string) {
 	pages := map[string]page{"chats": pageChats, "archived": pageChats, "calls": pageCalls, "status": pageStatus,
-		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings}
+		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings,
+		"general": pageSettings, "notifications": pageSettings}
 	u.setPage(pages[name])
 	u.sidebar.showArchived = name == "archived"
+	switch name {
+	case "general":
+		u.openSettings(settingGeneral)
+	case "notifications":
+		u.openSettings(settingNotifications)
+	}
 }
 
 // ShowStatus opens the status viewer on the i-th poster (used for screenshots).
@@ -299,6 +342,7 @@ func (u *UI) setPage(pg page) {
 		}
 	}
 	u.page = pg
+	u.settings.detail = 0
 	u.hideInfo()
 	u.status.viewer.close()
 }
@@ -363,6 +407,7 @@ func (u *UI) open(c *model.Chat) {
 	u.loadLatest()
 	c.Unread = 0
 	u.backend.Open(c.ID)
+	u.chatRead(c.ID)
 	u.conv.list.Position = layout.Position{}
 	u.conv.list.ScrollToEnd = true
 	u.conv.composer.SetText("")
@@ -374,7 +419,7 @@ func (u *UI) open(c *model.Chat) {
 	u.closePicker()
 	u.picker.anim.snap(false)
 	u.stopVoice()
-	u.attach.files = nil
+	u.dropAttachments()
 }
 
 // markSeen marks the open chat read while it is on screen and the window
@@ -396,46 +441,14 @@ func (u *UI) markSeen() bool {
 	}
 	c.Unread = 0
 	u.backend.Open(c.ID)
+	u.chatRead(c.ID)
 	return true
 }
 
-// Run drives the window event loop until the window is closed.
-func Run(w *app.Window, b model.Backend) error {
-	u := New(b)
-	u.window = w
-	u.Start(w.Invalidate)
-	defer b.Close()
-	// Once nothing has been drawn for a while, give memory back (see
-	// memtrim). Every frame pushes the trim back. Leaving the window trims
-	// sooner, even while something on screen still animates.
-	idle := time.AfterFunc(idleTrim, memtrim.Trim)
-	defer idle.Stop()
-	away := time.AfterFunc(awayTrim, memtrim.Trim)
-	away.Stop()
-	defer away.Stop()
-	focused := true
-	var ops op.Ops
-	for {
-		switch e := w.Event().(type) {
-		case app.DestroyEvent:
-			return e.Err
-		case app.ConfigEvent:
-			u.deco.Maximized = e.Config.Mode == app.Maximized
-			if f := e.Config.Focused && e.Config.Mode != app.Minimized; f != focused {
-				focused = f
-				u.away = !f
-				if f {
-					away.Stop()
-				} else {
-					away.Reset(awayTrim)
-				}
-			}
-		case app.FrameEvent:
-			gtx := app.NewContext(&ops, e)
-			u.Layout(gtx)
-			e.Frame(gtx.Ops)
-			idle.Reset(idleTrim)
-		}
+// chatRead takes a chat's notification away once the chat is read here.
+func (u *UI) chatRead(id string) {
+	if u.host != nil {
+		u.host.notes.read(id)
 	}
 }
 
@@ -486,7 +499,7 @@ func (u *UI) Layout(gtx C) D {
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
 	u.layoutViewer(gtx)
-	if u.picker.shown() && u.picker.mode == pickReaction {
+	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
 	u.layoutCtxMenu(gtx)
@@ -697,6 +710,18 @@ func (u *UI) update(gtx C) {
 	if ms := u.mentionQuery(); ms == nil {
 		u.conv.mentionDismissed = ""
 	}
+	if u.conv.emoji.Clicked(gtx) {
+		if u.picker.open {
+			u.closePicker()
+		} else {
+			u.openPicker(pickComposer, nil)
+		}
+	}
+	if u.conv.attach.Clicked(gtx) {
+		u.openAttachMenu()
+	}
+	u.updateAttach()
+	u.updatePaste(gtx)
 	for {
 		ev, ok := u.conv.composer.Update(gtx)
 		if !ok {
@@ -725,12 +750,28 @@ func (u *UI) escape() {
 	case u.mentionQuery() != nil:
 		ms := u.mentionQuery()
 		u.conv.mentionDismissed = string([]rune(u.conv.composer.Text())[ms.start:ms.end])
+	case len(u.attach.files) > 0:
+		// The send view: stop typing, put the tool down, drop the
+		// selection, then close.
+		ed := &u.attach.ed
+		switch {
+		case ed.typing >= 0:
+			u.finishTyping()
+		case ed.tool != toolNone:
+			u.setTool(ed.tool)
+		case ed.sel >= 0:
+			ed.sel = -1
+		default:
+			u.closeSendView(false)
+		}
 	case u.conv.selecting:
 		u.endSelect()
 	case u.conv.reply != nil:
 		u.conv.reply = nil
 	case u.status.viewer.isOpen():
 		u.status.viewer.close()
+	case u.page == pageSettings && u.settings.detail != 0:
+		u.settings.detail = 0
 	}
 }
 
@@ -921,6 +962,12 @@ func (u *UI) upsertMessage(m *model.Message) {
 	if i == len(u.msgs) && u.now().Sub(m.Time) < time.Minute {
 		// A new message slides in at the bottom (history arrives older).
 		u.anims.start(animKey{id: m.ID, tag: tagAppear})
+		if !m.FromMe && u.conv.typingH > 0 && u.conv.typingFor == m.ChatID {
+			// It replaces the typing bubble on screen.
+			u.conv.takeover, u.conv.takeoverH = m.ID, u.conv.typingH
+			u.conv.typingAnim.snap(false)
+			u.conv.typingH = 0
+		}
 	}
 	u.msgs = append(u.msgs, nil)
 	copy(u.msgs[i+1:], u.msgs[i:])
@@ -948,17 +995,19 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "msgmenu", "emoji", "sticker", "viewer", "forward", "reply", "delete",
+// "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
 // "select", "attach", "poll", "contacts" or "tray".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
 	u.mouse = image.Pt(x, y)
-	var lastIn, lastOut, img *model.Message
+	var lastIn, lastOut, img, sticker *model.Message
 	for _, m := range u.msgs {
 		switch {
 		case m.Kind == model.KindImage:
 			img = m
+		case m.Media == model.MediaSticker && !m.FromMe:
+			sticker = m
 		}
 		if m.FromMe {
 			lastOut = m
@@ -974,6 +1023,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "msgmenu":
 		if lastIn != nil {
 			u.openMessageMenu(lastIn)
+		}
+	case "stickermenu":
+		if sticker != nil {
+			u.openMessageMenu(sticker)
 		}
 	case "emoji":
 		u.openPicker(pickComposer, nil)
@@ -1006,10 +1059,27 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openPoll()
 	case "contacts":
 		u.openContactPicker()
-	case "tray":
-		u.attach.files = []model.Attachment{{Path: "beach.jpg", Media: model.MediaImage},
-			{Path: "Quarterly report.pdf", Media: model.MediaDocument}}
+	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter":
+		// $WAZZAP_DEMO_PHOTO is a real photo to show.
+		photo := os.Getenv("WAZZAP_DEMO_PHOTO")
+		if photo == "" {
+			photo = "beach.jpg"
+		}
+		u.addFiles(u.selected.ID, []*attachFile{
+			{Attachment: model.Attachment{Path: photo, Media: model.MediaImage}},
+			{Attachment: model.Attachment{Path: "Quarterly report.pdf", Media: model.MediaDocument}}})
+		u.attach.anim.snap(true)
 		u.conv.composer.SetText("From last weekend")
+		switch name {
+		case "senddoc":
+			u.showFile(1)
+		case "sendedit", "sendcrop", "sendfilter":
+			// The edit waits for the photo to decode (see demoEdit).
+			u.attach.demoEdit = strings.TrimPrefix(name, "send")
+		}
+		if name == "quality" {
+			u.openQualityMenu()
+		}
 	case "mention", "mentioned":
 		// The mention picker, or a draft with picked mentions.
 		ed := &u.conv.composer

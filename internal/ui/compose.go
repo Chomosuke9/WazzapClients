@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"slices"
 	"sort"
 	"strings"
@@ -14,11 +15,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"golang.org/x/image/math/fixed"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
@@ -139,11 +137,34 @@ func (u *UI) sendComposer() {
 		u.pickMention(0)
 		return
 	}
-	txt := trimSpace(u.conv.composer.Text())
-	if txt == "" && len(u.attach.files) == 0 {
+	if len(u.attach.files) > 0 {
+		// Each file goes with its own caption.
+		u.sendAttachments()
+		u.scrollMessages(layout.Position{})
 		return
 	}
-	d := model.Draft{Text: txt, Reply: u.conv.reply}
+	txt := trimSpace(u.conv.composer.Text())
+	if txt == "" {
+		return
+	}
+	d := u.draftFrom(txt)
+	d.Reply = u.conv.reply
+	u.conv.composer.SetText("")
+	u.conv.reply = nil
+	u.conv.mentions = nil
+	if m := u.backend.Send(u.selected.ID, d); m != nil {
+		if u.chatByID(m.ChatID) == nil {
+			u.chats = append(u.chats, u.selected)
+		}
+		u.upsertMessage(m)
+	}
+	u.scrollMessages(layout.Position{}) // jump to the newest message
+}
+
+// draftFrom makes a message of composer text, turning the picked
+// mentions in it into the protocol's.
+func (u *UI) draftFrom(txt string) model.Draft {
+	d := model.Draft{Text: txt}
 	// Longer names first, so "@Al" doesn't eat the start of "@Alice".
 	refs := append([]mentionRef(nil), u.conv.mentions...)
 	sort.SliceStable(refs, func(a, b int) bool { return len(refs[a].name) > len(refs[b].name) })
@@ -182,19 +203,7 @@ func (u *UI) sendComposer() {
 		d.Text = strings.ReplaceAll(d.Text, at, "@"+user)
 		addJID(mr.jid)
 	}
-	u.conv.composer.SetText("")
-	u.conv.reply = nil
-	u.conv.mentions = nil
-	if len(u.attach.files) > 0 {
-		// The text is the caption of the first file.
-		u.sendAttachments(d)
-	} else if m := u.backend.Send(u.selected.ID, d); m != nil {
-		if u.chatByID(m.ChatID) == nil {
-			u.chats = append(u.chats, u.selected)
-		}
-		u.upsertMessage(m)
-	}
-	u.scrollMessages(layout.Position{}) // jump to the newest message
+	return d
 }
 
 // mentionState describes an "@query" being typed before the caret.
@@ -340,75 +349,6 @@ func (u *UI) mentionRanges(txt string) [][2]int {
 	return out
 }
 
-// paintMentions draws the picked @mentions in the composer in green. The
-// editor paints all its text in one color, so a green copy of the text is
-// drawn over it, clipped to the mentions.
-func (u *UI) paintMentions(gtx C, e material.EditorStyle) {
-	ed := e.Editor
-	txt := ed.Text()
-	ranges := u.mentionRanges(txt)
-	if len(ranges) == 0 {
-		return
-	}
-	// The editor may be scrolled: compare where a mention sits in the
-	// shaped text with where the editor shows it.
-	sh := u.th.Shaper
-	sh.LayoutString(text.Parameters{
-		Font:     e.Font,
-		PxPerEm:  fixed.I(gtx.Sp(e.TextSize)),
-		MaxWidth: gtx.Constraints.Max.X,
-		MinWidth: gtx.Constraints.Min.X,
-		Locale:   gtx.Locale,
-	}, txt)
-	baseline := map[int]int{} // rune offset of a mention -> its baseline
-	for _, r := range ranges {
-		baseline[r[0]] = -1
-	}
-	idx := 0
-	for {
-		g, ok := sh.NextGlyph()
-		if !ok {
-			break
-		}
-		if g.Flags&text.FlagClusterBreak == 0 {
-			continue
-		}
-		if y, ok := baseline[idx]; ok && y < 0 {
-			baseline[idx] = int(g.Y)
-		}
-		idx += int(g.Runes)
-	}
-	var regions, buf []widget.Region
-	scroll, known := 0, false
-	for _, r := range ranges {
-		buf = ed.Regions(r[0], r[1], buf) // reuses buf
-		if !known && len(buf) > 0 && baseline[r[0]] >= 0 {
-			scroll, known = baseline[r[0]]-(buf[0].Bounds.Max.Y-buf[0].Baseline), true
-		}
-		regions = append(regions, buf...)
-	}
-	if !known {
-		return
-	}
-	lgtx := gtx
-	lgtx.Constraints.Max.Y = 1 << 24
-	m := op.Record(gtx.Ops)
-	t := op.Offset(image.Pt(0, -scroll)).Push(gtx.Ops)
-	cm := op.Record(gtx.Ops)
-	paint.ColorOp{Color: u.pal.Green}.Add(gtx.Ops)
-	widget.Label{}.Layout(lgtx, sh, e.Font, e.TextSize, txt, cm.Stop())
-	t.Pop()
-	call := m.Stop()
-	for _, r := range regions {
-		// Cover the editor's glyphs first, so their edges don't show.
-		cl := clip.Rect(r.Bounds).Push(gtx.Ops)
-		paint.ColorOp{Color: u.pal.Composer}.Add(gtx.Ops)
-		paint.PaintOp{}.Add(gtx.Ops)
-		call.Add(gtx.Ops)
-		cl.Pop()
-	}
-}
-
 // layoutMentionPicker draws matching members, plus "@all" and "@admin",
 // above the composer.
 func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
@@ -516,17 +456,6 @@ func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
 // layoutComposer is the floating message box at the bottom of a chat, or
 // the select bar in select mode. Switching between them cross-fades.
 func (u *UI) layoutComposer(gtx C) D {
-	if u.conv.emoji.Clicked(gtx) {
-		if u.picker.open {
-			u.closePicker()
-		} else {
-			u.openPicker(pickComposer, nil)
-		}
-	}
-	if u.conv.attach.Clicked(gtx) {
-		u.openAttachMenu()
-	}
-	u.updateAttach()
 	if u.conv.selecting {
 		return fadeW(gtx, easeOut(u.conv.selV), u.layoutSelectBar)
 	}
@@ -554,7 +483,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	if rv == 0 {
 		c.replyGhost = nil
 	}
-	hasText := trimSpace(c.composer.Text()) != "" || len(u.attach.files) > 0
+	hasText := trimSpace(c.composer.Text()) != "" && !c.editorElsewhere
 	sv := easeOut(c.sendAnim.step(gtx, hasText, durSwitch))
 	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -571,7 +500,6 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		}
 		m := op.Record(gtx.Ops)
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(u.layoutAttachTray),
 			layout.Rigid(func(gtx C) D {
 				ghost := c.replyGhost
 				if ghost == nil {
@@ -614,22 +542,16 @@ func (u *UI) layoutComposerBox(gtx C) D {
 							}),
 							layout.Rigid(layout.Spacer{Width: 10}.Layout),
 							layout.Flexed(1, func(gtx C) D {
-								return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
-									gtx.Constraints.Min.X = gtx.Constraints.Max.X
-									gtx.Constraints.Max.Y = gtx.Dp(140)
-									hint := "Type a message"
-									if len(u.attach.files) > 0 {
-										hint = "Add a caption"
+								if c.editorElsewhere {
+									// The send view has the editor; this is
+									// only seen while it slides.
+									txt, col := u.attach.draft, p.Text
+									if txt == "" {
+										txt, col = "Type a message", p.ComposerHint
 									}
-									e := material.Editor(u.th, &u.conv.composer, hint)
-									e.TextSize = 16
-									e.Color = p.Text
-									e.HintColor = p.ComposerHint
-									e.SelectionColor = argb(0x53bdeb, 0x60)
-									d := e.Layout(gtx)
-									u.paintMentions(gtx, e)
-									return d
-								})
+									return vcenter(gtx, gtx.Constraints.Min.Y, u.label(16, txt, col).Layout)
+								}
+								return u.layoutComposerEditor(gtx, "Type a message")
 							}),
 							layout.Rigid(layout.Spacer{Width: 8}.Layout),
 							layout.Rigid(func(gtx C) D {
@@ -671,6 +593,49 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		u.conv.composerH = dims.Size.Y + gtx.Dp(18)
 		return dims
 	})
+}
+
+// layoutComposerEditor lays out the composer's editor, which is also the
+// send view's caption field: formatting and mentions drawn over it, the
+// format bar, and clicks around the text. gtx.Constraints.Min.Y is the
+// height of the row it's in.
+func (u *UI) layoutComposerEditor(gtx C, hint string) D {
+	p := u.pal
+	u.formatKeys(gtx)
+	pad := gtx.Dp(8)
+	rowMin := gtx.Constraints.Min.Y
+	m := op.Record(gtx.Ops)
+	var ed D
+	dims := layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		gtx.Constraints.Min.Y = 0
+		gtx.Constraints.Max.Y = gtx.Dp(140)
+		e := material.Editor(u.th, &u.conv.composer, hint)
+		e.TextSize = 16
+		e.Color = p.Text
+		e.HintColor = p.ComposerHint
+		e.SelectionColor = argb(0x53bdeb, 0x60)
+		// Formatting and mentions are drawn over the editor, which then
+		// paints its text clear.
+		txt := u.conv.composer.Text()
+		rich := u.composerRich(txt)
+		if rich {
+			e.Color = color.NRGBA{}
+		}
+		ed = e.Layout(gtx)
+		if rich {
+			u.paintComposerText(gtx, e, txt, ed.Size)
+		}
+		u.layoutFormatBar(gtx, &u.conv.composer)
+		return ed
+	})
+	call := m.Stop()
+	// Clicks around the text, up to the row's edges, go to the editor too.
+	ext := max(0, (rowMin-dims.Size.Y)/2)
+	area := image.Rectangle{Min: image.Pt(0, -ext), Max: image.Pt(dims.Size.X, dims.Size.Y+ext)}
+	u.composerArea(gtx, area, image.Pt(0, pad), ed.Size)
+	call.Add(gtx.Ops)
+	return dims
 }
 
 // layoutSelectBar replaces the composer while selecting messages.
@@ -789,4 +754,70 @@ func (u *UI) layoutPinnedBanner(gtx C, m *model.Message) D {
 		fillRect(gtx, image.Rect(0, d.Size.Y-max(1, gtx.Dp(1)), d.Size.X, d.Size.Y), p.Divider)
 		return d
 	})
+}
+
+// composerArea passes presses and drags in area, around the composer's
+// text, to the editor at offset edAt of size edSize: the editor's own
+// input area covers only its lines, a thin strip in the round box.
+func (u *UI) composerArea(gtx C, area image.Rectangle, edAt, edSize image.Point) {
+	c := &u.conv
+	ed := &c.composer
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &c.composerArea, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
+		if !ok {
+			break
+		}
+		e, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		pos := e.Position.Round().Sub(edAt)
+		switch e.Kind {
+		case pointer.Press:
+			if !e.Buttons.Contain(pointer.ButtonPrimary) {
+				continue
+			}
+			i := composerCaretAt(ed, pos, edSize)
+			c.composerFrom, c.composerPress = i, true
+			if e.Modifiers.Contain(key.ModShift) {
+				_, c.composerFrom = ed.Selection()
+			}
+			ed.SetCaret(i, c.composerFrom)
+			gtx.Execute(key.FocusCmd{Tag: ed})
+		case pointer.Drag:
+			if c.composerPress {
+				ed.SetCaret(composerCaretAt(ed, pos, edSize), c.composerFrom)
+			}
+		default:
+			c.composerPress = false
+		}
+	}
+	defer clip.Rect(area).Push(gtx.Ops).Pop()
+	pointer.CursorText.Add(gtx.Ops)
+	event.Op(gtx.Ops, &c.composerArea)
+}
+
+// composerCaretAt returns the caret position nearest to p, in the
+// editor's coordinates, on the line level with p (the first or last line
+// when p is above or below the text).
+func composerCaretAt(ed *widget.Editor, p, size image.Point) int {
+	n := ed.Len()
+	y := min(max(p.Y, 0), max(0, size.Y-1))
+	best, bestD := n, -1
+	var rs []widget.Region
+	for i := range n {
+		rs = ed.Regions(i, i+1, rs[:0])
+		for _, r := range rs {
+			b := r.Bounds
+			if y < b.Min.Y || y >= b.Max.Y {
+				continue
+			}
+			for j, x := range [2]int{b.Min.X, b.Max.X} {
+				if d := max(p.X-x, x-p.X); bestD < 0 || d < bestD {
+					best, bestD = i+j, d
+				}
+			}
+		}
+	}
+	return best
 }

@@ -195,14 +195,24 @@ func (b *Backend) mediaPath(chatID, msgID string) string {
 	return filepath.Join(b.dataDir, "media", fileKey(chatID, msgID))
 }
 
-// MediaData implements model.Backend. A file with a ".failed" twin means the
-// download failed permanently (e.g. the media expired on WhatsApp's servers).
+// failedPath marks a download that failed permanently (e.g. the media expired
+// on WhatsApp's servers). Synced stickers use another name: before they could
+// come from a chat's copy (stickerFromChats), they were marked ".failed".
+func (b *Backend) failedPath(chatID, msgID string) string {
+	if chatID == stickerChat {
+		return b.mediaPath(chatID, msgID) + ".gone"
+	}
+	return b.mediaPath(chatID, msgID) + ".failed"
+}
+
+// MediaData implements model.Backend. Media with a failedPath marker is not
+// downloaded again.
 func (b *Backend) MediaData(chatID, msgID string) []byte {
 	path := b.mediaPath(chatID, msgID)
 	if data, err := os.ReadFile(path); err == nil {
 		return data
 	}
-	if _, err := os.Stat(path + ".failed"); err == nil {
+	if _, err := os.Stat(b.failedPath(chatID, msgID)); err == nil {
 		return nil
 	}
 	b.downloads.add(chatID+"/"+msgID, func() { b.download(chatID, msgID) })
@@ -246,10 +256,13 @@ func (b *Backend) download(chatID, msgID string) {
 		b.rehashSticker(msgID, data)
 		return
 	}
+	if err != nil && chatID == stickerChat && b.stickerFromChats(ctx, cli, msgID) {
+		return
+	}
 	if err != nil {
 		b.log.Infof("download media %s: %v", msgID, err)
 		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
-			_ = os.WriteFile(path+".failed", nil, 0o600)
+			_ = os.WriteFile(b.failedPath(chatID, msgID), nil, 0o600)
 			b.emit(model.MediaEvent{ChatID: chatID, MsgID: msgID})
 		}
 		return

@@ -6,9 +6,12 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/polymorfa/hypermeow/appstate"
+	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waHistorySync"
 	"github.com/polymorfa/hypermeow/proto/waSyncAction"
 	"github.com/polymorfa/hypermeow/types/events"
@@ -113,5 +116,75 @@ func TestStickerSync(t *testing.T) {
 	_, blob, _ = b.store.mediaBlob(b.ctx, stickerChat, got[0])
 	if m := mediaMessage(model.MediaSticker, blob); string(m.GetStickerMessage().GetFileSHA256()) != string(sha("d")) {
 		t.Fatalf("rehashed blob lacks its hash")
+	}
+}
+
+func TestStickerFromChats(t *testing.T) {
+	b := testBackend(t)
+	ctx := b.ctx
+	data := []byte("sticker file")
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	path := func(oe string) *string { return proto.String("/v/x.enc?oh=1&oe=" + oe + "&_nc_sid=1") }
+
+	// A favourite whose link died, and the same file received in a chat.
+	if err := b.store.putSticker(ctx, b.db, hash, &waE2E.StickerMessage{FileSHA256: sum[:], DirectPath: path("6A000000")}, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	fresh := &waE2E.StickerMessage{FileSHA256: sum[:], DirectPath: path("6B000000")}
+	blob, _ := proto.Marshal(fresh)
+	m := &model.Message{ID: "m1", ChatID: "c@s.whatsapp.net", Kind: model.KindSticker, Media: model.MediaSticker}
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, mediaBlob: blob}); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(filepath.Dir(b.mediaPath(m.ChatID, m.ID)), 0o700)
+	if err := os.WriteFile(b.mediaPath(m.ChatID, m.ID), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if !b.stickerFromChats(ctx, nil, hash) {
+		t.Fatal("no copy found")
+	}
+	if got := b.MediaData(stickerChat, hash); string(got) != string(data) {
+		t.Fatalf("file = %q", got)
+	}
+	stored := func() string {
+		raw, _ := b.store.stickerBlob(ctx, hash)
+		var s waE2E.StickerMessage
+		_ = proto.Unmarshal(raw, &s)
+		return s.GetDirectPath()
+	}
+	if got := stored(); got != *fresh.DirectPath {
+		t.Fatalf("link = %q, want the chat copy's", got)
+	}
+	// A sync repeating the dead link keeps the fresh one.
+	if err := b.store.putSticker(ctx, b.db, hash, &waE2E.StickerMessage{FileSHA256: sum[:], DirectPath: path("6A000000")}, 0, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := stored(); got != *fresh.DirectPath {
+		t.Fatalf("link after sync = %q", got)
+	}
+}
+
+func TestFavoriteSticker(t *testing.T) {
+	b := testBackend(t)
+	sum := sha256.Sum256([]byte("sticker"))
+	blob, _ := proto.Marshal(&waE2E.StickerMessage{FileSHA256: sum[:]})
+	m := &model.Message{ID: "m1", ChatID: "c@s.whatsapp.net", Kind: model.KindSticker, Media: model.MediaSticker}
+	if err := b.store.putMessage(b.ctx, b.db, storedMsg{Message: m, mediaBlob: blob}); err != nil {
+		t.Fatal(err)
+	}
+	if b.FavoriteSticker(m) {
+		t.Fatal("favourite before it was added")
+	}
+	s, hash, ok := b.chatSticker(m)
+	if !ok || hash != hex.EncodeToString(sum[:]) {
+		t.Fatalf("chatSticker = %v, %q", ok, hash)
+	}
+	if err := b.store.putSticker(b.ctx, b.db, hash, s, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	if !b.FavoriteSticker(m) {
+		t.Fatal("not a favourite after it was added")
 	}
 }

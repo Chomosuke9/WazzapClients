@@ -80,6 +80,14 @@ func (ps *players) endFrame() {
 	ps.frame++
 }
 
+// stopAll stops every player.
+func (ps *players) stopAll() {
+	for k, p := range ps.m {
+		close(p.stop)
+		delete(ps.m, k)
+	}
+}
+
 func (p *stickerPlayer) run(load func() []byte, maxSide int, held *atomic.Int64, invalidate func()) {
 	a, err := webpanim.Parse(load())
 	if err != nil {

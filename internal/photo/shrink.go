@@ -1,4 +1,4 @@
-package ui
+package photo
 
 import (
 	"image"
@@ -6,13 +6,13 @@ import (
 	"math"
 )
 
-// shrink scales src down to w x h, averaging the source pixels under each
+// Shrink scales src down to w x h, averaging the source pixels under each
 // destination pixel (an area-weighted box filter, which is what downscaling
 // a photo wants). It reads the source a row at a time and needs only a few
 // rows of memory besides the result. x/image/draw's CatmullRom kernel, used
 // before, allocates w x (source height) x 32 bytes: 157 MB to fit a
 // 12-megapixel photo to a screen, which the Go heap then kept.
-func shrink(src image.Image, w, h int) *image.RGBA {
+func Shrink(src image.Image, w, h int) *image.RGBA {
 	b := src.Bounds()
 	sw, sh := b.Dx(), b.Dy()
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))

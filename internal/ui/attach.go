@@ -1,12 +1,17 @@
 package ui
 
 import (
+	"bytes"
 	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"gioui.org/font"
+	"gioui.org/io/clipboard"
+	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -15,23 +20,73 @@ import (
 
 	"github.com/chomosuke9/wazzapclients/internal/filepick"
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/osclip"
+	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
-// The composer's attach menu: files picked with the system's dialog wait
-// in a tray above the message box and go out with the next send, the
-// typed text as their caption. Contacts and polls open their own dialogs.
+// The composer's attach menu: files picked with the system's dialog,
+// pasted or dropped on the window open the send view (sendview.go), where
+// each gets a caption and photos can be edited before they go out.
+// Contacts and polls open their own dialogs.
 
 // attachState holds the files picked to send.
 type attachState struct {
-	files   []model.Attachment
-	results chan pickResult // from the file dialog's goroutine
+	files   []*attachFile
+	cur     int             // the file the send view shows
+	chatID  string          // the chat they go to
+	draft   string          // the composer's text before; the composer holds captions meanwhile
+	results chan pickResult // from the file dialog's goroutine, and pastes
 	picking bool            // a file dialog is open
+
+	// quality is how photos are sent. est holds, per photo, what each
+	// quality makes of it, for the quality menu; estimating a photo
+	// decodes it, so it waits until the menu opens.
+	quality   model.Quality
+	est       map[string]*photoEst
+	estimates chan photoEst
+
+	// The send view slides in and out; ghost is what it showed, while
+	// it slides away.
+	anim     tween
+	ghost    []*attachFile
+	ghostCur int
+	ed       editState
+	dropAnim tween // the hint while files are dragged over the window
+
+	outbox  []*outItem      // files on their way out, see editrender.go
+	renders chan *renderJob // edited photos being rendered
+
+	demoEdit string // cmd/screenshot's sample edit still to make: edit, crop or filter
+}
+
+// attachFile is a file in the send view.
+type attachFile struct {
+	model.Attachment
+	caption string
+	edit    photoEdit
+	orig    image.Point // a photo's full size, once the editor has decoded it
+	temp    bool        // the app's own file (a pasted picture), removed once sent or dropped
+}
+
+// current returns the file the send view shows, or nil.
+func (a *attachState) current() *attachFile {
+	if a.cur >= 0 && a.cur < len(a.files) {
+		return a.files[a.cur]
+	}
+	return nil
+}
+
+type photoEst struct {
+	path string
+	photo.Estimate
+	ready bool // false while it is being worked out
 }
 
 type pickResult struct {
 	chatID string
 	files  []model.Attachment
+	temp   bool // files the app wrote (pasted pictures)
 	err    error
 }
 
@@ -152,128 +207,385 @@ func (u *UI) updateAttach() {
 	a := &u.attach
 	select {
 	case r := <-a.results:
-		a.picking = false
+		if !r.temp {
+			a.picking = false
+		}
 		switch {
 		case r.err == filepick.ErrUnsupported:
 			u.toast("No file dialog found. Install zenity or kdialog to attach files.")
 		case r.err != nil:
 			u.toast("Couldn't open the file dialog: " + r.err.Error())
-		case u.selected != nil && u.selected.ID == r.chatID && len(r.files) > 0:
-			a.files = append(a.files, r.files...)
-			u.requestFocus(&u.conv.composer)
+		default:
+			files := make([]*attachFile, len(r.files))
+			for i, f := range r.files {
+				files[i] = &attachFile{Attachment: f, temp: r.temp}
+			}
+			u.addFiles(r.chatID, files)
 		}
 	default:
 	}
-}
-
-// sendAttachments sends the picked files; the first one carries the draft
-// (caption, reply and mentions).
-func (u *UI) sendAttachments(d model.Draft) {
-	files := u.attach.files
-	u.attach.files = nil
-	for i, a := range files {
-		dd := d
-		if i > 0 {
-			dd = model.Draft{}
-		}
-		if m := u.backend.SendFile(u.selected.ID, a, dd); m != nil {
-			if u.chatByID(m.ChatID) == nil {
-				u.chats = append(u.chats, u.selected)
+	u.updateRenders()
+	for {
+		select {
+		case e := <-a.estimates:
+			if a.est[e.path] != nil {
+				*a.est[e.path] = e
 			}
-			u.upsertMessage(m)
+			continue
+		default:
 		}
+		break
+	}
+	if len(a.files) == 0 {
+		a.est = nil // nothing left to estimate for
 	}
 }
 
-// layoutAttachTray shows the picked files above the message box, each
-// with a button to take it out.
-func (u *UI) layoutAttachTray(gtx C) D {
+// hasPhotos reports whether a picked file goes out as a photo.
+func (a *attachState) hasPhotos() bool {
+	for _, f := range a.files {
+		if f.Media == model.MediaImage {
+			return true
+		}
+	}
+	return false
+}
+
+// openQualityMenu opens the photo quality menu above the pointer (the
+// tray's quality button), and starts estimating the photos' sizes.
+func (u *UI) openQualityMenu() {
+	if u.selected == nil {
+		return
+	}
+	u.ctx = ctxMenu{kind: ctxQuality, chatID: u.selected.ID, at: u.mouse}
 	a := &u.attach
-	for i := len(a.files) - 1; i >= 0; i-- {
-		if u.btn("attach:x:" + itoa(i)).Clicked(gtx) {
-			a.files = append(a.files[:i:i], a.files[i+1:]...)
+	if a.est == nil {
+		a.est = map[string]*photoEst{}
+	}
+	if a.estimates == nil {
+		a.estimates = make(chan photoEst, 16)
+	}
+	var paths []string
+	for _, f := range a.files {
+		if f.Media == model.MediaImage && a.est[f.Path] == nil {
+			a.est[f.Path] = &photoEst{path: f.Path}
+			paths = append(paths, f.Path)
+		}
+	}
+	if len(paths) == 0 {
+		return
+	}
+	notify, out := u.images.invalidate, a.estimates
+	go func() {
+		for _, path := range paths {
+			e := photoEst{path: path, ready: true}
+			if data, err := os.ReadFile(path); err == nil {
+				release := acquireDecode(data)
+				e.Estimate, _ = photo.Estimates(data)
+				release()
+			}
+			out <- e
+			if notify != nil {
+				notify()
+			}
+		}
+	}()
+}
+
+// qualityMenuItems mirrors WhatsApp's photo quality menu, plus Raw.
+func (u *UI) qualityMenuItems() []menuItem {
+	a := &u.attach
+	if !a.hasPhotos() {
+		return nil
+	}
+	item := func(key, label string, q model.Quality) menuItem {
+		return menuItem{key: key, label: label, sub: a.qualitySub(q), tick: a.quality == q, run: func() { a.quality = q }}
+	}
+	return []menuItem{
+		item("std", "Standard quality", model.QualityStandard),
+		item("hd", "HD quality", model.QualityHD),
+		item("raw", "Raw quality", model.QualityRaw),
+		{divider: true},
+		{note: true, label: "HD photos are clearer. Standard photos use less storage space and are faster to send. Raw photos are sent as they are."},
+	}
+}
+
+// qualitySub is a quality's size, "116 kB · 1600 x 900", or the total
+// size for several photos.
+func (a *attachState) qualitySub(q model.Quality) string {
+	n, total := 0, 0
+	var one *photoEst
+	for _, f := range a.files {
+		if f.Media != model.MediaImage {
+			continue
+		}
+		e := a.est[f.Path]
+		if e == nil || !e.ready {
+			return "…"
+		}
+		n, total, one = n+1, total+e.Bytes[q], e
+	}
+	switch {
+	case n == 0 || total == 0:
+		return ""
+	case n == 1:
+		return formatSize(int64(total)) + " · " + itoa(one.W[q]) + " x " + itoa(one.H[q])
+	}
+	return formatSize(int64(total)) + " · " + itoa(n) + " photos"
+}
+
+var qualityNames = [...]string{model.QualityStandard: "Standard", model.QualityHD: "HD", model.QualityRaw: "Raw"}
+
+// maxAttach is how many files WhatsApp sends at once.
+const maxAttach = 100
+
+// addFiles adds files to the send view, opening it, and shows the first
+// new one.
+func (u *UI) addFiles(chatID string, files []*attachFile) {
+	a := &u.attach
+	if len(files) == 0 {
+		return
+	}
+	if u.selected == nil || u.selected.ID != chatID || isChannelID(chatID) || (len(a.files) > 0 && a.chatID != chatID) {
+		removeTemps(files)
+		return
+	}
+	if len(a.files)+len(files) > maxAttach {
+		u.toast("You can send up to " + itoa(maxAttach) + " files at once.")
+		removeTemps(files[max(0, maxAttach-len(a.files)):])
+		files = files[:max(0, maxAttach-len(a.files))]
+		if len(files) == 0 {
+			return
 		}
 	}
 	if len(a.files) == 0 {
-		return D{}
+		// The composer becomes the caption field; its text waits.
+		a.chatID, a.cur, a.ghost = chatID, 0, nil
+		a.draft = u.conv.composer.Text()
+		u.conv.composer.SetText("")
+		u.resetEditor()
+		u.closePicker()
+		a.files = files
+	} else {
+		n := len(a.files)
+		a.files = append(a.files, files...)
+		u.showFile(n)
 	}
-	return layout.Inset{Left: 8, Right: 8, Top: 8}.Layout(gtx, func(gtx C) D {
-		maxW := gtx.Constraints.Max.X
-		gap := gtx.Dp(8)
-		chipW := min(maxW, gtx.Dp(250))
-		x, y, rowH := 0, 0, 0
-		for i, f := range a.files {
-			chip := record(gtx, func(gtx C) D { return u.attachChip(gtx, i, f, chipW) })
-			if x > 0 && x+chip.size.X > maxW {
-				x, y = 0, y+rowH+gap
-				rowH = 0
-			}
-			chip.at(gtx, x, y)
-			x += chip.size.X + gap
-			rowH = max(rowH, chip.size.Y)
-		}
-		return D{Size: image.Pt(maxW, y+rowH)}
-	})
+	u.requestFocus(&u.conv.composer)
 }
 
-func (u *UI) attachChip(gtx C, i int, f model.Attachment, w int) D {
-	p := u.pal
-	h := gtx.Dp(52)
-	fillRRect(gtx, image.Rect(0, 0, w, h), gtx.Dp(8), p.QuoteIn)
-	pic := gtx.Dp(40)
-	px, py := gtx.Dp(6), (h-pic)/2
-	r := image.Rect(px, py, px+pic, py+pic)
-	switch f.Media {
-	case model.MediaImage:
-		path := f.Path
-		e := u.images.get("f:"+path, gtx.Dp(80), func() []byte {
-			data, _ := os.ReadFile(path)
-			return data
-		})
-		if e.state == imgReady {
-			func() {
-				defer clip.UniformRRect(r, gtx.Dp(4)).Push(gtx.Ops).Pop()
-				paintCover(gtx, e.op, e.size, r)
-			}()
+// classify tells how a file is sent: photos and videos as media, the
+// rest as documents.
+func classify(path string) model.Media {
+	switch {
+	case hasExt(path, photoExts):
+		return model.MediaImage
+	case hasExt(path, videoExts):
+		return model.MediaVideo
+	}
+	return model.MediaDocument
+}
+
+// attachPaths adds dropped or pasted files to the open chat's send view.
+func (u *UI) attachPaths(paths []string) {
+	if u.selected == nil || isChannelID(u.selected.ID) || u.selPage != u.page {
+		u.toast("Open a chat to send files to it.")
+		return
+	}
+	var files []*attachFile
+	skipped := 0
+	for _, p := range paths {
+		st, err := os.Stat(p)
+		if err != nil || st.IsDir() {
+			skipped++
+			continue
+		}
+		files = append(files, &attachFile{Attachment: model.Attachment{Path: p, Media: classify(p)}})
+	}
+	if skipped > 0 {
+		u.toast("Folders can't be sent.")
+	}
+	u.addFiles(u.selected.ID, files)
+}
+
+// pasteFiles attaches the files or the picture on the clipboard, and
+// reports whether there were any. Text comes first: apps like Word put a
+// picture of copied text on the clipboard too.
+func (u *UI) pasteFiles() bool {
+	if u.selected == nil || isChannelID(u.selected.ID) {
+		return false
+	}
+	if paths := osclip.Files(); len(paths) > 0 {
+		u.attachPaths(paths)
+		return true
+	}
+	if osclip.HasText() {
+		return false
+	}
+	img := osclip.Image()
+	if img == nil {
+		return false
+	}
+	a := &u.attach
+	if a.results == nil {
+		a.results = make(chan pickResult, 1)
+	}
+	chatID, results, notify := u.selected.ID, a.results, u.images.invalidate
+	go func() {
+		r := pickResult{chatID: chatID, temp: true}
+		var buf bytes.Buffer
+		if err := (&png.Encoder{CompressionLevel: png.BestSpeed}).Encode(&buf, img); err == nil {
+			if path, err := writeTemp("Pasted image.png", buf.Bytes()); err == nil {
+				r.files = []model.Attachment{{Path: path, Media: model.MediaImage}}
+			}
+		}
+		results <- r
+		if notify != nil {
+			notify()
+		}
+	}()
+	return true
+}
+
+// updatePaste attaches files and pictures pasted with Ctrl+V into the
+// composer (or onto a photo in the send view), and files dropped on the
+// window. Pasted text still goes to the composer.
+func (u *UI) updatePaste(gtx C) {
+	if u.host != nil {
+	drain:
+		for {
+			select {
+			case paths := <-u.host.drops:
+				u.attachPaths(paths)
+			default:
+				break drain
+			}
+		}
+	}
+	filters := []event.Filter{key.Filter{Focus: &u.conv.composer, Name: "V", Required: key.ModShortcut}}
+	if len(u.attach.files) > 0 {
+		filters = append(filters, key.Filter{Focus: &u.attach.ed.canvas, Name: "V", Required: key.ModShortcut})
+	}
+	for {
+		ev, ok := gtx.Event(filters...)
+		if !ok {
 			break
 		}
-		fillRRect(gtx, r, gtx.Dp(4), faded(attachPhotos, 0.25))
-		t := op.Offset(r.Min.Add(image.Pt((pic-gtx.Dp(24))/2, (pic-gtx.Dp(24))/2))).Push(gtx.Ops)
-		drawIcon(gtx, icImage, 24, attachPhotos)
-		t.Pop()
-	default:
-		ic, col := icDocumentFill, attachDocument
-		switch f.Media {
-		case model.MediaVideo:
-			ic, col = icVideo, attachPhotos
-		case model.MediaAudio:
-			ic, col = icHeadphonesFill, attachAudio
+		if ke, ok := ev.(key.Event); !ok || ke.State != key.Press {
+			continue
 		}
-		fillRRect(gtx, r, gtx.Dp(4), faded(col, 0.25))
-		t := op.Offset(r.Min.Add(image.Pt((pic-gtx.Dp(24))/2, (pic-gtx.Dp(24))/2))).Push(gtx.Ops)
-		drawIcon(gtx, ic, 24, col)
-		t.Pop()
+		if !u.pasteFiles() && gtx.Focused(&u.conv.composer) {
+			gtx.Execute(clipboard.ReadCmd{Tag: &u.conv.composer})
+		}
 	}
-	// Name and size, then the remove button.
-	xb := gtx.Dp(32)
-	tx := px + pic + gtx.Dp(10)
-	tg := gtx
-	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, w-tx-xb-gtx.Dp(4)), h)}
-	size := ""
-	if st, err := os.Stat(f.Path); err == nil {
-		size = formatSize(st.Size())
+}
+
+// showFile shows file i in the send view, swapping the captions.
+func (u *UI) showFile(i int) {
+	a := &u.attach
+	if i == a.cur || i < 0 || i >= len(a.files) {
+		return
 	}
-	text := record(tg, func(gtx C) D {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(u.label(14, filepath.Base(f.Path), p.Text, labelOpts{maxLines: 1}).Layout),
-			layout.Rigid(u.label(12, size, p.TextSecondary, labelOpts{maxLines: 1}).Layout),
-		)
-	})
-	text.at(gtx, tx, (h-text.size.Y)/2)
-	t := op.Offset(image.Pt(w-xb-gtx.Dp(4), (h-xb)/2)).Push(gtx.Ops)
-	u.iconButton(gtx, u.btn("attach:x:"+itoa(i)), icClose, 32, 18, p.Icon)
-	t.Pop()
-	return D{Size: image.Pt(w, h)}
+	u.finishTyping()
+	if f := a.current(); f != nil {
+		f.caption = u.conv.composer.Text()
+	}
+	u.resetEditor()
+	a.cur = i
+	ed := &u.conv.composer
+	ed.SetText(a.files[i].caption)
+	ed.SetCaret(ed.Len(), ed.Len())
+}
+
+// removeFile takes file i out of the send view; the view closes with the
+// last one.
+func (u *UI) removeFile(i int) {
+	a := &u.attach
+	if i < 0 || i >= len(a.files) {
+		return
+	}
+	if len(a.files) == 1 {
+		u.closeSendView(false)
+		return
+	}
+	u.finishTyping()
+	if f := a.current(); f != nil {
+		f.caption = u.conv.composer.Text()
+	}
+	removeTemps(a.files[i : i+1])
+	a.files = append(a.files[:i:i], a.files[i+1:]...)
+	if i == a.cur || a.cur >= len(a.files) {
+		u.resetEditor()
+	}
+	if a.cur > i || a.cur >= len(a.files) {
+		a.cur--
+	}
+	ed := &u.conv.composer
+	ed.SetText(a.files[a.cur].caption)
+	ed.SetCaret(ed.Len(), ed.Len())
+}
+
+// closeSendView closes the send view (sent or not) and gives the composer
+// its text back.
+func (u *UI) closeSendView(sent bool) {
+	a := &u.attach
+	if len(a.files) == 0 {
+		return
+	}
+	u.finishTyping()
+	if !sent {
+		removeTemps(a.files)
+	}
+	a.ghost, a.ghostCur = a.files, a.cur
+	a.files, a.cur = nil, 0
+	a.ed.tool, a.ed.sel = toolNone, -1
+	ed := &u.conv.composer
+	ed.SetText(a.draft)
+	ed.SetCaret(ed.Len(), ed.Len())
+	a.draft = ""
+	if u.picker.mode == pickMedia {
+		u.closePicker()
+	}
+	u.requestFocus(ed)
+}
+
+// dropAttachments forgets the send view at once, as when another chat
+// opens; the composer's text is the caller's.
+func (u *UI) dropAttachments() {
+	a := &u.attach
+	removeTemps(a.files)
+	a.files, a.ghost, a.cur, a.draft = nil, nil, 0, ""
+	a.anim.snap(false)
+	u.resetEditor()
+}
+
+// removeTemps deletes the app's own copies among files.
+func removeTemps(files []*attachFile) {
+	for _, f := range files {
+		if f.temp {
+			_ = os.Remove(f.Path)
+		}
+	}
+}
+
+// sendAttachments sends the files of the send view, each with its own
+// caption; the first one carries the reply.
+func (u *UI) sendAttachments() {
+	a := &u.attach
+	u.finishTyping()
+	if f := a.current(); f != nil {
+		f.caption = u.conv.composer.Text()
+	}
+	for i, f := range a.files {
+		d := u.draftFrom(trimSpace(f.caption))
+		if i == 0 {
+			d.Reply = u.conv.reply
+		}
+		u.queueSend(a.chatID, f, d)
+	}
+	u.conv.reply, u.conv.mentions = nil, nil
+	u.closeSendView(true)
+	u.flushOutbox()
 }
 
 // openContactPicker opens the forward picker to choose contacts to share.

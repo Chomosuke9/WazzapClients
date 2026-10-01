@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/jpeg"
 	"io"
 	"mime"
 	"os"
@@ -16,17 +14,13 @@ import (
 	"strings"
 	"time"
 
-	_ "image/gif" // image formats a picked photo may come in
-	_ "image/png"
-
 	"github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
-	"golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/photo"
 )
 
 // fileInfo is what the file column keeps about a document or audio file.
@@ -349,7 +343,7 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 	switch a.Media {
 	case model.MediaImage:
 		m.Kind = model.KindImage
-		if err := up.prepareImage(); err != nil {
+		if err := up.prepareImage(a.Quality); err != nil {
 			b.emit(model.NoticeEvent{Text: "Couldn't read the photo " + name + "."})
 			return nil
 		}
@@ -383,7 +377,7 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		b.log.Errorf("store outgoing file: %v", err)
 	}
 	b.emitChat(chatID)
-	go b.uploadAndSend(jid, sm, up, d.Text, ci)
+	go b.uploadAndSend(jid, sm, up, d.Text, ci, a.ViewOnce)
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		return b.resolve(ctx, r, jid.Server == types.GroupServer)
 	}
@@ -415,9 +409,8 @@ func fileType(a model.Attachment) string {
 	return "application/octet-stream"
 }
 
-// upload is a file on its way out. Photos are read (and, unless they are
-// JPEG or PNG already, converted to JPEG) up front for their thumbnail;
-// anything else streams from disk.
+// upload is a file on its way out. Photos are read, scaled and compressed
+// up front (see photo.Prepare); anything else streams from disk.
 type upload struct {
 	path  string
 	data  []byte // the photo to send
@@ -426,56 +419,17 @@ type upload struct {
 	w, h  int
 }
 
-// maxPhotoSide is the largest side a converted photo is sent at.
-const maxPhotoSide = 4096
-
-func (up *upload) prepareImage() error {
+func (up *upload) prepareImage(q model.Quality) error {
 	data, err := os.ReadFile(up.path)
 	if err != nil {
 		return err
 	}
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	p, err := photo.Prepare(data, q)
 	if err != nil {
 		return err
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	up.w, up.h = cfg.Width, cfg.Height
-	switch format {
-	case "jpeg":
-		up.data = data
-	case "png":
-		up.data, up.png = data, true
-	default:
-		// WhatsApp shows photos as JPEG; convert the rest (WebP, GIF...).
-		if s := max(up.w, up.h); s > maxPhotoSide {
-			img = scale(img, maxPhotoSide*up.w/s, maxPhotoSide*up.h/s)
-			up.w, up.h = img.Bounds().Dx(), img.Bounds().Dy()
-		}
-		var buf bytes.Buffer
-		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
-			return err
-		}
-		up.data = buf.Bytes()
-	}
-	// WhatsApp's own thumbnails are about 100 px on the long side.
-	s := max(up.w, up.h, 1)
-	t := scale(img, max(1, 100*up.w/s), max(1, 100*up.h/s))
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, t, &jpeg.Options{Quality: 70}); err == nil {
-		up.thumb = buf.Bytes()
-	}
+	up.data, up.png, up.thumb, up.w, up.h = p.Data, p.PNG, p.Thumb, p.W, p.H
 	return nil
-}
-
-func scale(src image.Image, w, h int) image.Image {
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	// ApproxBiLinear reads the source directly, unlike CatmullRom, which
-	// allocates a buffer as tall as the source.
-	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Src, nil)
-	return dst
 }
 
 // keep writes the photo to the media cache.
@@ -517,7 +471,7 @@ var mediaTypes = map[model.Media]whatsmeow.MediaType{
 }
 
 // uploadAndSend uploads a stored pending file, then sends it.
-func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption string, ci *waE2E.ContextInfo) {
+func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption string, ci *waE2E.ContextInfo, viewOnce bool) {
 	m := sm.Message
 	fail := func(err error) {
 		b.log.Errorf("send file %s to %s: %v", m.FileName, m.ChatID, err)
@@ -559,6 +513,9 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 		if caption != "" {
 			e.Caption = proto.String(caption)
 		}
+		if viewOnce {
+			e.ViewOnce = proto.Bool(true)
+		}
 		msg, inner = &waE2E.Message{ImageMessage: e}, e
 	case model.MediaVideo:
 		e := &waE2E.VideoMessage{
@@ -569,6 +526,9 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 		}
 		if caption != "" {
 			e.Caption = proto.String(caption)
+		}
+		if viewOnce {
+			e.ViewOnce = proto.Bool(true)
 		}
 		msg, inner = &waE2E.Message{VideoMessage: e}, e
 	case model.MediaAudio:
@@ -591,6 +551,9 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 			e.Caption = proto.String(caption)
 			msg = &waE2E.Message{DocumentWithCaptionMessage: &waE2E.FutureProofMessage{Message: msg}}
 		}
+	}
+	if viewOnce && (msg.ImageMessage != nil || msg.VideoMessage != nil) {
+		msg = &waE2E.Message{ViewOnceMessageV2: &waE2E.FutureProofMessage{Message: msg}}
 	}
 	if ci != nil && len(ci.GroupMentions) > 0 {
 		msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}

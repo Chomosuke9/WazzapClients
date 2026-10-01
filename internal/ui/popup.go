@@ -25,12 +25,26 @@ import (
 // everything and lets events pass through.
 func (u *UI) trackMouse(gtx C) {
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &u.mouseTag, Kinds: pointer.Move | pointer.Press | pointer.Drag})
+		ev, ok := gtx.Event(pointer.Filter{Target: &u.mouseTag, Kinds: pointer.Move | pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
 		if !ok {
 			break
 		}
 		if e, ok := ev.(pointer.Event); ok {
-			u.mouse = e.Position.Round()
+			if e.Kind != pointer.Cancel {
+				u.mouse = e.Position.Round()
+			}
+			switch e.Kind {
+			case pointer.Press:
+				u.mouseDown = u.mouseDown || e.Buttons.Contain(pointer.ButtonPrimary)
+			case pointer.Release, pointer.Cancel:
+				u.mouseDown = false
+			}
+			// A click anywhere but on selectable text (or in a menu, which
+			// may copy the selection) clears the selection.
+			if e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonPrimary) &&
+				e.Time != u.textSel.pressed && !u.ctx.isOpen() {
+				u.textSel.clear()
+			}
 		}
 	}
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
@@ -41,12 +55,13 @@ func (u *UI) trackMouse(gtx C) {
 // rightClick reports a secondary-button press on an area of size sz at the
 // current offset. Other handlers underneath still get the event.
 func (u *UI) rightClick(gtx C, key string, sz image.Point) bool {
-	right, _ := u.pressArea(gtx, key, sz)
+	right, _, _ := u.pressArea(gtx, key, image.Rectangle{Max: sz})
 	return right
 }
 
-// pressArea is rightClick that also reports a double left-click.
-func (u *UI) pressArea(gtx C, key string, sz image.Point) (right, double bool) {
+// pressArea is rightClick on area that also reports where the right click
+// was, and a double left-click.
+func (u *UI) pressArea(gtx C, key string, area image.Rectangle) (right bool, rightAt image.Point, double bool) {
 	tag := u.btn("rc:" + key) // only its address is used, as an event tag
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
@@ -57,7 +72,7 @@ func (u *UI) pressArea(gtx C, key string, sz image.Point) (right, double bool) {
 		switch {
 		case !ok:
 		case e.Buttons.Contain(pointer.ButtonSecondary):
-			right = true
+			right, rightAt = true, e.Position.Round()
 		case e.Buttons.Contain(pointer.ButtonPrimary):
 			if u.lastPress.key == key && e.Time-u.lastPress.at < 400*time.Millisecond {
 				double = true
@@ -67,10 +82,10 @@ func (u *UI) pressArea(gtx C, key string, sz image.Point) (right, double bool) {
 			}
 		}
 	}
-	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+	defer clip.Rect(area).Push(gtx.Ops).Pop()
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, tag)
-	return right, double
+	return right, rightAt, double
 }
 
 // menuItem is one row of a popup menu, or a divider.
@@ -81,6 +96,8 @@ type menuItem struct {
 	sub     string      // second line, e.g. "Muted always"
 	arrow   bool        // opens a submenu
 	check   int         // 1 checked box, -1 empty box, 0 none
+	tick    bool        // a check mark on the right: the chosen option
+	note    bool        // explanatory text under the options, wrapped
 	col     color.NRGBA // the icon's color, if not the text's
 	divider bool
 	run     func()
@@ -92,8 +109,9 @@ const (
 	ctxNone ctxKind = iota
 	ctxChat
 	ctxMessage
-	ctxViewer // the media viewer's ⋮ menu
-	ctxAttach // the composer's attach menu
+	ctxViewer  // the media viewer's ⋮ menu
+	ctxAttach  // the composer's attach menu
+	ctxQuality // the attach tray's photo quality menu
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -102,6 +120,7 @@ type ctxMenu struct {
 	kind   ctxKind
 	chatID string
 	msg    *model.Message
+	fav    bool        // msg is a favourite sticker
 	at     image.Point // where it was opened, in content coordinates
 	scrim  widget.Clickable
 	lists  bool // "Add to list" submenu open
@@ -122,6 +141,9 @@ func (u *UI) openChatMenu(c *model.Chat) {
 
 func (u *UI) openMessageMenu(m *model.Message) {
 	u.ctx = ctxMenu{kind: ctxMessage, chatID: m.ChatID, msg: m, at: u.mouse}
+	if m.Media == model.MediaSticker && m.Kind != model.KindDeleted {
+		u.ctx.fav = u.backend.FavoriteSticker(m)
+	}
 }
 
 func (u *UI) closeMenu() { u.ctx.closing = true }
@@ -215,6 +237,9 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		add(menuItem{key: "dm", ic: icChats, label: "Message " + shortName(plainText(m.Sender)), run: func() { u.openDirect(m.SenderID, m.Sender) }})
 	}
 	if txt := plainText(m.Text); txt != "" && !deleted {
+		if sel := u.textSel.selected(m.ID); sel != "" {
+			txt = sel
+		}
 		add(menuItem{key: "copy", ic: icCopy, label: "Copy", run: func() { u.copyText(stripIsolates(txt)) }})
 	}
 	if canSave(m) {
@@ -235,6 +260,13 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 			add(menuItem{key: "star", ic: icStar, label: "Unstar", run: func() { b.Star(m, false) }})
 		} else {
 			add(menuItem{key: "star", ic: icStar, label: "Star", run: func() { b.Star(m, true) }})
+		}
+		if m.Media == model.MediaSticker && !isChannelID(c.ID) {
+			if u.ctx.fav {
+				add(menuItem{key: "favsticker", ic: icHeart, label: "Remove from Favourites", run: func() { b.SetFavoriteSticker(m, false) }})
+			} else {
+				add(menuItem{key: "favsticker", ic: icHeart, label: "Add to Favourites", run: func() { b.SetFavoriteSticker(m, true) }})
+			}
 		}
 	}
 	add(menuItem{divider: true})
@@ -290,6 +322,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		case ctxAttach:
 			if u.selected != nil && u.selected.ID == m.chatID {
 				items = u.attachMenuItems(u.selected)
+			}
+		case ctxQuality:
+			if u.selected != nil && u.selected.ID == m.chatID {
+				items = u.qualityMenuItems()
 			}
 		}
 		if items == nil {
@@ -348,9 +384,14 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		pos.Y = max(reactH+gtx.Dp(8), sz.Y-gtx.Dp(8)-menu.size.Y)
 	}
 	pos.Y = max(pos.Y, reactH+gtx.Dp(8))
-	if m.kind == ctxAttach {
+	switch m.kind {
+	case ctxAttach:
 		// It opens upwards from the attach button.
 		pos = image.Pt(max(gtx.Dp(8), m.at.X-gtx.Dp(24)), max(gtx.Dp(8), m.at.Y-gtx.Dp(30)-menu.size.Y))
+	case ctxQuality:
+		// It hangs under the send view's HD button.
+		x := min(m.at.X-menu.size.X/2, sz.X-gtx.Dp(8)-menu.size.X)
+		pos = image.Pt(max(gtx.Dp(8), x), m.at.Y+gtx.Dp(26))
 	}
 	// It grows out of the corner nearest to where it was opened.
 	origin := image.Pt(min(max(m.at.X, pos.X), pos.X+menu.size.X), min(max(m.at.Y, pos.Y), pos.Y+menu.size.Y))
@@ -427,6 +468,10 @@ func (u *UI) menuPanel(gtx C, prefix string, items []menuItem) D {
 		if it.divider {
 			continue
 		}
+		if it.note {
+			w = max(w, gtx.Dp(300)) // it wraps to the menu's width
+			continue
+		}
 		l := record(gtx, u.label(15, it.label, p.Text, labelOpts{maxLines: 1}).Layout)
 		extra := 49 + 24
 		if it.arrow {
@@ -434,6 +479,9 @@ func (u *UI) menuPanel(gtx C, prefix string, items []menuItem) D {
 		}
 		if it.ic == nil && it.check == 0 {
 			extra = 24 + 24
+		}
+		if it.tick {
+			extra += 36
 		}
 		w = max(w, l.size.X+gtx.Dp(unit.Dp(extra)))
 	}
@@ -468,6 +516,10 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 		fillRect(gtx, image.Rect(gtx.Dp(14), y, gtx.Constraints.Max.X-gtx.Dp(14), y+max(1, gtx.Dp(1))), p.PopupDivider)
 		return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
 	}
+	if it.note {
+		return layout.Inset{Left: 24, Right: 20, Top: 8, Bottom: 8}.Layout(gtx,
+			u.label(13, it.label, p.PopupSub, labelOpts{}).Layout)
+	}
 	content := func(gtx C) D {
 		h := gtx.Dp(40)
 		if it.sub != "" {
@@ -496,10 +548,13 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 						)
 					}),
 					layout.Rigid(func(gtx C) D {
-						if !it.arrow {
-							return D{}
+						switch {
+						case it.arrow:
+							return drawIcon(gtx, icSubmenu, 20, p.Text)
+						case it.tick:
+							return layout.Inset{Left: 12}.Layout(gtx, iconW(icTick, 22, p.Green))
 						}
-						return drawIcon(gtx, icSubmenu, 20, p.Text)
+						return D{}
 					}),
 				)
 			})

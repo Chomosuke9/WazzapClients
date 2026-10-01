@@ -32,6 +32,7 @@ type Palette struct {
 	BubbleLine, BubbleButton     color.NRGBA // dividers and text of message buttons
 	CodeBg                       color.NRGBA // behind `inline code`
 	MentionPill                  color.NRGBA // behind mentions of you
+	Selection                    color.NRGBA // behind selected text
 	DateChip, DateChipText       color.NRGBA
 	Encryption, EncryptionText   color.NRGBA
 	Composer, ComposerHint       color.NRGBA
@@ -61,6 +62,10 @@ type Palette struct {
 	Dialog                         color.NRGBA
 	Toast, ToastText               color.NRGBA
 }
+
+// markColors are what the photo editor draws with, the same in both
+// themes since they end up in the photo.
+var markColors = rgbs(0xffffff, 0x000000, 0xff3b30, 0xff9500, 0xffcc00, 0x34c759, 0x007aff, 0xaf52de)
 
 func rgb(c uint32) color.NRGBA {
 	return color.NRGBA{R: uint8(c >> 16), G: uint8(c >> 8), B: uint8(c), A: 0xff}
@@ -125,6 +130,7 @@ var darkPalette = Palette{
 	BubbleLine: argb(0xffffff, 0x14), BubbleButton: rgb(0x53bdeb),
 	CodeBg:      argb(0xffffff, 0x12),
 	MentionPill: argb(0x21c063, 0x24),
+	Selection:   rgb(0x1e3a9e),
 }
 
 var lightPalette = Palette{
@@ -172,6 +178,7 @@ var lightPalette = Palette{
 	BubbleLine: argb(0x000000, 0x14), BubbleButton: rgb(0x027eb5),
 	CodeBg:      argb(0x000000, 0x0f),
 	MentionPill: argb(0x1daa61, 0x22),
+	Selection:   rgb(0xb3d4fc),
 }
 
 func hashIndex(s string, n int) int {

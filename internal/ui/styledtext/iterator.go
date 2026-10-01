@@ -51,6 +51,8 @@ type textIterator struct {
 	first bool
 	// baseline tracks the location of the first line of text's baseline.
 	baseline int
+	// carets, if not nil, collects the end of each cluster (see TextStyle.Carets).
+	carets []Caret
 }
 
 // processGlyph checks whether the glyph is visible within the iterator's configured
@@ -132,6 +134,7 @@ func max[T constraints.Ordered](a, b T) T {
 // This design is awkward, but prevents the line slice from escaping
 // to the heap.
 func (it *textIterator) paintGlyph(gtx layout.Context, shaper *text.Shaper, glyph text.Glyph, line []text.Glyph) ([]text.Glyph, bool) {
+	runes := it.runes
 	_, visibleOrBefore := it.processGlyph(glyph, true)
 	if it.visible {
 		if !it.init {
@@ -142,6 +145,9 @@ func (it *textIterator) paintGlyph(gtx layout.Context, shaper *text.Shaper, glyp
 			it.lineOff = image.Point{X: (glyph.X - it.firstX).Floor(), Y: int(glyph.Y)}.Sub(it.viewport.Min)
 		}
 		line = append(line, glyph)
+	}
+	if it.carets != nil && it.init && it.runes > runes && glyph.Flags&text.FlagClusterBreak != 0 {
+		it.carets = append(it.carets, Caret{Rune: it.runes, X: (glyph.X + glyph.Advance - it.firstX).Round()})
 	}
 	if glyph.Flags&text.FlagLineBreak > 0 || cap(line)-len(line) == 0 || !visibleOrBefore {
 		t := op.Offset(it.lineOff).Push(gtx.Ops)
