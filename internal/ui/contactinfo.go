@@ -413,6 +413,9 @@ func (u *UI) infoCommonGroup(gtx C, g model.CommonGroup) D {
 	c := u.btn("info:common:" + g.ID)
 	if c.Clicked(gtx) {
 		if chat := u.chatByID(g.ID); chat != nil {
+			if u.selected != nil && u.selected.ID == chat.ID {
+				u.info.open = false // the group is open already, under the panel
+			}
 			u.setPage(pageChats)
 			u.open(chat)
 		}

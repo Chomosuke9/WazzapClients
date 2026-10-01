@@ -33,14 +33,18 @@ func (b *Backend) SetBlocked(chatID string, blocked bool) {
 			return
 		}
 		key := "info:" + chatID
+		info := model.ChatInfo{ID: chatID}
 		if raw := b.store.meta(ctx, key); raw != "" {
-			var info model.ChatInfo
-			if json.Unmarshal([]byte(raw), &info) == nil {
-				info.Blocked = blocked
-				out, _ := json.Marshal(&info)
-				_ = b.store.setMetaValue(ctx, key, string(out))
-			}
+			_ = json.Unmarshal([]byte(raw), &info)
+		} else {
+			// Nothing was cached yet: fetch the rest of the details too.
+			b.infoMu.Lock()
+			delete(b.infoFetched, chatID)
+			b.infoMu.Unlock()
 		}
+		info.Blocked = blocked
+		out, _ := json.Marshal(&info)
+		_ = b.store.setMetaValue(ctx, key, string(out))
 		b.emit(model.InfoEvent{ChatID: chatID})
 		name := b.chatName(ctx, jid)
 		if blocked {
