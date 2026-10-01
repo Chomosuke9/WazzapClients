@@ -313,7 +313,12 @@ type ChatsEvent struct{ Chats []*Chat }
 type ChatEvent struct{ Chat *Chat }
 
 // MessageEvent inserts or updates a message (matched by ID).
-type MessageEvent struct{ Msg *Message }
+type MessageEvent struct {
+	Msg *Message
+	// New marks a message that just arrived, which may notify: not one
+	// from history, an edit, a reaction or one seen before.
+	New bool
+}
 
 // ReceiptEvent upgrades the receipt of outgoing messages.
 type ReceiptEvent struct {

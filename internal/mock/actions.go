@@ -59,7 +59,7 @@ func (b *Backend) Receive(chatID, who, text string) {
 	m := &model.Message{ChatID: chatID, Sender: who, SenderID: who, Text: text, Time: b.now()}
 	b.add(m)
 	cp := *m
-	b.emit(model.MessageEvent{Msg: &cp})
+	b.emit(model.MessageEvent{Msg: &cp, New: true})
 }
 
 // quoteOf returns the quote of a reply to r, or nil.

@@ -668,6 +668,7 @@ func (b *Backend) onMessage(e *events.Message) {
 		return
 	}
 	chat := p.msg.ChatID
+	isNew := false
 	switch {
 	case p.revoke:
 		_ = b.store.markDeleted(ctx, chat, p.target)
@@ -689,6 +690,8 @@ func (b *Backend) onMessage(e *events.Message) {
 			name = b.chatName(ctx, chatJID)
 		}
 		_, exists := b.store.chat(ctx, chat)
+		// A message can come again (a retry); it counts and notifies once.
+		_, seen := b.store.message(ctx, chat, p.msg.ID)
 		if err := b.store.ensureChat(ctx, b.db, chat, e.Info.IsGroup, name); err != nil {
 			b.log.Errorf("store chat %s: %v", chat, err)
 			return
@@ -698,7 +701,10 @@ func (b *Backend) onMessage(e *events.Message) {
 			return
 		}
 		if !p.msg.FromMe {
-			_ = b.store.addUnread(ctx, chat)
+			if !seen {
+				_ = b.store.addUnread(ctx, chat)
+				isNew = true
+			}
 		} else if p.msg.Media == model.MediaSticker && len(p.msg.mediaBlob) > 0 {
 			b.recentSticker(p.msg.mediaBlob, p.msg.Time, "", "") // sent from another device
 		}
@@ -708,7 +714,7 @@ func (b *Backend) onMessage(e *events.Message) {
 		p.target = p.msg.ID
 	}
 	if r, ok := b.store.message(ctx, chat, p.target); ok {
-		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, e.Info.IsGroup)})
+		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, e.Info.IsGroup), New: isNew})
 		b.emitChat(chat)
 	}
 }

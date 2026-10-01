@@ -118,6 +118,14 @@ Gotchas already found in the pinned version (v0.10.x):
   or a big `clip.RRect` fill, costs a screen-sized texture. Fill rounded rectangles with
   `fillRRect`/`paintRRect`, which only stencil the corners, and round a big panel's
   corner with a mask (`roundCorner`) instead of clipping it.
+- Gio's window thread waits for the UI goroutine while it delivers an event. Never
+  `SendMessage` to the window from the UI goroutine (it hangs both); post instead,
+  as `desktop.SetWindowIcon` does.
+- WinRT interfaces are called through vtables (`internal/notify`). Don't trust
+  remembered IIDs: one wrong digit is E_NOINTERFACE. Windows PowerShell 5.1 reads the
+  real ones and the method order from the system metadata, e.g.
+  `[Windows.UI.Notifications.ToastNotification].GetInterfaces() | % { $_.FullName + " " + $_.GUID }`
+  after loading the type with `, Windows.UI.Notifications, ContentType = WindowsRuntime`.
 - A rectangle clip under a transform that isn't a whole-pixel offset becomes a path
   too, and text outlines are rebuilt. `moveBy` rounds to whole pixels; `pushFx` counts
   real scales in `fxDepth`, under which `paintRRect` draws one path (no seams).
@@ -151,9 +159,35 @@ internal/video/    plays videos with the OS's own player (Media Foundation on Wi
                    OpenAudio plays voice messages and audio files the same way
 internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or
                    osascript elsewhere), run on its own goroutine
-internal/memtrim/  gives memory back to the OS after 30 s without a frame (see ui.Run)
+internal/memtrim/  gives memory back to the OS after 10 s without a frame (see ui.Run)
+internal/notify/   system notifications: WinRT toasts on Windows (replaced per chat, removed
+                   when read, Reply and Mark as read through a COM activator), notify-send
+                   or osascript elsewhere
+internal/desktop/  tray icon, one instance per data directory, start at login, window icon
+                   (Windows; stubs elsewhere)
 patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
 ```
+
+## Window lifecycle and notifications
+
+`ui.Run` (`internal/ui/host.go`) owns the process. Its goroutine is the UI goroutine
+for good, with or without a window: a helper goroutine waits for each window event and
+hands it over, so requests (tray, notification clicks, a second launch) are served even
+while the window is minimized and Gio draws no frames.
+
+- With the tray icon up and the user logged in, closing the window destroys it, which
+  frees its GPU textures, and drops the window's `UI` and the package caches
+  (`dropCaches`; add new package-level drawing caches there). The backend keeps running;
+  the next window gets a fresh `UI` built from the stored chats plus the latest
+  `ConnEvent`. `-background` starts without a window (start at login).
+- Every backend event goes through `host.poll`: the notifier (`notifications.go`) sees
+  them all, and the window's `UI` gets them through `hostBackend.Poll`. Only
+  `MessageEvent`s with `New` set notify; backends set it for messages that just arrived
+  (not history, edits, reactions or repeats).
+- Notification rules follow WhatsApp: one per chat, nothing while the window has focus,
+  muted and archived chats only for mentions and replies to you, removed once the chat
+  is read (here or on another device). Preferences are `Backend.Pref` keys, on unless
+  "off" (`prefNotify*`, `prefBackground`).
 
 ## Conventions
 
@@ -219,12 +253,14 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
 sh patches/apply.sh            # once after cloning: builds the patched go-text
 go run ./cmd/wazzap            # run the app (links to WhatsApp via QR code)
 go run ./cmd/wazzap -demo      # run with fake chats, no network
+go run ./cmd/wazzap -background  # start in the tray, without a window
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
 go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
 go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).
-# -view: chats, archived, status, channels, communities, settings, info, statusviewer
+# -view: chats, archived, status, channels, communities, settings, general,
+# notifications, info, statusviewer
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \

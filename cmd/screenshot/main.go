@@ -40,7 +40,7 @@ func main() {
 	memprofile := flag.String("memprofile", "", "write a heap profile after rendering")
 	data := flag.String("data", "", "in -compare mode, render this session's stored chats (no network)")
 	chatName := flag.String("chatname", "", "in -compare mode with -data, open the chat with this name")
-	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings or info")
+	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, general, notifications or info")
 	infoScroll := flag.Int("infoscroll", 0, "in -compare mode with -view info, first visible item of the info panel")
 	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")
 	win := flag.String("win", "", "in -compare mode, render a window of this size (W,H px) and crop it like the screenshot")
@@ -130,6 +130,7 @@ func main() {
 		{"preview-channels.png", true, "", false, true, "channels"},
 		{"preview-communities.png", true, "", false, true, "communities"},
 		{"preview-settings.png", false, "", false, true, "settings"},
+		{"preview-notifications.png", true, "", false, true, "notifications"},
 	}
 	for _, s := range shots {
 		var b *mock.Backend

@@ -16,7 +16,6 @@ import (
 	"gioui.org/widget/material"
 	"rsc.io/qr"
 
-	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -39,6 +38,7 @@ type UI struct {
 	dark   bool
 	now    func() time.Time
 	window *app.Window // nil when rendering headless
+	host   *host       // nil when rendering headless (see Run)
 	deco   widget.Decorations
 	// winWidth is the window width in px, for panels sized relative to it.
 	winWidth int
@@ -205,6 +205,7 @@ func New(b model.Backend) *UI {
 	u.channel.search.SingleLine = true
 	u.commun.list.Axis = layout.Vertical
 	u.settings.list.Axis = layout.Vertical
+	u.settings.detailList.Axis = layout.Vertical
 	u.settings.search.SingleLine = true
 	u.sidebar.search.SingleLine = true
 	u.sidebar.list.Axis = layout.Vertical
@@ -247,12 +248,20 @@ func (u *UI) Preview() {
 func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 
 // ShowPage switches the navigation rail to one of "chats", "archived",
-// "calls", "status", "channels", "communities" or "settings".
+// "calls", "status", "channels", "communities" or "settings", or opens
+// the "general" or "notifications" settings.
 func (u *UI) ShowPage(name string) {
 	pages := map[string]page{"chats": pageChats, "archived": pageChats, "calls": pageCalls, "status": pageStatus,
-		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings}
+		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings,
+		"general": pageSettings, "notifications": pageSettings}
 	u.setPage(pages[name])
 	u.sidebar.showArchived = name == "archived"
+	switch name {
+	case "general":
+		u.openSettings(settingGeneral)
+	case "notifications":
+		u.openSettings(settingNotifications)
+	}
 }
 
 // ShowStatus opens the status viewer on the i-th poster (used for screenshots).
@@ -287,6 +296,7 @@ func (u *UI) setPage(pg page) {
 		}
 	}
 	u.page = pg
+	u.settings.detail = 0
 	u.hideInfo()
 	u.status.viewer.close()
 }
@@ -351,6 +361,7 @@ func (u *UI) open(c *model.Chat) {
 	u.loadLatest()
 	c.Unread = 0
 	u.backend.Open(c.ID)
+	u.chatRead(c.ID)
 	u.conv.list.Position = layout.Position{}
 	u.conv.list.ScrollToEnd = true
 	u.conv.composer.SetText("")
@@ -384,46 +395,14 @@ func (u *UI) markSeen() bool {
 	}
 	c.Unread = 0
 	u.backend.Open(c.ID)
+	u.chatRead(c.ID)
 	return true
 }
 
-// Run drives the window event loop until the window is closed.
-func Run(w *app.Window, b model.Backend) error {
-	u := New(b)
-	u.window = w
-	u.Start(w.Invalidate)
-	defer b.Close()
-	// Once nothing has been drawn for a while, give memory back (see
-	// memtrim). Every frame pushes the trim back. Leaving the window trims
-	// sooner, even while something on screen still animates.
-	idle := time.AfterFunc(idleTrim, memtrim.Trim)
-	defer idle.Stop()
-	away := time.AfterFunc(awayTrim, memtrim.Trim)
-	away.Stop()
-	defer away.Stop()
-	focused := true
-	var ops op.Ops
-	for {
-		switch e := w.Event().(type) {
-		case app.DestroyEvent:
-			return e.Err
-		case app.ConfigEvent:
-			u.deco.Maximized = e.Config.Mode == app.Maximized
-			if f := e.Config.Focused && e.Config.Mode != app.Minimized; f != focused {
-				focused = f
-				u.away = !f
-				if f {
-					away.Stop()
-				} else {
-					away.Reset(awayTrim)
-				}
-			}
-		case app.FrameEvent:
-			gtx := app.NewContext(&ops, e)
-			u.Layout(gtx)
-			e.Frame(gtx.Ops)
-			idle.Reset(idleTrim)
-		}
+// chatRead takes a chat's notification away once the chat is read here.
+func (u *UI) chatRead(id string) {
+	if u.host != nil {
+		u.host.notes.read(id)
 	}
 }
 
@@ -719,6 +698,8 @@ func (u *UI) escape() {
 		u.conv.reply = nil
 	case u.status.viewer.isOpen():
 		u.status.viewer.close()
+	case u.page == pageSettings && u.settings.detail != 0:
+		u.settings.detail = 0
 	}
 }
 
