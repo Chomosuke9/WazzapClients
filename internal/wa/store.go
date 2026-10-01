@@ -118,6 +118,8 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN file TEXT NOT NULL DEFAULT ''`,    // JSON fileInfo
 	// For pinnedMessage; after the pinned column exists.
 	`CREATE INDEX IF NOT EXISTS wz_messages_pinned ON wz_messages (chat, pinned) WHERE pinned != 0`,
+	// For lastPush.
+	`CREATE INDEX IF NOT EXISTS wz_messages_sender ON wz_messages (sender_jid, ts) WHERE sender_push != ''`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -308,6 +310,15 @@ func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
 func (s *msgStore) editText(ctx context.Context, chat, id, text string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET text = ? WHERE chat = ? AND id = ?`, text, chat, id)
 	return err
+}
+
+// lastPush returns the push name of the newest stored message from jid or
+// alt (one person's LID and phone JID), or "".
+func (s *msgStore) lastPush(ctx context.Context, jid, alt string) string {
+	var push string
+	_ = s.db.QueryRowContext(ctx, `SELECT sender_push FROM wz_messages
+		WHERE sender_jid IN (?, ?) AND sender_push != '' ORDER BY ts DESC LIMIT 1`, jid, alt).Scan(&push)
+	return push
 }
 
 func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.Media, blob []byte, err error) {
