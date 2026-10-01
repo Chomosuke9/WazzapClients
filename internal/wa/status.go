@@ -190,7 +190,7 @@ func (b *Backend) Statuses() []*model.StatusThread {
 	ctx := b.ctx
 	since := time.Now().Add(-statusTTL)
 	// Old updates go, with their downloaded pictures and videos.
-	for _, id := range b.store.dropStatuses(ctx, since.Add(-statusTTL)) {
+	for _, id := range b.store.dropStatuses(ctx, since) {
 		path := b.mediaPath(statusChat, id)
 		for _, p := range []string{path, path + ".failed", path + ".mp4"} {
 			_ = os.Remove(p)

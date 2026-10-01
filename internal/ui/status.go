@@ -255,7 +255,7 @@ func (v *statusViewer) show(t *model.StatusThread) {
 			break
 		}
 	}
-	v.shownAt, v.zp, v.frac, v.paused = time.Time{}, zoomPan{}, 0, false
+	v.shownAt, v.zp, v.frac, v.held, v.paused = time.Time{}, zoomPan{}, 0, 0, false
 	v.reply.SingleLine, v.reply.Submit = true, true
 	v.reply.SetText("")
 }
@@ -402,7 +402,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	p := u.pal
 	advance := func(d int) {
 		v.index += d
-		v.shownAt, v.zp, v.frac = time.Time{}, zoomPan{}, 0
+		v.shownAt, v.zp, v.frac, v.held = time.Time{}, zoomPan{}, 0, 0
 		if v.index < 0 {
 			v.index = 0
 		}
