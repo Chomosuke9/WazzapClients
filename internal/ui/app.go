@@ -76,6 +76,7 @@ type UI struct {
 	clicks      clicks // see btn
 
 	info     infoState
+	search   chatSearchState
 	status   statusState
 	channel  channelState
 	commun   communityState
@@ -230,6 +231,8 @@ func New(b model.Backend) *UI {
 	u.emojiImgs = newImageCache(600, 4<<20)
 	u.clicks.m = make(map[string]*clickEntry)
 	u.info.list.Axis = layout.Vertical
+	u.search.list.Axis = layout.Vertical
+	u.search.query.SingleLine = true
 	u.status.list.Axis = layout.Vertical
 	u.channel.list.Axis = layout.Vertical
 	u.channel.search.SingleLine = true
@@ -354,6 +357,7 @@ func (u *UI) setPage(pg page) {
 	u.page = pg
 	u.settings.detail = 0
 	u.hideInfo()
+	u.hideChatSearch()
 	u.status.viewer.close()
 }
 
@@ -413,6 +417,7 @@ func (u *UI) open(c *model.Chat) {
 	if u.info.from != c.ID {
 		u.hideInfo()
 	}
+	u.hideChatSearch()
 	u.selected = c
 	u.loadLatest()
 	c.Unread = 0
@@ -600,7 +605,7 @@ func (u *UI) layoutPageSidebar(gtx C) D {
 // it), or the selected page's placeholder.
 func (u *UI) layoutRightPane(gtx C) D {
 	if u.selected != nil && u.selPage == u.page && u.page != pageStatus && u.page != pageSettings {
-		if !u.info.shown() {
+		if !u.info.shown() && !u.search.shown() {
 			return u.layoutConversation(gtx)
 		}
 		return u.layoutWithInfo(gtx)
@@ -633,16 +638,22 @@ func (u *UI) layoutPlaceholder(gtx C) D {
 }
 
 // layoutWithInfo splits the pane between the conversation and the contact
-// or group info panel, which takes about 30% of the window like WhatsApp's.
-// The panel slides in from the right edge while the conversation narrows.
+// or group info panel (or the search panel in its place), which takes
+// about 30% of the window like WhatsApp's. The panel slides in from the
+// right edge while the conversation narrows.
 func (u *UI) layoutWithInfo(gtx C) D {
 	sz := gtx.Constraints.Max
-	v := easeOut(u.info.anim.step(gtx, u.info.open, durPanel))
+	open, panel, anim := u.info.open, u.layoutInfo, &u.info.anim
+	if u.search.shown() {
+		open, panel, anim = u.search.open, u.layoutChatSearch, &u.search.anim
+	}
+	v := easeOut(anim.step(gtx, open, durPanel))
 	infoW := max(gtx.Dp(340), int(float32(u.winWidth)*0.3))
 	infoW = min(infoW, sz.X)
 	shown := lerpInt(0, infoW, v) // how much of the panel is on screen
 	convW := sz.X - shown
-	if sz.X-infoW < gtx.Dp(380) {
+	u.search.covers = sz.X-infoW < gtx.Dp(380)
+	if u.search.covers {
 		// Too narrow to share: the panel covers the conversation.
 		convW = sz.X
 	}
@@ -655,13 +666,13 @@ func (u *UI) layoutWithInfo(gtx C) D {
 	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
 	t := op.Offset(image.Pt(sz.X-shown, 0)).Push(gtx.Ops)
 	igtx := gtx
-	if !u.info.open {
+	if !open {
 		var done func()
 		igtx, done = fadeOut(igtx)
 		defer done()
 	}
 	igtx.Constraints = layout.Exact(image.Pt(infoW, sz.Y))
-	u.layoutInfo(igtx)
+	panel(igtx)
 	t.Pop()
 	return D{Size: sz}
 }
@@ -709,6 +720,26 @@ func (u *UI) update(gtx C) {
 			u.info.open = false
 		} else {
 			u.openInfo(u.selected.ID)
+		}
+	}
+	searchKey := false
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: "F", Required: key.ModShortcut | key.ModShift})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			searchKey = true
+		}
+	}
+	if searchKey && u.selected != nil && u.selPage == u.page {
+		u.openChatSearch() // Ctrl+Shift+F, like WhatsApp Desktop
+	}
+	if u.conv.search.Clicked(gtx) {
+		if u.search.open {
+			u.search.open = false
+		} else {
+			u.openChatSearch()
 		}
 	}
 	for id, click := range u.sidebar.rows {
@@ -775,6 +806,8 @@ func (u *UI) escape() {
 		default:
 			u.closeSendView(false)
 		}
+	case u.search.open:
+		u.search.open = false
 	case u.conv.selecting:
 		u.endSelect()
 	case u.conv.reply != nil:
@@ -808,6 +841,9 @@ func (u *UI) applyEvents() {
 			u.upsertChat(e.Chat)
 		case model.MessageEvent:
 			u.upsertMessage(e.Msg)
+			u.searchChatChanged(e.Msg.ChatID)
+		case model.SearchEvent:
+			u.searchResults(e)
 		case model.ReceiptEvent:
 			u.applyReceipt(e)
 		case model.TypingEvent:
@@ -841,6 +877,7 @@ func (u *UI) applyEvents() {
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.DeletedEvent:
+			u.searchChatChanged(e.ChatID)
 			if u.selected != nil && u.selected.ID == e.ChatID {
 				u.reloadMessages()
 			}
@@ -1007,7 +1044,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
-// "select", "attach", "poll", "contacts" or "tray".
+// "select", "attach", "poll", "contacts", "tray", "search" (the search
+// panel, with $WAZZAP_DEMO_SEARCH typed in) or "membersearch".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1074,6 +1112,20 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		if lastIn != nil {
 			u.startSelect(lastIn)
 		}
+	case "search":
+		u.openChatSearch()
+		u.search.anim.snap(true)
+		q := os.Getenv("WAZZAP_DEMO_SEARCH")
+		if q == "" {
+			q = "the"
+		}
+		u.search.query.SetText(q)
+	case "membersearch":
+		u.openInfo(u.selected.ID)
+		u.info.anim.snap(true)
+		u.info.memberSearch = true
+		u.info.memberQuery.SingleLine = true
+		u.info.memberQuery.SetText("an")
 	case "attach":
 		u.openAttachMenu()
 	case "poll":

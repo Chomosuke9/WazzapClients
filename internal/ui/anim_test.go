@@ -98,6 +98,8 @@ func TestIdleAtRest(t *testing.T) {
 		{"close viewer", u.Escape},
 		{"delete dialog", func() { u.ShowOverlay("delete", 0, 0) }},
 		{"close dialog", u.Escape},
+		{"search panel", func() { u.ShowOverlay("search", 0, 0) }},
+		{"close search", u.Escape},
 		{"status page", func() { u.ShowPage("status") }},
 		{"chats page", func() { u.ShowPage("chats") }},
 		{"chat moves up", func() { b.Forward(b.Messages("rina", 1), []string{"gym"}) }},

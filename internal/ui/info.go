@@ -35,6 +35,9 @@ type infoState struct {
 	allMembers   bool  // the member list is expanded
 	allHours     bool  // a business's opening hours are expanded
 	anim         tween // sliding in and out
+	// memberSearch filters a group's member list by memberQuery.
+	memberSearch bool
+	memberQuery  widget.Editor
 }
 
 // infoPage is a panel to return to with the back arrow (a group's info
@@ -98,10 +101,12 @@ func (u *UI) infoBack() {
 }
 
 func (u *UI) showInfo(chatID, name string) {
+	u.swapSearchForInfo()
 	if u.info.chatID != chatID {
 		u.info.list.Position = layout.Position{}
 		u.info.allMembers = false
 		u.info.allHours = false
+		u.info.memberSearch = false
 	}
 	u.info.chatID = chatID
 	u.info.name = name
@@ -214,13 +219,20 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		u.greenAction("email", icMail, "Invite to group via email", true),
 	)
 	members := info.Members
-	if !u.info.allMembers && len(members) > infoMembersShown {
+	if u.info.memberSearch {
+		members = filterMembers(members, u.info.memberQuery.Text())
+		if len(members) == 0 {
+			rows = append(rows, func(gtx C) D {
+				return layout.Inset{Left: infoPadX, Top: 14, Bottom: 14}.Layout(gtx, u.label(15, "No members found", p.TextSecondary).Layout)
+			})
+		}
+	} else if !u.info.allMembers && len(members) > infoMembersShown {
 		members = members[:infoMembersShown]
 	}
 	for _, m := range members {
 		rows = append(rows, func(gtx C) D { return u.infoMember(gtx, m) })
 	}
-	if more := len(info.Members) - len(members); more > 0 {
+	if more := len(info.Members) - len(members); more > 0 && !u.info.memberSearch {
 		rows = append(rows, func(gtx C) D {
 			c := u.btn("info:allmembers")
 			if c.Clicked(gtx) {
@@ -378,6 +390,9 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 	}
 	if u.btn("info-action:share").Clicked(gtx) {
 		u.openShareContact(c.ID)
+	}
+	if u.btn("info-action:search").Clicked(gtx) {
+		u.openChatSearch()
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -567,17 +582,14 @@ func (u *UI) pill(txt string, size unit.Sp, round bool) layout.Widget {
 }
 
 func (u *UI) infoMembersHeader(gtx C, info *model.ChatInfo) D {
-	p := u.pal
 	n := len(info.Members)
 	txt := fmt.Sprintf("%d members", n)
 	if n == 1 {
 		txt = "1 member"
 	}
-	return layout.Inset{Left: infoPadX, Right: 40, Top: 32.2, Bottom: 13.7}.Layout(gtx, func(gtx C) D {
-		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-			layout.Flexed(1, u.label(15, txt, p.TextSecondary, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
-			layout.Rigid(iconW(icSearch, 28, p.IconStrong)),
-		)
+	// The search button's 40dp box ends 6dp right of its icon.
+	return layout.Inset{Left: infoPadX, Right: 34, Top: 32.2 - 6, Bottom: 13.7 - 6}.Layout(gtx, func(gtx C) D {
+		return u.membersHeaderRow(gtx, txt)
 	})
 }
 

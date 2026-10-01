@@ -75,6 +75,7 @@ func (u *UI) openDirect(id, name string) {
 func (u *UI) closeChat() {
 	u.selected = nil
 	u.hideInfo()
+	u.hideChatSearch()
 	u.endSelect()
 }
 

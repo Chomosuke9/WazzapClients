@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -445,6 +446,40 @@ func (s *msgStore) pinnedMessage(ctx context.Context, chat string) (rawMsg, bool
 		WHERE chat = ? AND pinned != 0 ORDER BY pinned DESC LIMIT 1`, chat)
 	m, err := scanMessage(row)
 	return m, err == nil
+}
+
+// searchMessages returns up to limit messages of a chat whose
+// model.SearchKey contains key, newest first, leaving out deleted and
+// unsupported messages. SQLite's LIKE folds ASCII only and sees the
+// formatting markers, so the texts are compared in Go; it stops when ctx
+// is cancelled.
+func (s *msgStore) searchMessages(ctx context.Context, chat, key string, limit int) ([]rawMsg, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, text FROM wz_messages
+		WHERE chat = ? AND kind NOT IN (?, ?) AND text != '' ORDER BY ts DESC, rowid DESC`,
+		chat, int(model.KindDeleted), int(model.KindUnsupported))
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() && len(ids) < limit {
+		var id int64
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if strings.Contains(model.SearchKey(text), key) {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
+		SELECT *, rowid AS rid FROM wz_messages WHERE rowid IN (`+strings.Join(ids, ",")+`)
+	) ORDER BY ts DESC, rid DESC`)
 }
 
 func (s *msgStore) queryMessages(ctx context.Context, q string, args ...any) ([]rawMsg, error) {
