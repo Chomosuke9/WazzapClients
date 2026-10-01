@@ -840,6 +840,9 @@ func (u *UI) applyEvents() {
 			u.upsertChat(e.Chat)
 		case model.MessageEvent:
 			u.upsertMessage(e.Msg)
+			u.searchChatChanged(e.Msg.ChatID)
+		case model.SearchEvent:
+			u.searchResults(e)
 		case model.ReceiptEvent:
 			u.applyReceipt(e)
 		case model.TypingEvent:
@@ -873,6 +876,7 @@ func (u *UI) applyEvents() {
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.DeletedEvent:
+			u.searchChatChanged(e.ChatID)
 			if u.selected != nil && u.selected.ID == e.ChatID {
 				u.reloadMessages()
 			}

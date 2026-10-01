@@ -60,6 +60,9 @@ type Backend struct {
 
 	infoMu      sync.Mutex
 	infoFetched map[string]bool // info panels refreshed this session
+
+	searchMu     sync.Mutex
+	searchCancel context.CancelFunc // the running SearchMessages
 }
 
 var _ model.Backend = (*Backend)(nil)
@@ -306,9 +309,28 @@ func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
 	return b.resolveMessages(chatID, raw, err)
 }
 
-func (b *Backend) SearchMessages(chatID, query string, limit int) []*model.Message {
-	raw, err := b.store.searchMessages(b.ctx, chatID, query, limit)
-	return b.resolveMessages(chatID, raw, err)
+func (b *Backend) SearchMessages(chatID, query string, limit int) {
+	ctx, cancel := context.WithCancel(b.ctx)
+	b.searchMu.Lock()
+	if b.searchCancel != nil {
+		b.searchCancel()
+	}
+	b.searchCancel = cancel
+	b.searchMu.Unlock()
+	go func() {
+		defer cancel()
+		var msgs []*model.Message
+		if key := model.SearchKey(query); key != "" {
+			raw, err := b.store.searchMessages(ctx, chatID, key, limit)
+			if ctx.Err() != nil {
+				return
+			}
+			msgs = b.resolveMessages(chatID, raw, err)
+		}
+		if ctx.Err() == nil {
+			b.emit(model.SearchEvent{ChatID: chatID, Query: query, Msgs: msgs})
+		}
+	}()
 }
 
 func (b *Backend) PinnedMessage(chatID string) *model.Message {

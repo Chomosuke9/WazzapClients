@@ -448,26 +448,18 @@ func (s *msgStore) pinnedMessage(ctx context.Context, chat string) (rawMsg, bool
 	return m, err == nil
 }
 
-// searchMessages returns up to limit messages of a chat whose text
-// contains query, ignoring case, newest first. Deleted and unsupported
-// messages are left out. SQLite's LIKE folds ASCII letters only, so a
-// query with other letters is matched in Go instead.
-func (s *msgStore) searchMessages(ctx context.Context, chat, query string, limit int) ([]rawMsg, error) {
-	const where = `chat = ? AND kind NOT IN (?, ?)`
-	skip := []any{int(model.KindDeleted), int(model.KindUnsupported)}
-	if isASCII(query) {
-		pat := "%" + likeEscaper.Replace(query) + "%"
-		return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
-			SELECT *, rowid AS rid FROM wz_messages WHERE `+where+` AND text LIKE ? ESCAPE '\'
-			ORDER BY ts DESC, rid DESC LIMIT ?
-		)`, chat, skip[0], skip[1], pat, limit)
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT rowid, text FROM wz_messages WHERE `+where+` AND text != ''
-		ORDER BY ts DESC, rowid DESC`, chat, skip[0], skip[1])
+// searchMessages returns up to limit messages of a chat whose
+// model.SearchKey contains key, newest first, leaving out deleted and
+// unsupported messages. SQLite's LIKE folds ASCII only and sees the
+// formatting markers, so the texts are compared in Go; it stops when ctx
+// is cancelled.
+func (s *msgStore) searchMessages(ctx context.Context, chat, key string, limit int) ([]rawMsg, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, text FROM wz_messages
+		WHERE chat = ? AND kind NOT IN (?, ?) AND text != '' ORDER BY ts DESC, rowid DESC`,
+		chat, int(model.KindDeleted), int(model.KindUnsupported))
 	if err != nil {
 		return nil, err
 	}
-	q := strings.ToLower(query)
 	var ids []string
 	for rows.Next() && len(ids) < limit {
 		var id int64
@@ -476,7 +468,7 @@ func (s *msgStore) searchMessages(ctx context.Context, chat, query string, limit
 			rows.Close()
 			return nil, err
 		}
-		if strings.Contains(strings.ToLower(text), q) {
+		if strings.Contains(model.SearchKey(text), key) {
 			ids = append(ids, strconv.FormatInt(id, 10))
 		}
 	}
@@ -489,18 +481,6 @@ func (s *msgStore) searchMessages(ctx context.Context, chat, query string, limit
 		SELECT *, rowid AS rid FROM wz_messages WHERE rowid IN (`+strings.Join(ids, ",")+`)
 	) ORDER BY ts DESC, rid DESC`)
 }
-
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
-			return false
-		}
-	}
-	return true
-}
-
-// likeEscaper escapes LIKE's wildcards (with ESCAPE '\').
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 func (s *msgStore) queryMessages(ctx context.Context, q string, args ...any) ([]rawMsg, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)

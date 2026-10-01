@@ -2,7 +2,11 @@
 // (the real WhatsApp connection in internal/wa, or demo data in internal/mock).
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+	"unicode"
+)
 
 // Receipt is the delivery state of an outgoing message.
 type Receipt int
@@ -416,6 +420,12 @@ type StickersEvent struct{}
 // NoticeEvent is a short message for a toast ("Saved to Downloads").
 type NoticeEvent struct{ Text string }
 
+// SearchEvent brings the results of Backend.SearchMessages.
+type SearchEvent struct {
+	ChatID, Query string
+	Msgs          []*Message
+}
+
 // DeletedEvent reports that messages were removed from a chat (deleted for
 // you, or the chat was cleared). IDs is nil when the whole chat was cleared.
 type DeletedEvent struct {
@@ -440,6 +450,7 @@ func (CommunitiesEvent) isEvent() {}
 func (NoticeEvent) isEvent()      {}
 func (StickersEvent) isEvent()    {}
 func (DeletedEvent) isEvent()     {}
+func (SearchEvent) isEvent()      {}
 
 // StickerSet is a tab of the sticker picker.
 type StickerSet int
@@ -467,9 +478,10 @@ type Backend interface {
 	// MessagesFrom returns up to limit messages from message id (included)
 	// on, oldest first. It returns none when id isn't stored.
 	MessagesFrom(chatID, id string, limit int) []*Message
-	// SearchMessages returns up to limit messages of a chat whose text
-	// contains query (ignoring case), newest first.
-	SearchMessages(chatID, query string, limit int) []*Message
+	// SearchMessages looks in the background for up to limit messages of
+	// a chat whose SearchKey contains the query's, newest first. A
+	// SearchEvent brings the results; a new search cancels the last one.
+	SearchMessages(chatID, query string, limit int)
 	// PinnedMessage returns the chat's most recently pinned message, or nil.
 	PinnedMessage(chatID string) *Message
 	// Open is called when the user opens a chat: mark it read, subscribe to presence.
@@ -576,4 +588,41 @@ type Backend interface {
 	// Logout unlinks this device and returns to the QR screen.
 	Logout()
 	Close()
+}
+
+// SearchKey is the form of a text that message search compares: case
+// folded (so K matches k and the Kelvin sign, σ matches Σ and ς), without
+// the formatting markers (*_~`) and mention marks that the chat doesn't
+// show, so "*hello* world" is found by "hello world".
+func SearchKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '*', '_', '~', '`', '\u2068', '\u2069', MentionNotifies, MentionAdmins:
+			continue
+		}
+		b.WriteRune(FoldRune(r))
+	}
+	return b.String()
+}
+
+// FoldRune maps every rune of a case-folding orbit (K, k and the Kelvin
+// sign) to the same one: its smallest, in lower case when that is an
+// ASCII letter.
+func FoldRune(r rune) rune {
+	if r < 0x80 && r != 'k' && r != 'K' && r != 's' && r != 'S' {
+		if 'A' <= r && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}
+	m := r
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		m = min(m, f)
+	}
+	if 'A' <= m && m <= 'Z' {
+		m += 'a' - 'A'
+	}
+	return m
 }

@@ -4,7 +4,6 @@ import (
 	"image"
 	"image/color"
 	"strings"
-	"unicode"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -24,7 +23,9 @@ type chatSearchState struct {
 	open     bool
 	chatID   string
 	query    widget.Editor
-	ran      string // the query results are for
+	ran      string // the query last sent to the backend
+	got      string // the query results are for
+	stale    bool   // the chat changed: run the query again
 	results  []*model.Message
 	list     widget.List
 	closeBtn widget.Clickable
@@ -54,11 +55,12 @@ func (u *UI) openChatSearch() {
 	}
 	if s.chatID != u.selected.ID {
 		s.query.SetText("")
-		s.ran, s.results = "", nil
+		s.ran, s.got, s.results = "", "", nil
 		s.list.Position = layout.Position{}
 	}
 	s.chatID = u.selected.ID
 	s.open = true
+	s.stale = true // messages may have changed while it was closed
 	u.requestFocus(&s.query)
 }
 
@@ -78,18 +80,39 @@ func (u *UI) swapSearchForInfo() {
 	}
 }
 
-// runChatSearch runs the query when it changed since the last frame.
+// runChatSearch starts a search when the query changed since the last
+// frame, or the chat's messages did. The results come as a SearchEvent
+// (see searchResults); the last ones stay up until then.
 func (u *UI) runChatSearch() {
 	s := &u.search
 	q := trimSpace(s.query.Text())
-	if q == s.ran {
+	if q == s.ran && !s.stale {
 		return
 	}
-	s.ran = q
-	s.results = nil
-	s.list.Position = layout.Position{}
-	if q != "" {
-		s.results = u.backend.SearchMessages(s.chatID, q, searchLimit)
+	if q != s.ran {
+		s.list.Position = layout.Position{}
+	}
+	s.ran, s.stale = q, false
+	if q == "" {
+		s.got, s.results = "", nil
+		return
+	}
+	u.backend.SearchMessages(s.chatID, q, searchLimit)
+}
+
+// searchResults takes a search's results, unless a newer one started.
+func (u *UI) searchResults(e model.SearchEvent) {
+	s := &u.search
+	if e.ChatID == s.chatID && e.Query == s.ran {
+		s.got, s.results = e.Query, e.Msgs
+	}
+}
+
+// searchChatChanged marks the search of a chat whose messages changed
+// as stale.
+func (u *UI) searchChatChanged(chatID string) {
+	if chatID == u.search.chatID {
+		u.search.stale = true
 	}
 }
 
@@ -99,7 +122,9 @@ func (u *UI) layoutChatSearch(gtx C) D {
 	if s.closeBtn.Clicked(gtx) {
 		s.open = false
 	}
-	u.runChatSearch()
+	if s.open {
+		u.runChatSearch()
+	}
 	dims := fill(gtx, p.Panel)
 	c := u.chatByID(s.chatID)
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -128,6 +153,8 @@ func (u *UI) layoutChatSearch(gtx C) D {
 				hint = "Search for messages with " + c.Name + "."
 			case s.ran == "":
 				hint = "Search for messages in this chat."
+			case s.got != s.ran && len(s.results) == 0:
+				return D{} // searching
 			case len(s.results) == 0:
 				hint = "No messages found"
 			}
@@ -138,7 +165,7 @@ func (u *UI) layoutChatSearch(gtx C) D {
 				})
 			}
 			return u.scrollList(gtx, &s.list, len(s.results), func(gtx C, i int) D {
-				return u.searchResult(gtx, c, s.results[i], s.ran)
+				return u.searchResult(gtx, c, s.results[i], s.got)
 			})
 		}),
 	)
@@ -283,13 +310,14 @@ func matchRects(cs []styledtext.Caret, ranges [][2]int) []image.Rectangle {
 	return out
 }
 
-// matchRanges finds every place q appears in s, ignoring case, as rune
+// matchRanges finds every place q appears in s, ignoring case like
+// message search (model.SearchKey), as rune
 // index ranges.
 func matchRanges(s, q []rune) [][2]int {
 	if len(q) == 0 {
 		return nil
 	}
-	fold := func(r rune) rune { return unicode.ToLower(r) }
+	fold := model.FoldRune
 	var out [][2]int
 	for i := 0; i+len(q) <= len(s); {
 		j := 0

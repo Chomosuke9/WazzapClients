@@ -18,6 +18,7 @@ func TestMatchRanges(t *testing.T) {
 		{"aaa", "aa", [][2]int{{0, 2}}},
 		{"abc", "", nil},
 		{"ab", "abc", nil},
+		{"ΟΔΟΣ", "οδος", [][2]int{{0, 4}}},
 	} {
 		if got := matchRanges([]rune(c.s), []rune(c.q)); !slices.Equal(got, c.want) {
 			t.Errorf("matchRanges(%q, %q) = %v, want %v", c.s, c.q, got, c.want)
@@ -28,7 +29,8 @@ func TestMatchRanges(t *testing.T) {
 // TestChatSearch opens a chat's search, checks that a query finds its
 // messages, and that the info panel then takes the panel's place.
 func TestChatSearch(t *testing.T) {
-	u := New(mock.New())
+	b := mock.New()
+	u := New(b)
 	u.Start(func() {})
 	u.SelectID("rina")
 	u.openChatSearch()
@@ -37,6 +39,7 @@ func TestChatSearch(t *testing.T) {
 	}
 	u.search.query.SetText("villa")
 	u.runChatSearch()
+	u.applyEvents()
 	if len(u.search.results) == 0 {
 		t.Fatal("no results for a word in the chat")
 	}
@@ -47,6 +50,15 @@ func TestChatSearch(t *testing.T) {
 		if i > 0 && m.Time.After(u.search.results[i-1].Time) {
 			t.Error("results aren't newest first")
 		}
+	}
+	// A new matching message shows up in the open search.
+	n := len(u.search.results)
+	b.Forward(b.Messages("rina", 1), []string{"rina"})
+	u.applyEvents()
+	u.runChatSearch()
+	u.applyEvents()
+	if len(u.search.results) != n+1 {
+		t.Errorf("%d results after a matching message came, want %d", len(u.search.results), n+1)
 	}
 	u.openInfo("rina")
 	if u.search.shown() || !u.info.open {

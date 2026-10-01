@@ -10,8 +10,8 @@ import (
 )
 
 // TestSearchMessages checks that a chat's search finds text in any case,
-// beyond ASCII, newest first, treats LIKE wildcards literally, and skips other chats and
-// deleted messages.
+// beyond ASCII, through formatting markers, newest first, takes % as
+// itself, and skips other chats and deleted messages.
 func TestSearchMessages(t *testing.T) {
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "t.db"))
@@ -38,6 +38,8 @@ func TestSearchMessages(t *testing.T) {
 		{"a", "7", 7, model.KindText, "ÉTÉ à Paris"},
 		{"a", "8", 8, model.KindDeleted, "été"},
 		{"a", "9", 9, model.KindText, "un été"},
+		{"a", "10", 10, model.KindText, "*hello* world, ΟΔΟΣ"},
+		{"a", "11", 11, model.KindText, "Kelvin"},
 	} {
 		if _, err := db.ExecContext(ctx, `INSERT INTO wz_messages (chat, id, ts, kind, text) VALUES (?, ?, ?, ?, ?)`,
 			m.chat, m.id, m.ts, int(m.kind), m.text); err != nil {
@@ -45,7 +47,7 @@ func TestSearchMessages(t *testing.T) {
 		}
 	}
 	ids := func(q string, limit int) (out []string) {
-		raw, err := s.searchMessages(ctx, "a", q, limit)
+		raw, err := s.searchMessages(ctx, "a", model.SearchKey(q), limit)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,10 +64,13 @@ func TestSearchMessages(t *testing.T) {
 		{"lunch", 10, "4 2 1"},
 		{"lunch", 2, "4 2"},
 		{"0%", 10, "2"},
-		{"5_0", 10, ""},
+		{"5%0", 10, ""},
 		{"été", 10, "9 7"},
 		{"été", 1, "9"},
 		{"À p", 10, "7"},
+		{"hello world", 10, "10"},
+		{"οδος", 10, "10"},
+		{"kelvin", 10, "11"},
 	} {
 		got := ""
 		for i, id := range ids(c.q, c.limit) {
