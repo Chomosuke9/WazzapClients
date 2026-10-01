@@ -13,6 +13,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // TestContactInfoBack checks that a member's contact info opened from a
@@ -77,4 +78,24 @@ func TestSenderOpensContact(t *testing.T) {
 		}
 	}
 	t.Fatal("no click on the conversation opened the sender's contact info")
+}
+
+// TestHoursNow checks opening hours, including hours past midnight.
+func TestHoursNow(t *testing.T) {
+	biz := &model.Business{TimeZone: "UTC", Hours: []model.BusinessHours{
+		{Day: time.Monday, Mode: "specific_hours", Open: 22 * 60, Close: 2 * 60},
+		{Day: time.Tuesday, Mode: "specific_hours", Open: 9 * 60, Close: 17 * 60},
+	}}
+	at := func(day, h int) time.Time { return time.Date(2026, 9, 28+day, h, 30, 0, 0, time.UTC) } // 28 Sep 2026 is a Monday
+	for _, c := range []struct {
+		t    time.Time
+		open bool
+	}{
+		{at(0, 21), false}, {at(0, 23), true}, {at(1, 1), true}, {at(1, 3), false},
+		{at(1, 10), true}, {at(1, 18), false}, {at(2, 1), false},
+	} {
+		if got := hoursNow(biz, c.t).open; got != c.open {
+			t.Errorf("open at %v = %v, want %v", c.t, got, c.open)
+		}
+	}
 }

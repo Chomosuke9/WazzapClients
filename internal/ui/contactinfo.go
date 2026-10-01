@@ -364,6 +364,13 @@ func hoursNow(biz *model.Business, now time.Time) openState {
 		}
 	}
 	mins := now.Hour()*60 + now.Minute()
+	// Yesterday's hours may run past midnight (22:00–02:00).
+	for _, h := range biz.Hours {
+		if h.Day == (now.Weekday()+6)%7 && h.Mode != "open_24h" && h.Mode != "appointment_only" && h.Close < h.Open && mins < h.Close {
+			st.open, st.word, st.summary = true, "Open", "until "+hhmm(h.Close)
+			return st
+		}
+	}
 	switch h := st.today; {
 	case h == nil:
 		st.word, st.summary = "Closed", "today"

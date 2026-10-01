@@ -98,10 +98,10 @@ func (b *Backend) fetchInfo(jid types.JID) {
 		b.subtitles[jid.String()] = b.groupSubtitle(ctx, g.Participants)
 		b.subMu.Unlock()
 	} else {
+		// Start from what was fetched before, so a request that fails
+		// (or being offline) keeps it.
 		old := b.store.meta(ctx, "info:"+jid.String())
-		if !online && old != "" {
-			// Keep what was fetched before; only the shared groups, which
-			// are stored locally, can be refreshed.
+		if old != "" {
 			_ = json.Unmarshal([]byte(old), info)
 		}
 		info.Name = b.chatName(ctx, jid)
@@ -129,25 +129,26 @@ func (b *Backend) fillContactInfo(ctx context.Context, info *model.ChatInfo, jid
 	} else if p, err := cli.Store.LIDs.GetPNForLID(ctx, jid); err == nil {
 		pn = p
 	}
-	info.About = ""
 	business := b.lookup(ctx, jid).business
-	isBusiness := business != ""
+	isBusiness := business != "" || info.Business != nil
 	users, err := cli.GetUserInfo(ctx, []types.JID{jid})
 	if err != nil {
 		b.log.Debugf("user info %s: %v", jid, err)
-	}
-	for _, u := range users {
-		info.About = u.Status
-		if u.VerifiedName != nil {
-			isBusiness = true
-			if n := u.VerifiedName.Details.GetVerifiedName(); n != "" {
-				business = n
+	} else {
+		isBusiness = business != ""
+		for _, u := range users {
+			info.About = u.Status
+			if u.VerifiedName != nil {
+				isBusiness = true
+				if n := u.VerifiedName.Details.GetVerifiedName(); n != "" {
+					business = n
+				}
 			}
 		}
 	}
-	info.Business = nil
-	if isBusiness {
-		info.Business = &model.Business{Name: business}
+	if !isBusiness {
+		info.Business = nil
+	} else {
 		var bp *types.BusinessProfile
 		for _, j := range []types.JID{pn, jid} {
 			if j.IsEmpty() {
@@ -158,12 +159,18 @@ func (b *Backend) fillContactInfo(ctx context.Context, info *model.ChatInfo, jid
 			}
 			b.log.Debugf("business profile %s: %v", j, err)
 		}
-		if bp != nil {
+		switch {
+		case bp != nil:
+			info.Business = &model.Business{Name: business}
 			fillBusiness(info.Business, bp)
+		case info.Business == nil:
+			info.Business = &model.Business{Name: business}
+		case business != "":
+			info.Business.Name = business
 		}
 	}
 	if list, err := cli.GetBlocklist(ctx); err == nil {
-		info.Blocked = false
+		info.Blocked = false // only once the list is in
 		for _, j := range list.JIDs {
 			if j.User == jid.User || (!pn.IsEmpty() && j.User == pn.User) {
 				info.Blocked = true

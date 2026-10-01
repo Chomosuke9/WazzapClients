@@ -1,6 +1,7 @@
 package wa
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"strings"
@@ -69,21 +70,30 @@ func (b *Backend) ExportChat(chatID string) {
 		if cli := b.client(); cli != nil && cli.Store.PushName != "" {
 			me = cli.Store.PushName
 		}
-		// Read the chat newest first, a page at a time, then write it out
-		// oldest first.
-		const page = 500
-		var pages [][]*model.Message
-		msgs := b.Messages(chatID, page)
-		for len(msgs) > 0 {
-			pages = append(pages, msgs)
-			if len(msgs) < page {
-				break
-			}
-			msgs = b.MessagesBefore(chatID, msgs[0].ID, page)
+		first := b.store.oldestID(ctx, chatID)
+		if first == "" {
+			b.emit(model.NoticeEvent{Text: "This chat has no messages to export."})
+			return
 		}
-		var sb strings.Builder
-		for i := len(pages) - 1; i >= 0; i-- {
-			for _, m := range pages[i] {
+		f, err := createDownload("WhatsApp Chat with " + name + ".txt")
+		if err != nil {
+			b.log.Warnf("export %s: %v", chatID, err)
+			b.emit(model.NoticeEvent{Text: "Couldn't export the chat."})
+			return
+		}
+		path := f.Name()
+		// Read the chat oldest first, a page at a time, writing each page
+		// out before the next, so a long chat never sits in memory whole.
+		w := bufio.NewWriter(f)
+		const page = 500
+		for id := first; id != ""; {
+			msgs := b.MessagesFrom(chatID, id, page+1)
+			id = ""
+			if len(msgs) > page {
+				id = msgs[page].ID
+				msgs = msgs[:page]
+			}
+			for _, m := range msgs {
 				who := m.Sender
 				switch {
 				case m.FromMe:
@@ -91,14 +101,13 @@ func (b *Backend) ExportChat(chatID string) {
 				case who == "":
 					who = name
 				}
-				sb.WriteString(m.Time.Format("02/01/2006, 15:04") + " - " + who + ": " + exportText(m) + "\n")
+				w.WriteString(m.Time.Format("02/01/2006, 15:04") + " - " + who + ": " + exportText(m) + "\n")
 			}
 		}
-		if sb.Len() == 0 {
-			b.emit(model.NoticeEvent{Text: "This chat has no messages to export."})
-			return
+		err = w.Flush()
+		if cerr := f.Close(); err == nil {
+			err = cerr
 		}
-		path, err := saveDownload("WhatsApp Chat with "+name+".txt", []byte(sb.String()))
 		if err != nil {
 			b.log.Warnf("export %s: %v", chatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't export the chat."})

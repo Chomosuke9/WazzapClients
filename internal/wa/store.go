@@ -432,6 +432,13 @@ func (s *msgStore) messagesFrom(ctx context.Context, chat, id string, limit int)
 	)`, chat, id, chat, limit)
 }
 
+// oldestID returns the ID of a chat's first message, or "".
+func (s *msgStore) oldestID(ctx context.Context, chat string) string {
+	var id string
+	_ = s.db.QueryRowContext(ctx, `SELECT id FROM wz_messages WHERE chat = ? ORDER BY ts, rowid LIMIT 1`, chat).Scan(&id)
+	return id
+}
+
 // pinnedMessage returns the chat's most recently pinned message.
 func (s *msgStore) pinnedMessage(ctx context.Context, chat string) (rawMsg, bool) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+msgColumns+` FROM wz_messages
