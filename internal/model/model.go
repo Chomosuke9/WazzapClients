@@ -308,6 +308,9 @@ type ChannelsEvent struct{}
 // CommunitiesEvent reports that the community structure changed.
 type CommunitiesEvent struct{}
 
+// StickersEvent reports that the recent or favourite stickers changed.
+type StickersEvent struct{}
+
 // NoticeEvent is a short message for a toast ("Saved to Downloads").
 type NoticeEvent struct{ Text string }
 
@@ -333,7 +336,17 @@ func (StatusEvent) isEvent()      {}
 func (ChannelsEvent) isEvent()    {}
 func (CommunitiesEvent) isEvent() {}
 func (NoticeEvent) isEvent()      {}
+func (StickersEvent) isEvent()    {}
 func (DeletedEvent) isEvent()     {}
+
+// StickerSet is a tab of the sticker picker.
+type StickerSet int
+
+const (
+	StickersRecent   StickerSet = iota // sent recently, from any of the account's devices
+	StickersFavorite                   // favourited on any device
+	StickersReceived                   // received in chats
+)
 
 // Backend is everything the UI needs from a WhatsApp connection.
 //
@@ -363,8 +376,8 @@ type Backend interface {
 	PressButton(m *Message, i int) *Message
 	// SendSticker sends a sticker that was received before, again.
 	SendSticker(chatID string, sticker *Message)
-	// Stickers lists recently received stickers, newest first.
-	Stickers() []*Message
+	// Stickers lists one of the sticker picker's sets, newest first.
+	Stickers(set StickerSet) []*Message
 	// Forward sends copies of messages to other chats.
 	Forward(msgs []*Message, chatIDs []string)
 	// React sets (or, with "", removes) your reaction to a message.

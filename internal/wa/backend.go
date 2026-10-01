@@ -527,6 +527,7 @@ func (b *Backend) handle(evt any) {
 		if len(e.Index) > 0 && e.Index[0] == appstate.IndexFavorites && e.GetFavoritesAction() != nil {
 			b.onFavorites(e.GetFavoritesAction())
 		}
+		b.onStickerAppState(e)
 
 	case *events.PushName, *events.Contact, *events.BusinessName:
 		b.names.clear()
@@ -565,8 +566,9 @@ func (b *Backend) updateChat(j types.JID, field string, v any, quiet bool) {
 // contacts) once per session database. Sessions linked before app state
 // events were enabled never received their pins and mutes.
 func (b *Backend) resyncAppStateOnce() {
-	// v2 also picks up lists and favourites, which older versions ignored.
-	const key = "appstate_resynced_v2"
+	// v2 also picks up lists and favourites, which older versions ignored;
+	// v3 favourite stickers.
+	const key = "appstate_resynced_v3"
 	if b.store.meta(b.ctx, key) != "" {
 		return
 	}
@@ -624,6 +626,8 @@ func (b *Backend) onMessage(e *events.Message) {
 		}
 		if !p.msg.FromMe {
 			_ = b.store.addUnread(ctx, chat)
+		} else if p.msg.Media == model.MediaSticker && len(p.msg.mediaBlob) > 0 {
+			b.recentSticker(p.msg.mediaBlob, p.msg.Time, "", "") // sent from another device
 		}
 		if !exists && e.Info.IsGroup {
 			go b.fetchGroupName(chatJID)
@@ -797,6 +801,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			}
 		}
 	}
+	b.onRecentStickers(data.GetRecentStickers())
 	b.log.Infof("history sync %s: %d conversations, progress %d%%",
 		data.GetSyncType(), len(convs), data.GetProgress())
 	if data.GetSyncType() == waHistorySync.HistorySync_PUSH_NAME {
