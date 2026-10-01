@@ -166,6 +166,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    menu, file tray and poll dialog in attach.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go;
+                   text in textsel.go; searching a chat's messages (the panel that takes the info
+                   panel's place) and a group's members in chatsearch.go; the composer's
+                   formatting toolbar in formatbar.go; the attach
+                   menu, file tray and poll dialog in attach.go; animation helpers in anim.go;
                    chat actions shared by menus and info panels (mute choices, lists,
                    clear/exit/delete confirms) in chatactions.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
@@ -289,7 +293,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
-# delete, select, mention, mentioned; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
+# delete, select, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and
