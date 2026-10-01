@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -225,8 +226,12 @@ func TestSendViewCaptionsAndSend(t *testing.T) {
 	if msgs[0].Media != model.MediaImage || msgs[0].Text != "the photo" || msgs[1].Text != "the notes" {
 		t.Errorf("sent %q (%v) then %q (%v)", msgs[0].Text, msgs[0].Media, msgs[1].Text, msgs[1].Media)
 	}
-	if msgs[0].FileName == "photo.png" {
+	// Edits render on the GPU. Without one (as on CI runners), the photo
+	// goes out as it was, with a toast.
+	if gpu := headlessWorks(); gpu && msgs[0].FileName == "photo.png" {
 		t.Error("the edited photo went out unedited")
+	} else if !gpu && (msgs[0].FileName != "photo.png" || u.toastMsg.text == "") {
+		t.Errorf("without a GPU, sent %q and toasted %q", msgs[0].FileName, u.toastMsg.text)
 	}
 	if got := u.conv.composer.Text(); got != "" {
 		t.Errorf("after sending, the composer has %q", got)
@@ -352,4 +357,14 @@ func TestCenteredPicker(t *testing.T) {
 			t.Errorf("mode %d: a click on the picker closed it", mode)
 		}
 	}
+}
+
+// headlessWorks reports whether Gio's headless renderer works here.
+func headlessWorks() bool {
+	w, err := headless.NewWindow(1, 1)
+	if err != nil {
+		return false
+	}
+	w.Release()
+	return true
 }

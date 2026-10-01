@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/io/input"
@@ -45,39 +46,34 @@ func TestSelectText(t *testing.T) {
 		ev(pointer.Press, p, pointer.ButtonPrimary)
 		ev(pointer.Release, p, 0)
 	}
-	// The last message is "Also can you send me the villa address? My mom
-	// keeps asking". Text widths depend on the system's fonts, so the
-	// points to press are found from the text's carets: a click on the
-	// text shows where it is in the window.
+	// The last message, "Also can you send me the villa address? My mom
+	// keeps asking", wraps after "keeps"; its time sits after "asking".
+	// Text widths depend on the system's fonts, so a click on the text
+	// finds where it is, and the drag aims at its characters.
 	probe := f32.Pt(560, 580)
 	click(probe)
-	if u.textSel.id == "" {
-		t.Fatal("the click missed the message's text")
-	}
-	origin := probe.Sub(layout.FPt(u.textSel.lastPos))
-	plain := []rune(string(u.textSel.plain))
-	runeAt := func(s string) int {
-		for i := range plain {
-			if strings.HasPrefix(string(plain[i:]), s) {
-				return i
-			}
-		}
-		t.Fatalf("the text %q has no %q", string(plain), s)
-		return 0
-	}
-	// caret returns the window point of the caret before rune i, moved by dx.
-	caret := func(i int, dx float32) f32.Point {
+	off := probe.Sub(pointF(u.textSel.lastPos))
+	plain := string(u.textSel.plain)
+	// at returns the window position of rune i's caret, nudged by dx.
+	at := func(i int, dx float32) f32.Point {
 		for _, c := range u.textSel.carets {
 			if c.Rune == i {
-				return origin.Add(f32.Pt(float32(c.X)+dx, float32(c.Top+c.Bottom)/2))
+				return f32.Pt(float32(c.X)+dx, float32(c.Top+c.Bottom)/2).Add(off)
 			}
 		}
-		t.Fatalf("no caret before rune %d", i)
+		t.Fatalf("no caret at rune %d of %q", i, plain)
 		return f32.Point{}
 	}
-	from, to := caret(runeAt("can you"), 0), caret(runeAt("asking")+len("asking"), 0)
-	villa := caret(runeAt("villa"), 4)
+	runeAt := func(sub string) int {
+		i := strings.Index(plain, sub)
+		if i < 0 {
+			t.Fatalf("%q isn't in %q", sub, plain)
+		}
+		return utf8.RuneCountInString(plain[:i])
+	}
 	now = now.Add(time.Second)
+	from := at(runeAt("can you"), 2)
+	to := at(runeAt("asking")+len("asking"), -2)
 	ev(pointer.Move, from, 0)
 	ev(pointer.Press, from, pointer.ButtonPrimary)
 	ev(pointer.Move, to, pointer.ButtonPrimary)
@@ -93,6 +89,7 @@ func TestSelectText(t *testing.T) {
 	}
 
 	now = now.Add(time.Second)
+	villa := at(runeAt("villa")+2, 0) // in "villa"
 	click(villa)
 	click(villa)
 	if got := u.textSel.selected(u.textSel.id); got != "villa" {

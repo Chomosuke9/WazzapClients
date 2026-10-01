@@ -63,8 +63,6 @@ jobs:
             libxkbcommon-x11-dev \
             libgles2-mesa-dev \
             libegl1-mesa-dev \
-            libegl-mesa0 \
-            libgl1-mesa-dri \
             libffi-dev \
             libxcursor-dev \
             libxfixes-dev \
@@ -91,11 +89,7 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # Edited photos render on Gio's headless GPU renderer. With no
-      # display, Linux gets it from Mesa's software EGL.
       - name: Test
-        env:
-          EGL_PLATFORM: surfaceless
         run: go test ./...
 
       - name: Build all packages
