@@ -714,7 +714,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		if lead == nil {
 			if !out {
 				o.pills = pillMe
-				if c.IsGroup && strings.Contains(text, "\u2068@admin\u2069") && u.amAdmin(c.ID) {
+				if c.IsGroup && strings.ContainsRune(text, model.MentionAdmins) && u.amAdmin(c.ID) {
 					o.pills |= pillAdmin
 				}
 			}
@@ -725,7 +725,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 				}
 				u.conv.expanded[m.ID]++
 			}
-			if cut, ok := readMoreCut(text, u.conv.expanded[m.ID]); ok {
+			if cut, ok := readMore(text, u.conv.expanded[m.ID]); ok {
 				text, o.more = cut, more
 			}
 		}

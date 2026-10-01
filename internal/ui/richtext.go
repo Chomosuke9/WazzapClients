@@ -13,6 +13,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/styledtext"
 )
 
@@ -134,7 +135,7 @@ func plainText(s string) string {
 	for _, r := range parseFormatting(s) {
 		b.WriteString(r.text)
 	}
-	return strings.NewReplacer("⁨", "", "⁩", "").Replace(b.String())
+	return mentionMarks.Replace(b.String())
 }
 
 var linkRe = regexp.MustCompile(`https?://[^\s\x{2068}\x{2069}]+|www\.[^\s\x{2068}\x{2069}]+`)
@@ -156,16 +157,21 @@ const (
 	pillAdmin                     // "@admin", when you are an admin
 )
 
-// pilled reports whether a mention ("@Name") is drawn as a pill.
-func (pf pillFor) pilled(name string) bool {
-	switch name {
-	case "@You", "@all":
+// pilled reports whether a mention, which starts with its kind mark if it
+// has one, is drawn as a pill.
+func (pf pillFor) pilled(mention string) bool {
+	r, _ := utf8.DecodeRuneInString(mention)
+	switch r {
+	case model.MentionNotifies:
 		return pf&pillMe != 0
-	case "@admin":
+	case model.MentionAdmins:
 		return pf&pillAdmin != 0
 	}
 	return false
 }
+
+// mentionMarks are the invisible marks around and inside a mention.
+var mentionMarks = strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "", string(model.MentionAdmins), "")
 
 // richSpans turns message text into styled spans: WhatsApp formatting,
 // highlighted mentions and links. deco has each span's decorations.
@@ -224,14 +230,15 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, 
 			}
 			mf := f
 			mf.Weight = max(mf.Weight, font.Medium)
-			if name := rest[:j]; pills.pilled(name) {
+			name := rest[:j]
+			if pills.pilled(name) {
 				// NBSPs pad the name inside its pill, and keep it on one line.
 				prev := cur
 				cur |= decoPill
-				add("\u00a0"+strings.ReplaceAll(name, " ", "\u00a0")+"\u00a0", mf, p.Green)
+				add("\u00a0"+strings.ReplaceAll(mentionMarks.Replace(name), " ", "\u00a0")+"\u00a0", mf, p.Green)
 				cur = prev
 			} else {
-				add(name, mf, p.Green)
+				add(mentionMarks.Replace(name), mf, p.Green)
 			}
 			if j < len(rest) {
 				rest = rest[j+len(string(mentionEnd)):]
@@ -439,7 +446,7 @@ const (
 	readMoreRunes = 700 // shown at first
 	readMoreLines = 16
 	readMoreStep  = 4
-	readMoreLabel = "Read more"
+	readMoreLabel = "Read\u00a0more"
 )
 
 // readMoreCut returns the part of a message's text to show after clicks
@@ -488,5 +495,52 @@ func readMoreCut(s string, clicks int) (string, bool) {
 	if strings.Count(t, "```")%2 == 1 {
 		t += "```"
 	}
-	return t + "… ", true
+	return closeFormatting(t, s) + "…\u00a0", true
+}
+
+// closeFormatting closes the *bold*, _italic_, ~strike~ or `code` that a
+// cut through full left open in its start t, so the shown start is styled
+// as it is in the whole text. It adds up to two markers (nested styles).
+func closeFormatting(t, full string) string {
+	want := plainText(full)
+	fits := func(c string) bool { return strings.HasPrefix(want, plainText(t+c)) }
+	if fits("") {
+		return t
+	}
+	markers := []string{"*", "_", "~", "`"}
+	for _, a := range markers {
+		if fits(a) {
+			return t + a
+		}
+	}
+	for _, a := range markers {
+		for _, b := range markers {
+			if a != b && fits(a+b) {
+				return t + a + b
+			}
+		}
+	}
+	return t
+}
+
+type readMoreKey struct {
+	text   string
+	clicks int
+}
+
+type readMoreVal struct {
+	text string
+	more bool
+}
+
+// readMoreCuts caches readMoreCut, which parses the text.
+var readMoreCuts = memo[readMoreKey, readMoreVal]{limit: 100}
+
+// readMore is readMoreCut, cached.
+func readMore(s string, clicks int) (string, bool) {
+	v := readMoreCuts.get(readMoreKey{s, clicks}, func() readMoreVal {
+		t, more := readMoreCut(s, clicks)
+		return readMoreVal{t, more}
+	})
+	return v.text, v.more
 }

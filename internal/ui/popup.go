@@ -253,7 +253,7 @@ func canSave(m *model.Message) bool {
 
 // stripIsolates removes the invisible marks around resolved @mentions.
 func stripIsolates(s string) string {
-	return strings.NewReplacer("⁨", "", "⁩", "").Replace(s)
+	return mentionMarks.Replace(s)
 }
 
 func (u *UI) copyText(s string) {

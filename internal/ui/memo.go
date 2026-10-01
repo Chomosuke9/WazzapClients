@@ -7,6 +7,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/styledtext"
 )
 
@@ -76,7 +77,7 @@ func displayText(s string) string {
 	clean := true
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if (c < 0x20 && c != '\n') || c == 0x7f || (c == 0xe2 && i+2 < len(s) && s[i+1] == 0x81 && (s[i+2] == 0xa8 || s[i+2] == 0xa9)) {
+		if (c < 0x20 && c != '\n') || c == 0x7f || (c == 0xe2 && i+2 < len(s) && s[i+1] == 0x81 && (s[i+2] == 0xa8 || s[i+2] == 0xa9 || s[i+2] == 0xa2 || s[i+2] == 0xa3)) {
 			clean = false
 			break
 		}
@@ -90,7 +91,7 @@ func displayText(s string) string {
 			return ' '
 		case r == '\n':
 			return r
-		case r < 0x20, r == 0x7f, r == mentionStart, r == mentionEnd:
+		case r < 0x20, r == 0x7f, r == mentionStart, r == mentionEnd, r == model.MentionNotifies, r == model.MentionAdmins:
 			return -1
 		}
 		return r

@@ -118,6 +118,15 @@ type Chat struct {
 	Presence string // header subtitle, e.g. "online"
 }
 
+// Message text shows a resolved @mention as "\u2068@Name\u2069" (Unicode
+// isolate marks, invisible). A mark right after U+2068 says whom it notifies.
+const (
+	// MentionNotifies marks a mention that notifies you: of you, or @all.
+	MentionNotifies = '\u2063'
+	// MentionAdmins marks "@admin", which notifies the group's admins.
+	MentionAdmins = '\u2062'
+)
+
 // Draft is an outgoing text message.
 type Draft struct {
 	Text string

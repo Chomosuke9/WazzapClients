@@ -235,10 +235,10 @@ func (b *Backend) showMentions(chatID string, d model.Draft) string {
 	mark := func(name string) string { return "⁨@" + name + "⁩" }
 	txt := d.Text
 	if d.MentionAll {
-		txt = strings.ReplaceAll(txt, "@all", mark("all"))
+		txt = strings.ReplaceAll(txt, "@all", "⁨"+string(model.MentionNotifies)+"@all⁩")
 	}
 	if d.MentionAdmins {
-		txt = strings.ReplaceAll(txt, "@"+chatID, mark("admin"))
+		txt = strings.ReplaceAll(txt, "@"+chatID, "⁨"+string(model.MentionAdmins)+"@admin⁩")
 	}
 	if info := b.Info(chatID); info != nil {
 		for _, m := range info.Members {

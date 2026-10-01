@@ -222,11 +222,11 @@ func demo(now time.Time) []*demoChat {
 		Messages: []*model.Message{
 			grp("Andre", day(0, 9, 2), "Standup in 5"),
 			grp("Andre", day(0, 9, 4), "Webhook payload from yesterday's failed upload:\n```json\n"+demoPayload+"\n```"),
-			grp("Dewi", day(0, 9, 12), "⁨@all⁩ demo for the client moves to 3pm"),
-			grp("Dewi", day(0, 9, 13), "⁨@admin⁩ can someone approve the staging deploy?"),
-			grp("Clara", day(0, 9, 30), "Release candidate is up on staging. ⁨@You⁩ can you check the release notes? ⁨@Bima⁩ too"),
+			grp("Dewi", day(0, 9, 12), "⁨\u2063@all⁩ demo for the client moves to 3pm"),
+			grp("Dewi", day(0, 9, 13), "⁨\u2062@admin⁩ can someone approve the staging deploy?"),
+			grp("Clara", day(0, 9, 30), "Release candidate is up on staging. ⁨\u2063@You⁩ can you check the release notes? ⁨@Bima⁩ too"),
 			{Sender: "Bima", SenderID: "bima", Kind: model.KindSticker, Media: model.MediaSticker, Time: day(0, 9, 31),
-				Quote: &model.Quote{Sender: "Clara", Text: "Release candidate is up on staging. ⁨@You⁩ can you check the release notes? ⁨@Bima⁩ too"}},
+				Quote: &model.Quote{Sender: "Clara", Text: "Release candidate is up on staging. ⁨\u2063@You⁩ can you check the release notes? ⁨@Bima⁩ too"}},
 			grp("Bima", day(0, 9, 34), "Nice, I'll run the smoke tests"),
 		},
 	}
