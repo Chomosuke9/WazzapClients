@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -240,7 +241,14 @@ func (b *Backend) setChat(id string, f func(*model.Chat)) {
 func (b *Backend) SetArchived(id string, v bool) {
 	b.setChat(id, func(c *model.Chat) { c.Archived = v; c.Pinned = c.Pinned && !v })
 }
-func (b *Backend) SetMuted(id string, v bool)  { b.setChat(id, func(c *model.Chat) { c.Muted = v }) }
+func (b *Backend) SetMuted(id string, v bool, d time.Duration) {
+	b.setChat(id, func(c *model.Chat) {
+		c.Muted, c.MuteUntil = v, time.Time{}
+		if v && d > 0 {
+			c.MuteUntil = time.Now().Add(d)
+		}
+	})
+}
 func (b *Backend) SetPinned(id string, v bool) { b.setChat(id, func(c *model.Chat) { c.Pinned = v }) }
 func (b *Backend) SetFavorite(id string, v bool) {
 	b.setChat(id, func(c *model.Chat) { c.Favorite = v })

@@ -502,6 +502,7 @@ func (u *UI) Layout(gtx C) D {
 		return D{Size: sz}
 	}
 	u.applyFocus(gtx)
+	u.expireMutes(gtx)
 	u.flushClipboard(gtx)
 	u.update(gtx)
 	u.layoutMain(gtx)
@@ -1023,7 +1024,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
+// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
 // "select", "attach", "poll", "contacts", "tray", or on the Status page
 // "statusadd", "statusmenu", "statusprivacy", "statustext" and "statussend".
 // Menus open at (x, y) px in content coordinates.
@@ -1048,6 +1049,16 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "chatmenu":
 		if len(u.chats) > 1 {
 			u.openChatMenu(u.chats[1])
+		}
+	case "mute", "lists":
+		// The chat menu's mute choices and the info panel's lists, for the
+		// second chat like chatmenu.
+		if len(u.chats) > 1 {
+			if name == "mute" {
+				u.openMuteMenu(u.chats[1])
+			} else {
+				u.openListsMenu(u.chats[1])
+			}
 		}
 	case "msgmenu":
 		if lastIn != nil {
