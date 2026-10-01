@@ -239,6 +239,12 @@ func (b *Backend) download(chatID, msgID string) {
 	path := b.mediaPath(chatID, msgID)
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
 	data, err := cli.Download(ctx, msg)
+	if errors.Is(err, whatsmeow.ErrInvalidMediaSHA256) && chatID == stickerChat && len(data) > 0 {
+		// A synced sticker's plaintext hash comes from its app state index,
+		// which may be missing or a different hash. The file still passed
+		// its MAC check.
+		err = nil
+	}
 	if err != nil {
 		b.log.Infof("download media %s: %v", msgID, err)
 		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {

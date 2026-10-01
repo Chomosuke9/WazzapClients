@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS wz_stickers (
 );
 `
 
+// encStickerPrefix starts the key of a synced sticker whose plaintext hash
+// is unknown; the rest is its encrypted file's SHA-256 (hex).
+const encStickerPrefix = "enc-"
+
 // stickerListMax is how many stickers a picker tab shows.
 const stickerListMax = 60
 
@@ -82,8 +86,11 @@ func (s *msgStore) stickerBlob(ctx context.Context, hash string) (blob []byte, e
 // stickerHashByEnc finds the plaintext hash of a sticker by its encrypted
 // file's hash, from the stickers received in chats.
 func (s *msgStore) stickerHashByEnc(ctx context.Context, enc []byte) []byte {
-	rows, err := s.db.QueryContext(ctx, `SELECT media_blob FROM wz_messages WHERE media = ? AND media_blob IS NOT NULL`,
-		int(model.MediaSticker))
+	if len(enc) == 0 {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT media_blob FROM wz_messages WHERE media = ? AND media_blob IS NOT NULL
+		UNION ALL SELECT blob FROM wz_stickers`, int(model.MediaSticker))
 	if err != nil {
 		return nil
 	}
@@ -224,15 +231,29 @@ func (b *Backend) onStickerAppState(e *events.AppState) {
 			return
 		}
 		sha := decodeHash(e.Index[1])
+		if string(sha) == string(a.GetFileEncSHA256()) {
+			sha = nil // the index named the encrypted file
+		}
 		if sha == nil {
 			sha = b.store.stickerHashByEnc(b.ctx, a.GetFileEncSHA256())
 		}
-		if sha == nil {
-			b.log.Debugf("favourite sticker %q: unknown file hash", e.Index[1])
+		var hash string
+		switch {
+		case sha != nil:
+			hash = hex.EncodeToString(sha)
+		case len(a.GetFileEncSHA256()) == 32:
+			// Without the plaintext hash the download is still checked by
+			// its MAC (see download); key it by the encrypted file instead.
+			b.log.Infof("favourite sticker %q: no plaintext hash, keyed by its encrypted file", e.Index[1])
+			hash = encStickerPrefix + hex.EncodeToString(a.GetFileEncSHA256())
+		default:
+			b.log.Infof("favourite sticker %q: no file hash", e.Index[1])
 			return
 		}
-		hash := hex.EncodeToString(sha)
-		if !a.GetIsFavorite() {
+		// A favourite is a SET mutation; unfavouriting may be a REMOVE (which
+		// hypermeow doesn't emit) or a SET with isFavorite false. A SET that
+		// leaves isFavorite out is a favourite.
+		if a.IsFavorite != nil && !a.GetIsFavorite() {
 			_ = b.store.unmarkSticker(b.ctx, hash, "favorite")
 			b.emit(model.StickersEvent{})
 			return
