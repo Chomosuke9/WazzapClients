@@ -402,8 +402,10 @@ func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, o
 		ht := st
 		ht.Styles = hidden
 		ht.Layout(gtx, func(gtx C, idx int, d D) {
-			r := image.Rectangle{Max: d.Size}
-			r.Min.Y, r.Max.Y = gtx.Dp(1), d.Size.Y-gtx.Dp(1)
+			// Center the box on the text, not on the font's ascent and
+			// descent, which differ between fonts (Consolas, Segoe UI).
+			em := float32(gtx.Sp(spans[idx].Size))
+			r := image.Rect(0, d.Baseline-int(em*0.98+0.5), d.Size.X, d.Baseline+int(em*0.26+0.5))
 			switch {
 			case deco[idx]&decoCode != 0:
 				fillRRect(gtx, r, gtx.Dp(4), u.pal.CodeBg)
