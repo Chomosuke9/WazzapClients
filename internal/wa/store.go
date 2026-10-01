@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS wz_list_chats (
 );
 `
 
-// migrations add columns to databases created by older versions.
+// migrations add columns (and indexes on them) to databases created by
+// older versions.
 var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN sender_push TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_messages ADD COLUMN media INTEGER NOT NULL DEFAULT 0`,
@@ -114,6 +115,8 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_messages ADD COLUMN buttons TEXT NOT NULL DEFAULT ''`, // JSON buttonsInfo
+	// For pinnedMessage; after the pinned column exists.
+	`CREATE INDEX IF NOT EXISTS wz_messages_pinned ON wz_messages (chat, pinned) WHERE pinned != 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -373,9 +376,44 @@ func (s *msgStore) message(ctx context.Context, chat, id string) (rawMsg, bool) 
 
 // messages returns the newest limit messages of a chat, oldest first.
 func (s *msgStore) messages(ctx context.Context, chat string, limit int) ([]rawMsg, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+msgColumns+` FROM (
+	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
 		SELECT *, rowid AS rid FROM wz_messages WHERE chat = ? ORDER BY ts DESC, rid DESC LIMIT ?
 	) ORDER BY ts, rid`, chat, limit)
+}
+
+// Messages are ordered by (ts, rowid). The cursor message a is looked up by
+// ID; the "m.ts <= a.ts" term lets SQLite walk the (chat, ts) index.
+const cursorJoin = `wz_messages m, (SELECT ts AS ats, rowid AS arid FROM wz_messages WHERE chat = ? AND id = ?) a
+	WHERE m.chat = ?`
+
+// messagesBefore returns up to limit messages of a chat older than message
+// id, oldest first.
+func (s *msgStore) messagesBefore(ctx context.Context, chat, id string, limit int) ([]rawMsg, error) {
+	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
+		SELECT m.*, m.rowid AS rid FROM `+cursorJoin+` AND m.ts <= a.ats AND (m.ts < a.ats OR m.rowid < a.arid)
+		ORDER BY m.ts DESC, rid DESC LIMIT ?
+	) ORDER BY ts, rid`, chat, id, chat, limit)
+}
+
+// messagesFrom returns up to limit messages of a chat from message id
+// (included) on, oldest first; none when id isn't stored.
+func (s *msgStore) messagesFrom(ctx context.Context, chat, id string, limit int) ([]rawMsg, error) {
+	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
+		SELECT m.*, m.rowid AS rid FROM `+cursorJoin+` AND m.ts >= a.ats AND (m.ts > a.ats OR m.rowid >= a.arid)
+		ORDER BY m.ts, rid LIMIT ?
+	)`, chat, id, chat, limit)
+}
+
+// pinnedMessage returns the chat's most recently pinned message.
+func (s *msgStore) pinnedMessage(ctx context.Context, chat string) (rawMsg, bool) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+msgColumns+` FROM wz_messages
+		WHERE chat = ? AND pinned != 0 ORDER BY pinned DESC LIMIT 1`, chat)
+	m, err := scanMessage(row)
+	return m, err == nil
+}
+
+func (s *msgStore) queryMessages(ctx context.Context, q string, args ...any) ([]rawMsg, error) {
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

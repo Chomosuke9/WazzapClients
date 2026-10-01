@@ -3,6 +3,7 @@ package mock
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -118,6 +119,34 @@ func (b *Backend) Messages(chatID string, limit int) []*model.Message {
 		m = m[len(m)-limit:]
 	}
 	return append([]*model.Message(nil), m...)
+}
+
+func (b *Backend) MessagesBefore(chatID, id string, limit int) []*model.Message {
+	m := b.msgs[chatID]
+	i := slices.IndexFunc(m, func(m *model.Message) bool { return m.ID == id })
+	if i < 0 {
+		return nil
+	}
+	return append([]*model.Message(nil), m[max(0, i-limit):i]...)
+}
+
+func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
+	m := b.msgs[chatID]
+	i := slices.IndexFunc(m, func(m *model.Message) bool { return m.ID == id })
+	if i < 0 {
+		return nil
+	}
+	return append([]*model.Message(nil), m[i:min(len(m), i+limit)]...)
+}
+
+func (b *Backend) PinnedMessage(chatID string) *model.Message {
+	m := b.msgs[chatID]
+	for i := len(m) - 1; i >= 0; i-- {
+		if m[i].Pinned && m[i].Kind != model.KindDeleted {
+			return m[i]
+		}
+	}
+	return nil
 }
 
 func (b *Backend) Open(chatID string) {

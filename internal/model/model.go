@@ -344,7 +344,16 @@ type Backend interface {
 	Start(notify func())
 	Poll() []Event
 	Chats() []*Chat
+	// Messages returns the newest limit messages of a chat, oldest first.
 	Messages(chatID string, limit int) []*Message
+	// MessagesBefore returns up to limit messages older than message id,
+	// oldest first.
+	MessagesBefore(chatID, id string, limit int) []*Message
+	// MessagesFrom returns up to limit messages from message id (included)
+	// on, oldest first. It returns none when id isn't stored.
+	MessagesFrom(chatID, id string, limit int) []*Message
+	// PinnedMessage returns the chat's most recently pinned message, or nil.
+	PinnedMessage(chatID string) *Message
 	// Open is called when the user opens a chat: mark it read, subscribe to presence.
 	Open(chatID string)
 	// Send queues a text message and returns it in its pending state.
