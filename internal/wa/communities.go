@@ -74,3 +74,131 @@ func (b *Backend) Communities() []*model.Community {
 	sort.SliceStable(out, func(i, j int) bool { return latest[out[i].ID] > latest[out[j].ID] })
 	return out
 }
+
+// setMembers replaces the stored participants of a group, used to find the
+// groups you share with a contact.
+func (s *msgStore) setMembers(ctx context.Context, g *types.GroupInfo) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	jid := g.JID.String()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM wz_members WHERE chat = ?`, jid); err != nil {
+		return err
+	}
+	for _, p := range g.Participants {
+		if err := addMember(ctx, tx, jid, p.JID, p.PhoneNumber); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func addMember(ctx context.Context, x execer, chat string, j, pn types.JID) error {
+	j = j.ToNonAD()
+	if j.Server == types.DefaultUserServer && pn.IsEmpty() {
+		pn = j
+	}
+	p := ""
+	if !pn.IsEmpty() {
+		p = pn.ToNonAD().String()
+	}
+	_, err := x.ExecContext(ctx, `INSERT INTO wz_members (chat, jid, pn) VALUES (?, ?, ?)
+		ON CONFLICT (chat, jid) DO UPDATE SET pn = CASE WHEN excluded.pn != '' THEN excluded.pn ELSE pn END`,
+		chat, j.String(), p)
+	return err
+}
+
+// updateMembers applies a group's joins and leaves.
+func (s *msgStore) updateMembers(ctx context.Context, chat string, join, leave []types.JID) {
+	for _, j := range join {
+		_ = addMember(ctx, s.db, chat, j, types.EmptyJID)
+	}
+	for _, j := range leave {
+		j = j.ToNonAD()
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_members WHERE chat = ? AND (jid = ? OR pn = ?)`, chat, j.String(), j.String())
+	}
+}
+
+// clearMembers forgets a group's participants, once you left it.
+func (s *msgStore) clearMembers(ctx context.Context, chat string) {
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_members WHERE chat = ?`, chat)
+}
+
+// keepMembers forgets the participants of every group but the joined ones,
+// which drops groups you left while offline.
+func (s *msgStore) keepMembers(ctx context.Context, joined []string) {
+	if len(joined) == 0 {
+		return // likely a failed fetch rather than no groups at all
+	}
+	args := make([]any, len(joined))
+	for i, j := range joined {
+		args[i] = j
+	}
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_members WHERE chat NOT IN (`+placeholders(len(joined))+`)`, args...)
+}
+
+// members returns a group's stored participants.
+func (s *msgStore) members(ctx context.Context, chat string) []types.GroupParticipant {
+	rows, err := s.db.QueryContext(ctx, `SELECT jid, pn FROM wz_members WHERE chat = ?`, chat)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []types.GroupParticipant
+	for rows.Next() {
+		var j, pn string
+		if rows.Scan(&j, &pn) != nil {
+			break
+		}
+		p := types.GroupParticipant{}
+		p.JID, _ = types.ParseJID(j)
+		if pn != "" {
+			p.PhoneNumber, _ = types.ParseJID(pn)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// commonGroup is a group shared with a contact, before its members are
+// listed.
+type commonGroup struct {
+	jid, name, community, communityID string
+}
+
+// commonGroups lists the groups that any of ids (a contact's LID and phone
+// JID) is in, newest activity first. Communities themselves and their
+// announcement groups are left out, like WhatsApp does.
+func (s *msgStore) commonGroups(ctx context.Context, ids ...string) []commonGroup {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]any, 0, 2*len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.jid, g.name, COALESCE(p.name, ''), COALESCE(p.jid, '') FROM wz_chats g
+		LEFT JOIN wz_chats p ON p.jid = g.parent AND g.parent != ''
+		WHERE g.community = 0 AND g.announce_sub = 0 AND g.jid IN (
+			SELECT chat FROM wz_members WHERE jid IN (`+placeholders(len(ids))+`) OR pn IN (`+placeholders(len(ids))+`))
+		ORDER BY MAX(g.last_ts, COALESCE((SELECT MAX(ts) FROM wz_messages WHERE chat = g.jid), 0)) DESC`, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []commonGroup
+	for rows.Next() {
+		var g commonGroup
+		if rows.Scan(&g.jid, &g.name, &g.community, &g.communityID) != nil {
+			break
+		}
+		out = append(out, g)
+	}
+	return out
+}

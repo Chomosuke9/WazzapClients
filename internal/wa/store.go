@@ -90,6 +90,14 @@ CREATE TABLE IF NOT EXISTS wz_lists (
 	ord     INTEGER NOT NULL DEFAULT 0,
 	deleted INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS wz_members (
+	chat TEXT NOT NULL, -- group JID
+	jid  TEXT NOT NULL, -- participant, usually a LID
+	pn   TEXT NOT NULL DEFAULT '', -- participant's phone-number JID, when known
+	PRIMARY KEY (chat, jid)
+);
+CREATE INDEX IF NOT EXISTS wz_members_jid ON wz_members (jid);
+CREATE INDEX IF NOT EXISTS wz_members_pn ON wz_members (pn) WHERE pn != '';
 CREATE TABLE IF NOT EXISTS wz_list_chats (
 	list TEXT NOT NULL,
 	chat TEXT NOT NULL,
@@ -422,6 +430,13 @@ func (s *msgStore) messagesFrom(ctx context.Context, chat, id string, limit int)
 		SELECT m.*, m.rowid AS rid FROM `+cursorJoin+` AND m.ts >= a.ats AND (m.ts > a.ats OR m.rowid >= a.arid)
 		ORDER BY m.ts, rid LIMIT ?
 	)`, chat, id, chat, limit)
+}
+
+// oldestID returns the ID of a chat's first message, or "".
+func (s *msgStore) oldestID(ctx context.Context, chat string) string {
+	var id string
+	_ = s.db.QueryRowContext(ctx, `SELECT id FROM wz_messages WHERE chat = ? ORDER BY ts, rowid LIMIT 1`, chat).Scan(&id)
+	return id
 }
 
 // pinnedMessage returns the chat's most recently pinned message.

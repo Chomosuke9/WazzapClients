@@ -551,13 +551,27 @@ func fileName(m *model.Message, media model.Media, blob []byte) string {
 
 // saveDownload writes data into the Downloads folder without overwriting.
 func saveDownload(name string, data []byte) (string, error) {
-	home, err := os.UserHomeDir()
+	f, err := createDownload(name)
 	if err != nil {
 		return "", err
 	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return f.Name(), err
+}
+
+// createDownload creates a new file in the Downloads folder, numbering the
+// name ("file (1).txt") rather than overwriting one.
+func createDownload(name string) (*os.File, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
 	dir := filepath.Join(home, "Downloads")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return nil, err
 	}
 	name = strings.Map(func(r rune) rune {
 		if strings.ContainsRune(`<>:"/\|?*`, r) || r < 32 {
@@ -574,14 +588,7 @@ func saveDownload(name string, data []byte) (string, error) {
 			path = filepath.Join(dir, base+" ("+itoa(i)+")"+ext)
 			continue
 		}
-		if err != nil {
-			return "", err
-		}
-		_, err = f.Write(data)
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-		return path, err
+		return f, err
 	}
 }
 

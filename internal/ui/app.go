@@ -330,6 +330,14 @@ func (u *UI) ShowInfo(first, offset int) {
 	u.info.list.Position = layout.Position{First: first, Offset: offset}
 }
 
+// ShowContact opens the contact info of a group member from the selected
+// chat, scrolled like ShowInfo (used for screenshots).
+func (u *UI) ShowContact(id string, first, offset int) {
+	u.applyEvents()
+	u.openContact(id, "")
+	u.info.list.Position = layout.Position{First: first, Offset: offset}
+}
+
 func (u *UI) setPage(pg page) {
 	if u.page == pg {
 		return
@@ -402,7 +410,7 @@ func (u *UI) open(c *model.Chat) {
 		return
 	}
 	u.selPage = u.page
-	if u.info.chatID != c.ID {
+	if u.info.from != c.ID {
 		u.hideInfo()
 	}
 	u.selected = c

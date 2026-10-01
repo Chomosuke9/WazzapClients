@@ -220,6 +220,49 @@ type ChatInfo struct {
 	// pictures to preview.
 	MediaCount int
 	Media      []*Message
+
+	// The rest describes contacts only.
+
+	// Business is a business account's profile, or nil for a person.
+	Business *Business
+	// Blocked reports whether you blocked the contact.
+	Blocked bool
+	// Common lists the groups you share with the contact.
+	Common []CommonGroup
+}
+
+// Business is a business account's public profile.
+type Business struct {
+	// Name is the verified business name.
+	Name        string
+	Category    string
+	Description string
+	Address     string
+	Email       string
+	Websites    []string
+	// TimeZone is the IANA zone that Hours are in ("" when unknown).
+	TimeZone string
+	Hours    []BusinessHours
+}
+
+// BusinessHours is when a business is open on one day of the week.
+type BusinessHours struct {
+	Day time.Weekday
+	// Mode is "open_24h", "appointment_only" or "specific_hours".
+	Mode string
+	// Open and Close are minutes after midnight, for specific hours.
+	Open, Close int
+}
+
+// CommonGroup is a group you share with a contact.
+type CommonGroup struct {
+	ID   string
+	Name string
+	// Community and CommunityID name the community the group belongs to,
+	// if any.
+	Community, CommunityID string
+	// Members lists the members like the group's header does.
+	Members string
 }
 
 // StatusUpdate is one status post.
@@ -490,6 +533,12 @@ type Backend interface {
 	DeleteChat(chatID string)
 	// LeaveGroup exits a group.
 	LeaveGroup(chatID string)
+	// SetBlocked blocks or unblocks a contact. An InfoEvent follows, and a
+	// NoticeEvent on failure.
+	SetBlocked(chatID string, blocked bool)
+	// ExportChat writes a chat's messages as text into the Downloads folder
+	// in the background; a NoticeEvent reports the result.
+	ExportChat(chatID string)
 
 	// Pref and SetPref keep small UI preferences (recent emoji).
 	Pref(key string) string

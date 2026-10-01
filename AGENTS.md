@@ -153,7 +153,8 @@ cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs an
 cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
-                   settings), conversation and composer, contact/group info panel, and the
+                   settings), conversation and composer, contact/group info panel (a person's
+                   or business's sections in contactinfo.go), and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
                    (viewer.go); the send view for picked, pasted and dropped files
@@ -277,7 +278,8 @@ go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).
 # -view: chats, archived, status, channels, communities, settings, general,
-# notifications, info, statusviewer
+# notifications, info, statusviewer, contact (a group member's contact info:
+# -contact <id>, default the demo business vivy@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \

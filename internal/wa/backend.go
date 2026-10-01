@@ -384,7 +384,8 @@ func (b *Backend) Open(chatID string) {
 					b.log.Debugf("group info %s: %v", chatID, err)
 					return
 				}
-				sub = b.groupSubtitle(ctx, info)
+				sub = b.groupSubtitle(ctx, info.Participants)
+				_ = b.store.setMembers(ctx, info)
 				b.subMu.Lock()
 				b.subtitles[chatID] = sub
 				b.subMu.Unlock()
@@ -556,6 +557,15 @@ func (b *Backend) handle(evt any) {
 		b.names.clear()
 		b.refreshChatNames()
 	case *events.GroupInfo:
+		if len(e.Join) > 0 || len(e.Leave) > 0 {
+			b.store.updateMembers(ctx, e.JID.String(), e.Join, e.Leave)
+		}
+		for _, j := range e.Leave {
+			if b.isMe(j) {
+				// A group you left isn't one you share with anyone.
+				b.store.clearMembers(ctx, e.JID.String())
+			}
+		}
 		if e.Name != nil {
 			jid := e.JID.String()
 			_ = b.store.setName(ctx, jid, e.Name.Name)
@@ -565,6 +575,7 @@ func (b *Backend) handle(evt any) {
 		jid := e.JID.String()
 		_ = b.store.ensureChat(ctx, b.db, jid, true, e.Name)
 		_ = b.store.setField(ctx, jid, "last_ts", time.Now().Unix())
+		_ = b.store.setMembers(ctx, &e.GroupInfo)
 		b.emitChat(jid)
 	}
 }
@@ -940,9 +951,17 @@ func (b *Backend) refreshGroupNames() {
 		b.log.Warnf("get joined groups: %v", err)
 		return
 	}
+	joined := make([]string, len(groups))
+	for i, g := range groups {
+		joined[i] = g.JID.String()
+	}
+	b.store.keepMembers(b.ctx, joined)
 	for _, g := range groups {
 		if err := b.store.setGroupShape(b.ctx, g); err != nil {
 			b.log.Warnf("store group %s: %v", g.JID, err)
+		}
+		if err := b.store.setMembers(b.ctx, g); err != nil {
+			b.log.Warnf("store members of %s: %v", g.JID, err)
 		}
 		if g.Name != "" {
 			_ = b.store.setName(b.ctx, g.JID.String(), g.Name)
