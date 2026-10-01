@@ -241,9 +241,10 @@ func (b *Backend) download(chatID, msgID string) {
 	data, err := cli.Download(ctx, msg)
 	if errors.Is(err, whatsmeow.ErrInvalidMediaSHA256) && chatID == stickerChat && len(data) > 0 {
 		// A synced sticker's plaintext hash comes from its app state index,
-		// which may be missing or a different hash. The file still passed
-		// its MAC check.
-		err = nil
+		// which may be missing or a different hash. The file passed its MAC
+		// check, so file it under the hash it really has.
+		b.rehashSticker(msgID, data)
+		return
 	}
 	if err != nil {
 		b.log.Infof("download media %s: %v", msgID, err)

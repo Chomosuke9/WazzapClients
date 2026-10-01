@@ -103,4 +103,15 @@ func TestStickerSync(t *testing.T) {
 	if len(got) != 2 || got[0] != encStickerPrefix+hex.EncodeToString(enc) {
 		t.Fatalf("favourites with an unhashed one = %v", got)
 	}
+
+	// Once downloaded, it's filed under its real plaintext hash.
+	b.rehashSticker(got[0], []byte("d"))
+	got = ids(b.Stickers(model.StickersFavorite))
+	if len(got) != 2 || got[0] != hex.EncodeToString(sha("d")) {
+		t.Fatalf("favourites after rehash = %v", got)
+	}
+	_, blob, _ = b.store.mediaBlob(b.ctx, stickerChat, got[0])
+	if m := mediaMessage(model.MediaSticker, blob); string(m.GetStickerMessage().GetFileSHA256()) != string(sha("d")) {
+		t.Fatalf("rehashed blob lacks its hash")
+	}
 }

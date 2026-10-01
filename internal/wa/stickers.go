@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"os"
@@ -273,6 +274,38 @@ func (b *Backend) onStickerAppState(e *events.AppState) {
 			b.emit(model.StickersEvent{})
 		}
 	}
+}
+
+// rehashSticker files a downloaded synced sticker whose content doesn't
+// match its key (an enc- placeholder, or an index that named another hash)
+// under its real plaintext hash, merging it with any row already there, so
+// it can be sent and deduplicated like any other.
+func (b *Backend) rehashSticker(oldKey string, data []byte) {
+	ctx := b.ctx
+	var m waE2E.StickerMessage
+	var recentTS, fav int64
+	var blob []byte
+	if b.db.QueryRowContext(ctx, `SELECT blob, recent_ts, favorite FROM wz_stickers WHERE hash = ?`, oldKey).
+		Scan(&blob, &recentTS, &fav) != nil || proto.Unmarshal(blob, &m) != nil {
+		return
+	}
+	sum := sha256.Sum256(data)
+	m.FileSHA256 = sum[:]
+	key := hex.EncodeToString(sum[:])
+	path := b.mediaPath(stickerChat, key)
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		b.log.Warnf("save sticker: %v", err)
+		return
+	}
+	if err := b.store.putSticker(ctx, b.db, key, &m, recentTS, fav); err != nil {
+		b.log.Warnf("rehash sticker: %v", err)
+		return
+	}
+	if key != oldKey {
+		_, _ = b.db.ExecContext(ctx, `DELETE FROM wz_stickers WHERE hash = ?`, oldKey)
+	}
+	b.emit(model.StickersEvent{})
 }
 
 func stickerFromAction(a *waSyncAction.StickerAction, sha []byte) *waE2E.StickerMessage {
