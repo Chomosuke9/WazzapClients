@@ -10,7 +10,7 @@ import (
 )
 
 // TestSearchMessages checks that a chat's search finds text in any case,
-// newest first, treats LIKE wildcards literally, and skips other chats and
+// beyond ASCII, newest first, treats LIKE wildcards literally, and skips other chats and
 // deleted messages.
 func TestSearchMessages(t *testing.T) {
 	ctx := context.Background()
@@ -35,6 +35,9 @@ func TestSearchMessages(t *testing.T) {
 		{"a", "4", 4, model.KindText, "LUNCH again"},
 		{"a", "5", 5, model.KindText, "500 off"},
 		{"b", "6", 6, model.KindText, "lunch"},
+		{"a", "7", 7, model.KindText, "ÉTÉ à Paris"},
+		{"a", "8", 8, model.KindDeleted, "été"},
+		{"a", "9", 9, model.KindText, "un été"},
 	} {
 		if _, err := db.ExecContext(ctx, `INSERT INTO wz_messages (chat, id, ts, kind, text) VALUES (?, ?, ?, ?, ?)`,
 			m.chat, m.id, m.ts, int(m.kind), m.text); err != nil {
@@ -60,6 +63,9 @@ func TestSearchMessages(t *testing.T) {
 		{"lunch", 2, "4 2"},
 		{"0%", 10, "2"},
 		{"5_0", 10, ""},
+		{"été", 10, "9 7"},
+		{"été", 1, "9"},
+		{"À p", 10, "7"},
 	} {
 		got := ""
 		for i, id := range ids(c.q, c.limit) {

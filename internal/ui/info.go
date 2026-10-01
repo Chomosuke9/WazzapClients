@@ -243,7 +243,7 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 	for _, m := range members {
 		rows = append(rows, func(gtx C) D { return u.infoMember(gtx, m) })
 	}
-	if more := len(info.Members) - len(members); more > 0 {
+	if more := len(info.Members) - len(members); more > 0 && !u.info.memberSearch {
 		rows = append(rows, func(gtx C) D {
 			c := u.btn("info:allmembers")
 			if c.Clicked(gtx) {

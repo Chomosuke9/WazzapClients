@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -448,15 +449,54 @@ func (s *msgStore) pinnedMessage(ctx context.Context, chat string) (rawMsg, bool
 }
 
 // searchMessages returns up to limit messages of a chat whose text
-// contains query, newest first. SQLite's LIKE ignores case for ASCII
-// letters only; deleted and unsupported messages are left out.
+// contains query, ignoring case, newest first. Deleted and unsupported
+// messages are left out. SQLite's LIKE folds ASCII letters only, so a
+// query with other letters is matched in Go instead.
 func (s *msgStore) searchMessages(ctx context.Context, chat, query string, limit int) ([]rawMsg, error) {
-	pat := "%" + likeEscaper.Replace(query) + "%"
+	const where = `chat = ? AND kind NOT IN (?, ?)`
+	skip := []any{int(model.KindDeleted), int(model.KindUnsupported)}
+	if isASCII(query) {
+		pat := "%" + likeEscaper.Replace(query) + "%"
+		return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
+			SELECT *, rowid AS rid FROM wz_messages WHERE `+where+` AND text LIKE ? ESCAPE '\'
+			ORDER BY ts DESC, rid DESC LIMIT ?
+		)`, chat, skip[0], skip[1], pat, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, text FROM wz_messages WHERE `+where+` AND text != ''
+		ORDER BY ts DESC, rowid DESC`, chat, skip[0], skip[1])
+	if err != nil {
+		return nil, err
+	}
+	q := strings.ToLower(query)
+	var ids []string
+	for rows.Next() && len(ids) < limit {
+		var id int64
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if strings.Contains(strings.ToLower(text), q) {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
 	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
-		SELECT *, rowid AS rid FROM wz_messages
-		WHERE chat = ? AND kind NOT IN (?, ?) AND text LIKE ? ESCAPE '\'
-		ORDER BY ts DESC, rid DESC LIMIT ?
-	)`, chat, int(model.KindDeleted), int(model.KindUnsupported), pat, limit)
+		SELECT *, rowid AS rid FROM wz_messages WHERE rowid IN (`+strings.Join(ids, ",")+`)
+	) ORDER BY ts DESC, rid DESC`)
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // likeEscaper escapes LIKE's wildcards (with ESCAPE '\').
