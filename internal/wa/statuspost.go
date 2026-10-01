@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,11 +69,6 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 			return
 		}
 		m.Duration = mp4Seconds(a.Path)
-		// The upload reads the copy: the picked file may be a temporary one.
-		dst := b.mediaFilePath(m)
-		if up.copyTo(dst); fileExists(dst) {
-			up.path = dst
-		}
 	default:
 		b.emit(model.NoticeEvent{Text: "Only photos and videos can be posted to your status."})
 		return
@@ -82,6 +78,13 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 		return
 	}
 	go func() {
+		if m.Media == model.MediaVideo {
+			if st, err := os.Stat(a.Path); err == nil && st.Size() <= maxLocalCopy {
+				// Your own update plays without a download. Copied here,
+				// not on the UI goroutine that posts it.
+				up.copyTo(b.mediaFilePath(m))
+			}
+		}
 		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
 		defer cancel()
 		msg, inner, err := uploadMedia(ctx, cli, m, up, p.Text, nil, false)
@@ -97,9 +100,18 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 	}()
 }
 
+// pendingStatus marks, in wz_meta, an update of yours that hasn't been
+// sent yet. If the app quits before it is, dropPendingStatuses takes it
+// out on the next start, so it doesn't show as posted.
+const pendingStatus = "status-pending:"
+
 // storeStatus keeps your new update and announces it.
 func (b *Backend) storeStatus(st storedStatus) bool {
-	if err := b.store.putStatus(b.ctx, b.db, st); err != nil {
+	err := b.store.setMetaValue(b.ctx, pendingStatus+st.id, "1")
+	if err == nil {
+		err = b.store.putStatus(b.ctx, b.db, st)
+	}
+	if err != nil {
 		b.log.Errorf("store status %s: %v", st.id, err)
 		b.emit(model.NoticeEvent{Text: "Couldn't post your status."})
 		return false
@@ -117,19 +129,53 @@ func (b *Backend) sendStatus(cli *whatsmeow.Client, id string, msg *waE2E.Messag
 	}
 	if _, err := cli.SendMessage(b.ctx, types.StatusBroadcastJID, msg, whatsmeow.SendRequestExtra{ID: id}); err != nil {
 		b.statusFailed(id, err)
+		return
+	}
+	if _, err := b.db.ExecContext(b.ctx, `DELETE FROM wz_meta WHERE key = ?`, pendingStatus+id); err != nil {
+		b.log.Warnf("status %s sent: %v", id, err)
 	}
 }
 
-// statusFailed takes an update that couldn't be sent back out.
+// statusFailed takes an update that couldn't be sent back out. When the
+// app is closing, the database may be gone already; the update is still
+// marked pending then, and goes on the next start.
 func (b *Backend) statusFailed(id string, err error) {
 	b.log.Errorf("post status %s: %v", id, err)
-	_, _ = b.db.ExecContext(b.ctx, `DELETE FROM wz_status WHERE id = ?`, id)
+	b.dropStatus(b.ctx, id)
+	b.emit(model.NoticeEvent{Text: "Couldn't post your status."})
+	b.emit(model.StatusEvent{})
+}
+
+// dropStatus deletes an unsent update of yours, its media and its mark.
+func (b *Backend) dropStatus(ctx context.Context, id string) {
+	if _, err := b.db.ExecContext(ctx, `DELETE FROM wz_status WHERE id = ?`, id); err != nil {
+		return // keep the mark, to try again on the next start
+	}
 	path := b.mediaPath(statusChat, id)
 	for _, p := range []string{path, path + ".mp4"} {
 		_ = os.Remove(p)
 	}
-	b.emit(model.NoticeEvent{Text: "Couldn't post your status."})
-	b.emit(model.StatusEvent{})
+	_, _ = b.db.ExecContext(ctx, `DELETE FROM wz_meta WHERE key = ?`, pendingStatus+id)
+}
+
+// dropPendingStatuses takes out the updates the app quit before sending.
+func (b *Backend) dropPendingStatuses(ctx context.Context) {
+	rows, err := b.db.QueryContext(ctx, `SELECT key FROM wz_meta WHERE key LIKE ?`, pendingStatus+"%")
+	if err != nil {
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var k string
+		if rows.Scan(&k) == nil {
+			ids = append(ids, strings.TrimPrefix(k, pendingStatus))
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		b.log.Warnf("status %s was never sent; dropping it", id)
+		b.dropStatus(ctx, id)
+	}
 }
 
 // statusPrivacy caches your status privacy setting.
@@ -187,9 +233,4 @@ func audienceOf(p types.StatusPrivacy) *model.StatusPrivacy {
 		out.Audience, out.Count = model.AudienceContacts, 0
 	}
 	return out
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

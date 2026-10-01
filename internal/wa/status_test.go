@@ -70,3 +70,25 @@ func TestAudienceOf(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingStatusDroppedOnStart(t *testing.T) {
+	b := testBackend(t)
+	now := time.Now()
+	for _, id := range []string{"sent", "unsent"} {
+		if !b.storeStatus(storedStatus{id: id, sender: "me@lid", fromMe: true, ts: now, c: content{text: id}}) {
+			t.Fatal("couldn't store", id)
+		}
+	}
+	// "sent" went out; the app quit while "unsent" was on its way.
+	if _, err := b.db.Exec(`DELETE FROM wz_meta WHERE key = ?`, pendingStatus+"sent"); err != nil {
+		t.Fatal(err)
+	}
+	b.dropPendingStatuses(b.ctx)
+	threads := b.Statuses()
+	if len(threads) != 1 || len(threads[0].Updates) != 1 || threads[0].Updates[0].ID != "sent" {
+		t.Fatalf("statuses after restart = %+v", threads)
+	}
+	if v := b.store.meta(b.ctx, pendingStatus+"unsent"); v != "" {
+		t.Errorf("the pending mark stayed: %q", v)
+	}
+}

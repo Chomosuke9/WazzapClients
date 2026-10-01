@@ -150,6 +150,7 @@ func (b *Backend) Start(notify func()) {
 	b.mu.Lock()
 	b.notify = notify
 	b.mu.Unlock()
+	b.dropPendingStatuses(b.ctx)
 	go b.run()
 	// WhatsApp rate-limits profile picture queries, so space them out.
 	go b.avatars.run(b.ctx, 250*time.Millisecond)
