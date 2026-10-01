@@ -68,4 +68,9 @@ func TestCommonGroups(t *testing.T) {
 	if _, ok := names()["By phone"]; ok {
 		t.Error("a group they left is still shared")
 	}
+	s.clearMembers(ctx, types.NewJID("lidpn", types.GroupServer).String())
+	s.keepMembers(ctx, []string{types.NewJID("lidpn", types.GroupServer).String(), types.NewJID("none", types.GroupServer).String()})
+	if got := names(); len(got) != 0 {
+		t.Errorf("groups you left are still shared: %v", got)
+	}
 }

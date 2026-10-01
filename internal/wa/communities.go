@@ -121,6 +121,24 @@ func (s *msgStore) updateMembers(ctx context.Context, chat string, join, leave [
 	}
 }
 
+// clearMembers forgets a group's participants, once you left it.
+func (s *msgStore) clearMembers(ctx context.Context, chat string) {
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_members WHERE chat = ?`, chat)
+}
+
+// keepMembers forgets the participants of every group but the joined ones,
+// which drops groups you left while offline.
+func (s *msgStore) keepMembers(ctx context.Context, joined []string) {
+	if len(joined) == 0 {
+		return // likely a failed fetch rather than no groups at all
+	}
+	args := make([]any, len(joined))
+	for i, j := range joined {
+		args[i] = j
+	}
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_members WHERE chat NOT IN (`+placeholders(len(joined))+`)`, args...)
+}
+
 // members returns a group's stored participants.
 func (s *msgStore) members(ctx context.Context, chat string) []types.GroupParticipant {
 	rows, err := s.db.QueryContext(ctx, `SELECT jid, pn FROM wz_members WHERE chat = ?`, chat)
