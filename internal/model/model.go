@@ -361,8 +361,9 @@ type Backend interface {
 	// PressButton answers a message's quick-reply button (Buttons[i]) and
 	// returns the answer in its pending state, or nil.
 	PressButton(m *Message, i int) *Message
-	// SendSticker sends a sticker that was received before, again.
-	SendSticker(chatID string, sticker *Message)
+	// SendSticker sends a sticker that was received before, again, as a
+	// reply to reply if it isn't nil.
+	SendSticker(chatID string, sticker, reply *Message)
 	// Stickers lists recently received stickers, newest first.
 	Stickers() []*Message
 	// Forward sends copies of messages to other chats.

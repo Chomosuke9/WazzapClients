@@ -176,6 +176,7 @@ type UI struct {
 		glide        glide             // smooth scroll to a message
 		heights      map[int]int       // row heights laid out last frame, by index
 		reactions    map[string]string // reaction shown per message, to pop new ones
+		expanded     map[string]int    // "Read more" clicks per message
 	}
 }
 
@@ -342,7 +343,7 @@ func (u *UI) open(c *model.Chat) {
 	u.conv.list.ScrollToEnd = true
 	u.conv.composer.SetText("")
 	u.conv.reply, u.conv.mentions = nil, nil
-	u.conv.reactions = nil
+	u.conv.reactions, u.conv.expanded = nil, nil
 	u.endSelect()
 	u.resetComposerAnims()
 	u.hideViewer()

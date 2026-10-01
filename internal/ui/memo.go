@@ -111,25 +111,26 @@ type richKey struct {
 	size   unit.Sp
 	col    color.NRGBA
 	italic bool
+	pills  pillFor
 }
 
 type richBlock struct {
-	kind         blockKind
-	marker       string
-	spans        []styledtext.SpanStyle
-	code, strike []bool
+	kind   blockKind
+	marker string
+	spans  []styledtext.SpanStyle
+	deco   []spanDeco
 }
 
 var richBlocks = memo[richKey, []richBlock]{limit: 600}
 
 // parsedRich returns a text's blocks with their styled spans, parsed once.
 // The spans must not be modified.
-func (u *UI) parsedRich(text string, size unit.Sp, col color.NRGBA, italic bool) []richBlock {
-	return richBlocks.get(richKey{text, size, col, italic}, func() []richBlock {
+func (u *UI) parsedRich(text string, size unit.Sp, col color.NRGBA, italic bool, pills pillFor) []richBlock {
+	return richBlocks.get(richKey{text, size, col, italic, pills}, func() []richBlock {
 		var out []richBlock
 		for _, b := range parseBlocks(text) {
-			spans, code, strike := u.richSpans(b.text, size, col, italic)
-			out = append(out, richBlock{b.kind, b.marker, spans, code, strike})
+			spans, deco := u.richSpans(b.text, size, col, italic, pills)
+			out = append(out, richBlock{b.kind, b.marker, spans, deco})
 		}
 		return out
 	})

@@ -47,22 +47,28 @@ func (b *Backend) add(m *model.Message) {
 
 func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 	m := &model.Message{ChatID: chatID, FromMe: true, Text: b.showMentions(chatID, d), Time: b.now(), Receipt: model.Sent}
-	if r := d.Reply; r != nil {
-		name := r.Sender
-		if r.FromMe {
-			name = ""
-		}
-		m.Quote = &model.Quote{ID: r.ID, Sender: name, SenderID: r.SenderID, Text: r.Text, Media: r.Media}
-	}
+	m.Quote = quoteOf(d.Reply)
 	b.add(m)
 	cp := *m
 	return &cp
 }
 
-func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool) {
+// quoteOf returns the quote of a reply to r, or nil.
+func quoteOf(r *model.Message) *model.Quote {
+	if r == nil {
+		return nil
+	}
+	name := r.Sender
+	if r.FromMe {
+		name = ""
+	}
+	return &model.Quote{ID: r.ID, Sender: name, SenderID: r.SenderID, Text: r.Text, Media: r.Media}
+}
+
+func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool, quote *model.Quote) {
 	m := *src
 	m.ChatID, m.FromMe, m.Time, m.Receipt = chatID, true, b.now(), model.Sent
-	m.Sender, m.SenderID, m.Quote, m.Reaction, m.Starred, m.Pinned = "", "", nil, "", false, false
+	m.Sender, m.SenderID, m.Quote, m.Reaction, m.Starred, m.Pinned = "", "", quote, "", false, false
 	m.Forwarded = forwarded
 	b.add(&m)
 	cp := m
@@ -76,14 +82,16 @@ func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
 	return b.Send(m.ChatID, model.Draft{Text: m.Buttons[i].Label, Reply: m})
 }
 
-func (b *Backend) SendSticker(chatID string, s *model.Message) { b.copyTo(s, chatID, false) }
+func (b *Backend) SendSticker(chatID string, s, reply *model.Message) {
+	b.copyTo(s, chatID, false, quoteOf(reply))
+}
 
 func (b *Backend) Stickers() []*model.Message { return nil }
 
 func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	for _, c := range chatIDs {
 		for _, m := range msgs {
-			b.copyTo(m, c, true)
+			b.copyTo(m, c, true, nil)
 		}
 	}
 }

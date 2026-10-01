@@ -130,7 +130,6 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 	if err != nil || cli == nil {
 		return nil
 	}
-	ctx := b.ctx
 	m := &model.Message{
 		ID:      cli.GenerateMessageID(),
 		ChatID:  chatID,
@@ -155,19 +154,8 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			sm.mentions = append(sm.mentions, groupMention(chatID, "admin"))
 		}
 		if r := d.Reply; r != nil {
-			sender := b.senderOf(r)
-			ci.StanzaID = proto.String(r.ID)
-			ci.Participant = proto.String(sender.String())
-			ci.QuotedMessage = b.quotedMessage(ctx, r.ChatID, r.ID)
-			if r.ChatID != chatID {
-				// "Reply privately" quotes a group message in a one-to-one chat.
-				ci.RemoteJID = proto.String(r.ChatID)
-			}
-			m.Quote = &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media}
-			if r.Kind == model.KindImage && r.Text == "" {
-				m.Quote.Media = r.Media
-			}
-			sm.quoteJID, sm.quoteID = sender.String(), r.ID
+			m.Quote = b.quote(chatID, r, ci)
+			sm.quoteJID, sm.quoteID = m.Quote.SenderID, r.ID
 		}
 		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text:                  proto.String(d.Text),
@@ -178,13 +166,26 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 		}
 	}
-	if m.Quote != nil {
-		// Store the raw quoted text, not the display text with resolved names.
-		if raw, ok := b.store.message(ctx, d.Reply.ChatID, d.Reply.ID); ok {
-			m.Quote.Text = raw.Text
-		}
-	}
 	return b.storeAndSend(jid, sm, msg, nil)
+}
+
+// quote makes a message sent to chatID a reply to r: it fills in ci and
+// returns the quote to store with the message.
+func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) *model.Quote {
+	sender := b.senderOf(r)
+	ci.StanzaID = proto.String(r.ID)
+	ci.Participant = proto.String(sender.String())
+	ci.QuotedMessage = b.quotedMessage(b.ctx, r.ChatID, r.ID)
+	if r.ChatID != chatID {
+		// "Reply privately" quotes a group message in a one-to-one chat.
+		ci.RemoteJID = proto.String(r.ChatID)
+	}
+	q := &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media}
+	// Store the raw quoted text, not the display text with resolved names.
+	if raw, ok := b.store.message(b.ctx, r.ChatID, r.ID); ok {
+		q.Text = raw.Text
+	}
+	return q
 }
 
 // storeAndSend stores an outgoing message as pending, sends it in the
@@ -234,8 +235,8 @@ func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg, fall
 }
 
 // sendCopy sends an existing message's content to another chat, as a
-// sticker/forward, and stores the copy.
-func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool) bool {
+// sticker/forward, and stores the copy. A sticker can reply to a message.
+func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, reply *model.Message) bool {
 	ctx := b.ctx
 	cli := b.client()
 	jid, err := types.ParseJID(chatID)
@@ -255,6 +256,13 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool) bo
 	if forwarded {
 		ci = &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(1)}
 	}
+	var q *model.Quote
+	if reply != nil {
+		if ci == nil {
+			ci = &waE2E.ContextInfo{}
+		}
+		q = b.quote(chatID, reply, ci)
+	}
 	switch {
 	case msg != nil:
 		setContext(msg, ci)
@@ -266,8 +274,13 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool) bo
 	m := &model.Message{
 		ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Time: time.Now(), Receipt: model.Pending,
 		Kind: raw.Kind, Media: raw.Media, Duration: raw.Duration, Text: raw.Text, Thumb: raw.Thumb, Forwarded: forwarded,
+		Quote: q,
 	}
-	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, mediaBlob: blob}); err != nil {
+	sm := storedMsg{Message: m, mediaBlob: blob}
+	if q != nil {
+		sm.quoteJID, sm.quoteID = q.SenderID, q.ID
+	}
+	if err := b.store.putMessage(ctx, b.db, sm); err != nil {
 		b.log.Errorf("store forwarded message: %v", err)
 	}
 	// The picture is already on disk; share it with the copy.
@@ -290,7 +303,7 @@ func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	skipped := 0
 	for _, c := range chatIDs {
 		for _, m := range msgs {
-			if !b.sendCopy(m, c, true) {
+			if !b.sendCopy(m, c, true, nil) {
 				skipped++
 			}
 		}
@@ -301,9 +314,9 @@ func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 }
 
 // SendSticker implements model.Backend.
-func (b *Backend) SendSticker(chatID string, sticker *model.Message) {
+func (b *Backend) SendSticker(chatID string, sticker, reply *model.Message) {
 	if b.connected() != nil {
-		b.sendCopy(sticker, chatID, false)
+		b.sendCopy(sticker, chatID, false, reply)
 	}
 }
 
