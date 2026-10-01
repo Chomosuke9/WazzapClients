@@ -186,6 +186,15 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 	item := func(key string, it listItem) layout.Widget {
 		return func(gtx C) D { return u.layoutListItem(gtx, u.btn("info:"+key), it, infoGeom) }
 	}
+	if u.btn("info:similar").Clicked(gtx) {
+		var members []model.Contact
+		for _, m := range info.Members {
+			if !m.Me {
+				members = append(members, model.Contact{ID: m.ID, Name: m.Name})
+			}
+		}
+		u.openNewGroup(members)
+	}
 	// The actions at the bottom of the panel are spaced a little wider.
 	tall := infoGeom
 	tall.height = 65.5

@@ -109,9 +109,11 @@ const (
 	ctxNone ctxKind = iota
 	ctxChat
 	ctxMessage
-	ctxViewer  // the media viewer's ⋮ menu
-	ctxAttach  // the composer's attach menu
-	ctxQuality // the attach tray's photo quality menu
+	ctxViewer     // the media viewer's ⋮ menu
+	ctxAttach     // the composer's attach menu
+	ctxQuality    // the attach tray's photo quality menu
+	ctxGroupPhoto // the new group's picture
+	ctxGroupTimer // the new group's disappearing messages
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -326,6 +328,14 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		case ctxQuality:
 			if u.selected != nil && u.selected.ID == m.chatID {
 				items = u.qualityMenuItems()
+			}
+		case ctxGroupPhoto:
+			if u.newChat.step == ncGroup {
+				items = u.groupPhotoItems()
+			}
+		case ctxGroupTimer:
+			if u.newChat.step == ncGroup {
+				items = u.groupTimerItems()
 			}
 		}
 		if items == nil {
