@@ -22,7 +22,7 @@ import (
 // and the scrollable list of chats.
 func (u *UI) layoutSidebar(gtx C) D {
 	u.sidebar.visible = u.filteredChats()
-	u.sidebar.order.update(gtx, u.sidebar.visible)
+	u.sidebar.order.update(gtx, u.sidebar.visible, u.rowHeight(gtx))
 	menuID := ""
 	if u.ctx.isOpen() && u.ctx.kind == ctxChat {
 		menuID = u.ctx.chatID
@@ -237,38 +237,47 @@ type chatOrder struct {
 	pending bool           // the order may have changed since the last frame
 	anim    tween
 	// Rows differ in height (a community's groups are taller), so each
-	// row's last drawn height is kept; rowH is the last one drawn, for
-	// rows not drawn yet.
+	// row's last drawn height is kept. Rows not drawn yet are guessed.
 	heights map[string]int
-	rowH    int
 }
 
 func (o *chatOrder) measured(id string, h int) {
 	if o.heights == nil {
 		o.heights = make(map[string]int)
 	}
-	o.heights[id], o.rowH = h, h
+	o.heights[id] = h
 }
 
-func (o *chatOrder) height(id string) int {
+func (o *chatOrder) height(id string, guess func(id string) int) int {
 	if h, ok := o.heights[id]; ok {
 		return h
 	}
-	return o.rowH
+	return guess(id)
+}
+
+// rowHeight returns the height of a chat row not drawn yet, from the
+// sizes chatRow lays it out at.
+func (u *UI) rowHeight(gtx C) func(id string) int {
+	return func(id string) int {
+		if cm := u.inCommunity[id]; cm != nil && cm.Announcements != id {
+			return gtx.Dp(96.5) + gtx.Dp(2)*2
+		}
+		return gtx.Dp(76.3) + gtx.Dp(2)*2
+	}
 }
 
 // fadeInRow is the shift of a row that fades in instead of sliding.
 const fadeInRow = 1 << 20
 
 // update notices a new order of the visible chats and advances the slide.
-func (o *chatOrder) update(gtx C, visible []*model.Chat) {
+func (o *chatOrder) update(gtx C, visible []*model.Chat, guess func(id string) int) {
 	if o.pending && len(o.prev) > 0 {
 		was := make(map[string]int, len(o.prev))
 		wasY := make(map[string]int, len(o.prev))
 		y := 0
 		for i, id := range o.prev {
 			was[id], wasY[id] = i, y
-			y += o.height(id)
+			y += o.height(id, guess)
 		}
 		if o.shift == nil {
 			o.shift = make(map[string]int)
@@ -282,7 +291,7 @@ func (o *chatOrder) update(gtx C, visible []*model.Chat) {
 			case j != i:
 				o.shift[c.ID] = wasY[c.ID] - y
 			}
-			y += o.height(c.ID)
+			y += o.height(c.ID, guess)
 		}
 		if len(o.shift) > 0 {
 			o.anim.snap(false)
