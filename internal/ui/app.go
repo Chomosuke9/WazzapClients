@@ -52,14 +52,15 @@ type UI struct {
 	me      string
 	meID    string
 
-	chats    []*model.Chat
-	selected *model.Chat
-	selPage  page             // page the selected chat was opened from
-	msgs     []*model.Message // loaded window of the selected chat
-	msgsVer  int              // bumped whenever msgs changes
-	images   *imageCache
-	players  players // animated stickers on screen
-	bars     map[*widget.List]*scrollbar
+	chats     []*model.Chat
+	selected  *model.Chat
+	selPage   page             // page the selected chat was opened from
+	msgs      []*model.Message // loaded window of the selected chat
+	msgsVer   int              // bumped whenever msgs changes
+	images    *imageCache
+	emojiImgs *imageCache // the emoji picker's, see layoutEmojiImage
+	players   players     // animated stickers on screen
+	bars      map[*widget.List]*scrollbar
 
 	page         page
 	statusSeen   time.Time // when the Status page was last open
@@ -68,7 +69,7 @@ type UI struct {
 	channels     []*model.Channel
 	suggested    []*model.Channel
 	communities  []*model.Community
-	clicks       map[string]*widget.Clickable // see btn
+	clicks       clicks // see btn
 
 	info     infoState
 	status   statusState
@@ -182,7 +183,8 @@ func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: time.Now, backend: b, syncPct: -1}
 	u.SetDark(true)
 	u.images = newImageCache(240, 32<<20)
-	u.clicks = make(map[string]*widget.Clickable)
+	u.emojiImgs = newImageCache(600, 4<<20)
+	u.clicks.m = make(map[string]*clickEntry)
 	u.info.list.Axis = layout.Vertical
 	u.status.list.Axis = layout.Vertical
 	u.channel.list.Axis = layout.Vertical
@@ -205,6 +207,7 @@ func New(b model.Backend) *UI {
 // (from any goroutine) whenever the UI should redraw.
 func (u *UI) Start(notify func()) {
 	u.images.invalidate = notify
+	u.emojiImgs.invalidate = notify
 	u.setChats(u.backend.Chats())
 	u.loadPages()
 	u.backend.Start(notify)
@@ -354,9 +357,14 @@ func Run(w *app.Window, b model.Backend) error {
 	u.Start(w.Invalidate)
 	defer b.Close()
 	// Once nothing has been drawn for a while, give memory back (see
-	// memtrim). Every frame pushes the trim back.
+	// memtrim). Every frame pushes the trim back. Leaving the window trims
+	// sooner, even while something on screen still animates.
 	idle := time.AfterFunc(idleTrim, memtrim.Trim)
 	defer idle.Stop()
+	away := time.AfterFunc(awayTrim, memtrim.Trim)
+	away.Stop()
+	defer away.Stop()
+	focused := true
 	var ops op.Ops
 	for {
 		switch e := w.Event().(type) {
@@ -364,6 +372,14 @@ func Run(w *app.Window, b model.Backend) error {
 			return e.Err
 		case app.ConfigEvent:
 			u.deco.Maximized = e.Config.Mode == app.Maximized
+			if f := e.Config.Focused && e.Config.Mode != app.Minimized; f != focused {
+				focused = f
+				if f {
+					away.Stop()
+				} else {
+					away.Reset(awayTrim)
+				}
+			}
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 			u.Layout(gtx)
@@ -374,8 +390,13 @@ func Run(w *app.Window, b model.Backend) error {
 }
 
 // idleTrim is how long the window goes without a frame before memory is
-// trimmed.
-const idleTrim = 30 * time.Second
+// trimmed, and awayTrim how long after it loses focus or is minimized.
+// A trim costs a few milliseconds of page faults on the next frames, as
+// the pages still in use come back.
+const (
+	idleTrim = 10 * time.Second
+	awayTrim = 3 * time.Second
+)
 
 // Layout draws one frame: custom title bar, then either the login screen or
 // nav rail | chat list | conversation.
@@ -385,8 +406,10 @@ func (u *UI) Layout(gtx C) D {
 		u.window.Perform(a)
 	}
 	defer u.images.endFrame()
+	defer u.emojiImgs.endFrame()
 	defer u.players.endFrame()
 	defer u.anims.endFrame()
+	defer u.endFrameClicks()
 
 	sz := gtx.Constraints.Max
 	u.winWidth = sz.X
@@ -704,7 +727,7 @@ func (u *UI) applyEvents() {
 				u.images.forget("sm:" + e.MsgID)
 			}
 			if u.viewer.open && u.viewer.msgID == e.MsgID {
-				u.images.forget("v:" + e.MsgID)
+				u.forgetViewerImage(e.MsgID)
 			}
 			u.videoDownloaded(e)
 		case model.NoticeEvent:

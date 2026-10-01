@@ -45,13 +45,19 @@ func (u *UI) viewerItems() []*model.Message {
 
 func (u *UI) openViewer(m *model.Message) {
 	if u.viewer.anim.v > 0 {
-		u.images.forget("v:" + u.viewer.msgID) // still fading out
+		u.forgetViewerImage(u.viewer.msgID) // still fading out
 	}
 	u.stopVideo()
 	u.viewer = mediaViewer{open: true, msgID: m.ID, origin: u.mouse, video: videoView{muted: u.viewer.video.muted}}
 	u.viewer.strip.Axis = layout.Horizontal
 	u.closePicker()
 	u.requestFocus(nil) // so arrow keys reach the viewer, not the composer
+}
+
+// forgetViewerImage releases the viewer's decoded copies of a picture.
+func (u *UI) forgetViewerImage(id string) {
+	u.images.forget("v:" + id)
+	u.images.forget("vz:" + id)
 }
 
 // closeViewer fades the viewer out. Its picture is released after; a
@@ -64,7 +70,7 @@ func (u *UI) closeViewer() {
 // hideViewer closes the viewer at once.
 func (u *UI) hideViewer() {
 	if u.viewer.open || u.viewer.anim.v > 0 {
-		u.images.forget("v:" + u.viewer.msgID)
+		u.forgetViewerImage(u.viewer.msgID)
 	}
 	u.viewer.open = false
 	u.viewer.anim.snap(false)
@@ -97,7 +103,7 @@ func (u *UI) showViewerAt(items []*model.Message, i int) {
 	if i < 0 || i >= len(items) {
 		return
 	}
-	u.images.forget("v:" + u.viewer.msgID)
+	u.forgetViewerImage(u.viewer.msgID)
 	u.stopVideo()
 	u.viewer.msgID = items[i].ID
 	u.viewer.zp.reset()
@@ -181,7 +187,7 @@ func (u *UI) layoutViewer(gtx C) {
 	m, idx = u.viewerMsg(items)
 	a := v.anim.step(gtx, v.open, durDialog)
 	if a == 0 && !v.open {
-		u.images.forget("v:" + v.msgID)
+		u.forgetViewerImage(v.msgID)
 		return
 	}
 	if !v.open {
@@ -338,15 +344,27 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) im
 		u.toggleVideo(gtx, m)
 	}
 
-	maxSide := max(area.Dx(), area.Dy()) * 2
 	var img *imgEntry
 	if isVideo(m) {
 		img = u.videoFrame(area.Size())
 	} else if m.Media == model.MediaImage {
+		// The picture decodes to fit the area. Zoomed in, a sharper copy
+		// loads (twice that); it's dropped when zoomed out, because a
+		// 4000x3000 photo takes about 45 MB decoded, and as much again
+		// on the GPU.
 		b := u.backend
 		chat, id := m.ChatID, m.ID
-		if e := u.images.get("v:"+id, maxSide, func() []byte { return b.MediaData(chat, id) }); e.state == imgReady {
+		load := func() []byte { return b.MediaData(chat, id) }
+		fit := max(area.Dx(), area.Dy())
+		if e := u.images.get("v:"+id, fit, load); e.state == imgReady {
 			img = e
+		}
+		if v.zp.zoomed() {
+			if e := u.images.get("vz:"+id, 2*fit, load); e.state == imgReady {
+				img = e
+			}
+		} else {
+			u.images.forget("vz:" + id)
 		}
 	}
 	if img == nil {

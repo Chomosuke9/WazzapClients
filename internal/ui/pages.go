@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"strings"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -28,12 +29,47 @@ const (
 // btn returns the Clickable stored under key, creating it on first use.
 // Lists of rows and per-item buttons use it instead of their own maps.
 func (u *UI) btn(key string) *widget.Clickable {
-	c, ok := u.clicks[key]
+	c, ok := u.clicks.m[key]
 	if !ok {
-		c = new(widget.Clickable)
-		u.clicks[key] = c
+		c = new(clickEntry)
+		u.clicks.m[key] = c
 	}
-	return c
+	c.seen = u.clicks.frame
+	return &c.Clickable
+}
+
+// clicks holds the buttons of btn. Many are per message (and one hover
+// tag per message, see hoverArea), so buttons not drawn for a while are
+// dropped, or scrolling through chats would keep one for every message
+// ever shown.
+type clicks struct {
+	m     map[string]*clickEntry
+	frame int64
+}
+
+type clickEntry struct {
+	widget.Clickable
+	seen int64 // frame of last use
+}
+
+// clickKeep is how many frames a button stays after it was last used.
+const clickKeep = 600
+
+// endFrameClicks drops buttons unused for clickKeep frames, now and then.
+func (u *UI) endFrameClicks() {
+	c := &u.clicks
+	c.frame++
+	if c.frame%clickKeep != 0 {
+		return
+	}
+	for k, e := range c.m {
+		if e.seen < c.frame-clickKeep {
+			delete(c.m, k)
+			if hk, ok := strings.CutPrefix(k, "hv:"); ok {
+				delete(u.hovered, hk)
+			}
+		}
+	}
 }
 
 // pageHeader is the 68dp title row at the top of a sidebar page.

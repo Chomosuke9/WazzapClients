@@ -86,6 +86,13 @@ Gotchas already found in the pinned version (v0.10.x):
 - `material.List`'s scrollbar turns thumb drags into "scroll by N items" against a length
   re-estimated from the visible rows, so the thumb drifts from the pointer. Use
   `u.scrollList` (`internal/ui/scrollbar.go`) for every list.
+- Gio's shaper keeps up to 1000 color-emoji bitmaps decoded at the font's full 136x128
+  (70 KB each) for good. The emoji picker draws its emojis as pictures from
+  `u.emojiImgs` instead (`emojiimg.go`); scrolling it through Labels pinned ~70 MB.
+- `x/image/draw`'s `CatmullRom` allocates dst width x src height x 32 bytes (157 MB to fit
+  a 12 MP photo to a screen). Downscale with `shrink` (`shrink.go`). Go's JPEG decoder
+  keeps all of a progressive JPEG's coefficients (~7.5 bytes/pixel), so big pictures
+  decode one at a time (`acquireDecode`).
 - `golang.org/x/image/webp` can't read animated WebP. Animated stickers go through
   `internal/webpanim`; `stickerFrame` (`player.go`) plays the ones on screen.
 - Videos use the OS's decoder, never a bundled codec (`internal/video`). The Windows
