@@ -76,9 +76,12 @@ Gotchas already found in the pinned version (v0.10.x):
 - Popups that must draw above later siblings (the emoji picker) use `op.Defer`, which
   keeps the local transform. Context menus instead open at `u.mouse`, the last pointer
   position in content coordinates.
-- `widget.Editor` paints all its text in one color. Colored spans (the composer's
-  @mentions) are drawn over it: see `paintMentions`. `Editor.Regions` reuses the slice
-  you pass it, so don't use it to append.
+- `widget.Editor` paints all its text, and its caret, in one color and one font. When the
+  composer's text has formatting or @mentions, the editor paints it transparent and
+  `paintComposerText` (`composertext.go`) draws the text and caret itself. Bold and italic
+  are faked (outline drawn twice, slant) so glyphs keep the advances the editor's caret
+  and selection use. Color-emoji bitmaps ignore the text color, so the editor still
+  paints them. `Editor.Regions` reuses the slice you pass it, so don't use it to append.
 - Gio makes only its window thread DPI aware on Windows. While a drag holds the mouse
   capture, Windows then reports the pointer in DPI-unaware coordinates (divided by the
   display scale), so every dragged thing lagged the pointer. `dpi_windows.go` makes the
@@ -145,7 +148,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
                    (viewer.go); replies, @mentions and select mode live in compose.go;
-                   document cards and the voice/audio player in files.go; the attach
+                   document cards and the voice/audio player in files.go; selecting message
+                   text in textsel.go; the composer's formatting toolbar in formatbar.go; the attach
                    menu, file tray and poll dialog in attach.go; animation helpers in anim.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles

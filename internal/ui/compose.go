@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"slices"
 	"sort"
 	"strings"
@@ -14,11 +15,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"golang.org/x/image/math/fixed"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
@@ -340,75 +338,6 @@ func (u *UI) mentionRanges(txt string) [][2]int {
 	return out
 }
 
-// paintMentions draws the picked @mentions in the composer in green. The
-// editor paints all its text in one color, so a green copy of the text is
-// drawn over it, clipped to the mentions.
-func (u *UI) paintMentions(gtx C, e material.EditorStyle) {
-	ed := e.Editor
-	txt := ed.Text()
-	ranges := u.mentionRanges(txt)
-	if len(ranges) == 0 {
-		return
-	}
-	// The editor may be scrolled: compare where a mention sits in the
-	// shaped text with where the editor shows it.
-	sh := u.th.Shaper
-	sh.LayoutString(text.Parameters{
-		Font:     e.Font,
-		PxPerEm:  fixed.I(gtx.Sp(e.TextSize)),
-		MaxWidth: gtx.Constraints.Max.X,
-		MinWidth: gtx.Constraints.Min.X,
-		Locale:   gtx.Locale,
-	}, txt)
-	baseline := map[int]int{} // rune offset of a mention -> its baseline
-	for _, r := range ranges {
-		baseline[r[0]] = -1
-	}
-	idx := 0
-	for {
-		g, ok := sh.NextGlyph()
-		if !ok {
-			break
-		}
-		if g.Flags&text.FlagClusterBreak == 0 {
-			continue
-		}
-		if y, ok := baseline[idx]; ok && y < 0 {
-			baseline[idx] = int(g.Y)
-		}
-		idx += int(g.Runes)
-	}
-	var regions, buf []widget.Region
-	scroll, known := 0, false
-	for _, r := range ranges {
-		buf = ed.Regions(r[0], r[1], buf) // reuses buf
-		if !known && len(buf) > 0 && baseline[r[0]] >= 0 {
-			scroll, known = baseline[r[0]]-(buf[0].Bounds.Max.Y-buf[0].Baseline), true
-		}
-		regions = append(regions, buf...)
-	}
-	if !known {
-		return
-	}
-	lgtx := gtx
-	lgtx.Constraints.Max.Y = 1 << 24
-	m := op.Record(gtx.Ops)
-	t := op.Offset(image.Pt(0, -scroll)).Push(gtx.Ops)
-	cm := op.Record(gtx.Ops)
-	paint.ColorOp{Color: u.pal.Green}.Add(gtx.Ops)
-	widget.Label{}.Layout(lgtx, sh, e.Font, e.TextSize, txt, cm.Stop())
-	t.Pop()
-	call := m.Stop()
-	for _, r := range regions {
-		// Cover the editor's glyphs first, so their edges don't show.
-		cl := clip.Rect(r.Bounds).Push(gtx.Ops)
-		paint.ColorOp{Color: u.pal.Composer}.Add(gtx.Ops)
-		paint.PaintOp{}.Add(gtx.Ops)
-		call.Add(gtx.Ops)
-		cl.Pop()
-	}
-}
-
 // layoutMentionPicker draws matching members, plus "@all" and "@admin",
 // above the composer.
 func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
@@ -614,7 +543,12 @@ func (u *UI) layoutComposerBox(gtx C) D {
 							}),
 							layout.Rigid(layout.Spacer{Width: 10}.Layout),
 							layout.Flexed(1, func(gtx C) D {
-								return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
+								u.formatKeys(gtx)
+								pad := gtx.Dp(8)
+								rowMin := gtx.Constraints.Min.Y
+								m := op.Record(gtx.Ops)
+								var ed D
+								dims := layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
 									gtx.Constraints.Min.X = gtx.Constraints.Max.X
 									gtx.Constraints.Max.Y = gtx.Dp(140)
 									hint := "Type a message"
@@ -626,10 +560,28 @@ func (u *UI) layoutComposerBox(gtx C) D {
 									e.Color = p.Text
 									e.HintColor = p.ComposerHint
 									e.SelectionColor = argb(0x53bdeb, 0x60)
-									d := e.Layout(gtx)
-									u.paintMentions(gtx, e)
-									return d
+									// Formatting and mentions are drawn over the
+									// editor, which then paints its text clear.
+									txt := u.conv.composer.Text()
+									rich := u.composerRich(txt)
+									if rich {
+										e.Color = color.NRGBA{}
+									}
+									ed = e.Layout(gtx)
+									if rich {
+										u.paintComposerText(gtx, e, txt, ed.Size)
+									}
+									u.layoutFormatBar(gtx, &u.conv.composer)
+									return ed
 								})
+								call := m.Stop()
+								// Clicks around the text, up to the row's edges,
+								// go to the editor too.
+								ext := max(0, (rowMin-dims.Size.Y)/2)
+								area := image.Rectangle{Min: image.Pt(0, -ext), Max: image.Pt(dims.Size.X, dims.Size.Y+ext)}
+								u.composerArea(gtx, area, image.Pt(0, pad), ed.Size)
+								call.Add(gtx.Ops)
+								return dims
 							}),
 							layout.Rigid(layout.Spacer{Width: 8}.Layout),
 							layout.Rigid(func(gtx C) D {
@@ -789,4 +741,70 @@ func (u *UI) layoutPinnedBanner(gtx C, m *model.Message) D {
 		fillRect(gtx, image.Rect(0, d.Size.Y-max(1, gtx.Dp(1)), d.Size.X, d.Size.Y), p.Divider)
 		return d
 	})
+}
+
+// composerArea passes presses and drags in area, around the composer's
+// text, to the editor at offset edAt of size edSize: the editor's own
+// input area covers only its lines, a thin strip in the round box.
+func (u *UI) composerArea(gtx C, area image.Rectangle, edAt, edSize image.Point) {
+	c := &u.conv
+	ed := &c.composer
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &c.composerArea, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
+		if !ok {
+			break
+		}
+		e, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		pos := e.Position.Round().Sub(edAt)
+		switch e.Kind {
+		case pointer.Press:
+			if !e.Buttons.Contain(pointer.ButtonPrimary) {
+				continue
+			}
+			i := composerCaretAt(ed, pos, edSize)
+			c.composerFrom, c.composerPress = i, true
+			if e.Modifiers.Contain(key.ModShift) {
+				_, c.composerFrom = ed.Selection()
+			}
+			ed.SetCaret(i, c.composerFrom)
+			gtx.Execute(key.FocusCmd{Tag: ed})
+		case pointer.Drag:
+			if c.composerPress {
+				ed.SetCaret(composerCaretAt(ed, pos, edSize), c.composerFrom)
+			}
+		default:
+			c.composerPress = false
+		}
+	}
+	defer clip.Rect(area).Push(gtx.Ops).Pop()
+	pointer.CursorText.Add(gtx.Ops)
+	event.Op(gtx.Ops, &c.composerArea)
+}
+
+// composerCaretAt returns the caret position nearest to p, in the
+// editor's coordinates, on the line level with p (the first or last line
+// when p is above or below the text).
+func composerCaretAt(ed *widget.Editor, p, size image.Point) int {
+	n := ed.Len()
+	y := min(max(p.Y, 0), max(0, size.Y-1))
+	best, bestD := n, -1
+	var rs []widget.Region
+	for i := range n {
+		rs = ed.Regions(i, i+1, rs[:0])
+		for _, r := range rs {
+			b := r.Bounds
+			if y < b.Min.Y || y >= b.Max.Y {
+				continue
+			}
+			for j, x := range [2]int{b.Min.X, b.Max.X} {
+				if d := max(p.X-x, x-p.X); bestD < 0 || d < bestD {
+					best, bestD = i+j, d
+				}
+			}
+		}
+	}
+	return best
 }

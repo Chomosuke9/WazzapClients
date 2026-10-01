@@ -12,6 +12,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/text"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"rsc.io/qr"
@@ -101,6 +102,7 @@ type UI struct {
 	toastMsg  toastState
 	mouse     image.Point // last pointer position, in content coordinates
 	mouseTag  struct{}
+	mouseDown bool            // the primary button is down
 	hovered   map[string]bool // see hoverArea
 	lastPress struct {        // for double clicks, see pressArea
 		key string
@@ -110,8 +112,9 @@ type UI struct {
 		key string
 		at  time.Time
 	}
-	pendingCopy string // clipboard text waiting for a frame
-	focus       any    // editor to focus next frame (see requestFocus)
+	pendingCopy string        // clipboard text waiting for a frame
+	textSel     textSelection // selected message text
+	focus       any           // editor to focus next frame (see requestFocus)
 	focusReq    bool
 
 	anims    animStore                     // keyed fades: hovers, new messages, reactions
@@ -189,6 +192,25 @@ type UI struct {
 		heights      map[int]int       // row heights laid out last frame, by index
 		reactions    map[string]string // reaction shown per message, to pop new ones
 		expanded     map[string]int    // "Read more" clicks per message
+
+		// The formatting toolbar over a selection in the composer.
+		fmtAnim    tween
+		fmtAt      image.Point // the selection's top center, in the editor
+		fmtRegions []widget.Region
+		fmtActive  [numFmt]bool // the styles the selection has
+		// The composer's text as paintComposerText draws it.
+		richFor      string
+		richFlags    []uint8
+		richGlyphs   []text.Glyph
+		richRegions  []widget.Region
+		richRun      []text.Glyph
+		caretKey     [3]int // selection and length, to restart the blink
+		caretSince   time.Time
+		caretFocused bool
+		// composerArea takes clicks around the composer's text.
+		composerArea  struct{}
+		composerFrom  int // the caret where a press in composerArea started
+		composerPress bool
 	}
 }
 

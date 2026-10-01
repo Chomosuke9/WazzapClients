@@ -32,6 +32,7 @@ type Palette struct {
 	BubbleLine, BubbleButton     color.NRGBA // dividers and text of message buttons
 	CodeBg                       color.NRGBA // behind `inline code`
 	MentionPill                  color.NRGBA // behind mentions of you
+	Selection                    color.NRGBA // behind selected text
 	DateChip, DateChipText       color.NRGBA
 	Encryption, EncryptionText   color.NRGBA
 	Composer, ComposerHint       color.NRGBA
@@ -125,6 +126,7 @@ var darkPalette = Palette{
 	BubbleLine: argb(0xffffff, 0x14), BubbleButton: rgb(0x53bdeb),
 	CodeBg:      argb(0xffffff, 0x12),
 	MentionPill: argb(0x21c063, 0x24),
+	Selection:   rgb(0x1e3a9e),
 }
 
 var lightPalette = Palette{
@@ -172,6 +174,7 @@ var lightPalette = Palette{
 	BubbleLine: argb(0x000000, 0x14), BubbleButton: rgb(0x027eb5),
 	CodeBg:      argb(0x000000, 0x0f),
 	MentionPill: argb(0x1daa61, 0x22),
+	Selection:   rgb(0xb3d4fc),
 }
 
 func hashIndex(s string, n int) int {

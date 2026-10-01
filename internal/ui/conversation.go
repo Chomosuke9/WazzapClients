@@ -489,11 +489,17 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	if !sel {
 		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
 		hovered := u.hoverArea(gtx, m.ID, bubble.size)
-		right, double := u.pressArea(gtx, m.ID, bubble.size)
+		// A double click beside the bubble replies too, as in WhatsApp; a
+		// right click only on it opens its menu.
+		right, at, double := u.pressArea(gtx, m.ID, image.Rect(-margin-x, 0, w+margin-x, h))
+		if right && !at.In(image.Rectangle{Max: bubble.size}) {
+			right = false
+		}
 		if right {
 			u.openMessageMenu(m)
 		}
-		if double && m.Kind != model.KindDeleted {
+		// A double click on the text selects a word instead.
+		if double && m.Kind != model.KindDeleted && (u.textSel.id != m.ID || u.textSel.clicks < 2) {
 			u.startReply(m)
 		}
 		chev := u.btn("chev:" + m.ID)
@@ -824,6 +830,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		}
 		o := richOpts{italic: italic, prefix: prefix, suffix: suffix}
 		if lead == nil {
+			if !u.conv.selecting {
+				o.sel = m.ID
+			}
 			if !out {
 				o.pills = pillMe
 				if c.IsGroup && strings.ContainsRune(text, model.MentionAdmins) && u.amAdmin(c.ID) {

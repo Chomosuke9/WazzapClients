@@ -25,12 +25,26 @@ import (
 // everything and lets events pass through.
 func (u *UI) trackMouse(gtx C) {
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &u.mouseTag, Kinds: pointer.Move | pointer.Press | pointer.Drag})
+		ev, ok := gtx.Event(pointer.Filter{Target: &u.mouseTag, Kinds: pointer.Move | pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
 		if !ok {
 			break
 		}
 		if e, ok := ev.(pointer.Event); ok {
-			u.mouse = e.Position.Round()
+			if e.Kind != pointer.Cancel {
+				u.mouse = e.Position.Round()
+			}
+			switch e.Kind {
+			case pointer.Press:
+				u.mouseDown = u.mouseDown || e.Buttons.Contain(pointer.ButtonPrimary)
+			case pointer.Release, pointer.Cancel:
+				u.mouseDown = false
+			}
+			// A click anywhere but on selectable text (or in a menu, which
+			// may copy the selection) clears the selection.
+			if e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonPrimary) &&
+				e.Time != u.textSel.pressed && !u.ctx.isOpen() {
+				u.textSel.clear()
+			}
 		}
 	}
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
@@ -41,12 +55,13 @@ func (u *UI) trackMouse(gtx C) {
 // rightClick reports a secondary-button press on an area of size sz at the
 // current offset. Other handlers underneath still get the event.
 func (u *UI) rightClick(gtx C, key string, sz image.Point) bool {
-	right, _ := u.pressArea(gtx, key, sz)
+	right, _, _ := u.pressArea(gtx, key, image.Rectangle{Max: sz})
 	return right
 }
 
-// pressArea is rightClick that also reports a double left-click.
-func (u *UI) pressArea(gtx C, key string, sz image.Point) (right, double bool) {
+// pressArea is rightClick on area that also reports where the right click
+// was, and a double left-click.
+func (u *UI) pressArea(gtx C, key string, area image.Rectangle) (right bool, rightAt image.Point, double bool) {
 	tag := u.btn("rc:" + key) // only its address is used, as an event tag
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
@@ -57,7 +72,7 @@ func (u *UI) pressArea(gtx C, key string, sz image.Point) (right, double bool) {
 		switch {
 		case !ok:
 		case e.Buttons.Contain(pointer.ButtonSecondary):
-			right = true
+			right, rightAt = true, e.Position.Round()
 		case e.Buttons.Contain(pointer.ButtonPrimary):
 			if u.lastPress.key == key && e.Time-u.lastPress.at < 400*time.Millisecond {
 				double = true
@@ -67,10 +82,10 @@ func (u *UI) pressArea(gtx C, key string, sz image.Point) (right, double bool) {
 			}
 		}
 	}
-	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+	defer clip.Rect(area).Push(gtx.Ops).Pop()
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, tag)
-	return right, double
+	return right, rightAt, double
 }
 
 // menuItem is one row of a popup menu, or a divider.
@@ -222,6 +237,9 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		add(menuItem{key: "dm", ic: icChats, label: "Message " + shortName(plainText(m.Sender)), run: func() { u.openDirect(m.SenderID, m.Sender) }})
 	}
 	if txt := plainText(m.Text); txt != "" && !deleted {
+		if sel := u.textSel.selected(m.ID); sel != "" {
+			txt = sel
+		}
 		add(menuItem{key: "copy", ic: icCopy, label: "Copy", run: func() { u.copyText(stripIsolates(txt)) }})
 	}
 	if canSave(m) {

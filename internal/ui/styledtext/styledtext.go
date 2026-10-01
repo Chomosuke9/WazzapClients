@@ -24,12 +24,22 @@ type SpanStyle struct {
 	Color   color.NRGBA
 	Content string
 
-	idx int
+	idx     int
+	runeOff int // runes of the text before Content
+}
+
+// Caret is a position between two clusters of the text, for selecting it.
+type Caret struct {
+	// Rune counts the runes of all spans before the caret.
+	Rune int
+	// X is the caret's position on its line, which spans Top to Bottom.
+	X, Top, Bottom int
 }
 
 // spanShape describes the text shaping of a single span.
 type spanShape struct {
 	offset image.Point
+	carets []Caret // relative to the shape, with Rune relative to the span
 	call   op.CallOp
 	size   image.Point
 	ascent int
@@ -78,6 +88,9 @@ type TextStyle struct {
 	// LineHeightScale applies a scaling factor to the LineHeight. If zero, a
 	// sensible default will be used.
 	LineHeightScale float32
+	// Carets, if set, receives the position of every cluster boundary,
+	// line by line from the top (left to right text only).
+	Carets *[]Caret
 
 	*text.Shaper
 }
@@ -92,6 +105,7 @@ func Text(shaper *text.Shaper, styles ...SpanStyle) TextStyle {
 
 type spanResults struct {
 	call             op.CallOp
+	carets           []Caret
 	width            int
 	height           int
 	ascent           int
@@ -124,6 +138,9 @@ func (t TextStyle) iterateSpan(gtx layout.Context, maxWidth int, span SpanStyle,
 	ti := textIterator{
 		viewport: image.Rectangle{Max: gtx.Constraints.Max},
 		maxLines: 1,
+	}
+	if t.Carets != nil {
+		ti.carets = []Caret{{}}
 	}
 
 	line := glyphs[:0]
@@ -182,6 +199,7 @@ func (t TextStyle) layoutSpan(gtx layout.Context, maxWidth int, span SpanStyle, 
 	}
 	return spanResults{
 		call:             call,
+		carets:           ti.carets,
 		width:            ti.bounds.Dx(),
 		height:           ti.bounds.Dy(),
 		ascent:           ti.baseline,
@@ -224,7 +242,15 @@ func (t TextStyle) Layout(gtx layout.Context, spanFn func(gtx layout.Context, id
 		overallSize    image.Point
 		lineShapes     []spanShape
 		lineStartIndex int
+		lineCarets     []Caret
 	)
+	if t.Carets != nil {
+		n := 0
+		for i := range spans {
+			spans[i].runeOff = n
+			n += utf8.RuneCountInString(spans[i].Content)
+		}
+	}
 
 	for i := 0; i < len(spans); i++ {
 		// grab the next span
@@ -242,6 +268,11 @@ func (t TextStyle) Layout(gtx layout.Context, spanFn func(gtx layout.Context, id
 		forceToNextLine := lineDims.X > 0 && res.width > maxWidth
 
 		if !forceToNextLine {
+			for _, c := range res.carets {
+				c.X += lineDims.X
+				c.Rune += span.runeOff
+				lineCarets = append(lineCarets, c)
+			}
 			// store the text shaping results for the line
 			lineShapes = append(lineShapes, spanShape{
 				offset: image.Point{X: lineDims.X},
@@ -318,6 +349,14 @@ func (t TextStyle) Layout(gtx layout.Context, spanFn func(gtx layout.Context, id
 				effectiveLineHeight = lineHeightPx
 			}
 			effectiveLineHeight = int(float32(effectiveLineHeight) * lineHeightScale)
+			if t.Carets != nil {
+				for _, c := range lineCarets {
+					c.X += pad
+					c.Top, c.Bottom = overallSize.Y, overallSize.Y+effectiveLineHeight
+					*t.Carets = append(*t.Carets, c)
+				}
+				lineCarets = lineCarets[:0]
+			}
 			overallSize.Y += effectiveLineHeight
 			lineDims = image.Point{}
 			lineAscent = 0
@@ -341,6 +380,7 @@ func (t TextStyle) Layout(gtx layout.Context, spanFn func(gtx layout.Context, id
 				byteLen += n
 			}
 			span.Content = span.Content[byteLen:]
+			span.runeOff += res.runes
 			spans[i+1] = span
 		} else if forceToNextLine {
 			// mark where the next line to be laid out starts
