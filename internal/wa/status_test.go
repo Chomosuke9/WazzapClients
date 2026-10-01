@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
+	"github.com/polymorfa/hypermeow/types"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -51,5 +52,21 @@ func TestStatusQuoteAndExpiry(t *testing.T) {
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Errorf("expired status video kept: %v", err)
+	}
+}
+
+func TestAudienceOf(t *testing.T) {
+	jids := []types.JID{types.NewJID("1", types.DefaultUserServer), types.NewJID("2", types.DefaultUserServer)}
+	for _, c := range []struct {
+		in   types.StatusPrivacy
+		want model.StatusPrivacy
+	}{
+		{types.StatusPrivacy{Type: types.StatusPrivacyTypeContacts}, model.StatusPrivacy{Audience: model.AudienceContacts}},
+		{types.StatusPrivacy{Type: types.StatusPrivacyTypeBlacklist, List: jids}, model.StatusPrivacy{Audience: model.AudienceExcept, Count: 2}},
+		{types.StatusPrivacy{Type: types.StatusPrivacyTypeWhitelist, List: jids[:1]}, model.StatusPrivacy{Audience: model.AudienceOnly, Count: 1}},
+	} {
+		if got := *audienceOf(c.in); got != c.want {
+			t.Errorf("%s: got %+v, want %+v", c.in.Type, got, c.want)
+		}
 	}
 }

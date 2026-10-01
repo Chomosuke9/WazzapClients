@@ -60,6 +60,8 @@ type Backend struct {
 
 	infoMu      sync.Mutex
 	infoFetched map[string]bool // info panels refreshed this session
+
+	statusPriv statusPrivacy
 }
 
 var _ model.Backend = (*Backend)(nil)

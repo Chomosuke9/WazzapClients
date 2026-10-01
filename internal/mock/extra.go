@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -18,6 +20,7 @@ type extras struct {
 	suggested   []*model.Channel
 	communities []*model.Community
 	infos       map[string]*model.ChatInfo
+	posted      int // status updates posted, for their IDs
 }
 
 func (b *Backend) Statuses() []*model.StatusThread { return b.statuses }
@@ -32,6 +35,34 @@ func (b *Backend) ViewStatus(threadID, statusID string) {
 	}
 	b.emit(model.StatusEvent{})
 }
+
+// PostStatus adds the update to your own thread. A photo is its own
+// preview.
+func (b *Backend) PostStatus(p model.StatusPost) {
+	b.posted++
+	up := &model.StatusUpdate{ID: "posted-" + strconv.Itoa(b.posted), Text: p.Text, Background: p.Background, Time: b.now()}
+	if f := p.File; f != nil {
+		up.Media = f.Media
+		if st, err := os.Stat(f.Path); f.Media == model.MediaImage && err == nil && st.Size() < 8<<20 {
+			up.Thumb, _ = os.ReadFile(f.Path)
+		}
+	}
+	var mine *model.StatusThread
+	for _, t := range b.statuses {
+		if t.Mine {
+			mine = t
+		}
+	}
+	if mine == nil {
+		mine = &model.StatusThread{ID: "me", Mine: true}
+		b.statuses = append([]*model.StatusThread{mine}, b.statuses...)
+	}
+	mine.Updates = append(mine.Updates, up)
+	b.emit(model.StatusEvent{})
+}
+
+// StatusPrivacy is the default: all your contacts.
+func (b *Backend) StatusPrivacy() *model.StatusPrivacy { return &model.StatusPrivacy{} }
 
 func (b *Backend) Channels() []*model.Channel { return b.channels }
 
