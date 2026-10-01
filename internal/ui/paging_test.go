@@ -78,24 +78,31 @@ func TestMessagePaging(t *testing.T) {
 		r.Frame(&ops)
 		now = now.Add(time.Second)
 	}
+	// wheel turns the wheel one notch and lays out frames until the list has
+	// eased all of it in.
 	wheel := func(dy float32) {
 		r.Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(800, 350), Scroll: f32.Pt(0, dy)})
 		frame()
+		for i := 0; i < 10 && u.wheels[&u.conv.list.List] != nil; i++ {
+			frame()
+		}
 	}
-	// firstShown is the first message on screen and its distance from the top.
-	firstShown := func() (string, int) {
+	// shownBelow is the first message on screen at least top px from the
+	// top, and its distance from it. A notch then keeps it on screen, where
+	// shownAt can find it: only the rows on screen have known heights.
+	shownBelow := func(top int) (string, int) {
 		pos := u.conv.list.Position
 		y := -pos.Offset
 		for j, r := range u.conv.rows[pos.First:] {
-			if r.msg != nil {
+			if r.msg != nil && y >= top {
 				return r.msg.ID, y
 			}
 			y += u.conv.heights[pos.First+j]
 		}
 		return "", 0
 	}
-	// shownAt is where message id is on screen, or just above it; ok is
-	// false when it wasn't laid out.
+	// shownAt is where message id is on screen; ok is false when it wasn't
+	// laid out.
 	shownAt := func(id string) (y int, ok bool) {
 		pos := u.conv.list.Position
 		is := func(j int) bool { r := u.conv.rows[j]; return r.msg != nil && r.msg.ID == id }
@@ -122,13 +129,13 @@ func TestMessagePaging(t *testing.T) {
 		}
 		return 0, false
 	}
-	// scroll turns the wheel by dy each frame while more is true, and
-	// returns how many pages loaded. Every frame starts a new wheel notch,
-	// so the list moves the same distance each frame, paging or not.
+	// scroll turns the wheel by dy a notch at a time while more is true, and
+	// returns how many pages loaded. Each notch is eased in fully, so the
+	// list moves the same distance each time, paging or not.
 	scroll := func(dy float32, more func() bool) (pages int) {
 		step := 0
 		for i := 0; i < 1000 && more(); i++ {
-			id, y := firstShown()
+			id, y := shownBelow(200)
 			ver := u.msgsVer
 			wheel(dy)
 			y2, ok := shownAt(id)
