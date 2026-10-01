@@ -22,7 +22,7 @@ import (
 // and the scrollable list of chats.
 func (u *UI) layoutSidebar(gtx C) D {
 	u.sidebar.visible = u.filteredChats()
-	u.sidebar.order.update(gtx, u.sidebar.visible)
+	u.sidebar.order.update(gtx, u.sidebar.visible, u.rowHeight(gtx))
 	menuID := ""
 	if u.ctx.isOpen() && u.ctx.kind == ctxChat {
 		menuID = u.ctx.chatID
@@ -202,7 +202,7 @@ func (u *UI) filteredChats() []*model.Chat {
 				continue
 			}
 		}
-		if q != "" && !strings.Contains(strings.ToLower(c.Name), q) {
+		if q != "" && !strings.Contains(strings.ToLower(u.listName(c)), q) {
 			continue
 		}
 		out = append(out, c)
@@ -218,10 +218,11 @@ func (u *UI) layoutChatList(gtx C) D {
 		dy, a, moving := o.at(c.ID)
 		if !moving {
 			d := u.layoutChatRow(gtx, c)
-			o.rowH = d.Size.Y
+			o.measured(c.ID, d.Size.Y)
 			return d
 		}
 		row := record(gtx, func(gtx C) D { return u.layoutChatRow(gtx, c) })
+		o.measured(c.ID, row.size.Y)
 		withOpacity(gtx, a, func() { row.at(gtx, 0, dy) })
 		return D{Size: row.size}
 	})
@@ -232,33 +233,72 @@ func (u *UI) layoutChatList(gtx C) D {
 // up fades in at its new place while the rows above it make room.
 type chatOrder struct {
 	prev    []string       // chat IDs as drawn last frame
-	shift   map[string]int // moving rows: their old place, in rows from the new one
+	shift   map[string]int // moving rows: their old place, in px from the new one
 	pending bool           // the order may have changed since the last frame
 	anim    tween
-	rowH    int
+	// Rows differ in height (a community's groups are taller), so each
+	// row's last drawn height is kept, in px at metric. Rows not drawn
+	// yet are guessed.
+	heights map[string]int
+	metric  unit.Metric
+}
+
+func (o *chatOrder) measured(id string, h int) {
+	if o.heights == nil {
+		o.heights = make(map[string]int)
+	}
+	o.heights[id] = h
+}
+
+func (o *chatOrder) height(id string, guess func(id string) int) int {
+	if h, ok := o.heights[id]; ok {
+		return h
+	}
+	return guess(id)
+}
+
+// rowHeight returns the height of a chat row not drawn yet, from the
+// sizes chatRow lays it out at.
+func (u *UI) rowHeight(gtx C) func(id string) int {
+	return func(id string) int {
+		if cm := u.inCommunity[id]; cm != nil && cm.Announcements != id {
+			return gtx.Dp(96.5) + gtx.Dp(2)*2
+		}
+		return gtx.Dp(76.3) + gtx.Dp(2)*2
+	}
 }
 
 // fadeInRow is the shift of a row that fades in instead of sliding.
 const fadeInRow = 1 << 20
 
 // update notices a new order of the visible chats and advances the slide.
-func (o *chatOrder) update(gtx C, visible []*model.Chat) {
+func (o *chatOrder) update(gtx C, visible []*model.Chat, guess func(id string) int) {
+	if gtx.Metric != o.metric {
+		// The window moved to a display with another scale.
+		o.metric = gtx.Metric
+		clear(o.heights)
+	}
 	if o.pending && len(o.prev) > 0 {
 		was := make(map[string]int, len(o.prev))
+		wasY := make(map[string]int, len(o.prev))
+		y := 0
 		for i, id := range o.prev {
-			was[id] = i
+			was[id], wasY[id] = i, y
+			y += o.height(id, guess)
 		}
 		if o.shift == nil {
 			o.shift = make(map[string]int)
 		}
 		clear(o.shift)
+		y = 0
 		for i, c := range visible {
 			switch j, ok := was[c.ID]; {
 			case !ok || j-i > 1:
 				o.shift[c.ID] = fadeInRow
 			case j != i:
-				o.shift[c.ID] = j - i
+				o.shift[c.ID] = wasY[c.ID] - y
 			}
+			y += o.height(c.ID, guess)
 		}
 		if len(o.shift) > 0 {
 			o.anim.snap(false)
@@ -285,7 +325,7 @@ func (o *chatOrder) at(id string) (dy int, alpha float32, moving bool) {
 	if s == fadeInRow {
 		return 0, e, true
 	}
-	return int(float32(s*o.rowH) * (1 - e)), 1, true
+	return int(float32(s) * (1 - e)), 1, true
 }
 
 func (u *UI) rowClick(c *model.Chat) *widget.Clickable {
@@ -297,26 +337,52 @@ func (u *UI) rowClick(c *model.Chat) *widget.Clickable {
 	return cl
 }
 
+// listName is the name the chat list shows for c: WhatsApp lists a
+// community's announcements under the community's name and picture.
+func (u *UI) listName(c *model.Chat) string {
+	if cm := u.inCommunity[c.ID]; cm != nil && cm.Announcements == c.ID {
+		return cm.Name
+	}
+	return c.Name
+}
+
 func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 	click := u.rowClick(c)
 	chev := u.btn("rowmenu:" + c.ID)
 	if chev.Clicked(gtx) {
 		u.openChatMenu(c)
 	}
-	dims := u.chatRow(gtx, c, rowOpts{
+	o := rowOpts{
 		click: click,
 		sel:   max(u.sidebar.openSel.of(c.ID), u.sidebar.menuSel.of(c.ID)),
 		// The chevron's button covers part of the row, so the row counts
 		// as hovered while the chevron is.
 		hovered: chev.Hovered(),
-	})
+	}
+	shown := c
+	if cm := u.inCommunity[c.ID]; cm != nil {
+		if c.ID == cm.Announcements {
+			ann := *c
+			ann.Name = u.listName(c)
+			shown = &ann
+			o.avatar = func(gtx C) D { return u.avatarOf(gtx, cm.ID, avatarCommunity, 52) }
+		} else {
+			o.community = cm
+		}
+	}
+	dims := u.chatRow(gtx, shown, o)
 	if u.rightClick(gtx, "chat:"+c.ID, dims.Size) {
 		u.openChatMenu(c)
 	}
 	if click.Hovered() || chev.Hovered() {
-		// The row's chevron (drawn by layoutRowPreview) opens the menu.
+		// The row's chevron (drawn with the row's indicators) opens the
+		// menu. A community group's row has them on its middle line.
 		s := gtx.Dp(30)
-		t := op.Offset(image.Pt(dims.Size.X-gtx.Dp(18+14)-s+gtx.Dp(4), gtx.Dp(53)-s/2)).Push(gtx.Ops)
+		y := gtx.Dp(53)
+		if o.community != nil {
+			y = dims.Size.Y / 2
+		}
+		t := op.Offset(image.Pt(dims.Size.X-gtx.Dp(18+14)-s+gtx.Dp(4), y-s/2)).Push(gtx.Ops)
 		cg := gtx
 		cg.Constraints = layout.Exact(image.Pt(s, s))
 		clickable(cg, chev, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
@@ -334,6 +400,9 @@ type rowOpts struct {
 	textGap  unit.Dp       // space between avatar and text (default 16)
 	verified bool          // blue badge after the name
 	hovered  bool          // hovered through a button drawn over the row
+	// community is the community a group belongs to: the row shows its
+	// picture and name above the group's.
+	community *model.Community
 }
 
 // chatRow draws one row of the chat list: avatar, name and time, then the
@@ -359,19 +428,26 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			hover := u.hoverOn(gtx, click, click.Hovered() || o.hovered)
 			bg := mix(mix(p.Panel, p.Hover, hover), p.Selected, o.sel)
+			h := gtx.Dp(76.3)
+			text := func(gtx C) D {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx C) D { return u.layoutRowTitle(gtx, c, o.verified) }),
+					layout.Rigid(layout.Spacer{Height: 3}.Layout),
+					layout.Rigid(func(gtx C) D { return u.layoutRowPreview(gtx, c, last, hover) }),
+				)
+			}
+			if cm := o.community; cm != nil {
+				h = gtx.Dp(96.5)
+				avatar = func(gtx C) D { return u.communityGroupAvatar(gtx, c, cm, bg) }
+				text = func(gtx C) D { return u.layoutCommunityRowText(gtx, c, cm, o.verified, hover) }
+			}
 			return background(gtx, bg, 10, func(gtx C) D {
-				return vcenter(gtx, gtx.Dp(76.3), func(gtx C) D {
+				return vcenter(gtx, h, func(gtx C) D {
 					return layout.Inset{Left: left, Right: 14}.Layout(gtx, func(gtx C) D {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 							layout.Rigid(avatar),
 							layout.Rigid(layout.Spacer{Width: gap}.Layout),
-							layout.Flexed(1, func(gtx C) D {
-								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-									layout.Rigid(func(gtx C) D { return u.layoutRowTitle(gtx, c, o.verified) }),
-									layout.Rigid(layout.Spacer{Height: 3}.Layout),
-									layout.Rigid(func(gtx C) D { return u.layoutRowPreview(gtx, c, last, hover) }),
-								)
-							}),
+							layout.Flexed(1, text),
 						)
 					})
 				})
@@ -399,33 +475,86 @@ func (u *UI) nameWithBadge(gtx C, name string, size unit.Sp, col color.NRGBA, ve
 }
 
 func (u *UI) layoutRowTitle(gtx C, c *model.Chat, verified bool) D {
+	return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
+		layout.Flexed(1, func(gtx C) D { return u.layoutRowName(gtx, c, verified) }),
+		layout.Rigid(layout.Spacer{Width: 6}.Layout),
+		layout.Rigid(func(gtx C) D { return u.layoutRowTime(gtx, c) }),
+	)
+}
+
+// layoutRowName draws a chat row's name.
+func (u *UI) layoutRowName(gtx C, c *model.Chat, verified bool) D {
 	p := u.pal
-	timeCol := p.TextSecondary
+	if !c.Self {
+		return u.nameWithBadge(gtx, c.Name, 17.5, p.Text, verified)
+	}
+	// "Name (You)": the name truncates, the suffix never does.
+	return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
+		layout.Flexed(1, func(gtx C) D {
+			gtx.Constraints.Min.X = 0
+			return u.label(17.5, c.Name, p.Text).Layout(gtx)
+		}),
+		layout.Rigid(u.label(17.5, "  (You)", p.Text).Layout),
+	)
+}
+
+// layoutRowTime draws when a chat row's last message came, green while
+// the chat is unread.
+func (u *UI) layoutRowTime(gtx C, c *model.Chat) D {
+	p := u.pal
+	col := p.TextSecondary
 	if c.Unread != 0 {
-		timeCol = p.Green
+		col = p.Green
 	}
 	var ts string
 	if c.Last != nil {
 		ts = listTime(c.Last.Time, u.now())
 	}
-	children := []layout.FlexChild{
-		layout.Flexed(1, func(gtx C) D {
-			if !c.Self {
-				return u.nameWithBadge(gtx, c.Name, 17.5, p.Text, verified)
-			}
-			// "Name (You)": the name truncates, the suffix never does.
+	return u.label(13.2, ts, col).Layout(gtx)
+}
+
+// communityGroupAvatar is the picture of a group in a community, as the
+// chat list shows it: the community's rounded square with the group's
+// own picture over its bottom-right corner, cut out of it by a ring of
+// the row's background bg.
+func (u *UI) communityGroupAvatar(gtx C, c *model.Chat, cm *model.Community, bg color.NRGBA) D {
+	box := gtx.Dp(52)
+	u.avatarOf(gtx, cm.ID, avatarCommunity, 33)
+	const d = unit.Dp(34)
+	dpx := gtx.Dp(d)
+	fillCircle(gtx, image.Pt(box-dpx/2, box-dpx/2), dpx/2+gtx.Dp(2.5), bg)
+	t := op.Offset(image.Pt(box-dpx, box-dpx)).Push(gtx.Ops)
+	u.avatarOf(gtx, c.ID, avatarGroup, d)
+	t.Pop()
+	return D{Size: image.Pt(box, box)}
+}
+
+// layoutCommunityRowText is the text of a community group's row: the
+// community's name and the time, the group's name and the indicators,
+// then the last message.
+func (u *UI) layoutCommunityRowText(gtx C, c *model.Chat, cm *model.Community, verified bool, chev float32) D {
+	p := u.pal
+	line := func(w layout.Widget) layout.FlexChild {
+		return layout.Rigid(func(gtx C) D { return vcenter(gtx, gtx.Dp(24), w) })
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		line(func(gtx C) D {
 			return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
-				layout.Flexed(1, func(gtx C) D {
-					gtx.Constraints.Min.X = 0
-					return u.label(17.5, c.Name, p.Text).Layout(gtx)
-				}),
-				layout.Rigid(u.label(17.5, "  (You)", p.Text).Layout),
+				layout.Flexed(1, u.label(15.3, cm.Name, p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+				layout.Rigid(layout.Spacer{Width: 6}.Layout),
+				layout.Rigid(func(gtx C) D { return u.layoutRowTime(gtx, c) }),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Width: 6}.Layout),
-		layout.Rigid(u.label(13.2, ts, timeCol).Layout),
-	}
-	return layout.Flex{Alignment: layout.Baseline}.Layout(gtx, children...)
+		layout.Rigid(layout.Spacer{Height: 3}.Layout),
+		line(func(gtx C) D {
+			row := []layout.FlexChild{layout.Flexed(1, func(gtx C) D { return u.layoutRowName(gtx, c, verified) })}
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx, append(row, u.rowIndicators(c, chev)...)...)
+		}),
+		layout.Rigid(layout.Spacer{Height: 3}.Layout),
+		line(func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx, u.previewParts(c, c.Last)...)
+		}),
+	)
 }
 
 // mediaIcon is the small glyph shown before media previews.
@@ -503,6 +632,21 @@ func shortName(name string) string {
 // followed by muted / pinned / unread indicators, and the menu chevron while
 // the row is hovered (chev, 0 to 1).
 func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, chev float32) D {
+	parts := u.previewParts(c, last)
+	// Indicators are rigid children of the outer row, so Flex sizes them
+	// first and the preview gets whatever width is left.
+	row := []layout.FlexChild{layout.Flexed(1, func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, parts...)
+	})}
+	row = append(row, u.rowIndicators(c, chev)...)
+	return vcenter(gtx, gtx.Dp(22), func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, row...)
+	})
+}
+
+// previewParts lays out the last message preview: sender, receipt or
+// media glyph, then the text.
+func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild {
 	p := u.pal
 	var children []layout.FlexChild
 	small := func(ic *icon.Icon, col color.NRGBA, size unit.Dp, right unit.Dp) layout.FlexChild {
@@ -551,12 +695,14 @@ func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, chev fl
 		}
 		children = append(children, layout.Flexed(1, u.label(size, previewText(txt), p.TextSecondary, labelOpts{maxLines: 1, italic: italic}).Layout))
 	}
+	return children
+}
 
-	// Indicators are rigid children of the outer row, so Flex sizes them
-	// first and the preview gets whatever width is left.
-	row := []layout.FlexChild{layout.Flexed(1, func(gtx C) D {
-		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
-	})}
+// rowIndicators are a chat row's muted, unread and pinned indicators, and
+// the menu chevron while the row is hovered (chev, 0 to 1).
+func (u *UI) rowIndicators(c *model.Chat, chev float32) []layout.FlexChild {
+	p := u.pal
+	var row []layout.FlexChild
 	indicator := func(w layout.Widget) layout.FlexChild {
 		return layout.Rigid(func(gtx C) D { return layout.Inset{Left: 8}.Layout(gtx, w) })
 	}
@@ -586,9 +732,7 @@ func (u *UI) layoutRowPreview(gtx C, c *model.Chat, last *model.Message, chev fl
 			return D{Size: image.Pt(w, full.size.Y)}
 		}))
 	}
-	return vcenter(gtx, gtx.Dp(22), func(gtx C) D {
-		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, row...)
-	})
+	return row
 }
 
 func firstLine(s string) string {

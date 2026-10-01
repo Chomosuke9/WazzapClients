@@ -70,7 +70,10 @@ type UI struct {
 	channels     []*model.Channel
 	suggested    []*model.Channel
 	communities  []*model.Community
-	clicks       clicks // see btn
+	// inCommunity maps a community's groups and announcements to it, so
+	// the chat list can show which community a group belongs to.
+	inCommunity map[string]*model.Community
+	clicks      clicks // see btn
 
 	info     infoState
 	status   statusState
@@ -260,7 +263,25 @@ func (u *UI) loadPages() {
 	u.statuses = u.backend.Statuses()
 	u.channels = u.backend.Channels()
 	u.suggested = u.backend.SuggestedChannels()
-	u.communities = u.backend.Communities()
+	u.setCommunities(u.backend.Communities())
+}
+
+func (u *UI) setCommunities(list []*model.Community) {
+	u.communities = list
+	if u.inCommunity == nil {
+		u.inCommunity = map[string]*model.Community{}
+	}
+	clear(u.inCommunity)
+	// A group joining or leaving a community changes its row's height.
+	clear(u.sidebar.order.heights)
+	for _, c := range list {
+		if c.Announcements != "" {
+			u.inCommunity[c.Announcements] = c
+		}
+		for _, id := range c.Groups {
+			u.inCommunity[id] = c
+		}
+	}
 }
 
 // Preview loads stored chats without starting the backend, for rendering
@@ -829,7 +850,7 @@ func (u *UI) applyEvents() {
 			u.channels = u.backend.Channels()
 			u.suggested = u.backend.SuggestedChannels()
 		case model.CommunitiesEvent:
-			u.communities = u.backend.Communities()
+			u.setCommunities(u.backend.Communities())
 		}
 	}
 }
