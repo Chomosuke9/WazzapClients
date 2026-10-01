@@ -521,7 +521,8 @@ type Backend interface {
 
 	// Chat list actions. Each is followed by a ChatEvent (or ChatsEvent).
 	SetArchived(chatID string, archived bool)
-	SetMuted(chatID string, muted bool)
+	// SetMuted mutes a chat for d, or for good when d is 0, or unmutes it.
+	SetMuted(chatID string, muted bool, d time.Duration)
 	SetPinned(chatID string, pinned bool)
 	SetUnread(chatID string, unread bool)
 	SetFavorite(chatID string, favorite bool)
