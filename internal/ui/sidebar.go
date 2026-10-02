@@ -664,6 +664,13 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 			who = shortName(c.Typing) + " is typing…"
 		}
 		children = append(children, layout.Flexed(1, u.label(size, who, p.Green).Layout))
+	case u.drafts[c.ID] != nil:
+		children = append(children, layout.Rigid(u.label(size, "Draft: ", p.Green).Layout))
+		ic, txt := draftPreview(u.drafts[c.ID])
+		if ic != nil {
+			children = append(children, small(ic, p.TextSecondary, 18, 4))
+		}
+		children = append(children, layout.Flexed(1, u.label(size, previewText(txt), p.TextSecondary, labelOpts{maxLines: 1}).Layout))
 	case last == nil:
 		children = append(children, layout.Flexed(1, layout.Spacer{}.Layout))
 	default:

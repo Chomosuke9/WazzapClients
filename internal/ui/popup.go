@@ -193,7 +193,7 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 		add(menuItem{key: "read", ic: icMarkUnread, label: "Mark as unread", run: func() {
 			b.SetUnread(id, true)
 			if u.selected != nil && u.selected.ID == id {
-				u.selected = nil
+				u.closeChat()
 			}
 		}})
 	}

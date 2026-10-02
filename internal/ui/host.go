@@ -74,6 +74,7 @@ func Run(b model.Backend, o Options) error {
 		wake:    make(chan struct{}, 1),
 		reqs:    make(chan request, 16),
 		syncPct: -1,
+		drafts:  make(map[string]*chatDraft),
 	}
 	h.notes = newNotifier(b, h)
 	h.upd.h = h
@@ -174,7 +175,8 @@ type host struct {
 	queue    []model.Event   // backend events for u
 	conn     model.ConnEvent // the latest state, for new windows
 	syncPct  int
-	openChat string // chat to open in the next window
+	openChat string                // chat to open in the next window
+	drafts   map[string]*chatDraft // the chats' drafts, kept across windows
 	quitting bool
 
 	// leaving is set while the open account logs out to switch to
@@ -392,6 +394,7 @@ func (h *host) openWindow() {
 func (h *host) newUI() {
 	u := New(hostBackend{Backend: h.b, h: h})
 	u.window, u.host = h.win, h
+	u.drafts = h.drafts
 	h.u = u
 	u.accounts = h.accountRows()
 	// The window may be there already (another account opened in it).
@@ -484,6 +487,7 @@ func (h *host) enableDrop(hwnd uintptr) {
 func (h *host) closeWindow() {
 	h.idle.Stop()
 	h.away.Stop()
+	h.u.stashDraft() // the open chat's composer, for the next window
 	h.u.shutdown()
 	h.win, h.u, h.events, h.ack, h.queue = nil, nil, nil, nil, nil
 	h.hwnd = 0

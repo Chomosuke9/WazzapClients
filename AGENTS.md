@@ -200,7 +200,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    (sendview.go), its photo editor (mediaedit.go) and the rendering of
                    edits and the send queue (editrender.go); replies, @mentions and
                    select mode live in compose.go; editing your messages (in the composer)
-                   and the Edit history dialog in edit.go;
+                   and the Edit history dialog in edit.go; drafts (what a chat's composer
+                   and send view held when another chat opened, and the list's "Draft:")
+                   in draft.go;
                    document cards and the voice/audio player in files.go; selecting message
                    text in textsel.go; searching a chat's messages (the panel that takes the info
                    panel's place) and a group's members in chatsearch.go; the composer's

@@ -47,7 +47,7 @@ func main() {
 	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")
 	win := flag.String("win", "", "in -compare mode, render a window of this size (W,H px) and crop it like the screenshot")
 	rightAligned := flag.Bool("right", false, "with -win, the screenshot is the window's right edge")
-	overlay := flag.String("overlay", "", "render only this overlay (menu, accounts, loginaccounts, slash, slashkick, slashrun, chatmenu, mute, lists, msgmenu, stickermenu, emoji, viewer, forward, reply, delete, select, edit, edits, mention, mentioned, attach, poll, contacts, invite, tray, quality, sendedit, sendcrop, sendfilter, senddoc, statusadd, statusmenu, statusprivacy, statustext, statussend, newchat, newnumber, newmembers, newgroup, search, membersearch) to <out>/overlay-<name>.png")
+	overlay := flag.String("overlay", "", "render only this overlay (menu, accounts, loginaccounts, slash, slashkick, slashrun, chatmenu, mute, lists, msgmenu, stickermenu, emoji, viewer, forward, reply, delete, select, edit, edits, mention, mentioned, attach, poll, contacts, invite, tray, quality, sendedit, sendcrop, sendfilter, senddoc, statusadd, statusmenu, statusprivacy, statustext, statussend, draft, newchat, newnumber, newmembers, newgroup, search, membersearch) to <out>/overlay-<name>.png")
 	at := flag.String("at", "600,300", "with -overlay, where menus open (x,y px)")
 	overlayChat := flag.String("ochat", "rina", "with -overlay, the demo chat to open")
 	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, info, message, reorder, hover or typing")

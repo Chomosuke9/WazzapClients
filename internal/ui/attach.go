@@ -357,6 +357,11 @@ func (u *UI) addFiles(chatID string, files []*attachFile) {
 			return
 		}
 		files = u.statusFiles(files)
+	} else if (u.selected == nil || u.selected.ID != chatID) && !isChannelID(chatID) && u.chatByID(chatID) != nil {
+		// Another chat opened while the file dialog was open: the files
+		// wait in the chat's draft.
+		u.draftFiles(chatID, files)
+		return
 	}
 	if len(a.files) > 0 && a.chatID != chatID || chatID != statusChatID &&
 		(u.selected == nil || u.selected.ID != chatID || isChannelID(chatID)) {
@@ -572,7 +577,8 @@ func (u *UI) closeSendView(sent bool) {
 }
 
 // dropAttachments forgets the send view at once, as when another chat
-// opens; the composer's text is the caller's.
+// opens (stashDraft has taken a chat's files first); the composer's text
+// is the caller's.
 func (u *UI) dropAttachments() {
 	a := &u.attach
 	removeTemps(a.files)

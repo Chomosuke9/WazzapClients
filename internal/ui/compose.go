@@ -74,6 +74,11 @@ func (u *UI) openDirect(id, name string) {
 }
 
 func (u *UI) closeChat() {
+	u.stashDraft()
+	if u.attach.chatID != statusChatID {
+		u.dropAttachments()
+	}
+	u.resetComposerAnims()
 	u.selected = nil
 	u.hideInfo()
 	u.hideChatSearch()

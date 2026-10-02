@@ -230,6 +230,11 @@ func (h *host) useBackend(b model.Backend) {
 		h.conn = model.ConnEvent{State: model.StateConnecting, Me: cur.Name, MeID: cur.ID}
 	}
 	h.leaving, h.leaveTo = false, ""
+	// Drafts belong to the account that was open.
+	if h.u != nil {
+		h.u.dropAttachments()
+	}
+	clearDrafts(h.drafts)
 	h.notes = newNotifier(b, h)
 	h.notes.enabled = h.notifyOK
 	h.notes.setChats(b.Chats())

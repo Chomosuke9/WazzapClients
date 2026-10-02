@@ -88,6 +88,7 @@ func (u *UI) confirmDeleteChat(id string) {
 			if u.selected != nil && u.selected.ID == id {
 				u.closeChat()
 			}
+			u.dropDraft(id)
 			u.backend.DeleteChat(id)
 		}})
 }

@@ -59,6 +59,10 @@ type UI struct {
 	me      string
 	meID    string
 
+	// drafts are the composers of chats left with something in them
+	// (draft.go); the host's, so they outlast the window.
+	drafts map[string]*chatDraft
+
 	chats     []*model.Chat
 	selected  *model.Chat
 	selPage   page             // page the selected chat was opened from
@@ -284,6 +288,7 @@ func New(b model.Backend) *UI {
 	u.images = newImageCache(240, 32<<20)
 	u.emojiImgs = newImageCache(600, 4<<20)
 	u.clicks.m = make(map[string]*clickEntry)
+	u.drafts = make(map[string]*chatDraft)
 	u.info.list.Axis = layout.Vertical
 	u.search.list.Axis = layout.Vertical
 	u.search.query.SingleLine = true
@@ -485,7 +490,7 @@ func (u *UI) SetConn(e model.ConnEvent) { u.conn = e }
 func (u *UI) Select(i int) {
 	u.applyEvents()
 	if i < 0 || i >= len(u.chats) {
-		u.selected = nil
+		u.closeChat()
 		return
 	}
 	u.open(u.chats[i])
@@ -506,6 +511,7 @@ func (u *UI) open(c *model.Chat) {
 	if u.selected != nil && u.selected.ID == c.ID && u.selPage == u.page {
 		return
 	}
+	u.stashDraft()
 	u.selPage = u.page
 	if u.info.from != c.ID {
 		u.hideInfo()
@@ -531,6 +537,7 @@ func (u *UI) open(c *model.Chat) {
 	u.picker.anim.snap(false)
 	u.stopVoice()
 	u.dropAttachments()
+	u.restoreDraft()
 }
 
 // markSeen marks the open chat read while it is on screen and the window
@@ -1413,6 +1420,13 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.newChat.disappearing = 7 * 86400
 		}
 		u.newChat.snap()
+	case "draft":
+		// Drafts left in two chats: the open one's text, and a photo
+		// waiting in Budi's send view.
+		u.conv.composer.SetText("I'll bring the snacks, see you at 7")
+		u.SelectID("budi")
+		u.addFiles("budi", []*attachFile{{Attachment: model.Attachment{Path: "beach.jpg", Media: model.MediaImage}}})
+		u.SelectID("dewi")
 	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter":
 		// $WAZZAP_DEMO_PHOTO is a real photo to show.
 		photo := os.Getenv("WAZZAP_DEMO_PHOTO")
