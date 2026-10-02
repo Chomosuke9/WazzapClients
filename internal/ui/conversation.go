@@ -761,11 +761,11 @@ func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color
 	children = append(children, layout.Rigid(u.label(12.5, m.Time.Format("15:04"), col).Layout))
 	if m.FromMe && m.Kind != model.KindDeleted {
 		ic, tc := receiptIcon(m.Receipt, u.pal, true)
-		if m.Receipt != model.Read {
+		if m.Receipt != model.Read && m.Receipt != model.Failed {
 			tc = col
-		}
-		if tickCol != nil && m.Receipt != model.Read {
-			tc = *tickCol
+			if tickCol != nil {
+				tc = *tickCol
+			}
 		}
 		children = append(children,
 			layout.Rigid(layout.Spacer{Width: 3}.Layout),

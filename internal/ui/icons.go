@@ -27,6 +27,7 @@ var (
 	icTick       = icon.Check
 	icTicks      = icon.DoneAll
 	icClock      = icon.Schedule
+	icFailed     = icon.Error
 	icImage      = icon.Image
 	icLock       = icon.LockFill
 	icBack       = icon.ArrowBack

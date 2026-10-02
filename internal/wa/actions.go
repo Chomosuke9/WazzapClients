@@ -213,12 +213,22 @@ func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg, fall
 		}
 		if err != nil {
 			b.log.Errorf("send to %s: %v", chatID, err)
-			b.emit(model.NoticeEvent{Text: "Couldn't send the message."})
+			b.sendFailed(chatID, id, "Couldn't send the message.")
 			return
 		}
 		_ = b.store.setReceipt(b.ctx, chatID, []string{id}, model.Sent)
 		b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{id}, Receipt: model.Sent})
 	}()
+}
+
+// sendFailed marks a pending message failed, so it stops showing a clock,
+// and says so.
+func (b *Backend) sendFailed(chatID, id, notice string) {
+	if err := b.store.setFailed(b.ctx, chatID, id); err != nil {
+		b.log.Errorf("mark %s failed: %v", id, err)
+	}
+	b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{id}, Receipt: model.Failed})
+	b.emit(model.NoticeEvent{Text: notice})
 }
 
 // sendCopy sends an existing message's content to another chat, as a

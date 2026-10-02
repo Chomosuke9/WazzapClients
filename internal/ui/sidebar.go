@@ -751,6 +751,8 @@ func receiptIcon(r model.Receipt, p *Palette, out bool) (*icon.Icon, color.NRGBA
 		col = p.MetaOut
 	}
 	switch r {
+	case model.Failed:
+		return icFailed, p.Danger
 	case model.Pending:
 		return icClock, col
 	case model.Sent:

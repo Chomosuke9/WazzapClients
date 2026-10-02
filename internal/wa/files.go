@@ -478,7 +478,7 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 	m := sm.Message
 	fail := func(err error) {
 		b.log.Errorf("send file %s to %s: %v", m.FileName, m.ChatID, err)
-		b.emit(model.NoticeEvent{Text: "Couldn't send " + m.FileName + "."})
+		b.sendFailed(m.ChatID, m.ID, "Couldn't send "+m.FileName+".")
 	}
 	cli := b.client()
 	if cli == nil {

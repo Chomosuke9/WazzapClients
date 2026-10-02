@@ -1209,7 +1209,10 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 		ids[id] = true
 	}
 	up := func(m *model.Message) {
-		if m != nil && m.FromMe && ids[m.ID] && m.Receipt < e.Receipt {
+		if m == nil || !m.FromMe || !ids[m.ID] {
+			return
+		}
+		if m.Receipt < e.Receipt || e.Receipt == model.Failed && m.Receipt == model.Pending {
 			m.Receipt = e.Receipt
 		}
 	}

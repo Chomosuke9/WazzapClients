@@ -251,7 +251,7 @@ func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Messag
 		res, err := cli.Upload(ctx, webp, whatsmeow.MediaImage)
 		if err != nil {
 			b.log.Errorf("upload sticker to %s: %v", chatID, err)
-			b.emit(model.NoticeEvent{Text: "Couldn't send the sticker."})
+			b.sendFailed(chatID, m.ID, "Couldn't send the sticker.")
 			return
 		}
 		e := &waE2E.StickerMessage{

@@ -143,6 +143,8 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS wz_messages_media ON wz_messages (media, ts) WHERE media != 0`,
 	`CREATE INDEX IF NOT EXISTS wz_messages_starred ON wz_messages (ts) WHERE starred != 0`,
 	`ALTER TABLE wz_messages ADD COLUMN album TEXT NOT NULL DEFAULT ''`, // ID of the album message
+	// For failStale.
+	`CREATE INDEX IF NOT EXISTS wz_messages_pending ON wz_messages (chat) WHERE from_me = 1 AND receipt = 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -157,7 +159,18 @@ func (s *msgStore) init(ctx context.Context) error {
 	if err := s.migrateLegacyMedia(ctx); err != nil {
 		return err
 	}
-	return s.migrateFileInfo(ctx)
+	if err := s.migrateFileInfo(ctx); err != nil {
+		return err
+	}
+	return s.failStale(ctx)
+}
+
+// failStale marks the messages still pending from an earlier run failed:
+// nothing sends them any more.
+func (s *msgStore) failStale(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET receipt = ? WHERE from_me = 1 AND receipt = ?`,
+		int(model.Failed), int(model.Pending))
+	return err
 }
 
 // migrateLegacyMedia converts media rows written by the first version,
@@ -325,6 +338,13 @@ func (s *msgStore) setReceipt(ctx context.Context, chat string, ids []string, r 
 	args = append(args, int(r))
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET receipt = ? WHERE chat = ? AND id IN (`+
 		placeholders(len(ids))+`) AND receipt < ?`, args...)
+	return err
+}
+
+// setFailed marks an outgoing message that is still pending as failed.
+func (s *msgStore) setFailed(ctx context.Context, chat, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET receipt = ? WHERE chat = ? AND id = ? AND receipt = ?`,
+		int(model.Failed), chat, id, int(model.Pending))
 	return err
 }
 

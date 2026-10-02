@@ -18,6 +18,11 @@ const (
 	Read
 )
 
+// Failed is an outgoing message that couldn't be sent. It comes before
+// Pending, so receipts that only move forward still lift it if the message
+// turns out to have gone out after all.
+const Failed Receipt = -1
+
 // Kind is how a message is drawn.
 type Kind int
 
@@ -439,7 +444,8 @@ type MessageEvent struct {
 	New bool
 }
 
-// ReceiptEvent upgrades the receipt of outgoing messages.
+// ReceiptEvent upgrades the receipt of outgoing messages, or marks pending
+// ones Failed.
 type ReceiptEvent struct {
 	ChatID  string
 	IDs     []string
