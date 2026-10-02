@@ -76,6 +76,36 @@ func TestMentionKeys(t *testing.T) {
 	}
 }
 
+// TestEnterAfterMention checks that Enter sends once a mention is picked:
+// the picked "@Name " no longer counts as a query that finds that member.
+func TestEnterAfterMention(t *testing.T) {
+	st := newSlashTest(t, "work")
+	st.typeText("@Bim")
+	st.press(key.NameReturn)
+	if st.text() != "@Bima " {
+		t.Fatalf("picked %q, want @Bima", st.text())
+	}
+	if ms := st.u.mentionQuery(); ms != nil {
+		t.Fatalf("the picker reopened after picking: %+v", ms.members)
+	}
+	before := len(st.u.msgs)
+	st.press(key.NameReturn)
+	if st.text() != "" || len(st.u.msgs) != before+1 {
+		t.Fatalf("Enter after the mention left %q and %d new messages, want it sent", st.text(), len(st.u.msgs)-before)
+	}
+	if m := st.u.msgs[len(st.u.msgs)-1]; !strings.Contains(m.Text, "Bima") {
+		t.Errorf("sent %q", m.Text)
+	}
+
+	// Editing the name makes it a query again.
+	st.typeText("@Bima")
+	st.u.conv.mentions = []mentionRef{{name: "Bima", jid: "bima"}}
+	st.u.conv.composer.SetCaret(3, 3) // "@Bi|ma"
+	if st.u.mentionQuery() == nil {
+		t.Error("no picker with the caret inside a picked mention")
+	}
+}
+
 // TestMentionPickerNames checks that the mention picker finds members you
 // haven't saved by their number typed any way, names them by the name they
 // gave themselves, and ranks better matches first.

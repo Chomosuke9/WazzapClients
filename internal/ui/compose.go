@@ -246,6 +246,15 @@ func (u *UI) mentionQuery() *mentionState {
 			if u.conv.mentionDismissed == string(txt[i-1:caret]) {
 				return nil
 			}
+			// A mention picked already, with the caret after it, isn't a
+			// query: "@Vivy " would still find Vivy, and Enter would pick
+			// her again instead of sending.
+			for _, mr := range u.conv.mentions {
+				at := []rune("@" + mr.name)
+				if end := i - 1 + len(at); end <= caret && string(txt[i-1:end]) == string(at) {
+					return nil
+				}
+			}
 			info := u.chatMembers(c.ID)
 			if info == nil {
 				return nil
