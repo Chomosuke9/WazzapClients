@@ -42,6 +42,8 @@ type content struct {
 	ctx      *waE2E.ContextInfo
 	buttons  *buttonsInfo // footer and buttons of business messages
 	file     fileInfo     // documents and audio
+	link     *model.LinkPreview
+	linkPic  []byte // the link preview's JPEG
 }
 
 func marshal(m proto.Message) []byte {
@@ -116,7 +118,13 @@ func describe(m *waE2E.Message) content {
 		return content{text: m.GetConversation()}
 	case m.GetExtendedTextMessage() != nil:
 		e := m.GetExtendedTextMessage()
-		return content{text: e.GetText(), bg: e.GetBackgroundArgb(), ctx: e.GetContextInfo()}
+		c := content{text: e.GetText(), bg: e.GetBackgroundArgb(), ctx: e.GetContextInfo()}
+		if e.GetTitle() != "" || e.GetDescription() != "" {
+			c.link = &model.LinkPreview{URL: e.GetMatchedText(), Title: e.GetTitle(),
+				Description: e.GetDescription()}
+			c.linkPic = e.GetJPEGThumbnail()
+		}
+		return c
 	case m.GetImageMessage() != nil:
 		e := m.GetImageMessage()
 		return content{text: e.GetCaption(), kind: model.KindImage, media: model.MediaImage,
@@ -295,6 +303,9 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	msg.Text = c.text
 	msg.Time = evt.Info.Timestamp
 	msg.Thumb = c.thumb
+	if c.link != nil {
+		msg.Link, msg.Thumb = c.link, c.linkPic
+	}
 	if c.kind == model.KindImage {
 		msg.Album = first(albumOf(evt.RawMessage), albumOf(m))
 	}

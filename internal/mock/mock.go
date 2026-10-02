@@ -248,6 +248,10 @@ func demo(now time.Time) []*demoChat {
 		Messages: []*model.Message{
 			txt(false, day(1, 19, 2), "Hey! Are we still on for the weekend trip?"),
 			txt(true, day(1, 19, 5), "Yes!! I already booked the villa in Ubud 🏡"),
+			{FromMe: true, Text: "https://villakayu.example/ubud", Time: day(1, 19, 5), Receipt: model.Read,
+				Link: &model.LinkPreview{URL: "https://villakayu.example/ubud", Title: "Villa Kayu · Ubud, Bali",
+					Description: "A private pool villa among the rice fields, 10 minutes from Ubud center. 3 bedrooms, breakfast included."},
+				ImageA: 0x56ab2f, ImageB: 0xa8e063},
 			{FromMe: true, Text: "Check in Friday 2pm, check out Sunday noon", Time: day(1, 19, 5), Receipt: model.Read, Starred: true},
 			txt(false, day(1, 19, 11), "Perfect. I'll bring the camera"),
 			txt(false, day(1, 19, 11), "Should we rent a car or just use Grab the whole time?"),

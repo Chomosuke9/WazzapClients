@@ -169,6 +169,11 @@ func (u *UI) sendComposer() {
 	}
 	d := u.draftFrom(txt)
 	d.Reply = u.conv.reply
+	if r := u.composerPreview(d.Text); r != nil {
+		d.Link = &model.LinkPreview{URL: r.url, Title: r.prev.Title, Description: r.prev.Description}
+		d.LinkThumb = r.prev.Thumb
+	}
+	u.conv.link.reset()
 	u.conv.composer.SetText("")
 	u.conv.reply = nil
 	u.conv.mentions = nil
@@ -453,6 +458,7 @@ func (u *UI) resetComposerAnims() {
 	s := &u.slash
 	s.anim.snap(false)
 	s.ghost, s.contacts, s.dismissed, s.problem = nil, nil, "", ""
+	c.link.reset()
 	c.selAnim.snap(false)
 	c.selV = 0
 	c.sendAnim.snap(false)
@@ -652,6 +658,15 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	if rv == 0 {
 		c.replyGhost = nil
 	}
+	// The preview of a link in the text, like the reply's.
+	link := u.composerPreview(c.composer.Text())
+	if link != nil {
+		c.link.ghost = link
+	}
+	lv := easeOut(c.link.anim.step(gtx, link != nil, durGrow))
+	if lv == 0 {
+		c.link.ghost = nil
+	}
 	hasText := trimSpace(c.composer.Text()) != "" && !c.editorElsewhere
 	sv := easeOut(c.sendAnim.step(gtx, hasText, durSwitch))
 	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
@@ -699,6 +714,24 @@ func (u *UI) layoutComposerBox(gtx C) D {
 				h := lerpInt(0, full.size.Y, rv)
 				defer clip.Rect{Max: image.Pt(full.size.X, h)}.Push(gtx.Ops).Pop()
 				withOpacity(gtx, rv, func() { full.at(gtx, 0, h-full.size.Y) })
+				return D{Size: image.Pt(full.size.X, h)}
+			}),
+			layout.Rigid(func(gtx C) D {
+				ghost := c.link.ghost
+				if ghost == nil {
+					return D{}
+				}
+				full := record(gtx, func(gtx C) D {
+					if link == nil {
+						var done func()
+						gtx, done = fadeOut(gtx)
+						defer done()
+					}
+					return u.layoutComposerLink(gtx, ghost)
+				})
+				h := lerpInt(0, full.size.Y, lv)
+				defer clip.Rect{Max: image.Pt(full.size.X, h)}.Push(gtx.Ops).Pop()
+				withOpacity(gtx, lv, func() { full.at(gtx, 0, h-full.size.Y) })
 				return D{Size: image.Pt(full.size.X, h)}
 			}),
 			layout.Rigid(func(gtx C) D {
@@ -768,7 +801,9 @@ func (u *UI) layoutComposerBox(gtx C) D {
 			}),
 		)
 		call := m.Stop()
-		r := lerpInt(gtx.Dp(28), gtx.Dp(20), rv)
+		// A preview above the input makes the box less round, its corner
+		// around theirs.
+		r := lerpInt(gtx.Dp(28), gtx.Dp(composerCardRadius+8), max(rv, lv))
 		fillRRect(gtx, image.Rectangle{Max: dims.Size}, min(dims.Size.Y/2, r), p.Composer)
 		call.Add(gtx.Ops)
 		for _, pk := range []struct {

@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"os"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/chomosuke9/wazzapclients/internal/accounts"
 	"github.com/chomosuke9/wazzapclients/internal/auto"
+	"github.com/chomosuke9/wazzapclients/internal/linkpreview"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -58,6 +60,9 @@ type UI struct {
 	syncPct int // initial history sync progress; -1 when not syncing
 	me      string
 	meID    string
+	// fetchLink reads a page for a link preview: linkpreview.Fetch, or a
+	// stand-in in tests.
+	fetchLink func(ctx context.Context, link string) (*linkpreview.Preview, error)
 
 	// drafts are the composers of chats left with something in them
 	// (draft.go); the host's, so they outlast the window.
@@ -238,6 +243,7 @@ type UI struct {
 		selV         float32           // select mode's progress this frame
 		sendAnim     tween             // the mic turning into the send button
 		glide        glide             // smooth scroll to a message
+		link         composerLink      // the preview of a link being typed
 		typingAnim   tween             // the typing bubble growing in and out
 		typingFor    string            // chat typingAnim belongs to
 		typingWho    [2]string         // who is typing (name, ID), kept while it fades out
@@ -276,7 +282,7 @@ var timeNow = time.Now
 // New builds the UI on top of a backend. Call Start before the first frame.
 func New(b model.Backend) *UI {
 	b, a := withAuto(b)
-	u := &UI{th: newTheme(), now: timeNow, backend: b, auto: a, syncPct: -1}
+	u := &UI{th: newTheme(), now: timeNow, backend: b, auto: a, syncPct: -1, fetchLink: linkpreview.Fetch}
 	u.SetDark(true)
 	u.doodles = true
 	u.split.anim.snap(true)
@@ -917,6 +923,7 @@ func (u *UI) update(gtx C) {
 	}
 	u.updateAttach()
 	u.updatePaste(gtx)
+	u.updateComposerLink(gtx)
 	u.ctrlEnterKeys(gtx)
 	u.slashKeys(gtx)
 	u.mentionKeys(gtx)
@@ -1272,8 +1279,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
-// "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "linkpreview" (a link's preview
+// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
@@ -1357,6 +1364,12 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		if lastIn != nil {
 			u.startReply(lastIn)
 		}
+	case "linkpreview":
+		const link = "https://villakayu.example/ubud"
+		u.conv.composer.SetText("This is the one " + link)
+		u.conv.link.url = link
+		u.conv.link.got = &linkResult{url: link, prev: &linkpreview.Preview{Title: "Villa Kayu · Ubud, Bali",
+			Description: "A private pool villa among the rice fields, 10 minutes from Ubud center."}}
 	case "delete":
 		if lastOut != nil {
 			u.confirmDelete([]*model.Message{lastOut})

@@ -25,6 +25,9 @@ const (
 	prefDoodles     = "doodles"    // wallpaper doodles; on unless "off"
 	prefEnterSend   = "enter_send" // Enter sends; on unless "off"
 	prefSecurityMsg = "security_notifications"
+	// Previews of the links you send, which ask the linked site for its
+	// title and picture; on unless "off".
+	prefLinkPreviews = "link_previews"
 )
 
 // The profile fields that can be edited (settingsState.editing).
@@ -538,6 +541,18 @@ func (u *UI) privacySettings() []settingsSection {
 			note: "Start new chats with disappearing messages set to your timer."},
 		{title: "Groups", rows: []settingRow{link("groups", "Groups", whoLabel(a.Privacy[model.PrivacyGroups]))}},
 		{title: "Blocked contacts", rows: []settingRow{link("blocked", "Blocked contacts", blocked)}},
+		{title: "Advanced", rows: []settingRow{{key: "linkpreviews", kind: setToggle,
+			on:    !prefOn(u.backend, prefLinkPreviews),
+			title: "Disable link previews",
+			sub: "To help protect your IP address from being inferred by third-party websites, previews for " +
+				"the links you share in chats will no longer be generated.",
+			run: func() {
+				v := "off"
+				if !prefOn(u.backend, prefLinkPreviews) {
+					v = "on"
+				}
+				u.backend.SetPref(prefLinkPreviews, v)
+			}}}},
 	}
 }
 

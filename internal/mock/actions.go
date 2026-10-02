@@ -50,6 +50,9 @@ func (b *Backend) add(m *model.Message) {
 func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 	m := &model.Message{ChatID: chatID, FromMe: true, Text: b.showMentions(chatID, d), Time: b.now(), Receipt: model.Sent}
 	m.Quote = quoteOf(d.Reply)
+	if d.Link.Shown(d.Text) {
+		m.Link, m.Thumb = d.Link, d.LinkThumb
+	}
 	b.add(m)
 	cp := *m
 	return &cp

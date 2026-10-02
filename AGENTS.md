@@ -200,7 +200,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    (sendview.go), its photo editor (mediaedit.go) and the rendering of
                    edits and the send queue (editrender.go); replies, @mentions and
                    select mode live in compose.go; editing your messages (in the composer)
-                   and the Edit history dialog in edit.go; drafts (what a chat's composer
+                   and the Edit history dialog in edit.go; link previews, in bubbles and
+                   over the composer, in linkpreview.go; drafts (what a chat's composer
                    and send view held when another chat opened, and the list's "Draft:")
                    in draft.go;
                    document cards and the voice/audio player in files.go; selecting message
@@ -250,6 +251,8 @@ internal/webpanim/ animated WebP (animated stickers), decoded one frame at a tim
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
+internal/linkpreview/ reads a page's Open Graph tags (or title) for the preview of a link you
+                   send; Settings > Privacy > Disable link previews turns it off
 internal/osclip/   files and pictures on the system clipboard (Gio's carries only text)
 internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or
                    osascript elsewhere), run on its own goroutine
@@ -392,7 +395,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun (open a
-# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, invite,
+# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, linkpreview, invite,
 # delete, select, edit, edits, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with

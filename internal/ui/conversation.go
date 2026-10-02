@@ -1085,6 +1085,13 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		contentW = max(contentW, fwd.size.X+2*textInset)
 	}
 
+	var link part
+	if hasLinkCard(m) {
+		lw := min(inner, max(contentW, gtx.Dp(320)))
+		link = record(cgtx, func(gtx C) D { return u.layoutLinkCard(gtx, m, lw, 7, quoteBg, textCol, secondary) })
+		contentW = max(contentW, link.size.X)
+	}
+
 	var quote part
 	if m.Quote != nil {
 		qm := u.quotedMessage(m.Quote)
@@ -1094,6 +1101,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		if quote.size.X < contentW {
 			quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, contentW, qm) })
 		}
+	}
+	if link.size.X > 0 && link.size.X < contentW {
+		link = record(cgtx, func(gtx C) D { return u.layoutLinkCard(gtx, m, contentW, 7, quoteBg, textCol, secondary) })
 	}
 	if u.btn("quote:"+m.ID).Clicked(gtx) && m.Quote != nil && m.Quote.ID != "" {
 		u.jumpTo(m.Quote.ID)
@@ -1145,6 +1155,10 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 			clickable(qg, u.btn("quote:"+m.ID), func(gtx C) D { return D{Size: quote.size} })
 		}()
 		y += quote.size.Y + gtx.Dp(5)
+	}
+	if link.size.Y > 0 {
+		link.at(gtx, 0, y)
+		y += link.size.Y + gtx.Dp(5)
 	}
 	if att.size.Y > 0 {
 		att.at(gtx, 0, y)

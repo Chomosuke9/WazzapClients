@@ -143,12 +143,20 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 	}
 	sm := storedMsg{Message: m}
 	msg := &waE2E.Message{Conversation: proto.String(d.Text)}
-	if ci := b.draftContext(chatID, d, &sm); ci != nil {
-		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+	link := d.Link.Shown(d.Text)
+	if link {
+		m.Link, m.Thumb = d.Link, d.LinkThumb
+	}
+	if ci := b.draftContext(chatID, d, &sm); ci != nil || link {
+		e := &waE2E.ExtendedTextMessage{
 			Text:                  proto.String(d.Text),
 			ContextInfo:           ci,
 			InviteLinkGroupTypeV2: waE2E.ExtendedTextMessage_DEFAULT.Enum(),
-		}}
+		}
+		if link {
+			addLink(e, d.Link, d.LinkThumb)
+		}
+		msg = &waE2E.Message{ExtendedTextMessage: e}
 		if d.MentionAdmins {
 			msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 		}
@@ -269,12 +277,16 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	case raw.Media != model.MediaNone || raw.Kind == model.KindDeleted || raw.Text == "":
 		return false // media we can't resend
 	default:
-		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(raw.Text), ContextInfo: ci}}
+		e := &waE2E.ExtendedTextMessage{Text: proto.String(raw.Text), ContextInfo: ci}
+		if raw.Link.Shown(raw.Text) {
+			addLink(e, raw.Link, raw.Thumb)
+		}
+		msg = &waE2E.Message{ExtendedTextMessage: e}
 	}
 	m := &model.Message{
 		ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Time: time.Now(), Receipt: model.Pending,
 		Kind: raw.Kind, Media: raw.Media, Duration: raw.Duration, Text: raw.Text, Thumb: raw.Thumb, Forwarded: forwarded,
-		Quote: q,
+		Quote: q, Link: raw.Link,
 	}
 	sm := storedMsg{Message: m, mediaBlob: blob}
 	if q != nil {

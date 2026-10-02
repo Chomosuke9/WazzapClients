@@ -100,7 +100,8 @@ type Message struct {
 	// Buttons its buttons.
 	Footer  string
 	Buttons []Button
-	// Thumb is a small JPEG preview for image and video messages.
+	// Thumb is a small JPEG preview for image and video messages, and a
+	// link preview's picture.
 	Thumb []byte
 	// FileName, FileSize (bytes), FileType (MIME type) and Pages describe a
 	// document or audio file. A document's Text is its caption, or its file
@@ -120,6 +121,23 @@ type Message struct {
 	// Edited is when the text (or caption) was last edited; zero when it
 	// never was.
 	Edited time.Time
+	// Link is the preview of a link in Text, or nil. Its picture is Thumb.
+	Link *LinkPreview
+}
+
+// LinkPreview is the card a text message shows for a link in it: what the
+// sender's app read from the page.
+type LinkPreview struct {
+	URL         string // the link as it appears in the text
+	Title       string
+	Description string
+}
+
+// Shown reports whether a message with text should show the preview: an
+// edit can take the link out.
+func (l *LinkPreview) Shown(text string) bool {
+	return l != nil && (l.Title != "" || l.Description != "") &&
+		(l.URL == "" || strings.Contains(text, l.URL))
 }
 
 // EditWindow is how long after sending a message you can edit it, as in
@@ -212,6 +230,10 @@ type Draft struct {
 	// MentionAdmins means Text contains "@<group JID>", shown as "@admin";
 	// Mentions then lists the group's admins.
 	MentionAdmins bool
+	// Link is the preview of a link in Text to send with it, or nil, and
+	// LinkThumb its picture (a small JPEG).
+	Link      *LinkPreview
+	LinkThumb []byte
 }
 
 // Attachment is a file to send.
