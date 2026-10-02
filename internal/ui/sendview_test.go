@@ -207,7 +207,12 @@ func TestSendViewCaptionsAndSend(t *testing.T) {
 	// Edit the photo, so it goes through the renderer.
 	f := u.attach.current()
 	f.edit.marks = append(f.edit.marks, mark{kind: markLine, pts: []f32.Point{{X: 10, Y: 10}, {X: 300, Y: 200}}, width: 8, col: markColors[2]})
-	before := len(u.msgs)
+	// The demo chat's messages from later today sort after the sent ones
+	// when the tests run early in the day, so find the new ones by identity.
+	old := map[*model.Message]bool{}
+	for _, m := range u.msgs {
+		old[m] = true
+	}
 	u.sendComposer()
 	if len(u.attach.files) != 0 {
 		t.Fatal("the send view stayed open")
@@ -219,7 +224,12 @@ func TestSendViewCaptionsAndSend(t *testing.T) {
 	if n := len(u.attach.outbox); n > 0 {
 		t.Fatalf("%d files never went out", n)
 	}
-	msgs := u.msgs[before:]
+	var msgs []*model.Message
+	for _, m := range u.msgs {
+		if !old[m] {
+			msgs = append(msgs, m)
+		}
+	}
 	if len(msgs) != 2 {
 		t.Fatalf("sent %d messages, want 2", len(msgs))
 	}
