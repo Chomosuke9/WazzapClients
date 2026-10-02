@@ -164,7 +164,8 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS wz_messages_pending ON wz_messages (chat) WHERE from_me = 1 AND receipt = 0`,
 	// Unix milliseconds of the last edit, 0 = never edited.
 	`ALTER TABLE wz_messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE wz_messages ADD COLUMN link TEXT NOT NULL DEFAULT ''`, // JSON linkInfo
+	`ALTER TABLE wz_messages ADD COLUMN link TEXT NOT NULL DEFAULT ''`,   // JSON linkInfo
+	`ALTER TABLE wz_chats ADD COLUMN general INTEGER NOT NULL DEFAULT 0`, // 1 for a community's General chat
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -645,7 +646,7 @@ type rawChat struct {
 
 const chatQuery = `
 	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts, c.favorite,
-		c.mentioned, m.id, m.sender_jid, m.sender_push, m.sender_name, m.from_me, m.ts, m.kind, m.media, m.duration, m.text, m.receipt, m.mentions
+		c.mentioned, c.general, m.id, m.sender_jid, m.sender_push, m.sender_name, m.from_me, m.ts, m.kind, m.media, m.duration, m.text, m.receipt, m.mentions
 	FROM wz_chats c
 	LEFT JOIN wz_messages m ON m.rowid = (
 		SELECT rowid FROM wz_messages WHERE chat = c.jid ORDER BY ts DESC, rowid DESC LIMIT 1
@@ -655,7 +656,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	var (
 		c                                 model.Chat
 		isGroup, archived, unread, fav    int
-		mentioned                         int
+		mentioned, general                int
 		pinned, mutedUntil, lastTS        int64
 		mID, mSender, mPush, mText, mMent sql.NullString
 		mLegacy                           sql.NullString
@@ -663,7 +664,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		mReceipt                          sql.NullInt64
 	)
 	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS, &fav,
-		&mentioned, &mID, &mSender, &mPush, &mLegacy, &mFromMe, &mTS, &mKind, &mMedia, &mDur, &mText, &mReceipt, &mMent)
+		&mentioned, &general, &mID, &mSender, &mPush, &mLegacy, &mFromMe, &mTS, &mKind, &mMedia, &mDur, &mText, &mReceipt, &mMent)
 	if err != nil {
 		return rawChat{}, err
 	}
@@ -674,6 +675,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		c.MuteUntil = time.Unix(mutedUntil, 0)
 	}
 	c.Favorite = fav != 0
+	c.General = general != 0
 	c.Archived = archived != 0
 	c.Unread = unread
 	c.Mentioned = mentioned != 0 && unread > 0

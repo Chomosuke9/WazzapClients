@@ -51,7 +51,7 @@ func NewReference() *Backend {
 				out("/reset", at(0, 2, 20), model.Sent),
 				in("Vivy", vivy, "Conversation history was reset.", at(0, 2, 20)),
 			}},
-		{model.Chat{ID: "chitchat@g.us", Name: "ChitChat", IsGroup: true, Muted: true},
+		{model.Chat{ID: "chitchat@g.us", Name: "ChitChat", IsGroup: true, Muted: true, General: true},
 			[]*model.Message{in("Vivy", vivy, "@~Natanael C halo! Ada yang mau ngobrol?", at(0, 2, 0))}},
 		{model.Chat{ID: "pam@g.us", Name: "PAM : Chat Bot Only", IsGroup: true, Muted: true},
 			[]*model.Message{{Sender: "~Dell Bot", SenderID: "dell@lid", Media: model.MediaImage, Kind: model.KindImage,

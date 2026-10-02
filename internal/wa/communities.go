@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 
+	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/types"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -201,4 +202,43 @@ func (s *msgStore) commonGroups(ctx context.Context, ids ...string) []commonGrou
 		out = append(out, g)
 	}
 	return out
+}
+
+// markGeneralChats marks the communities' General chats among your
+// groups. hypermeow doesn't parse the <general_chat/> in a group's node,
+// so this asks for the groups again, as GetJoinedGroups does, and only
+// looks for that.
+func (b *Backend) markGeneralChats() {
+	cli := b.client()
+	if cli == nil {
+		return
+	}
+	resp, err := cli.DangerousInternals().SendGroupIQ(b.ctx, "get", types.GroupServerJID, waBinary.Node{
+		Tag:     "participating",
+		Content: []waBinary.Node{{Tag: "participants"}, {Tag: "description"}},
+	})
+	if err != nil {
+		b.log.Warnf("get general chats: %v", err)
+		return
+	}
+	groups, ok := resp.GetOptionalChildByTag("groups")
+	if !ok {
+		return
+	}
+	var general []any
+	for _, g := range groups.GetChildren() {
+		if _, ok := g.GetOptionalChildByTag("general_chat"); !ok || g.Tag != "group" {
+			continue
+		}
+		if id, _ := g.Attrs["id"].(string); id != "" {
+			general = append(general, types.NewJID(id, types.GroupServer).String())
+		}
+	}
+	q := `UPDATE wz_chats SET general = 0 WHERE general != 0`
+	if len(general) > 0 {
+		q = `UPDATE wz_chats SET general = (jid IN (` + placeholders(len(general)) + `)) WHERE is_group = 1`
+	}
+	if _, err := b.db.ExecContext(b.ctx, q, general...); err != nil {
+		b.log.Warnf("store general chats: %v", err)
+	}
 }

@@ -1179,6 +1179,7 @@ func (b *Backend) refreshGroupNames() {
 			_ = b.store.setName(b.ctx, g.JID.String(), g.Name)
 		}
 	}
+	b.markGeneralChats()
 	b.emitAllChats()
 	b.emit(model.CommunitiesEvent{})
 }

@@ -185,6 +185,9 @@ type Chat struct {
 	Archived  bool
 	Favorite  bool
 	Self      bool // the "message yourself" chat
+	// General is a community's General chat, which shows a speech bubble
+	// while it has no picture.
+	General bool
 	// Unread counts unread messages; -1 means marked as unread.
 	Unread int
 	// Mentioned means one of the unread messages of a group mentions you

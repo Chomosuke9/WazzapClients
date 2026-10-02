@@ -163,6 +163,10 @@ Gotchas already found in the pinned version (v0.10.x):
   moves its caret with them as usual. In a command's text that takes @mentions
   (`Option.Mentions`, /schedule's message) the mention picker shows instead, and it
   takes Enter first (`slashTakesMentions`).
+- hypermeow doesn't parse a group's `<general_chat/>` (a community's General chat).
+  `markGeneralChats` (`internal/wa/communities.go`) asks for the joined groups again
+  through `DangerousInternals().SendGroupIQ` on connect and reads it from the raw nodes.
+  Run the app with `-debug` to see raw nodes in `wazzap.log` when something is missing.
 - WhatsApp now sends most message edits as a `secretEncryptedMessage` (MESSAGE_EDIT),
   decrypted with `DecryptSecretEncryptedMessage`, not as a `protocolMessage`. History
   sync (`ParseWebMessage`) hands an edit out as the new content under the original's
@@ -202,7 +206,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    select mode live in compose.go; editing your messages (in the composer)
                    and the Edit history dialog in edit.go; Message info (who got and read
                    one of your messages, and when; it takes the info panel's place) in
-                   msginfo.go; link previews, in bubbles and
+                   msginfo.go; profile pictures and their placeholders (a person's initial
+                   on a color from their ID, a General chat's speech bubble) in avatar.go; link previews, in bubbles and
                    over the composer, in linkpreview.go; drafts (what a chat's composer
                    and send view held when another chat opened, and the list's "Draft:")
                    in draft.go;
