@@ -91,6 +91,9 @@ type UI struct {
 		switchAcct widget.Clickable
 		qrData     string
 		qr         *qr.Code
+		// history is model.PrefHistorySync ("" until read), and recent
+		// the last number of days picked, for the "Recent messages" row.
+		history, recent string
 	}
 
 	// accounts lists the linked accounts, from the host; nil when there

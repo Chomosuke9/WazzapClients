@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"strconv"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -20,10 +21,140 @@ var loginSteps = []string{
 	"Point your phone at this screen to scan the QR code",
 }
 
+// historyChoices are the lengths offered for "Recent messages", as
+// model.PrefHistorySync values.
+var historyChoices = []struct{ val, name string }{
+	{"30", "1 month"},
+	{"90", "3 months"},
+	{"180", "6 months"},
+	{"365", "1 year"},
+}
+
 func (u *UI) updateLogin(gtx C) {
 	if u.login.retry.Clicked(gtx) {
 		u.backend.Retry()
 	}
+	if u.btn("login:recent").Clicked(gtx) {
+		u.setHistory(u.recentHistory())
+	}
+	if u.btn("login:full").Clicked(gtx) {
+		u.setHistory(model.HistoryFull)
+	}
+	for _, c := range historyChoices {
+		if u.btn("login:history:" + c.val).Clicked(gtx) {
+			u.setHistory(c.val)
+		}
+	}
+}
+
+// historyPref is how much chat history linking asks the phone for
+// (model.PrefHistorySync).
+func (u *UI) historyPref() string {
+	if u.login.history == "" {
+		u.login.history = u.backend.Pref(model.PrefHistorySync)
+		if u.login.history == "" {
+			u.login.history = strconv.Itoa(model.HistoryDefaultDays)
+		}
+	}
+	return u.login.history
+}
+
+// recentHistory is the length "Recent messages" stands for: the one picked
+// last, or the default.
+func (u *UI) recentHistory() string {
+	if h := u.historyPref(); h != model.HistoryFull {
+		return h
+	}
+	if u.login.recent != "" {
+		return u.login.recent
+	}
+	return strconv.Itoa(model.HistoryDefaultDays)
+}
+
+// setHistory changes how much chat history linking asks for. The phone
+// gets it with the QR code, so a code on screen is replaced.
+func (u *UI) setHistory(v string) {
+	old := u.historyPref()
+	if v == old {
+		return
+	}
+	if old != model.HistoryFull {
+		u.login.recent = old
+	}
+	u.login.history = v
+	u.backend.SetPref(model.PrefHistorySync, v)
+	if u.conn.State == model.StateQR || u.conn.State == model.StateStarting {
+		u.backend.Retry()
+	}
+}
+
+// layoutHistoryChoice lets the user pick how much chat history linking
+// copies from the phone: recent messages, and how far back, or all of it.
+func (u *UI) layoutHistoryChoice(gtx C) D {
+	p := u.pal
+	full := u.historyPref() == model.HistoryFull
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(u.label(14, "Chat history to copy from your phone", p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+		layout.Rigid(layout.Spacer{Height: 10}.Layout),
+		layout.Rigid(func(gtx C) D {
+			return u.historyOption(gtx, "login:recent", !full, "Recent messages", "")
+		}),
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Left: 32, Top: 8, Bottom: 14}.Layout(gtx, u.layoutHistoryChips)
+		}),
+		layout.Rigid(func(gtx C) D {
+			return u.historyOption(gtx, "login:full", full, "Full chat history",
+				"Takes longer to link and uses more storage")
+		}),
+	)
+}
+
+// historyOption is a radio button row of layoutHistoryChoice.
+func (u *UI) historyOption(gtx C, key string, on bool, title, sub string) D {
+	p := u.pal
+	return clickable(gtx, u.btn(key), func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx C) D { return u.radio(gtx, on) }),
+			layout.Rigid(layout.Spacer{Width: 12}.Layout),
+			layout.Flexed(1, func(gtx C) D {
+				lines := []layout.FlexChild{
+					layout.Rigid(u.label(16, title, p.Text, labelOpts{maxLines: 1}).Layout),
+				}
+				if sub != "" {
+					lines = append(lines, layout.Rigid(u.label(13, sub, p.TextSecondary, labelOpts{maxLines: 1}).Layout))
+				}
+				d := layout.Flex{Axis: layout.Vertical}.Layout(gtx, lines...)
+				d.Size.X = gtx.Constraints.Max.X
+				return d
+			}),
+		)
+	})
+}
+
+// layoutHistoryChips draws how far back "Recent messages" goes.
+func (u *UI) layoutHistoryChips(gtx C) D {
+	p := u.pal
+	h := u.historyPref()
+	gtx.Constraints.Min = image.Point{}
+	children := make([]layout.FlexChild, 0, 2*len(historyChoices))
+	for i, c := range historyChoices {
+		if i > 0 {
+			children = append(children, layout.Rigid(layout.Spacer{Width: 8}.Layout))
+		}
+		c := c
+		var active float32
+		if c.val == h {
+			active = 1
+		}
+		fg := mix(p.ChipText, p.ChipActiveText, active)
+		children = append(children, layout.Rigid(func(gtx C) D {
+			return u.chip(gtx, u.btn("login:history:"+c.val), active, func(gtx C) D {
+				return layout.Inset{Left: 12, Right: 12}.Layout(gtx,
+					u.label(14, c.name, fg, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+			})
+		}))
+	}
+	return layout.Flex{}.Layout(gtx, children...)
 }
 
 // layoutLogin is the device-linking screen shown while there is no session.
@@ -68,6 +199,11 @@ func (u *UI) layoutLoginCard(gtx C) D {
 						layout.Rigid(layout.Spacer{Height: 20}.Layout),
 					)
 				}
+				children = append(children,
+					layout.Rigid(layout.Spacer{Height: 8}.Layout),
+					layout.Rigid(u.layoutHistoryChoice),
+					layout.Rigid(layout.Spacer{Height: 20}.Layout),
+				)
 				if u.conn.State == model.StateError && u.conn.Err != "" {
 					children = append(children, layout.Rigid(
 						u.label(14, u.conn.Err, rgb(0xea0038), labelOpts{maxLines: 3}).Layout))

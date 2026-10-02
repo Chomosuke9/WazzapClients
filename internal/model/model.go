@@ -525,6 +525,19 @@ const (
 	StickersReceived                   // received in chats
 )
 
+// PrefHistorySync is the Pref key for how much chat history linking a
+// device asks the phone for: HistoryFull, or a number of days (the login
+// screen offers 30, 90, 180 and 365). It applies to the next QR code, so
+// the UI calls Retry after changing it while a code is shown.
+const PrefHistorySync = "history_sync"
+
+// HistoryFull is the PrefHistorySync value for all of the chat history.
+const HistoryFull = "full"
+
+// HistoryDefaultDays is the history linking asks for when PrefHistorySync
+// is unset.
+const HistoryDefaultDays = 90
+
 // Backend is everything the UI needs from a WhatsApp connection.
 //
 // Methods are called from the UI goroutine and must not block for long.
@@ -680,7 +693,8 @@ type Backend interface {
 	// SetDefaultTimer sets the disappearing messages timer of new chats
 	// (0 turns it off).
 	SetDefaultTimer(d time.Duration)
-	// Retry restarts pairing after the QR codes expired.
+	// Retry restarts pairing after the QR codes expired, or with new QR
+	// codes while they are shown (after PrefHistorySync changed).
 	Retry()
 	// Logout unlinks this device and returns to the QR screen.
 	Logout()

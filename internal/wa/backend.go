@@ -26,6 +26,7 @@ import (
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
 	waLog "github.com/polymorfa/hypermeow/util/log"
+	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, registers "sqlite"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -45,6 +46,9 @@ type Backend struct {
 
 	cliMu sync.Mutex
 	cli   *whatsmeow.Client
+
+	pairMu     sync.Mutex
+	pairCancel context.CancelFunc // stops the running pair's QR loop
 
 	mu     sync.Mutex
 	events []model.Event
@@ -198,20 +202,23 @@ func (b *Backend) connect() {
 	}
 }
 
-// pair shows QR codes until the phone links this device or the codes run out.
+// pair shows QR codes until the phone links this device, the codes run out,
+// or a newer pair (Retry) takes over.
 func (b *Backend) pair() {
-	cli := b.client()
-	b.emit(model.ConnEvent{State: model.StateStarting})
-	ch, err := cli.GetQRChannel(b.ctx)
-	if err != nil {
-		b.fail("Couldn't start linking: %v", err)
+	ctx, cli, ch, ok := b.startPair()
+	if !ok {
 		return
 	}
-	if err := cli.Connect(); err != nil {
-		b.fail("Couldn't connect to WhatsApp: %v", err)
-		return
-	}
-	for item := range ch {
+	for {
+		var item whatsmeow.QRChannelItem
+		select {
+		case <-ctx.Done():
+			return
+		case item, ok = <-ch:
+		}
+		if !ok || ctx.Err() != nil {
+			return
+		}
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
 			b.emit(model.ConnEvent{State: model.StateQR, QR: item.Code})
@@ -231,17 +238,82 @@ func (b *Backend) pair() {
 	}
 }
 
-// Retry restarts linking after the QR codes expired, or reconnects an
-// existing session after an error.
+// startPair stops the previous pair, if any, and connects a new client for
+// linking. Each attempt gets a new client: the history sync choice goes out
+// when the client connects, and a QR channel stopped mid-way leaves its
+// event handler on its client.
+func (b *Backend) startPair() (context.Context, *whatsmeow.Client, <-chan whatsmeow.QRChannelItem, bool) {
+	b.pairMu.Lock()
+	defer b.pairMu.Unlock()
+	if b.client().Store.ID != nil {
+		return nil, nil, nil, false // linked meanwhile
+	}
+	if b.pairCancel != nil {
+		b.pairCancel()
+	}
+	ctx, cancel := context.WithCancel(b.ctx)
+	b.pairCancel = cancel
+
+	b.client().Disconnect()
+	b.useDevice(b.container.NewDevice())
+	b.applyHistorySync()
+	cli := b.client()
+	b.emit(model.ConnEvent{State: model.StateStarting})
+	ch, err := cli.GetQRChannel(ctx)
+	if err != nil {
+		b.fail("Couldn't start linking: %v", err)
+		return nil, nil, nil, false
+	}
+	if err := cli.Connect(); err != nil {
+		b.fail("Couldn't connect to WhatsApp: %v", err)
+		return nil, nil, nil, false
+	}
+	return ctx, cli, ch, true
+}
+
+// allHistoryDays is the history limit sent for "full": WhatsApp wants a
+// number of days, and leaving it out lets the phone pick (about a year).
+const allHistoryDays = 20 * 365
+
+// applyHistorySync sets how much chat history the next link asks the phone
+// for (model.PrefHistorySync). The phone reads it when the client connects
+// to show a QR code. Without RequireFullSync it sends about three months;
+// with it, FullSyncDaysLimit days.
+func (b *Backend) applyHistorySync() {
+	if b.Pref(model.PrefHistorySync) == "" {
+		// Store the default, so history that arrives later is cut the same way.
+		b.SetPref(model.PrefHistorySync, strconv.Itoa(model.HistoryDefaultDays))
+	}
+	days, limited := b.historyDays()
+	if !limited {
+		days = allHistoryDays
+	}
+	store.DeviceProps.RequireFullSync = proto.Bool(true)
+	store.DeviceProps.HistorySyncConfig.FullSyncDaysLimit = proto.Uint32(uint32(days))
+}
+
+// historyDays is how many days of history this device keeps from history
+// syncs (model.PrefHistorySync). limited is false for all of it, and for
+// accounts linked before the choice existed.
+func (b *Backend) historyDays() (days int, limited bool) {
+	days, err := strconv.Atoi(b.Pref(model.PrefHistorySync))
+	if err != nil || days <= 0 {
+		return 0, false
+	}
+	return days, true
+}
+
+// Retry restarts linking after the QR codes expired (or with new codes,
+// after the history choice changed), or reconnects an existing session
+// after an error.
 func (b *Backend) Retry() {
 	go func() {
-		cli := b.client()
-		cli.Disconnect()
-		if cli.Store.ID == nil {
+		if b.client().Store.ID == nil {
 			b.pair()
-		} else {
-			b.connect()
+			return
 		}
+		b.client().Disconnect()
+		b.connect()
 	}()
 }
 
@@ -272,9 +344,11 @@ func (b *Backend) Close() {
 // starts linking again.
 func (b *Backend) resetSession() {
 	b.client().Disconnect()
+	history := b.Pref(model.PrefHistorySync) // the login screen still shows it
 	if err := b.store.wipe(b.ctx); err != nil {
 		b.log.Errorf("wipe message store: %v", err)
 	}
+	b.SetPref(model.PrefHistorySync, history)
 	b.names.clear()
 	b.emit(model.ChatsEvent{})
 	b.useDevice(b.container.NewDevice())
@@ -825,6 +899,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 	}
 	var convs []convData
 	var statuses []storedStatus
+	// Phones don't always keep to the limit linking asked for.
+	var cutoff time.Time
+	if days, ok := b.historyDays(); ok {
+		cutoff = time.Now().AddDate(0, 0, -days)
+	}
 	for _, conv := range data.GetConversations() {
 		raw, err := types.ParseJID(conv.GetID())
 		if err != nil {
@@ -867,6 +946,9 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			lastTS:     int64(max(conv.GetConversationTimestamp(), conv.GetLastMsgTimestamp())),
 		}
 		for _, hm := range conv.GetMessages() {
+			if int64(hm.GetMessage().GetMessageTimestamp()) < cutoff.Unix() {
+				continue
+			}
 			evt, err := cli.ParseWebMessage(raw, hm.GetMessage())
 			if err != nil {
 				continue
