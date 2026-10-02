@@ -35,6 +35,9 @@ jobs:
     env:
       CGO_ENABLED: ${{ matrix.cgo }}
       GOFLAGS: -mod=readonly
+      # A tag build knows its version, which turns on its updates
+      # (internal/update); other builds are development builds.
+      VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
 
     defaults:
       run:
@@ -107,7 +110,7 @@ jobs:
 
           go build `
             -trimpath `
-            -ldflags '-s -w -H=windowsgui' `
+            -ldflags "-s -w -H=windowsgui -X main.version=$env:VERSION" `
             -o bin/dist/WazzapClients-windows-amd64.exe `
             ./cmd/wazzap
 
@@ -124,6 +127,39 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+
+          # Inno Setup wants a plain number; development builds are 0.0.0.
+          $ver = if ($env:VERSION) { $env:VERSION.TrimStart('v') } else { '0.0.0' }
+
+          & $iscc /Qp "/DAppVersion=$ver" installer/wazzap.iss
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          path: bin/dist/WazzapClients-Setup.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
       # =========================
       # Linux
       # =========================
@@ -135,7 +171,7 @@ jobs:
 
           go build \
             -trimpath \
-            -ldflags '-s -w' \
+            -ldflags "-s -w -X main.version=$VERSION" \
             -o bin/dist/WazzapClients-linux-amd64 \
             ./cmd/wazzap
 
@@ -165,10 +201,25 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: Download Windows build
         uses: actions/download-artifact@v8
         with:
           name: WazzapClients-windows-amd64.exe
+          path: dist
+
+      - name: Download Windows installer
+        uses: actions/download-artifact@v8
+        with:
+          name: WazzapClients-Setup.exe
           path: dist
 
       - name: Download Linux build
@@ -186,10 +237,30 @@ jobs:
         run: |
           sha256sum \
             WazzapClients-windows-amd64.exe \
+            WazzapClients-Setup.exe \
             WazzapClients-linux-amd64 \
             > SHA256SUMS
 
           sha256sum --check SHA256SUMS
+
+      # The app only installs updates whose SHA256SUMS this key signed
+      # (internal/update). signrelease uses only the standard library, so
+      # it builds as a module of its own, without the patched go-text.
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo 'The RELEASE_SIGNING_KEY secret is missing; see docs/releasing.md.' >&2
+            exit 1
+          fi
+
+          sign="$RUNNER_TEMP/signrelease"
+          mkdir -p "$sign"
+          cp cmd/signrelease/main.go "$sign/"
+          cd "$sign"
+          go mod init signrelease
+          go run . "$GITHUB_WORKSPACE/dist/SHA256SUMS"
 
       - name: Create or update draft release
         env:
@@ -207,16 +278,20 @@ jobs:
 
             gh release upload "$RELEASE_TAG" \
               dist/WazzapClients-windows-amd64.exe \
+              dist/WazzapClients-Setup.exe \
               dist/WazzapClients-linux-amd64 \
               dist/SHA256SUMS \
+              dist/SHA256SUMS.sig \
               --clobber
 
           else
 
             gh release create "$RELEASE_TAG" \
               dist/WazzapClients-windows-amd64.exe \
+              dist/WazzapClients-Setup.exe \
               dist/WazzapClients-linux-amd64 \
               dist/SHA256SUMS \
+              dist/SHA256SUMS.sig \
               --verify-tag \
               --draft \
               --generate-notes \

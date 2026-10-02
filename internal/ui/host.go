@@ -51,6 +51,9 @@ type Options struct {
 	// the open one's. With nil Accounts there is only that backend.
 	Accounts *accounts.List
 	Open     func(dir string) (model.Backend, error)
+	// Version is the release this build is ("v1.2.3"), or "" for a
+	// development build, which doesn't update itself.
+	Version string
 }
 
 // Run runs the app until it quits. It opens a window and, while a tray
@@ -74,6 +77,10 @@ func Run(b model.Backend, o Options) error {
 		syncPct: -1,
 	}
 	h.notes = newNotifier(b, h)
+	h.upd.h = h
+	if exe, err := os.Executable(); err == nil {
+		h.upd.exe = exe
+	}
 	var cmd []string
 	if exe, err := os.Executable(); err == nil && o.Relaunch != nil {
 		cmd = append([]string{exe}, o.Relaunch...)
@@ -177,6 +184,7 @@ type host struct {
 	leaveTo string
 	// notice is shown in the next UI (a toast after switching accounts).
 	notice string
+	upd    updater
 }
 
 type request struct {
@@ -193,6 +201,8 @@ const (
 	reqActivate                  // a notification or one of its buttons
 	reqSwitch                    // open another account
 	reqAddAccount                // link a new account
+	reqRedraw                    // an update moved on: show it
+	reqRestart                   // an update is in place: start it and quit
 )
 
 // request queues r for the UI goroutine. It's called from other
@@ -303,6 +313,13 @@ func (h *host) handle(r request) bool {
 		h.switchAccount(r.dir)
 	case reqAddAccount:
 		h.addAccount()
+	case reqRedraw:
+		if h.u != nil {
+			h.u.settings.stale = true
+			h.win.Invalidate()
+		}
+	case reqRestart:
+		return h.restart()
 	}
 	return false
 }

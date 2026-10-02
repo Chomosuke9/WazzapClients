@@ -221,7 +221,7 @@ func (u *UI) settingsPage() []settingsSection {
 	case settingExtras:
 		return u.extrasSettings()
 	case settingHelp:
-		return helpSettings()
+		return u.helpSettings()
 	}
 	return nil
 }
@@ -708,7 +708,7 @@ const (
 	legalURL      = "https://www.whatsapp.com/legal/"
 )
 
-func helpSettings() []settingsSection {
+func (u *UI) helpSettings() []settingsSection {
 	link := func(key string, ic *icon.Icon, title, sub, url string) settingRow {
 		return settingRow{key: key, ic: ic, title: title, sub: sub, trailing: icOpenInNew, run: func() { openURL(url) }}
 	}
@@ -717,10 +717,10 @@ func helpSettings() []settingsSection {
 			link("faq", icHelp, "Help centre", "Get help with WhatsApp", helpCentreURL),
 			link("issues", icBubble, "Report a problem", "Tell us about a bug in "+appName, issuesURL),
 		}},
-		{title: "About", rows: []settingRow{
+		{title: "About", rows: append(u.updateRows(),
 			link("source", icLink, "Source code", "github.com/Chomosuke9/WazzapClients", sourceURL),
 			link("legal", icDocument, "Terms and Privacy Policy", "WhatsApp's terms apply to your account", legalURL),
-		}, note: appName + " is an unofficial WhatsApp client. It isn't made by or affiliated with WhatsApp or Meta."},
+		), note: appName + " is an unofficial WhatsApp client. It isn't made by or affiliated with WhatsApp or Meta."},
 	}
 }
 

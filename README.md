@@ -25,7 +25,10 @@ whatsmeow.
 
 Prebuilt packages for Windows (amd64) and Linux (amd64) are published on the
 [Releases](https://github.com/chomosuke9/wazzapclients/releases) page and as artifacts of
-each CI run. See [docs/releasing.md](docs/releasing.md) for details.
+each CI run. On Windows, `WazzapClients-Setup.exe` installs it for your user (no admin
+rights); `WazzapClients-windows-amd64.exe` is the same app without an installer.
+**Settings > Help > Check for updates** installs a newer release in place. See
+[docs/releasing.md](docs/releasing.md) for details.
 
 ## Build from source
 

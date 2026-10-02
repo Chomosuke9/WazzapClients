@@ -2,7 +2,10 @@
 
 package desktop
 
-import "image"
+import (
+	"image"
+	"time"
+)
 
 // Lock always succeeds: other systems don't stop a second instance yet.
 func Lock(dir string) bool { return true }
@@ -24,3 +27,6 @@ func StartAtLogin() bool { return false }
 
 // SetStartAtLogin fails.
 func SetStartAtLogin(on bool, args []string) error { return ErrUnsupported }
+
+// WaitExit returns at once: Lock doesn't stop a second instance here.
+func WaitExit(pid int, d time.Duration) {}

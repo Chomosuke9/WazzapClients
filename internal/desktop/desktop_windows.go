@@ -486,3 +486,14 @@ func SetStartAtLogin(on bool, args []string) error {
 	}
 	return k.SetStringValue("WazzapClients", cmd)
 }
+
+// WaitExit waits up to d for the process pid to exit: a restarted app
+// waits for the instance that started it to let go of Lock.
+func WaitExit(pid int, d time.Duration) {
+	p, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		return // gone already
+	}
+	defer windows.CloseHandle(p)
+	windows.WaitForSingleObject(p, uint32(d/time.Millisecond))
+}

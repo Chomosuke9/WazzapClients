@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	rdebug "runtime/debug"
 	"slices"
+	"time"
 
 	"gioui.org/app"
 	"gioui.org/unit"
@@ -19,8 +20,13 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui"
+	"github.com/chomosuke9/wazzapclients/internal/update"
 	"github.com/chomosuke9/wazzapclients/internal/wa"
 )
+
+// version is the release this build is, set by the release build
+// (-ldflags "-X main.version=v1.2.3"). Builds without one don't update.
+var version = ""
 
 func main() {
 	demo := flag.Bool("demo", false, "show demo chats instead of connecting to WhatsApp")
@@ -31,6 +37,7 @@ func main() {
 	// COM adds -Embedding (or /Embedding) when a notification click
 	// starts the app.
 	embedding := flag.Bool("Embedding", false, "started by a notification click (set by Windows)")
+	waitPID := flag.Int("wait-pid", 0, "wait for this process to exit first (set by an update's restart)")
 	flag.Parse()
 	*embedding = *embedding || slices.Contains(flag.Args(), "/Embedding")
 	// A chat app idles most of the time; trade a little CPU during bursts
@@ -50,8 +57,14 @@ func main() {
 	if *demo {
 		lockDir = demoDir
 	}
+	if *waitPID != 0 {
+		desktop.WaitExit(*waitPID, 15*time.Second)
+	}
 	if !desktop.Lock(lockDir) {
 		return
+	}
+	if exe, err := os.Executable(); err == nil && version != "" {
+		update.Cleanup(exe)
 	}
 
 	// Each linked account has a data directory of its own (see accounts);
@@ -75,6 +88,7 @@ func main() {
 		NotifyDir: filepath.Join(*dataDir, "notifications"),
 		Accounts:  list,
 		Open:      open,
+		Version:   version,
 	}
 	if *demo {
 		opts.NotifyDir = demoDir

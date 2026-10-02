@@ -173,6 +173,8 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
 cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory
+cmd/signrelease/   signs a release's SHA256SUMS with the update key (CI), or makes a new key
+installer/         the Windows installer (Inno Setup), per user in %LocalAppData%\Programs
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
                    settings), conversation and composer (an album's pictures as one grid in
@@ -241,6 +243,10 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
                    or osascript elsewhere
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
                    (Windows; stubs elsewhere)
+internal/update/   updates from GitHub releases when the user asks (Settings > Help): checks
+                   the signed SHA256SUMS, swaps the executable (the running one moves to
+                   .old on Windows) and the UI restarts it with -wait-pid (ui/update.go).
+                   Only tag builds (-X main.version=v1.2.3) update
 internal/accounts/ the WhatsApp accounts linked on this computer (accounts.json), each with
                    a data directory of its own: the first is the data directory itself,
                    the ones added later are accounts/<n>
