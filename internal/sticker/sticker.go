@@ -1,8 +1,9 @@
 // Package sticker makes WhatsApp stickers: a picture fitted into a 512x512
 // transparent canvas, with meme text if you like, as a lossless WebP. It
 // has its own WebP encoder (vp8l.go), since golang.org/x/image only
-// decodes WebP and the libwebp bindings need cgo or keep a WebAssembly
-// runtime in memory.
+// decodes WebP, and libwebp needs cgo or, translated to Go
+// (github.com/gen2brain/webp), adds megabytes to the executable and
+// registers a second WebP decoder for image.Decode.
 package sticker
 
 import (

@@ -241,7 +241,7 @@ internal/auto/     scheduled messages (/schedule) and AFK replies (/afk): wraps 
                    and your sends, and keeps its state in the backend's prefs
 internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the embedded Anton
                    font (OFL), and its own lossless WebP (VP8L) encoder: x/image only decodes
-                   WebP, and libwebp needs cgo or a WASM runtime
+                   WebP, and libwebp needs cgo or, translated to Go, adds megabytes
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution;
                    albums (an albumMessage, then each picture pointing back to it) in album.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
