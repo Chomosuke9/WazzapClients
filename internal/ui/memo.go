@@ -72,8 +72,13 @@ const (
 	shapeOutside                  // see roundCorner; w is the inset
 )
 
+// shapes.ops is replaced, never reset in place or re-zeroed: Gio keys a
+// path's GPU data by its *op.Ops, position and the Ops' reset count, so a
+// zeroed Ops at the same address would draw new shapes with the old
+// shapes' data while those are still cached (after dropCaches on an
+// account switch, circles came out as other circles' slices).
 var shapes struct {
-	ops op.Ops
+	ops *op.Ops
 	m   map[shapeKey]clip.Op
 }
 
@@ -87,7 +92,7 @@ func roundShape(w, h, r int) clip.Op {
 	if c, ok := shapes.m[k]; ok {
 		return c
 	}
-	c := clip.UniformRRect(image.Rect(0, 0, w, h), r).Op(&shapes.ops)
+	c := clip.UniformRRect(image.Rect(0, 0, w, h), r).Op(shapeOps())
 	putShape(k, c)
 	return c
 }
@@ -103,7 +108,7 @@ func outsideShape(o, rad int) clip.Op {
 	const iq = 1 - 4*(math.Sqrt2-1)/3
 	of, rf := float32(o), float32(rad)
 	var p clip.Path
-	p.Begin(&shapes.ops)
+	p.Begin(shapeOps())
 	p.MoveTo(f32.Pt(0, 0))
 	p.LineTo(f32.Pt(of+rf, 0))
 	p.LineTo(f32.Pt(of+rf, of))
@@ -113,6 +118,13 @@ func outsideShape(o, rad int) clip.Op {
 	c := clip.Outline{Path: p.End()}.Op()
 	putShape(k, c)
 	return c
+}
+
+func shapeOps() *op.Ops {
+	if shapes.ops == nil {
+		shapes.ops = new(op.Ops)
+	}
+	return shapes.ops
 }
 
 func putShape(k shapeKey, c clip.Op) {
@@ -133,7 +145,7 @@ func trimShapes() {
 
 func dropShapes() {
 	shapes.m = nil
-	shapes.ops = op.Ops{}
+	shapes.ops = nil
 }
 
 // memo is a string-keyed cache that is dropped when it grows too big,
