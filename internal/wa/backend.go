@@ -462,28 +462,7 @@ func (b *Backend) Open(chatID string) {
 			return
 		}
 		cli := b.client()
-		if c.Unread < 0 && cli.IsConnected() {
-			// Marked as unread: opening it marks it read again.
-			ts, key := b.lastKey(chatID)
-			b.sendAppState(appstate.BuildMarkChatAsRead(jid, true, ts, key))
-			_ = b.store.setField(ctx, chatID, "unread", 0)
-		}
-		if c.Unread > 0 {
-			ids, senders, err := b.store.unreadIncoming(ctx, chatID, min(c.Unread, 100))
-			if err == nil && cli.IsConnected() {
-				bySender := map[string][]types.MessageID{}
-				for i, id := range ids {
-					bySender[senders[i]] = append(bySender[senders[i]], id)
-				}
-				for s, ids := range bySender {
-					sender, _ := types.ParseJID(s)
-					if err := cli.MarkRead(ctx, ids, time.Now(), jid, sender); err != nil {
-						b.log.Warnf("mark read in %s: %v", chatID, err)
-					}
-				}
-			}
-			_ = b.store.setField(ctx, chatID, "unread", 0)
-		}
+		b.markRead(cli, jid, c)
 		switch {
 		case !cli.IsConnected():
 		case c.IsGroup:
@@ -506,6 +485,51 @@ func (b *Backend) Open(chatID string) {
 		default:
 			if err := cli.SubscribePresence(ctx, jid); err != nil {
 				b.log.Debugf("subscribe presence %s: %v", chatID, err)
+			}
+		}
+	}()
+}
+
+// markRead marks a chat read: its unread messages get read receipts, and
+// a chat marked as unread is marked read again on every device.
+func (b *Backend) markRead(cli *whatsmeow.Client, jid types.JID, c *model.Chat) {
+	ctx, chatID := b.ctx, c.ID
+	if c.Unread < 0 && cli.IsConnected() {
+		ts, key := b.lastKey(chatID)
+		b.sendAppStateNow(cli, appstate.BuildMarkChatAsRead(jid, true, ts, key))
+		_ = b.store.setField(ctx, chatID, "unread", 0)
+	}
+	if c.Unread > 0 {
+		ids, senders, err := b.store.unreadIncoming(ctx, chatID, min(c.Unread, 100))
+		if err == nil && cli.IsConnected() {
+			bySender := map[string][]types.MessageID{}
+			for i, id := range ids {
+				bySender[senders[i]] = append(bySender[senders[i]], id)
+			}
+			for s, ids := range bySender {
+				sender, _ := types.ParseJID(s)
+				if err := cli.MarkRead(ctx, ids, time.Now(), jid, sender); err != nil {
+					b.log.Warnf("mark read in %s: %v", chatID, err)
+				}
+			}
+		}
+		_ = b.store.setField(ctx, chatID, "unread", 0)
+	}
+}
+
+// MarkRead implements model.Backend. The chats are marked one after the
+// other, so their patches don't race.
+func (b *Backend) MarkRead(chatIDs []string) {
+	go func() {
+		cli := b.client()
+		for _, id := range chatIDs {
+			jid, err := types.ParseJID(id)
+			if err != nil || isChannel(jid) {
+				continue
+			}
+			if c := b.chat(id); c != nil && c.Unread != 0 {
+				b.markRead(cli, jid, c)
+				b.emitChat(id)
 			}
 		}
 	}()

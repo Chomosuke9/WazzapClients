@@ -45,8 +45,6 @@ var (
 	icDocumentFill   = icon.DescriptionFill
 	icPhotosFill     = icon.PhotoLibraryFill
 	icHeadphonesFill = icon.HeadphonesFill
-	icLightMode      = icon.LightMode
-	icDarkMode       = icon.DarkMode
 	icLogout         = icon.Logout
 	icSwitchAccount  = icon.SwitchAccount
 	icBubble         = icon.ChatBubble
@@ -87,7 +85,6 @@ var (
 	icCampaign      = icon.CampaignFill
 	icInfo          = icon.Info
 	icSort          = icon.Sort
-	icPanelClose    = icon.LeftPanelClose
 
 	// Chat and message menus.
 	icBellLine      = icon.Notifications

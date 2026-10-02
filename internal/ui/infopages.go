@@ -5,6 +5,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
@@ -128,12 +129,15 @@ func (u *UI) starredRows(gtx C) []layout.Widget {
 		if i == len(s.msgs)-1 {
 			s.next(u.backend) // the last row is in the list: load more
 		}
-		rows = append(rows, func(gtx C) D { return u.starredRow(gtx, m) })
+		rows = append(rows, func(gtx C) D { return u.starredRow(gtx, m, false) })
 	}
 	return rows
 }
 
-func (u *UI) starredRow(gtx C, m *model.Message) D {
+// starredRow is a starred message: who sent it, and the message in a
+// bubble. In the Media panel's starred messages from every chat (all), it
+// also names the chat.
+func (u *UI) starredRow(gtx C, m *model.Message, all bool) D {
 	p := u.pal
 	c := u.btn("starred:" + m.ChatID + "/" + m.ID)
 	if c.Clicked(gtx) {
@@ -148,6 +152,14 @@ func (u *UI) starredRow(gtx C, m *model.Message) D {
 			who = ch.Name
 		}
 	}
+	who = plainText(who)
+	padX, bubW := unit.Dp(infoPadX), gtx.Constraints.Max.X
+	if all {
+		if ch := u.chatByID(m.ChatID); ch != nil && ch.Name != who {
+			who += " · " + plainText(ch.Name)
+		}
+		padX, bubW = 30, gtx.Dp(640)
+	}
 	txt := plainText(m.Text)
 	if m.Media != model.MediaNone {
 		txt = mediaLabel(m)
@@ -156,13 +168,13 @@ func (u *UI) starredRow(gtx C, m *model.Message) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		bg := mix(p.Panel, p.Hover, u.hover(gtx, c))
 		return background(gtx, bg, 0, func(gtx C) D {
-			return layout.Inset{Left: infoPadX, Right: 24, Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D {
+			return layout.Inset{Left: padX, Right: 24, Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx C) D {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 							layout.Rigid(func(gtx C) D { return u.avatar(gtx, m.SenderID, who, false, 24) }),
 							layout.Rigid(layout.Spacer{Width: 10}.Layout),
-							layout.Flexed(1, u.label(14.5, plainText(who), p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+							layout.Flexed(1, u.label(14.5, who, p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
 							layout.Rigid(u.label(13, listTime(m.Time, u.now()), p.TextSecondary, labelOpts{maxLines: 1}).Layout),
 						)
 					}),
@@ -172,6 +184,7 @@ func (u *UI) starredRow(gtx C, m *model.Message) D {
 						if m.FromMe {
 							bub = p.BubbleOut
 						}
+						gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, bubW)
 						l := record(gtx, func(gtx C) D {
 							return layout.Inset{Left: 9, Right: 9, Top: 6, Bottom: 7}.Layout(gtx, func(gtx C) D {
 								return layout.Flex{Alignment: layout.End}.Layout(gtx,

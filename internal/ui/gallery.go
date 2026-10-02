@@ -56,8 +56,22 @@ var galleryTabs = []struct {
 // chatID is "".
 func (u *UI) openGallery(chatID, name string) {
 	g := &u.gallery
-	if !g.open || g.chatID != chatID {
+	if !g.open || g.chatID != chatID || g.tab == model.GalleryStarred {
 		*g = galleryState{chatID: chatID, name: name, anim: g.anim}
+	}
+	g.open = true
+	g.query.SingleLine = true
+	g.scroll.Axis = layout.Vertical
+	u.ctx = ctxMenu{}
+	u.loadGallery()
+}
+
+// openStarred opens the panel on every chat's starred messages (the ⋮
+// menu's "Starred messages"), without tabs.
+func (u *UI) openStarred() {
+	g := &u.gallery
+	if !g.open || g.tab != model.GalleryStarred {
+		*g = galleryState{tab: model.GalleryStarred, anim: g.anim}
 	}
 	g.open = true
 	g.query.SingleLine = true
@@ -143,7 +157,7 @@ func firstLink(s string) string {
 func (u *UI) galleryUpdate(gtx C) {
 	g := &u.gallery
 	if u.rail.media.Clicked(gtx) {
-		if g.open && g.chatID == "" {
+		if g.open && g.chatID == "" && g.tab != model.GalleryStarred {
 			u.closeGallery()
 		} else {
 			u.openGallery("", "")
@@ -281,6 +295,10 @@ func (u *UI) galleryHeader(gtx C) D {
 	if g.chatID != "" {
 		title, sub = "Media, links and docs", g.name
 	}
+	starred := g.tab == model.GalleryStarred
+	if starred {
+		title, sub = "Starred messages", "From all chats"
+	}
 	if g.selecting {
 		title, sub = "Select items", "Click items to select them"
 		if n := len(g.picked); n > 0 {
@@ -304,6 +322,10 @@ func (u *UI) galleryHeader(gtx C) D {
 		on  bool
 	}
 	btns := []btn{{"close", icClose, false}, {"select", icCheckBox, g.selecting}, {"sort", icSort, false}, {"search", icSearch, g.searching}}
+	if starred {
+		// Starred rows have no selection.
+		btns = []btn{{"close", icClose, false}, {"sort", icSort, false}, {"search", icSearch, g.searching}}
+	}
 	if len(g.picked) > 0 {
 		btns = []btn{{"close", icClose, false}, {"select", icCheckBox, true}, {"delete", icDelete, false},
 			{"save", icDownload, false}, {"forward", icForward, false}}
@@ -332,7 +354,7 @@ func (u *UI) galleryHeader(gtx C) D {
 		sg.Constraints = layout.Exact(image.Pt(max(0, sw), gtx.Dp(40)))
 		u.searchField(sg, &g.query, "Search")
 		t.Pop()
-	} else {
+	} else if !starred {
 		cur := 0
 		for i, t := range galleryTabs {
 			c := u.btn("gal:tab:" + itoa(int(t.kind)))
@@ -372,7 +394,7 @@ func (u *UI) galleryBody(gtx C) D {
 	sz := gtx.Constraints.Max
 	if len(l.msgs) == 0 {
 		txt := map[model.GalleryKind]string{model.GalleryMedia: "No media", model.GalleryDocs: "No documents",
-			model.GalleryLinks: "No links"}[g.tab]
+			model.GalleryLinks: "No links", model.GalleryStarred: "No starred messages"}[g.tab]
 		if l.loading {
 			txt = "Loading…"
 		} else if g.searching && g.ran != "" {
@@ -391,7 +413,10 @@ func (u *UI) galleryBody(gtx C) D {
 		if i == n-1 {
 			l.next(u.backend) // the last row is in view: load the next page
 		}
-		if g.tab != model.GalleryMedia {
+		switch g.tab {
+		case model.GalleryStarred:
+			return u.starredRow(gtx, l.msgs[i], true)
+		case model.GalleryDocs, model.GalleryLinks:
 			return u.galleryRow(gtx, l.msgs[i])
 		}
 		gap := gtx.Dp(3)

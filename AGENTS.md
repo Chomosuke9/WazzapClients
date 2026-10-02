@@ -347,7 +347,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashrun (open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, invite,
 # delete, select, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the Media panel:
-# gallery, gallerydocs, gallerylinks, galleryselect, chatgallery; the open chat's convmenu, timer, theme,
+# gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots

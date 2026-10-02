@@ -188,6 +188,12 @@ func (b *Backend) Open(chatID string) {
 	}
 }
 
+func (b *Backend) MarkRead(chatIDs []string) {
+	for _, id := range chatIDs {
+		b.setChat(id, func(c *model.Chat) { c.Unread = 0 })
+	}
+}
+
 func (b *Backend) Avatar(string) []byte { return nil }
 func (b *Backend) MediaData(chatID, msgID string) []byte {
 	b.mu.Lock()

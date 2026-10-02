@@ -1230,7 +1230,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
-// switcher on the login screen "loginaccounts"; slash commands in a group: the
+// switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
 // picker "slash", /kick's options "slashkick", or the notes of commands run "slashrun".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
@@ -1480,6 +1480,17 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.gallery.selecting = true
 			u.gallery.picked = u.gallery.list.msgs[:min(2, len(u.gallery.list.msgs))]
 		}
+		u.gallery.anim.snap(true)
+	case "starredall":
+		// The ⋮ menu's Starred messages, from every chat; the demo stars
+		// none, so star the last messages in and out first.
+		for _, m := range []*model.Message{lastIn, lastOut, img} {
+			if m != nil {
+				u.backend.Star(m, true)
+			}
+		}
+		u.openStarred()
+		u.applyEvents()
 		u.gallery.anim.snap(true)
 	case "convmenu", "timer":
 		// The open chat's ⋮ menu, or its disappearing message timers.

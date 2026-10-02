@@ -11,25 +11,32 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
-// menuState is the chat list's ⋮ drop-down.
+// menuState is the chat list's ⋮ drop-down, WhatsApp Desktop's minus
+// Select chats and App lock, plus Switch account.
 type menuState struct {
-	open          bool
-	anim          tween
-	anchor        image.Point // top-right corner, in window coordinates below the title bar
-	scrim         widget.Clickable
-	theme, logout widget.Clickable
-	hideList      widget.Clickable
-	switchAcct    widget.Clickable // opens the account switcher beside the menu
+	open       bool
+	anim       tween
+	anchor     image.Point // top-right corner, in window coordinates below the title bar
+	scrim      widget.Clickable
+	newGroup   widget.Clickable
+	starred    widget.Clickable
+	readAll    widget.Clickable
+	switchAcct widget.Clickable // opens the account switcher beside the menu
+	logout     widget.Clickable
 }
 
 func (u *UI) updateMenu(gtx C) {
 	m := &u.menu
-	if m.theme.Clicked(gtx) {
-		u.setTheme(!u.dark)
+	if m.newGroup.Clicked(gtx) {
+		u.openNewGroup(nil)
 		m.open = false
 	}
-	if m.hideList.Clicked(gtx) {
-		u.setListHidden(true)
+	if m.starred.Clicked(gtx) {
+		u.openStarred()
+		m.open = false
+	}
+	if m.readAll.Clicked(gtx) {
+		u.markAllRead()
 		m.open = false
 	}
 	if m.logout.Clicked(gtx) {
@@ -43,6 +50,25 @@ func (u *UI) updateMenu(gtx C) {
 		m.open = false
 	}
 }
+
+// markAllRead marks every unread chat read, archived ones too.
+func (u *UI) markAllRead() {
+	var ids []string
+	for _, c := range u.chats {
+		if c.Unread != 0 {
+			ids = append(ids, c.ID)
+		}
+	}
+	if len(ids) > 0 {
+		u.backend.MarkRead(ids)
+	}
+}
+
+// The ⋮ menu's row and divider heights.
+const (
+	menuRowH     = 42
+	menuDividerH = 9
+)
 
 // layoutMenu draws the open menu over everything else. A transparent scrim
 // underneath catches clicks outside it and closes it.
@@ -63,21 +89,22 @@ func (u *UI) layoutMenu(gtx C) {
 		defer done()
 	}
 
-	themeLabel, themeIcon := "Light theme", icLightMode
-	if !u.dark {
-		themeLabel, themeIcon = "Dark theme", icDarkMode
-	}
 	type menuEntry struct {
-		click *widget.Clickable
-		label string
-		ic    *icon.Icon
-		more  bool // opens a submenu
+		click   *widget.Clickable
+		label   string
+		ic      *icon.Icon
+		more    bool // opens a submenu
+		divider bool
 	}
-	items := []menuEntry{{click: &m.theme, label: themeLabel, ic: themeIcon},
-		{click: &m.hideList, label: "Hide chat list", ic: icPanelClose}}
-	switchRow := -1
+	items := []menuEntry{
+		{click: &m.newGroup, label: "New group", ic: icGroupAdd},
+		{click: &m.starred, label: "Starred messages", ic: icStar},
+		{click: &m.readAll, label: "Mark all as read", ic: icChats},
+		{divider: true},
+	}
+	switchY := -1 // the Switch account row's top, below the menu's padding
 	if len(u.accounts) > 0 {
-		switchRow = len(items)
+		switchY = (len(items)-1)*gtx.Dp(menuRowH) + gtx.Dp(menuDividerH)
 		items = append(items, menuEntry{click: &m.switchAcct, label: "Switch account", ic: icSwitchAccount, more: true})
 	}
 	items = append(items, menuEntry{click: &m.logout, label: "Log out", ic: icLogout})
@@ -90,6 +117,15 @@ func (u *UI) layoutMenu(gtx C) {
 		var children []layout.FlexChild
 		for _, it := range items {
 			it := it
+			if it.divider {
+				children = append(children, layout.Rigid(func(gtx C) D {
+					h := gtx.Dp(menuDividerH)
+					y := h / 2
+					fillRect(gtx, image.Rect(gtx.Dp(14), y, gtx.Constraints.Max.X-gtx.Dp(14), y+max(1, gtx.Dp(1))), p.PopupDivider)
+					return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
+				}))
+				continue
+			}
 			children = append(children, layout.Rigid(func(gtx C) D {
 				return clickable(gtx, it.click, func(gtx C) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -99,7 +135,7 @@ func (u *UI) layoutMenu(gtx C) {
 					}
 					bg := mix(p.Menu, p.MenuHover, h)
 					return background(gtx, bg, 8, func(gtx C) D {
-						return vcenter(gtx, gtx.Dp(42), func(gtx C) D {
+						return vcenter(gtx, gtx.Dp(menuRowH), func(gtx C) D {
 							return layout.Inset{Left: 12, Right: 8}.Layout(gtx, func(gtx C) D {
 								children := []layout.FlexChild{
 									layout.Rigid(iconW(it.ic, 20, p.Icon)),
@@ -121,9 +157,9 @@ func (u *UI) layoutMenu(gtx C) {
 	call := rec.Stop()
 
 	pos := image.Pt(m.anchor.X-dims.Size.X, m.anchor.Y)
-	if switchRow >= 0 {
+	if switchY >= 0 {
 		// The account switcher opens beside its row, to the right.
-		rowY := pos.Y + gtx.Dp(8) + switchRow*gtx.Dp(42)
+		rowY := pos.Y + gtx.Dp(8) + switchY
 		u.acctMenu.anchor = image.Pt(pos.X+dims.Size.X+gtx.Dp(6), rowY-gtx.Dp(8))
 	}
 	defer op.Offset(pos).Push(gtx.Ops).Pop()

@@ -406,17 +406,21 @@ func fromMeFlag(fromMe bool) string {
 // sendAppState sends a patch in the background.
 func (b *Backend) sendAppState(patch appstate.PatchInfo) {
 	cli := b.client()
-	go func() {
-		if err := cli.SendAppState(b.ctx, patch); err != nil {
-			b.log.Warnf("send app state %s: %v", patch.Type, err)
-			if errors.Is(err, appstate.ErrMismatchingLTHash) {
-				// requestAppStateRecovery is on it (AppStateSyncError).
-				b.emit(model.NoticeEvent{Text: "Your phone is repairing sync. Try again in a minute."})
-				return
-			}
-			b.emit(model.NoticeEvent{Text: "Couldn't sync the change to your phone."})
+	go b.sendAppStateNow(cli, patch)
+}
+
+// sendAppStateNow sends a patch and waits for it, so several patches go
+// one after the other.
+func (b *Backend) sendAppStateNow(cli *whatsmeow.Client, patch appstate.PatchInfo) {
+	if err := cli.SendAppState(b.ctx, patch); err != nil {
+		b.log.Warnf("send app state %s: %v", patch.Type, err)
+		if errors.Is(err, appstate.ErrMismatchingLTHash) {
+			// requestAppStateRecovery is on it (AppStateSyncError).
+			b.emit(model.NoticeEvent{Text: "Your phone is repairing sync. Try again in a minute."})
+			return
 		}
-	}()
+		b.emit(model.NoticeEvent{Text: "Couldn't sync the change to your phone."})
+	}
 }
 
 // Star implements model.Backend.

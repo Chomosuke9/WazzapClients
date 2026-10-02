@@ -766,6 +766,8 @@ type Backend interface {
 	PinnedMessage(chatID string) *Message
 	// Open is called when the user opens a chat: mark it read, subscribe to presence.
 	Open(chatID string)
+	// MarkRead marks chats read in the background ("Mark all as read").
+	MarkRead(chatIDs []string)
 	// Send queues a text message and returns it in its pending state.
 	Send(chatID string, d Draft) *Message
 	// PressButton answers a message's quick-reply button (Buttons[i]) and
