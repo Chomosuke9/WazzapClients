@@ -165,7 +165,8 @@ cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs an
 cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
-                   settings), conversation and composer, contact/group info panel (a person's
+                   settings), conversation and composer (an album's pictures as one grid in
+                   album.go), contact/group info panel (a person's
                    or business's sections in contactinfo.go), and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
@@ -207,7 +208,8 @@ internal/command/  slash commands, like Discord's: the list (commands.go), parsi
 internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the embedded Anton
                    font (OFL), and its own lossless WebP (VP8L) encoder: x/image only decodes
                    WebP, and libwebp needs cgo or a WASM runtime
-internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
+internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution;
+                   albums (an albumMessage, then each picture pointing back to it) in album.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time

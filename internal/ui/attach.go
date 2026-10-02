@@ -591,7 +591,8 @@ func removeTemps(files []*attachFile) {
 }
 
 // sendAttachments sends the files of the send view, each with its own
-// caption; the first one carries the reply.
+// caption; the first one carries the reply. Two or more photos and videos
+// go as an album.
 func (u *UI) sendAttachments() {
 	a := &u.attach
 	u.finishTyping()
@@ -599,6 +600,9 @@ func (u *UI) sendAttachments() {
 		f.caption = u.conv.composer.Text()
 	}
 	status := a.chatID == statusChatID
+	if !status {
+		u.openAlbum(a.chatID, a.files)
+	}
 	for i, f := range a.files {
 		if status {
 			// A caption has no mentions or reply.

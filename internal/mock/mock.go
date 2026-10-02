@@ -249,6 +249,12 @@ func demo(now time.Time) []*demoChat {
 			grp("Papa", day(0, 6, 15), "Pagi. Jangan lupa makan siang di rumah hari Minggu ya"),
 			grp("Dimas", day(0, 7, 1), "Siap pa 👍"),
 			grp("Sari", day(0, 7, 3), "Aku bawa kue dari toko yang kemarin"),
+			// An album of five photos: a grid of four, the last one "+2".
+			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0xf6d365, ImageB: 0xfda085},
+			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0x84fab0, ImageB: 0x8fd3f4},
+			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0xa18cd1, ImageB: 0xfbc2eb},
+			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0xfccb90, ImageB: 0xd57eeb},
+			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0x5ee7df, ImageB: 0xb490ca},
 			txt(true, day(0, 7, 20), "Aku datang agak telat, jam 12an"),
 			grp("Mama", day(0, 9, 12), "Oke nak, hati-hati di jalan"),
 		},
