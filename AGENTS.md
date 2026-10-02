@@ -123,7 +123,9 @@ Gotchas already found in the pinned version (v0.10.x):
   corner with a mask (`roundCorner`) instead of clipping it.
 - Gio's window thread waits for the UI goroutine while it delivers an event. Never
   `SendMessage` to the window from the UI goroutine (it hangs both); post instead,
-  as `desktop.SetWindowIcon` does.
+  as `desktop.SetWindowIcon` does. `Window.Perform` and `Window.Option` wait for the
+  window thread too: outside a frame (a tray or notification request), call them on
+  a goroutine of their own, as `host.show` raises the window.
 - WinRT interfaces are called through vtables (`internal/notify`). Don't trust
   remembered IIDs: one wrong digit is E_NOINTERFACE. Windows PowerShell 5.1 reads the
   real ones and the method order from the system metadata, e.g.

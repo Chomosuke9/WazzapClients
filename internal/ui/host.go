@@ -324,7 +324,11 @@ func (h *host) show() {
 		h.openWindow()
 		return
 	}
-	h.win.Perform(system.ActionRaise)
+	// Perform waits for the window thread, and raising a window that isn't
+	// in front makes that thread deliver focus and size events, which wait
+	// for this goroutine: both would hang. Only within a frame (deco's
+	// buttons) is it safe to wait, since Gio delivers those events re-entrantly.
+	go h.win.Perform(system.ActionRaise)
 	if h.openChat != "" {
 		h.u.openFromNotification(h.openChat)
 		h.openChat = ""
