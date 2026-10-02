@@ -1,6 +1,8 @@
 // Command wazzap is a lightweight native WhatsApp desktop client.
 package main
 
+//go:generate go run ../winres
+
 import (
 	"flag"
 	"log"

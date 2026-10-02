@@ -38,6 +38,7 @@ OutputBaseFilename=WazzapClients-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=wazzap.ico
 ; The app may be running in the notification area, without a window.
 CloseApplications=force
 RestartApplications=no

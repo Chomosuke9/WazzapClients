@@ -3,7 +3,6 @@ package ui
 import (
 	"bytes"
 	"image"
-	"image/color"
 	"image/png"
 	"os"
 	"strings"
@@ -99,7 +98,7 @@ func Run(b model.Backend, o Options) error {
 	}
 	if err := desktop.TrayStart(desktop.Tray{
 		Name: appName,
-		Icon: appIcon,
+		Icon: icon.Tray,
 		Open: func() { h.request(request{kind: reqShow}) },
 		Quit: func() { h.request(request{kind: reqQuit}) },
 	}); err == nil {
@@ -551,11 +550,8 @@ func dropCaches() {
 	dropShapes()
 }
 
-// appIcon draws the app's icon: a white chat bubble on WhatsApp green.
-func appIcon(px int) *image.RGBA {
-	return icon.Badge(px, color.NRGBA{R: 0x1d, G: 0xaa, B: 0x61, A: 0xff}, icon.ChatFill, 0.56,
-		color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff})
-}
+// appIcon draws the app's icon (the executable's own comes from cmd/winres).
+func appIcon(px int) *image.RGBA { return icon.App(px) }
 
 func encodePNG(img image.Image) []byte {
 	var buf bytes.Buffer

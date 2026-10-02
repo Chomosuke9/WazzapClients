@@ -173,6 +173,8 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
 cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory
+cmd/winres/        draws the app icon (icon.App) into the .exe's resources and installer/wazzap.ico;
+                   run `go generate ./cmd/wazzap` after changing the icon, and commit both
 cmd/signrelease/   signs a release's SHA256SUMS with the update key (CI), or makes a new key
 installer/         the Windows installer (Inno Setup), per user in %LocalAppData%\Programs
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to

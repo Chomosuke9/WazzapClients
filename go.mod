@@ -6,6 +6,7 @@ require (
 	gioui.org v0.10.3
 	github.com/go-text/typesetting v0.3.5
 	github.com/polymorfa/hypermeow v0.0.0-20260819021508-07d103b3683c
+	github.com/tc-hib/winres v0.3.1
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297
 	golang.org/x/image v0.26.0
 	golang.org/x/sys v0.48.0
@@ -24,6 +25,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/petermattis/goid v0.0.0-20260816044145-ed329add6b1b // indirect
 	github.com/polymorfa/libsignal-protocol-go v0.2.3-0.20260806162910-a2adef2e8a11 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
