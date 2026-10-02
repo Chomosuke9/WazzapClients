@@ -132,8 +132,8 @@ func (u *UI) layoutRail(gtx C) D {
 
 func (u *UI) railButton(gtx C, c *widget.Clickable, active bool, glyph func(gtx C, col color.NRGBA) D, badge int, dot bool) D {
 	p := u.pal
-	return clickable(gtx, c, func(gtx C) D {
-		sz := gtx.Dp(42)
+	sz := gtx.Dp(42)
+	d := clickable(gtx, c, func(gtx C) D {
 		u.railCircle(gtx, c, sz)
 		col := p.Icon
 		if active {
@@ -141,20 +141,22 @@ func (u *UI) railButton(gtx C, c *widget.Clickable, active bool, glyph func(gtx 
 		}
 		g := record(gtx, func(gtx C) D { return glyph(gtx, col) })
 		g.at(gtx, (sz-g.size.X)/2, (sz-g.size.Y)/2)
-
-		switch {
-		case badge > 0:
-			m := op.Record(gtx.Ops)
-			bd := u.railBadge(gtx, badge)
-			call := m.Stop()
-			t := op.Offset(image.Pt(sz-bd.Size.X+gtx.Dp(3), -gtx.Dp(1))).Push(gtx.Ops)
-			call.Add(gtx.Ops)
-			t.Pop()
-		case dot:
+		if dot && badge <= 0 {
 			fillCircle(gtx, image.Pt(sz-gtx.Dp(10), gtx.Dp(10)), gtx.Dp(5), p.Green)
 		}
 		return D{Size: image.Pt(sz, sz)}
 	})
+	// The badge sticks out past the button's corner, and a Clickable clips
+	// what it draws to its size: draw it afterwards, on top.
+	if badge > 0 {
+		m := op.Record(gtx.Ops)
+		bd := u.railBadge(gtx, badge)
+		call := m.Stop()
+		t := op.Offset(image.Pt(sz-bd.Size.X+gtx.Dp(3), -gtx.Dp(1))).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		t.Pop()
+	}
+	return d
 }
 
 // railCircle paints a rail button's round background: the active item's,

@@ -70,6 +70,8 @@ Gotchas already found in the pinned version (v0.10.x):
   0,0. Record the child and position it yourself.
 - `LineHeightScale` defaults to 1.2 and multiplies `LineHeight`. Set it to 1 when you
   want an exact line height.
+- `widget.Clickable` clips what it draws to its own size, so a badge or ring that sticks
+  out past a button gets cut: draw it after the Clickable (see `railButton`).
 - `widget.Clickable` registers its input area after drawing its content, so a Clickable
   wrapping a widget hides any Clickable inside it. Draw nested buttons afterwards, on
   top (see `layoutChatRow`), and use `hoverArea`/`rightClick`, which pass events through.
