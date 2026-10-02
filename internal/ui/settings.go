@@ -76,7 +76,7 @@ func (u *UI) layoutSettingsList(gtx C) D {
 	p := u.pal
 	s := &u.settings
 	if s.items[settingLogout].Clicked(gtx) {
-		u.backend.Logout()
+		u.logout()
 	}
 	for k := range settingLogout {
 		if s.items[k].Clicked(gtx) {

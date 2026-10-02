@@ -199,6 +199,9 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
                    or osascript elsewhere
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
                    (Windows; stubs elsewhere)
+internal/accounts/ the WhatsApp accounts linked on this computer (accounts.json), each with
+                   a data directory of its own: the first is the data directory itself,
+                   the ones added later are accounts/<n>
 patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
 ```
 
@@ -218,6 +221,12 @@ while the window is minimized and Gio draws no frames.
   them all, and the window's `UI` gets them through `hostBackend.Poll`. Only
   `MessageEvent`s with `New` set notify; backends set it for messages that just arrived
   (not history, edits, reactions or repeats).
+- Several accounts can be linked; one is open (connected) at a time, to keep memory
+  low. Switching (`internal/ui/accounts.go`: the ⋮ menu's "Switch account" and the
+  login screen) closes the open backend, opens the other one through `Options.Open`
+  and gives the window a new `UI`. The theme and other `appPrefs` carry over. Logging
+  out with another account linked opens that one and takes the logged-out account
+  off the list; so does switching away from an account that isn't linked.
 - Notification rules follow WhatsApp: one per chat, nothing while the window has focus,
   muted and archived chats only for mentions and replies to you, removed once the chat
   is read (here or on another device). Preferences are `Backend.Pref` keys, on unless
@@ -304,7 +313,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
-# Render one overlay with demo data (chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
+# Render one overlay with demo data (menu, accounts, loginaccounts, chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
 # delete, select, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots

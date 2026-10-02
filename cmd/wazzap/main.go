@@ -14,6 +14,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/unit"
 
+	"github.com/chomosuke9/wazzapclients/internal/accounts"
 	"github.com/chomosuke9/wazzapclients/internal/desktop"
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -53,7 +54,15 @@ func main() {
 		return
 	}
 
-	var backend model.Backend
+	// Each linked account has a data directory of its own (see accounts);
+	// the open one's backend runs.
+	root := *dataDir
+	open := func(dir string) (model.Backend, error) { return wa.Open(dir, *debug) }
+	if *demo {
+		root = demoDir
+		open = func(dir string) (model.Backend, error) { return demoAccount(root, dir), nil }
+	}
+	list := accounts.Load(root)
 	opts := ui.Options{
 		Window: []app.Option{
 			app.Title("WazzapClients"),
@@ -64,20 +73,20 @@ func main() {
 		},
 		Hidden:    *background || *embedding,
 		NotifyDir: filepath.Join(*dataDir, "notifications"),
+		Accounts:  list,
+		Open:      open,
 	}
 	if *demo {
-		backend = mock.New()
 		opts.NotifyDir = demoDir
 	} else {
 		opts.Relaunch = []string{}
 		if *dataDir != defaultDataDir() {
 			opts.Relaunch = []string{"-data", *dataDir}
 		}
-		b, err := wa.Open(*dataDir, *debug)
-		if err != nil {
-			log.Fatal(err)
-		}
-		backend = b
+	}
+	backend, err := open(list.Path(list.Active))
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	go func() {
@@ -87,6 +96,16 @@ func main() {
 		os.Exit(0)
 	}()
 	app.Main()
+}
+
+// demoAccount is the demo backend of an account's directory: the usual
+// demo data, under another name for the accounts added after the first.
+func demoAccount(root, dir string) model.Backend {
+	if filepath.Clean(dir) == filepath.Clean(root) {
+		return mock.New()
+	}
+	n := filepath.Base(dir)
+	return mock.NewAccount("Demo account "+n, "+1 555 010"+n, "1555010"+n+"@s.whatsapp.net")
 }
 
 func defaultDataDir() string {

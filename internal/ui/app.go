@@ -19,6 +19,7 @@ import (
 	"gioui.org/widget/material"
 	"rsc.io/qr"
 
+	"github.com/chomosuke9/wazzapclients/internal/accounts"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -86,10 +87,16 @@ type UI struct {
 	calls    callsState
 
 	login struct {
-		retry  widget.Clickable
-		qrData string
-		qr     *qr.Code
+		retry      widget.Clickable
+		switchAcct widget.Clickable
+		qrData     string
+		qr         *qr.Code
 	}
+
+	// accounts lists the linked accounts, from the host; nil when there
+	// is only one backend.
+	accounts []accountRow
+	acctMenu acctMenuState
 
 	rail struct {
 		chats, calls, status, channels, communities, archived, media, profile widget.Clickable
@@ -526,9 +533,14 @@ func (u *UI) Layout(gtx C) D {
 	defer op.Offset(image.Pt(0, tb.Size.Y)).Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(image.Pt(sz.X, sz.Y-tb.Size.Y))
 
-	if !u.conn.State.LoggedIn() {
+	// While an account logs out for another to open, it keeps its
+	// chats on screen instead of flashing the login screen.
+	if !u.conn.State.LoggedIn() && !u.leaving() {
 		u.updateLogin(gtx)
 		u.layoutLogin(gtx)
+		u.layoutLoginSwitch(gtx)
+		u.layoutAccountMenu(gtx)
+		u.layoutToast(gtx)
 		return D{Size: sz}
 	}
 	u.applyFocus(gtx)
@@ -542,6 +554,7 @@ func (u *UI) Layout(gtx C) D {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	u.layoutMenu(gtx)
+	u.layoutAccountMenu(gtx)
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
 	u.layoutStatusText(gtx)
@@ -850,6 +863,10 @@ func (u *UI) ctrlEnterKeys(gtx C) {
 // escape closes the topmost overlay, like WhatsApp's Esc.
 func (u *UI) escape() {
 	switch {
+	case u.acctMenu.open:
+		u.acctMenu.open, u.menu.open = false, false
+	case u.menu.open:
+		u.menu.open = false
 	case u.ctx.isOpen():
 		u.closeMenu()
 	case u.dialog.isOpen():
@@ -1133,7 +1150,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
-// open chat) or "newgroup".
+// open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
+// switcher on the login screen "loginaccounts".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1153,6 +1171,24 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	}
 	switch name {
+	case "menu", "accounts", "loginaccounts":
+		// The chat list's ⋮ menu, and its account switcher with a second
+		// demo account; or the switcher on the login screen of an account
+		// being added.
+		if u.accounts == nil {
+			u.accounts = []accountRow{
+				{Account: accounts.Account{ID: u.meID, Phone: "+1 555 0100"}, active: true},
+				{Account: accounts.Account{Dir: "accounts/2", ID: "15550142@s.whatsapp.net", Name: "Work", Phone: "+1 555 0142"}},
+			}
+		}
+		if name == "loginaccounts" {
+			u.accounts[0] = accountRow{Account: accounts.Account{Dir: "accounts/3"}, active: true}
+			u.me = ""
+			u.conn = model.ConnEvent{State: model.StateQR, QR: "2@demo-qr-code"}
+		} else {
+			u.menu.open = true
+		}
+		u.acctMenu.open = name != "menu"
 	case "chatmenu":
 		if len(u.chats) > 1 {
 			u.openChatMenu(u.chats[1])

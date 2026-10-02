@@ -16,6 +16,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/chomosuke9/wazzapclients/internal/accounts"
 	"github.com/chomosuke9/wazzapclients/internal/desktop"
 	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -44,6 +45,11 @@ type Options struct {
 	Relaunch []string
 	// NotifyDir keeps the pictures notifications show.
 	NotifyDir string
+	// Accounts lists the accounts linked on this computer, and Open opens
+	// the backend of one's data directory; the backend given to Run is
+	// the open one's. With nil Accounts there is only that backend.
+	Accounts *accounts.List
+	Open     func(dir string) (model.Backend, error)
 }
 
 // Run runs the app until it quits. It opens a window and, while a tray
@@ -78,6 +84,7 @@ func Run(b model.Backend, o Options) error {
 		Command:  cmd,
 		Activate: func(a notify.Activation) { h.request(request{kind: reqActivate, act: a}) },
 	}); err == nil {
+		h.notifyOK = true
 		h.notes.enabled = true
 		defer notify.Close()
 	}
@@ -90,7 +97,7 @@ func Run(b model.Backend, o Options) error {
 		h.tray = true
 		defer desktop.TrayStop()
 	}
-	defer b.Close()
+	defer func() { h.b.Close() }()
 	h.notes.setChats(b.Chats())
 	if !o.Hidden || !h.tray {
 		h.openWindow()
@@ -128,9 +135,11 @@ type host struct {
 	b     model.Backend
 	o     Options
 	notes *notifier
-	tray  bool          // a tray icon is up: the app can run without a window
-	wake  chan struct{} // the backend queued events
-	reqs  chan request
+	// notifyOK is set once notifications work (notify.Init).
+	notifyOK bool
+	tray     bool          // a tray icon is up: the app can run without a window
+	wake     chan struct{} // the backend queued events
+	reqs     chan request
 
 	// The open window, or nil.
 	win     *app.Window
@@ -158,19 +167,30 @@ type host struct {
 	syncPct  int
 	openChat string // chat to open in the next window
 	quitting bool
+
+	// leaving is set while the open account logs out to switch to
+	// another one (see logout): once it's logged out, the app opens
+	// leaveTo.
+	leaving bool
+	leaveTo string
+	// notice is shown in the next UI (a toast after switching accounts).
+	notice string
 }
 
 type request struct {
 	kind reqKind
 	act  notify.Activation
+	dir  string // the account of reqSwitch
 }
 
 type reqKind int
 
 const (
-	reqShow     reqKind = iota // bring the window up (tray icon, second launch)
-	reqQuit                    // the tray menu's Quit
-	reqActivate                // a notification or one of its buttons
+	reqShow       reqKind = iota // bring the window up (tray icon, second launch)
+	reqQuit                      // the tray menu's Quit
+	reqActivate                  // a notification or one of its buttons
+	reqSwitch                    // open another account
+	reqAddAccount                // link a new account
 )
 
 // request queues r for the UI goroutine. It's called from other
@@ -214,6 +234,9 @@ func (h *host) poll(invalidate bool) {
 				// Linking again, or a problem: only the window can show it.
 				h.show()
 			}
+			h.accountState(e)
+		case model.AccountEvent:
+			h.noteAccount(nil)
 		case model.SyncEvent:
 			h.syncPct = e.Percent
 			if e.Percent >= 100 {
@@ -274,6 +297,10 @@ func (h *host) handle(r request) bool {
 		case notify.MarkRead:
 			h.markRead(a.ID)
 		}
+	case reqSwitch:
+		h.switchAccount(r.dir)
+	case reqAddAccount:
+		h.addAccount()
 	}
 	return false
 }
@@ -315,19 +342,8 @@ func (h *host) openWindow() {
 		opts = append(opts[:len(opts):len(opts)], app.Maximized.Option())
 	}
 	w.Option(opts...)
-	u := New(hostBackend{Backend: h.b, h: h})
-	u.window, u.host = w, h
-	h.win, h.u = w, u
-	// A new UI starts from the stored chats and the current state.
-	h.queue = append(h.queue[:0], h.conn)
-	if h.syncPct >= 0 && h.conn.State.LoggedIn() {
-		h.queue = append(h.queue, model.SyncEvent{Percent: h.syncPct})
-	}
-	u.Start(w.Invalidate)
-	if h.openChat != "" {
-		u.openFromNotification(h.openChat)
-		h.openChat = ""
-	}
+	h.win = w
+	h.newUI()
 	h.focused = true
 	events, ack := make(chan event.Event), make(chan struct{})
 	h.events, h.ack = events, ack
@@ -347,6 +363,31 @@ func (h *host) openWindow() {
 	h.idle = time.AfterFunc(idleTrim, memtrim.Trim)
 	h.away = time.AfterFunc(awayTrim, memtrim.Trim)
 	h.away.Stop()
+}
+
+// newUI makes the open window's UI, for the open account.
+func (h *host) newUI() {
+	u := New(hostBackend{Backend: h.b, h: h})
+	u.window, u.host = h.win, h
+	h.u = u
+	u.accounts = h.accountRows()
+	// The window may be there already (another account opened in it).
+	u.deco.Maximized = h.maximized
+	u.away = h.win != nil && h.events != nil && !h.focused
+	// A new UI starts from the stored chats and the current state.
+	h.queue = append(h.queue[:0], h.conn)
+	if h.syncPct >= 0 && h.conn.State.LoggedIn() {
+		h.queue = append(h.queue, model.SyncEvent{Percent: h.syncPct})
+	}
+	if h.notice != "" {
+		h.queue = append(h.queue, model.NoticeEvent{Text: h.notice})
+		h.notice = ""
+	}
+	u.Start(h.win.Invalidate)
+	if h.openChat != "" {
+		u.openFromNotification(h.openChat)
+		h.openChat = ""
+	}
 }
 
 // windowEvent handles an event of the open window. It reports whether

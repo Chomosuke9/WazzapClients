@@ -29,6 +29,16 @@ func (b *Backend) demoAccount() *model.Account {
 	return b.acc
 }
 
+// NewAccount returns a demo backend for a second demo account, with its
+// own name and number.
+func NewAccount(name, phone, id string) *Backend {
+	b := New()
+	b.meName = name
+	a := b.demoAccount()
+	a.Phone, a.ID, a.LID = phone, id, ""
+	return b
+}
+
 func (b *Backend) me() string {
 	if b.meName != "" {
 		return b.meName

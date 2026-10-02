@@ -18,6 +18,7 @@ type menuState struct {
 	anchor        image.Point // top-right corner, in window coordinates below the title bar
 	scrim         widget.Clickable
 	theme, logout widget.Clickable
+	switchAcct    widget.Clickable // opens the account switcher beside the menu
 }
 
 func (u *UI) updateMenu(gtx C) {
@@ -27,8 +28,11 @@ func (u *UI) updateMenu(gtx C) {
 		m.open = false
 	}
 	if m.logout.Clicked(gtx) {
-		u.backend.Logout()
+		u.logout()
 		m.open = false
+	}
+	if m.switchAcct.Clicked(gtx) {
+		u.acctMenu.open = !u.acctMenu.open
 	}
 	if m.scrim.Clicked(gtx) {
 		m.open = false
@@ -58,14 +62,19 @@ func (u *UI) layoutMenu(gtx C) {
 	if !u.dark {
 		themeLabel, themeIcon = "Dark theme", icDarkMode
 	}
-	items := []struct {
+	type menuEntry struct {
 		click *widget.Clickable
 		label string
 		ic    *icon.Icon
-	}{
-		{&m.theme, themeLabel, themeIcon},
-		{&m.logout, "Log out", icLogout},
+		more  bool // opens a submenu
 	}
+	items := []menuEntry{{click: &m.theme, label: themeLabel, ic: themeIcon}}
+	switchRow := -1
+	if len(u.accounts) > 0 {
+		switchRow = len(items)
+		items = append(items, menuEntry{click: &m.switchAcct, label: "Switch account", ic: icSwitchAccount, more: true})
+	}
+	items = append(items, menuEntry{click: &m.logout, label: "Log out", ic: icLogout})
 
 	w := gtx.Dp(220)
 	rec := op.Record(gtx.Ops)
@@ -78,15 +87,23 @@ func (u *UI) layoutMenu(gtx C) {
 			children = append(children, layout.Rigid(func(gtx C) D {
 				return clickable(gtx, it.click, func(gtx C) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
-					bg := mix(p.Menu, p.MenuHover, u.hover(gtx, it.click))
+					h := u.hover(gtx, it.click)
+					if it.more && u.acctMenu.open {
+						h = 1 // its submenu is open
+					}
+					bg := mix(p.Menu, p.MenuHover, h)
 					return background(gtx, bg, 8, func(gtx C) D {
 						return vcenter(gtx, gtx.Dp(42), func(gtx C) D {
-							return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
-								return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+							return layout.Inset{Left: 12, Right: 8}.Layout(gtx, func(gtx C) D {
+								children := []layout.FlexChild{
 									layout.Rigid(iconW(it.ic, 20, p.Icon)),
 									layout.Rigid(layout.Spacer{Width: 14}.Layout),
 									layout.Flexed(1, u.label(15, it.label, p.Text).Layout),
-								)
+								}
+								if it.more {
+									children = append(children, layout.Rigid(iconW(icChevronRight, 20, p.Icon)))
+								}
+								return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
 							})
 						})
 					})
@@ -98,6 +115,11 @@ func (u *UI) layoutMenu(gtx C) {
 	call := rec.Stop()
 
 	pos := image.Pt(m.anchor.X-dims.Size.X, m.anchor.Y)
+	if switchRow >= 0 {
+		// The account switcher opens beside its row, to the right.
+		rowY := pos.Y + gtx.Dp(8) + switchRow*gtx.Dp(42)
+		u.acctMenu.anchor = image.Pt(pos.X+dims.Size.X+gtx.Dp(6), rowY-gtx.Dp(8))
+	}
 	defer op.Offset(pos).Push(gtx.Ops).Pop()
 	defer pushPopup(gtx, v, image.Pt(dims.Size.X, 0)).Pop()
 	r := gtx.Dp(12)

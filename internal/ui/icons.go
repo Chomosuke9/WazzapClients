@@ -48,6 +48,7 @@ var (
 	icLightMode      = icon.LightMode
 	icDarkMode       = icon.DarkMode
 	icLogout         = icon.Logout
+	icSwitchAccount  = icon.SwitchAccount
 	icBubble         = icon.ChatBubble
 
 	icGroupsLine    = icon.Groups

@@ -182,9 +182,13 @@ func (b *Backend) Open(chatID string) {
 
 func (b *Backend) Avatar(string) []byte            { return nil }
 func (b *Backend) MediaData(string, string) []byte { return nil }
-func (b *Backend) Logout()                         {}
-func (b *Backend) Retry()                          {}
-func (b *Backend) Close()                          {}
+func (b *Backend) Logout() {
+	// Back to linking, which the demo can't do.
+	b.emit(model.ChatsEvent{})
+	b.emit(model.ConnEvent{State: model.StateQR, QR: "demo"})
+}
+func (b *Backend) Retry() {}
+func (b *Backend) Close() {}
 
 type demoChat struct {
 	ID, Name, Presence, Typing       string
