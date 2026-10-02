@@ -144,7 +144,7 @@ func TestFromImage(t *testing.T) {
 		if err := png.Encode(&buf, src); err != nil {
 			t.Fatal(err)
 		}
-		data, err := FromImage(buf.Bytes())
+		data, err := FromImage(buf.Bytes(), Text{})
 		if err != nil {
 			t.Fatalf("%v: %v", sz, err)
 		}
@@ -176,7 +176,7 @@ func TestFromImageNoise(t *testing.T) {
 	if err := png.Encode(&buf, src); err != nil {
 		t.Fatal(err)
 	}
-	data, err := FromImage(buf.Bytes())
+	data, err := FromImage(buf.Bytes(), Text{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,4 +184,53 @@ func TestFromImageNoise(t *testing.T) {
 		t.Fatalf("%d bytes", len(data))
 	}
 	decodeARGB(t, data)
+}
+
+// Text goes on the picture: white letters with a black outline, near the
+// top and the bottom.
+func TestFromImageText(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 400, 400))
+	for i := range src.Pix {
+		src.Pix[i] = 0x80 // opaque gray
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	data, err := FromImage(buf.Bytes(), Text{Top: "when the code", Bottom: "works"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := decodeARGB(t, data)
+	count := func(y0, y1 int) (white, black int) {
+		for y := y0; y < y1; y++ {
+			for x := range Size {
+				switch got[y*Size+x] {
+				case 0xffffffff:
+					white++
+				case 0xff000000:
+					black++
+				}
+			}
+		}
+		return
+	}
+	for _, band := range [][2]int{{0, Size / 4}, {Size * 3 / 4, Size}} {
+		if w, b := count(band[0], band[1]); w < 200 || b < 200 {
+			t.Errorf("rows %v: %d white and %d black pixels, want text", band, w, b)
+		}
+	}
+	if w, b := count(Size*2/5, Size*3/5); w > 0 || b > 0 {
+		t.Errorf("text in the middle: %d white, %d black", w, b)
+	}
+}
+
+func TestAnimatedWebP(t *testing.T) {
+	anim := []byte("RIFF")
+	anim = append(anim, 0, 0, 0, 0)
+	anim = append(anim, "WEBPVP8X"...)
+	anim = append(anim, 10, 0, 0, 0, 0x02, 0, 0, 0)
+	if _, err := FromImage(anim, Text{}); err != ErrAnimated {
+		t.Fatalf("err = %v, want ErrAnimated", err)
+	}
 }

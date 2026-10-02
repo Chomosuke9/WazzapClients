@@ -143,6 +143,8 @@ type UI struct {
 
 	newChat newChatState // the New chat panel over the chat list
 	slash   slashState   // slash commands and their notes (slash.go)
+	// Extra features turned on (extras.go); slash commands are slash.on.
+	adminMention, rawPhotos bool
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
@@ -266,7 +268,7 @@ func New(b model.Backend) *UI {
 	u.conv.list.Axis = layout.Vertical
 	u.conv.list.ScrollToEnd = true
 	u.conv.composer.Submit = b == nil || prefOn(b, prefEnterSend)
-	u.slash.on = b == nil || prefOn(b, prefSlash)
+	u.loadExtras()
 	u.conv.mentionList.Axis = layout.Vertical
 	u.hovered = make(map[string]bool)
 	return u
@@ -1336,6 +1338,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "slash", "slashkick", "slashrun":
 		// Slash commands (open a group with -ochat): the picker of
 		// commands, /kick's options, or the notes of commands run.
+		u.slash.on = true // an extra feature, off by default
 		ed := &u.conv.composer
 		set := func(s string) {
 			ed.SetText(s)

@@ -51,6 +51,10 @@ var All = []*Command{
 	},
 	{
 		Name: "sticker", Description: "Turns the photo you reply to, or a picture you pick, into a sticker",
+		Options: []Option{
+			{Name: "top", Description: "Text along the top; # starts the bottom text", Kind: Text, Until: "#"},
+			{Name: "bottom", Description: "Text along the bottom", Kind: Text},
+		},
 		Run: runSticker,
 	},
 }
@@ -233,16 +237,21 @@ func runDescription(c *Context) error {
 
 func runSticker(c *Context) error {
 	chat := c.Chat.ID
+	text := sticker.Text{Top: c.Text("top"), Bottom: c.Text("bottom")}
+	plain := strings.TrimSpace(text.Top+text.Bottom) == ""
 	makeSticker := func(read func() ([]byte, error)) {
 		n := busy(c, "Making a sticker…")
 		c.Do(func() func() {
 			data, err := read()
 			var webp []byte
 			if err == nil {
-				webp, err = sticker.FromImage(data)
+				webp, err = sticker.FromImage(data, text)
 			}
 			return func() {
 				switch {
+				case errors.Is(err, sticker.ErrAnimated):
+					fail(n, "Text can't go on an animated sticker yet.")
+					return
 				case errors.Is(err, sticker.ErrTooLarge):
 					fail(n, "That picture is too big to make a sticker of.")
 					return
@@ -265,13 +274,13 @@ func runSticker(c *Context) error {
 				makeSticker(func() ([]byte, error) { return os.ReadFile(path) })
 			}
 		})
-	case src.Kind == model.KindSticker:
+	case src.Kind == model.KindSticker && plain:
 		// It's a sticker already: send it as it is.
 		c.Backend.SendSticker(chat, src, nil)
-	case src.Kind == model.KindImage && src.Media == model.MediaImage:
+	case src.Kind == model.KindSticker, src.Kind == model.KindImage && src.Media == model.MediaImage:
 		data := c.Backend.MediaData(src.ChatID, src.ID)
 		if data == nil {
-			return errors.New("The photo hasn't downloaded yet. Try again in a moment.")
+			return errors.New("It hasn't downloaded yet. Try again in a moment.")
 		}
 		makeSticker(func() ([]byte, error) { return data, nil })
 	default:

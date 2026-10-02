@@ -272,6 +272,9 @@ func (u *UI) mentionQuery() *mentionState {
 			}
 			var special []model.Member
 			for _, id := range []string{mentionAllID, mentionAdminID} {
+				if id == mentionAdminID && !u.adminMention {
+					continue // an extra feature
+				}
 				if matches(id[1:]) {
 					special = append(special, model.Member{ID: id, Name: id[1:]})
 				}

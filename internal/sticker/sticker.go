@@ -1,7 +1,8 @@
 // Package sticker makes WhatsApp stickers: a picture fitted into a 512x512
-// transparent canvas, as a lossless WebP. It has its own WebP encoder
-// (vp8l.go), since golang.org/x/image only decodes WebP and the libwebp
-// bindings need cgo or keep a WebAssembly runtime in memory.
+// transparent canvas, with meme text if you like, as a lossless WebP. It
+// has its own WebP encoder (vp8l.go), since golang.org/x/image only
+// decodes WebP and the libwebp bindings need cgo or keep a WebAssembly
+// runtime in memory.
 package sticker
 
 import (
@@ -33,9 +34,16 @@ const maxPixels = 24 << 20
 // ErrTooLarge means the picture is too big to decode.
 var ErrTooLarge = errors.New("sticker: the picture is too large")
 
+// ErrAnimated means the picture is an animated WebP, which can't be
+// decoded (see internal/webpanim).
+var ErrAnimated = errors.New("sticker: the picture is animated")
+
 // FromImage makes a sticker of a JPEG, PNG, GIF (its first frame) or still
-// WebP picture.
-func FromImage(data []byte) ([]byte, error) {
+// WebP picture, with text drawn on it.
+func FromImage(data []byte, text Text) ([]byte, error) {
+	if animatedWebP(data) {
+		return nil, ErrAnimated
+	}
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -47,7 +55,11 @@ func FromImage(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	argb := canvas(src)
+	c, area := canvas(src)
+	if err := drawText(c, text, area); err != nil {
+		return nil, err
+	}
+	argb := unpremultiply(c)
 	// A photo may not fit losslessly: drop low bits of its colors until
 	// it does.
 	var out []byte
@@ -60,9 +72,15 @@ func FromImage(data []byte) ([]byte, error) {
 	return nil, errors.New("sticker: the picture doesn't fit in a sticker")
 }
 
-// canvas fits img into the middle of a transparent Size x Size canvas and
-// returns its pixels as non-premultiplied ARGB.
-func canvas(img image.Image) []uint32 {
+// animatedWebP reports whether data is a WebP with animation.
+func animatedWebP(data []byte) bool {
+	// RIFF, size, WEBP, then a VP8X chunk whose flags say so.
+	return len(data) >= 21 && string(data[0:4]) == "RIFF" && string(data[8:16]) == "WEBPVP8X" && data[20]&0x02 != 0
+}
+
+// canvas fits img into the middle of a transparent Size x Size canvas, and
+// returns it with the area the picture covers.
+func canvas(img image.Image) (*image.RGBA, image.Rectangle) {
 	b := img.Bounds()
 	w, h := Size, Size
 	if b.Dx() > b.Dy() {
@@ -70,27 +88,32 @@ func canvas(img image.Image) []uint32 {
 	} else {
 		w = max(1, Size*b.Dx()/b.Dy())
 	}
-	var fit *image.RGBA
+	area := image.Rect(0, 0, w, h).Add(image.Pt((Size-w)/2, (Size-h)/2))
+	c := image.NewRGBA(image.Rect(0, 0, Size, Size))
 	if b.Dx() >= w && b.Dy() >= h {
-		fit = photo.Shrink(img, w, h)
+		draw.Draw(c, area, photo.Shrink(img, w, h), image.Point{}, draw.Src)
 	} else {
 		// Kernel scalers allocate w x (source height) x 32 bytes;
 		// ApproxBiLinear allocates nothing.
-		fit = image.NewRGBA(image.Rect(0, 0, w, h))
-		xdraw.ApproxBiLinear.Scale(fit, fit.Bounds(), img, b, draw.Src, nil)
+		xdraw.ApproxBiLinear.Scale(c, area, img, b, draw.Src, nil)
 	}
-	out := make([]uint32, Size*Size)
-	x0, y0 := (Size-w)/2, (Size-h)/2
-	for y := range h {
-		row := fit.Pix[y*fit.Stride : y*fit.Stride+4*w]
-		for x := range w {
+	return c, area
+}
+
+// unpremultiply returns the pixels of img as non-premultiplied ARGB, as
+// WebP keeps them.
+func unpremultiply(img *image.RGBA) []uint32 {
+	b := img.Bounds()
+	out := make([]uint32, 0, b.Dx()*b.Dy())
+	for y := range b.Dy() {
+		row := img.Pix[y*img.Stride : y*img.Stride+4*b.Dx()]
+		for x := range b.Dx() {
 			p := row[4*x : 4*x+4]
 			r, g, bl, a := uint32(p[0]), uint32(p[1]), uint32(p[2]), uint32(p[3])
 			if a != 0 && a != 0xff {
-				// image.RGBA is premultiplied; WebP isn't.
 				r, g, bl = min(255, (r*255+a/2)/a), min(255, (g*255+a/2)/a), min(255, (bl*255+a/2)/a)
 			}
-			out[(y0+y)*Size+x0+x] = a<<24 | r<<16 | g<<8 | bl
+			out = append(out, a<<24|r<<16|g<<8|bl)
 		}
 	}
 	return out

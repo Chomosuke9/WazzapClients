@@ -292,7 +292,8 @@ func (u *UI) openQualityMenu() {
 	}()
 }
 
-// qualityMenuItems mirrors WhatsApp's photo quality menu, plus Raw.
+// qualityMenuItems mirrors WhatsApp's photo quality menu, plus Raw when
+// that extra feature is on.
 func (u *UI) qualityMenuItems() []menuItem {
 	a := &u.attach
 	if !a.hasPhotos() {
@@ -301,13 +302,16 @@ func (u *UI) qualityMenuItems() []menuItem {
 	item := func(key, label string, q model.Quality) menuItem {
 		return menuItem{key: key, label: label, sub: a.qualitySub(q), tick: a.quality == q, run: func() { a.quality = q }}
 	}
-	return []menuItem{
+	items := []menuItem{
 		item("std", "Standard quality", model.QualityStandard),
 		item("hd", "HD quality", model.QualityHD),
-		item("raw", "Raw quality", model.QualityRaw),
-		{divider: true},
-		{note: true, label: "HD photos are clearer. Standard photos use less storage space and are faster to send. Raw photos are sent as they are."},
 	}
+	note := "HD photos are clearer. Standard photos use less storage space and are faster to send."
+	if u.rawPhotos { // an extra feature
+		items = append(items, item("raw", "Raw quality", model.QualityRaw))
+		note += " Raw photos are sent as they are."
+	}
+	return append(items, menuItem{divider: true}, menuItem{note: true, label: note})
 }
 
 // qualitySub is a quality's size, "116 kB · 1600 x 900", or the total

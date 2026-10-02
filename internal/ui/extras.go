@@ -7,14 +7,38 @@ import (
 	"gioui.org/layout"
 
 	"github.com/chomosuke9/wazzapclients/internal/command"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
-// Extra features are this app's own, which WhatsApp doesn't have. Each
-// can be turned off on the Extra features settings page.
+// Extra features are this app's own, which WhatsApp doesn't have. Each is
+// off until it's turned on, on the Extra features settings page.
 
-// prefSlash turns slash commands on, unless "off".
-const prefSlash = "slash_commands"
+// Preferences of the extra features (Backend.Pref keys), on when "on".
+const (
+	prefSlash        = "slash_commands" // slash.go
+	prefAdminMention = "admin_mention"  // "@admin" in the mention picker
+	prefRawPhotos    = "raw_photos"     // Raw quality for photos
+)
+
+// extraOn reports whether an extra feature is turned on.
+func extraOn(b model.Backend, key string) bool { return b != nil && b.Pref(key) == "on" }
+
+func setExtra(b model.Backend, key string, on bool) {
+	v := "off"
+	if on {
+		v = "on"
+	}
+	b.SetPref(key, v)
+}
+
+// loadExtras reads which extra features are on.
+func (u *UI) loadExtras() {
+	b := u.backend
+	u.slash.on = extraOn(b, prefSlash)
+	u.adminMention = extraOn(b, prefAdminMention)
+	u.rawPhotos = extraOn(b, prefRawPhotos)
+}
 
 // commandIcons are the commands' icons in the picker and in settings.
 var commandIcons = map[string]*icon.Icon{
@@ -38,18 +62,35 @@ func commandIcon(name string) *icon.Icon {
 // extrasSettings is the Extra features page.
 func (u *UI) extrasSettings() []settingsSection {
 	b := u.backend
+	toggle := func(key, title, sub string, flag *bool, changed func()) settingRow {
+		on := *flag
+		return settingRow{key: key, kind: setToggle, on: on, title: title, sub: sub, run: func() {
+			*flag = !on
+			setExtra(b, key, !on)
+			if changed != nil {
+				changed()
+			}
+		}}
+	}
 	on := u.slash.on
-	secs := []settingsSection{{
-		title: "Slash commands",
-		rows: []settingRow{{key: prefSlash, kind: setToggle, on: on, title: "Slash commands",
-			sub: "Type / at the start of a message to run a command, like in Discord",
-			run: func() {
-				u.slash.on = !on
-				setPref(b, prefSlash, u.slash.on)
-				u.conv.richFor = "" // the composer stops or starts showing commands
-			}}},
-		note: "Commands run on this computer, from your account. Group commands work in groups you administer.",
-	}}
+	secs := []settingsSection{
+		{title: "Slash commands", rows: []settingRow{
+			toggle(prefSlash, "Slash commands", "Type / at the start of a message to run a command, like in Discord",
+				&u.slash.on, func() { u.conv.richFor = "" }), // the composer starts or stops showing commands
+		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
+		{title: "Mentions", rows: []settingRow{
+			toggle(prefAdminMention, "@admin", "Type @admin in a group to mention all of its admins at once",
+				&u.adminMention, nil),
+		}},
+		{title: "Photos", rows: []settingRow{
+			toggle(prefRawPhotos, "Raw quality", "Offer Raw when sending photos: JPEG and PNG files go as they are, not scaled or compressed",
+				&u.rawPhotos, func() {
+					if !u.rawPhotos && u.attach.quality == model.QualityRaw {
+						u.attach.quality = model.QualityHD
+					}
+				}),
+		}},
+	}
 	if on {
 		sec := settingsSection{title: "Commands"}
 		for _, c := range command.All {
@@ -59,7 +100,8 @@ func (u *UI) extrasSettings() []settingsSection {
 				})
 			}})
 		}
-		secs = append(secs, sec)
+		// Under the switch that turns them on.
+		secs = append(secs[:1], append([]settingsSection{sec}, secs[1:]...)...)
 	}
 	secs[len(secs)-1].note = appendNote(secs[len(secs)-1].note,
 		"Extra features aren't made by WhatsApp. They only use what WhatsApp lets every linked device do.")

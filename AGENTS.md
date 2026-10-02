@@ -177,7 +177,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    formatting toolbar in formatbar.go; the attach
                    menu, file tray and poll dialog in attach.go; slash commands (their
                    picker over the composer and the notes only you see) in slash.go, and
-                   the Extra features settings page in extras.go; posting your own status
+                   the Extra features settings page in extras.go (the app's own features,
+                   such as slash commands, @admin and Raw photos: each off until turned on); posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go;
                    chat actions shared by menus and info panels (mute choices, lists,
@@ -190,8 +191,9 @@ internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated)
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/command/  slash commands, like Discord's: the list (commands.go), parsing their options,
                    and running them through a Host the UI implements. No Gio here
-internal/sticker/  turns a picture into a 512x512 sticker, with its own lossless WebP (VP8L)
-                   encoder: x/image only decodes WebP, and libwebp needs cgo or a WASM runtime
+internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the embedded Anton
+                   font (OFL), and its own lossless WebP (VP8L) encoder: x/image only decodes
+                   WebP, and libwebp needs cgo or a WASM runtime
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink

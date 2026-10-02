@@ -142,3 +142,32 @@ func TestMatching(t *testing.T) {
 		t.Errorf("d: %v", got)
 	}
 }
+
+func TestParseSeparator(t *testing.T) {
+	for _, c := range []struct {
+		text, top, bottom string
+		current           int
+	}{
+		{"/sticker When the code#works ", "When the code", "works", 1},
+		{"/sticker  only the top", "only the top", "", 0},
+		{"/sticker #only the bottom", "", "only the bottom", 1},
+		{"/sticker top #", "top", "", 1},
+		{"/sticker a#b#c", "a", "b#c", 1},
+	} {
+		in, ok := Parse(c.text, len([]rune(c.text)), nil, nil)
+		if !ok || in.Problem() != "" {
+			t.Errorf("%q: ok %v, problem %q", c.text, ok, in.Problem())
+			continue
+		}
+		get := func(i int) string {
+			if len(in.Values[i]) == 0 {
+				return ""
+			}
+			return in.Values[i][0].Text
+		}
+		if get(0) != c.top || get(1) != c.bottom || in.Current != c.current {
+			t.Errorf("%q: top %q, bottom %q, current %d; want %q, %q, %d",
+				c.text, get(0), get(1), in.Current, c.top, c.bottom, c.current)
+		}
+	}
+}

@@ -490,11 +490,15 @@ func (u *UI) slashHint(sp *slashPick) string {
 		if len(in.Values) > i && len(in.Values[i]) > 0 {
 			continue
 		}
-		if o.Required {
-			parts = append(parts, o.Name)
-		} else {
-			parts = append(parts, "["+o.Name+"]")
+		p := o.Name
+		if !o.Required {
+			p = "[" + p + "]"
 		}
+		if i > 0 && in.Cmd.Options[i-1].Until != "" {
+			// What separates it from the option before: "#[bottom]".
+			p = in.Cmd.Options[i-1].Until + p
+		}
+		parts = append(parts, p)
 	}
 	return strings.Join(parts, " ")
 }

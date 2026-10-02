@@ -36,6 +36,9 @@ type Option struct {
 	// Multiple lets a Member or Contact option take several.
 	Multiple bool
 	Choices  []string
+	// Until ends a Text option's value at this separator, so that the
+	// next option follows it: "/sticker top text#bottom text".
+	Until string
 	// Filter narrows the members a Member option offers; nil offers all
 	// but you.
 	Filter func(m model.Member) bool
@@ -203,7 +206,7 @@ func Parse(text string, caret int, mentions []Mention, members []model.Member) (
 		return Input{}, false
 	}
 	toks := tokenize(rs, end, mentions)
-	in.assign(rs, toks, members)
+	in.assign(rs, toks, mentions, members)
 	in.findCurrent(rs, caret)
 	return in, true
 }
@@ -261,7 +264,7 @@ func mentionAt(rs []rune, i int, mentions []Mention) (Mention, int) {
 }
 
 // assign gives the tokens to the options, in order.
-func (in *Input) assign(rs []rune, toks []token, members []model.Member) {
+func (in *Input) assign(rs []rune, toks []token, mentions []Mention, members []model.Member) {
 	opts := in.Cmd.Options
 	oi, ti := 0, 0
 	defer func() {
@@ -279,15 +282,31 @@ func (in *Input) assign(rs []rune, toks []token, members []model.Member) {
 		}
 		switch o.Kind {
 		case Text:
-			// The value runs to the end, though its text has no
-			// trailing spaces.
-			end := len(rs)
+			// The value runs to the end, or to the option's separator,
+			// though its text has no spaces around it.
+			stop := len(rs)
+			if o.Until != "" {
+				if i := strings.Index(string(rs[t.start:]), o.Until); i >= 0 {
+					stop = t.start + len([]rune(string(rs[t.start:])[:i]))
+				}
+			}
+			end := stop
 			for end > t.start && isSpace(rs[end-1]) {
 				end--
 			}
-			in.Values[oi] = append(in.Values[oi], Value{Text: string(rs[t.start:end]), Start: t.start, End: len(rs), Done: true})
-			ti = len(toks)
-			return
+			in.Values[oi] = append(in.Values[oi], Value{Text: string(rs[t.start:end]), Start: t.start, End: stop, Done: true})
+			oi++
+			if stop == len(rs) {
+				ti = len(toks)
+				return
+			}
+			// The rest, after the separator, is the next options'.
+			toks = append(toks[:ti:ti], tokenize(rs, stop+len([]rune(o.Until)), mentions)...)
+			if ti == len(toks) && oi < len(opts) {
+				// Nothing typed after it yet: the next option starts there.
+				at := stop + len([]rune(o.Until))
+				in.Values[oi] = append(in.Values[oi], Value{Start: at, End: at, Done: true})
+			}
 		case Choice:
 			v := Value{Text: t.text, Start: t.start, End: t.end}
 			found := false

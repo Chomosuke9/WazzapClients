@@ -13,6 +13,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // slashTest drives a UI with key events, like a window would.
@@ -27,6 +28,7 @@ type slashTest struct {
 
 func newSlashTest(t *testing.T, chat string) *slashTest {
 	st := &slashTest{t: t, b: mock.New(), now: time.Now()}
+	st.b.SetPref(prefSlash, "on") // an extra feature, off by default
 	st.u = New(st.b)
 	st.u.Start(func() {})
 	st.u.applyEvents()
@@ -193,5 +195,91 @@ func TestSlashEscape(t *testing.T) {
 	st.typeText("/k")
 	if !st.u.slashShown(st.u.slashQuery()) {
 		t.Fatal("picker didn't come back after typing")
+	}
+}
+
+// TestExtrasOffByDefault checks that extra features start off, and that
+// the Extra features page turns them on.
+func TestExtrasOffByDefault(t *testing.T) {
+	b := mock.New()
+	u := New(b)
+	u.Start(func() {})
+	u.applyEvents()
+	if u.slash.on || u.adminMention || u.rawPhotos {
+		t.Fatalf("extras on by default: slash %v, @admin %v, raw %v", u.slash.on, u.adminMention, u.rawPhotos)
+	}
+	u.SelectID("work")
+	hasAdmin := func() bool {
+		ed := &u.conv.composer
+		ed.SetText("@")
+		ed.SetCaret(1, 1)
+		u.slash.cacheOK = false
+		ms := u.mentionQuery()
+		if ms == nil {
+			t.Fatal("no mention picker for @")
+		}
+		for _, m := range ms.members {
+			if m.ID == mentionAdminID {
+				return true
+			}
+		}
+		return false
+	}
+	if hasAdmin() {
+		t.Error("@admin offered while off")
+	}
+	u.attach.files = []*attachFile{{Attachment: model.Attachment{Path: "a.jpg", Media: model.MediaImage}}}
+	hasRaw := func() bool {
+		for _, it := range u.qualityMenuItems() {
+			if it.key == "raw" {
+				return true
+			}
+		}
+		return false
+	}
+	if hasRaw() {
+		t.Error("Raw quality offered while off")
+	}
+
+	u.ShowPage("extras")
+	for _, key := range []string{prefSlash, prefAdminMention, prefRawPhotos} {
+		settingRowByKey(t, u, key).run()
+		u.settings.stale = true
+		if b.Pref(key) != "on" || !settingRowByKey(t, u, key).on {
+			t.Errorf("%s didn't turn on", key)
+		}
+	}
+	if !u.slash.on || !hasAdmin() || !hasRaw() {
+		t.Error("extras turned on aren't offered")
+	}
+	// A new window remembers them.
+	if u2 := New(b); !u2.slash.on || !u2.adminMention || !u2.rawPhotos {
+		t.Error("extras weren't remembered")
+	}
+	// Raw goes when it's turned off.
+	u.attach.quality = model.QualityRaw
+	settingRowByKey(t, u, prefRawPhotos).run()
+	if u.attach.quality != model.QualityHD || hasRaw() {
+		t.Error("Raw quality stayed after turning it off")
+	}
+}
+
+// TestSlashStickerHint checks the composer's hint for /sticker's two
+// texts, which # separates.
+func TestSlashStickerHint(t *testing.T) {
+	st := newSlashTest(t, "rina")
+	for _, c := range []struct{ text, hint string }{
+		{"/sticker ", "[top] #[bottom]"},
+		{"/sticker when it works", "#[bottom]"},
+		{"/sticker when it works#", ""},
+	} {
+		st.typeText(c.text)
+		sp := st.u.slashQuery()
+		if sp == nil {
+			t.Fatalf("%q isn't a command", c.text)
+		}
+		if got := st.u.slashHint(sp); got != c.hint {
+			t.Errorf("%q: hint %q, want %q", c.text, got, c.hint)
+		}
 	}
 }

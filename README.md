@@ -16,9 +16,10 @@ whatsmeow.
 - Media viewer and contact/group info panel
 - Light and dark themes
 - Messages stored locally in SQLite
-- Extras WhatsApp doesn't have: Discord-like slash commands (`/kick`, `/add`, `/promote`,
-  `/demote`, `/link`, `/lockdown`, `/description`, `/sticker`), which run from your own
-  account and can be turned off in Settings > Extra features
+- Extras WhatsApp doesn't have, off until you turn them on in Settings > Extra features:
+  Discord-like slash commands (`/kick`, `/add`, `/promote`, `/demote`, `/link`, `/lockdown`,
+  `/description`, `/sticker top text#bottom text`) that run from your own account, `@admin` to mention a
+  group's admins, and Raw quality to send photos as they are
 
 ## Download
 
