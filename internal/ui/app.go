@@ -186,6 +186,7 @@ type UI struct {
 		rows            []convRow
 		rowsFor         *model.Chat
 		rowsVer         int
+		rowsJobs        int // the scheduled messages' version (auto.Backend.Version)
 		wallpaper       wallpaper
 		nbsp            map[int]float32 // NBSP advance per text size in px
 		// cardH is the height of the last message laid out, without the

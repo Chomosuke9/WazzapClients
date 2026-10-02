@@ -68,14 +68,14 @@ func TestSchedule(t *testing.T) {
 	if ms, _ := at.poll(); len(ms) != 0 {
 		t.Fatalf("sent %d early", len(ms))
 	}
-	at.now = base.Add(45 * time.Minute)
+	at.now = base.Add(32 * time.Minute)
 	ms, _ := at.poll()
 	if len(ms) != 1 || ms[0].Text != "sooner" || ms[0].ChatID != "work" {
 		t.Fatalf("sent %+v", ms)
 	}
 	// Offline, nothing goes until it's back.
 	at.f.in = append(at.f.in, model.ConnEvent{State: model.StateConnecting})
-	at.now = base.Add(2 * time.Hour)
+	at.now = base.Add(time.Hour + 3*time.Minute) // a little late is fine
 	if ms, _ := at.poll(); len(ms) != 0 {
 		t.Fatal("sent while offline")
 	}
@@ -86,6 +86,25 @@ func TestSchedule(t *testing.T) {
 	}
 	if at.a.Cancel(j.ID) || len(at.a.Jobs("")) != 0 || at.f.Pref(prefJobs) != "" {
 		t.Fatal("the queue isn't empty")
+	}
+}
+
+func TestScheduleTooLate(t *testing.T) {
+	at := newAutoTest(t)
+	at.a.Schedule(Job{Chat: "rina", At: base.Add(time.Hour), Text: "good morning everyone, coffee's on me today", Shown: ""})
+	at.a.Schedule(Job{Chat: "rina", At: base.Add(3 * time.Hour), Text: "later"})
+	// The app was closed: it opens two hours late.
+	at.now = base.Add(3 * time.Hour)
+	ms, ns := at.poll()
+	if len(ms) != 1 || ms[0].Text != "later" {
+		t.Fatalf("sent %+v", ms)
+	}
+	want := "Not sent, the app was closed or offline at 16:00: \"good morning everyone, coffee's on me t…\""
+	if len(ns) != 1 || ns[0] != want {
+		t.Fatalf("notices %q, want %q", ns, want)
+	}
+	if len(at.a.Jobs("")) != 0 {
+		t.Fatal("the late message stayed queued")
 	}
 }
 

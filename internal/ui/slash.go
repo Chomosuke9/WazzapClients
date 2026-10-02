@@ -48,6 +48,9 @@ type slashState struct {
 	anim      tween
 	ghost     *slashPick // what the picker showed, while it fades out
 	calcMore  bool       // /calc's calculator shows its functions (⋯)
+	// replacing is the scheduled message being edited: the /schedule in
+	// the composer replaces it once it runs (see editScheduled).
+	replacing string
 
 	notes   map[string][]*localNote           // per chat, oldest first
 	waiting map[string]func(model.GroupEvent) // group requests, by Ref
@@ -283,6 +286,9 @@ const slashRows = 5
 // its keys.
 func (u *UI) slashKeys(gtx C) {
 	u.drainSlashDone()
+	if u.slash.replacing != "" && !strings.HasPrefix(u.conv.composer.Text(), "/schedule ") {
+		u.slash.replacing = "" // the edit was given up
+	}
 	sp := u.slashQuery()
 	u.updateSlashSel(sp)
 	if !u.slashShown(sp) || sp.rows() == 0 {
@@ -379,7 +385,12 @@ func (u *UI) submitSlash(sp *slashPick) {
 	u.conv.composer.SetText("")
 	u.conv.reply = nil
 	u.conv.mentions = nil
+	jobs := u.jobsVersion()
 	command.Execute(ctx)
+	if old := s.replacing; old != "" && in.Cmd.Name == "schedule" && u.jobsVersion() != jobs {
+		u.auto.Cancel(old) // rescheduled: the edit is done
+	}
+	s.replacing = ""
 	u.scrollMessages(layout.Position{})
 }
 

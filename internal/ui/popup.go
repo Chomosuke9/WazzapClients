@@ -123,6 +123,7 @@ const (
 	ctxConv        // the open chat's ⋮ menu
 	ctxTimer       // a chat's disappearing message timers
 	ctxGallerySort // the Media panel's sort order
+	ctxScheduled   // a scheduled message's (scheduled.go)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -132,6 +133,7 @@ type ctxMenu struct {
 	chatID string
 	msg    *model.Message
 	fav    bool        // msg is a favourite sticker
+	job    string      // the scheduled message's ID, for ctxScheduled
 	at     image.Point // where it was opened, in content coordinates
 	scrim  widget.Clickable
 	lists  bool // "Add to list" submenu open
@@ -359,6 +361,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 				if cm.ID == m.chatID {
 					items = u.communityMenuItems(cm)
 				}
+			}
+		case ctxScheduled:
+			if u.selected != nil && u.selected.ID == m.chatID {
+				items = u.scheduledMenuItems(m.job)
 			}
 		case ctxStatusAdd:
 			items = u.statusAddItems()

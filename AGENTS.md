@@ -190,7 +190,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    panel's place) and a group's members in chatsearch.go; the composer's
                    formatting toolbar in formatbar.go; the attach
                    menu, file tray and poll dialog in attach.go; slash commands (their
-                   picker over the composer and the notes only you see) in slash.go, and
+                   picker over the composer and the notes only you see) in slash.go; scheduled
+                   messages as bubbles after a chat's newest (send now, edit, cancel) and
+                   the AFK bar above the chat list in scheduled.go; and
                    the Extra features settings page in extras.go (the app's own features,
                    such as slash commands, @admin and Raw photos: each off until turned on); posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;

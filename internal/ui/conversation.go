@@ -18,6 +18,7 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 
+	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/styledtext"
 )
@@ -28,9 +29,10 @@ const (
 	rowDate rowKind = iota
 	rowEncryption
 	rowMessage
-	rowTyping // someone typing, after the newest message
-	rowNote   // a slash command's note, which only you see (slash.go)
-	rowUnread // "N unread messages", above the first of them (unread.go)
+	rowTyping    // someone typing, after the newest message
+	rowNote      // a slash command's note, which only you see (slash.go)
+	rowUnread    // "N unread messages", above the first of them (unread.go)
+	rowScheduled // a message you scheduled, after the newest (scheduled.go)
 )
 
 // convRow is one entry of the message list: a day separator, the
@@ -48,6 +50,8 @@ type convRow struct {
 	// an album, in one grid (album.go). Nil for a single message.
 	group []*model.Message
 	album bool
+	// job is a rowScheduled's message.
+	job *auto.Job
 }
 
 // has reports whether the row shows message id.
@@ -63,7 +67,8 @@ func (r convRow) has(id string) bool {
 
 // rows rebuilds the flattened message list when the loaded messages change.
 func (u *UI) rows(c *model.Chat) []convRow {
-	if u.conv.rowsFor == c && u.conv.rowsVer == u.msgsVer {
+	jobsVer := u.jobsVersion()
+	if u.conv.rowsFor == c && u.conv.rowsVer == u.msgsVer && u.conv.rowsJobs == jobsVer {
 		return u.conv.rows
 	}
 	now := u.now()
@@ -120,8 +125,9 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		for _, n := range notes {
 			rows = append(rows, convRow{kind: rowNote, note: n, first: true})
 		}
+		rows = u.appendScheduled(rows, c)
 	}
-	u.conv.rows, u.conv.rowsFor, u.conv.rowsVer = rows, c, u.msgsVer
+	u.conv.rows, u.conv.rowsFor, u.conv.rowsVer, u.conv.rowsJobs = rows, c, u.msgsVer, jobsVer
 	return rows
 }
 
@@ -397,7 +403,15 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	u.conv.typingH = 0
 	msgRows := len(rows)
 	if typingV > 0 {
-		rows = append(rows[:len(rows):len(rows)], convRow{kind: rowTyping, first: true})
+		// After the newest message: above the scheduled ones.
+		at := len(rows)
+		for at > 0 && (rows[at-1].kind == rowScheduled || rows[at-1].kind == rowDate && rows[at-1].date == scheduledChip) {
+			at--
+		}
+		rows = slices.Insert(rows[:len(rows):len(rows)], at, convRow{kind: rowTyping, first: true})
+		if at < msgRows {
+			msgRows = len(rows) // the last scheduled message keeps the bottom space
+		}
 	}
 	width := gtx.Constraints.Max.X
 	margin := max(gtx.Dp(12), min(gtx.Dp(63), width*13/100))
@@ -469,6 +483,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 					return u.layoutTyping(gtx, c.IsGroup, margin, typingV)
 				case r.kind == rowNote:
 					return u.layoutNote(gtx, r.note, maxBubble)
+				case r.kind == rowScheduled:
+					return u.layoutScheduled(gtx, r.job, r.first, maxBubble)
 				case r.album:
 					return u.layoutAlbumRow(gtx, c, r, maxBubble, margin)
 				case r.group != nil:

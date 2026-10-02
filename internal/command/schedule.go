@@ -121,11 +121,7 @@ func runAFK(c *Context) error {
 			n.Text = "You were back already."
 			return
 		}
-		told := c.Auto.Back()
-		n.Text = "You're back. The AFK reply went to " + plural(told, "person") + "."
-		if told != 1 {
-			n.Text = strings.Replace(n.Text, "persons", "people", 1)
-		}
+		n.Text = auto.BackText(c.Auto.Back())
 	}}}
 	c.Note(n)
 	return nil

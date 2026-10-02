@@ -64,6 +64,7 @@ type Backend struct {
 	notify func()
 	timer  *time.Timer
 	seq    int
+	ver    int // bumped as the jobs change
 }
 
 // Wrap returns b with scheduled messages and AFK, reading the time from
@@ -180,7 +181,12 @@ func (a *Backend) SendNow(id string) *model.Message {
 	return nil
 }
 
-// sendDue sends the jobs whose time has come, once online.
+// lateBy is how late a scheduled message may still go: past it (the app
+// was closed or offline), it's dropped with a notice instead.
+const lateBy = 5 * time.Minute
+
+// sendDue sends the jobs whose time has come, once online, and drops the
+// ones too late to send.
 func (a *Backend) sendDue() {
 	if !a.online {
 		return
@@ -197,6 +203,10 @@ func (a *Backend) sendDue() {
 	a.jobs = append([]Job(nil), a.jobs[n:]...)
 	a.saveJobs()
 	for _, j := range due {
+		if now.Sub(j.At) > lateBy {
+			a.out = append(a.out, model.NoticeEvent{Text: MissedText(j, now)})
+			continue
+		}
 		if m := a.send(j); m != nil {
 			a.out = append(a.out, model.MessageEvent{Msg: m})
 		}
@@ -218,6 +228,23 @@ func (a *Backend) send(j Job) *model.Message {
 	return m
 }
 
+// MissedText says that j wasn't sent because it was too late.
+func MissedText(j Job, now time.Time) string {
+	text := []rune(j.Shown)
+	if len(text) == 0 {
+		text = []rune(j.Text)
+	}
+	if len(text) > 40 {
+		text = append(text[:39], '…')
+	}
+	at := j.At.In(now.Location())
+	when := at.Format("15:04")
+	if y, m, d := at.Date(); y != now.Year() || m != now.Month() || d != now.Day() {
+		when = at.Format("Mon 2 Jan 15:04")
+	}
+	return "Not sent, the app was closed or offline at " + when + ": \"" + string(text) + "\""
+}
+
 // arm sets the timer for the next job. It wakes at least hourly, in case
 // the clock jumped (the computer slept).
 func (a *Backend) arm() {
@@ -235,7 +262,11 @@ func (a *Backend) arm() {
 	a.timer = time.AfterFunc(d, a.notify)
 }
 
+// Version changes whenever the scheduled messages do.
+func (a *Backend) Version() int { return a.ver }
+
 func (a *Backend) saveJobs() {
+	a.ver++
 	if len(a.jobs) == 0 {
 		a.Backend.SetPref(prefJobs, "")
 		return
@@ -385,17 +416,18 @@ func awayLines(w *Away, now time.Time) (reason, since string) {
 
 // cameBack ends AFK because you sent a message, with a notice saying so.
 func (a *Backend) cameBack() {
-	n := a.Back()
-	text := "Welcome back! You're no longer AFK."
-	if n > 0 {
-		text = "Welcome back! The AFK reply went to " + strconv.Itoa(n) + " "
-		if n == 1 {
-			text += "person."
-		} else {
-			text += "people."
-		}
+	a.out = append(a.out, model.NoticeEvent{Text: BackText(a.Back())})
+}
+
+// BackText says you're no longer AFK, and how many got the reply.
+func BackText(told int) string {
+	switch told {
+	case 0:
+		return "Welcome back! You're no longer AFK."
+	case 1:
+		return "Welcome back! The AFK reply went to 1 person."
 	}
-	a.out = append(a.out, model.NoticeEvent{Text: text})
+	return "Welcome back! The AFK reply went to " + strconv.Itoa(told) + " people."
 }
 
 // sent ends AFK when you send something yourself.

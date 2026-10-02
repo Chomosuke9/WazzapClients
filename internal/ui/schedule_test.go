@@ -142,3 +142,77 @@ func TestSlashAFK(t *testing.T) {
 		t.Fatalf("note %q", n.Text)
 	}
 }
+
+func TestScheduledBubbles(t *testing.T) {
+	st := newSlashTest(t, "work")
+	st.typeText("/schedule 1h standup @")
+	ms := st.u.mentionQuery()
+	pick := 0
+	for ms.members[pick].Me || strings.HasPrefix(ms.members[pick].ID, "@") {
+		pick++
+	}
+	name := st.u.mentionName(ms.members[pick])
+	st.u.pickMention(pick)
+	st.frame()
+	st.press(key.NameReturn)
+	jobs := st.u.auto.Jobs("work")
+	if len(jobs) != 1 {
+		t.Fatalf("%d jobs", len(jobs))
+	}
+	// It shows after the newest message, under its chip.
+	rows := st.u.rows(st.u.selected)
+	if n := len(rows); rows[n-1].kind != rowScheduled || rows[n-1].job.ID != jobs[0].ID || rows[n-2].date != scheduledChip {
+		t.Fatalf("last rows %+v", rows[n-2:])
+	}
+	items := st.u.scheduledMenuItems(jobs[0].ID)
+	if len(items) != 4 || items[0].label != "Send now" || items[1].label != "Edit" || items[3].label != "Cancel" {
+		t.Fatalf("menu %+v", items)
+	}
+	// Edit puts it back in the composer, mention and all.
+	items[1].run()
+	st.frame()
+	want := "/schedule today 16:00 standup @" + name
+	if st.text() != want || len(st.u.conv.mentions) != 1 || st.u.slash.replacing != jobs[0].ID {
+		t.Fatalf("editing %q, mentions %+v", st.text(), st.u.conv.mentions)
+	}
+	// Running it replaces the old one.
+	st.typeText("/schedule tomorrow 09:00 standup @" + name + " moved")
+	st.press(key.NameReturn)
+	jobs = st.u.auto.Jobs("work")
+	if len(jobs) != 1 || !strings.HasSuffix(jobs[0].Shown, " moved") || len(jobs[0].Mentions) != 1 {
+		t.Fatalf("after the edit %+v", jobs)
+	}
+	// An edit given up leaves it be.
+	st.u.scheduledMenuItems(jobs[0].ID)[1].run()
+	st.frame()
+	st.typeText("never mind")
+	st.typeText("/schedule 2h another")
+	st.press(key.NameReturn)
+	if len(st.u.auto.Jobs("work")) != 2 {
+		t.Fatal("a given-up edit replaced the message")
+	}
+	// Cancel takes it away, rows and all.
+	for _, j := range st.u.auto.Jobs("work") {
+		st.u.scheduledMenuItems(j.ID)[3].run()
+	}
+	for _, r := range st.u.rows(st.u.selected) {
+		if r.kind == rowScheduled || r.date == scheduledChip {
+			t.Fatal("a cancelled message still shows")
+		}
+	}
+}
+
+func TestAwayBar(t *testing.T) {
+	st := newSlashTest(t, "rina")
+	st.typeText("/afk ")
+	st.press(key.NameReturn)
+	if st.u.auto.Away() == nil {
+		t.Fatal("not away")
+	}
+	cl := st.u.btn("away:back")
+	cl.Click() // as if clicked; the bar reads it next frame
+	st.frame()
+	if st.u.auto.Away() != nil || st.u.toastMsg.text != auto.BackText(0) {
+		t.Fatalf("still away; toast %q", st.u.toastMsg.text)
+	}
+}
