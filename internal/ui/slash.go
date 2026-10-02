@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -82,9 +83,10 @@ type slashPick struct {
 }
 
 // slashValue is a value the picker offers for an option: a member or
-// contact (id is set) or a choice.
+// contact (id is set) or a choice. Picking it types name; its row shows
+// title (or name) over sub.
 type slashValue struct {
-	id, name, sub string
+	id, name, title, sub string
 }
 
 // rows is how many rows the picker offers to pick from.
@@ -158,17 +160,32 @@ func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInf
 			taken[v.ID] = true
 		}
 	}
-	q := strings.ToLower(strings.TrimPrefix(in.Word, "@"))
-	matches := func(name string) bool {
-		n := strings.ToLower(strings.TrimPrefix(name, "~"))
-		return q == "" || strings.HasPrefix(n, q) || strings.Contains(n, " "+q)
+	q := strings.TrimPrefix(in.Word, "@")
+	// Members and contacts the word finds (see fuzzy.go), best first.
+	type hit struct {
+		v     slashValue
+		score int
+	}
+	var hits []hit
+	add := func(v slashValue, score int) {
+		if q == "" {
+			score = matchExact // everyone, for a bare "@"
+		}
+		if score > 0 {
+			hits = append(hits, hit{v, score})
+		}
 	}
 	switch o.Kind {
 	case command.Member:
 		for _, m := range members {
-			if m.ID != "" && o.Offers(m) && !taken[m.ID] && matches(m.Name) {
-				sp.vals = append(sp.vals, slashValue{id: m.ID, name: strings.TrimPrefix(m.Name, "~")})
+			if m.ID == "" || !o.Offers(m) || taken[m.ID] {
+				continue
 			}
+			score := memberScore(m, q)
+			if m.Me {
+				score = personScore(q, "", m.Name, u.meName())
+			}
+			add(slashValue{id: m.ID, name: u.mentionName(m), title: memberTitle(m), sub: memberSub(m)}, score)
 		}
 	case command.Contact:
 		inGroup := map[string]bool{}
@@ -181,35 +198,24 @@ func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInf
 				u.slash.contacts = []*model.Contact{}
 			}
 		}
-		digits := strings.Map(func(r rune) rune {
-			if unicode.IsDigit(r) {
-				return r
-			}
-			return -1
-		}, q)
 		for _, ct := range u.slash.contacts {
-			phone := strings.Map(func(r rune) rune {
-				if unicode.IsDigit(r) {
-					return r
-				}
-				return -1
-			}, ct.Phone)
-			if inGroup[ct.ID] || taken[ct.ID] {
-				continue
-			}
-			if matches(ct.Name) || digits != "" && strings.Contains(phone, digits) {
-				sp.vals = append(sp.vals, slashValue{id: ct.ID, name: ct.Name, sub: ct.Phone})
-				if len(sp.vals) == 50 {
-					break
-				}
+			if !inGroup[ct.ID] && !taken[ct.ID] {
+				add(slashValue{id: ct.ID, name: ct.Name, sub: ct.Phone}, personScore(q, ct.Phone, ct.Name))
 			}
 		}
 	case command.Choice:
 		for _, ch := range o.Choices {
-			if strings.HasPrefix(ch, q) {
+			if strings.HasPrefix(ch, strings.ToLower(q)) {
 				sp.vals = append(sp.vals, slashValue{name: ch})
 			}
 		}
+	}
+	slices.SortStableFunc(hits, func(a, b hit) int { return b.score - a.score })
+	if o.Kind == command.Contact {
+		hits = hits[:min(len(hits), 50)]
+	}
+	for _, h := range hits {
+		sp.vals = append(sp.vals, h.v)
 	}
 	return sp
 }
@@ -260,6 +266,9 @@ func (u *UI) updateSlashSel(sp *slashPick) {
 	}
 }
 
+// slashRows is how many rows the slash picker's list shows at once.
+const slashRows = 5
+
 // slashKeys moves through the picker with the arrow keys, and picks with
 // Tab (or Enter, see slashEnterPicks). It runs before the composer reads
 // its keys.
@@ -294,11 +303,11 @@ func (u *UI) slashKeys(gtx C) {
 		case key.NameUpArrow:
 			s.sel = (max(s.sel, 0) - 1 + n) % n
 			s.navigated = true
-			s.list.ScrollTo(s.sel)
+			keepVisible(&s.list.List, s.sel, min(n, slashRows))
 		case key.NameDownArrow:
 			s.sel = (s.sel + 1) % n
 			s.navigated = true
-			s.list.ScrollTo(s.sel)
+			keepVisible(&s.list.List, s.sel, min(n, slashRows))
 		default:
 			u.pickSlash(sp, max(s.sel, 0))
 			return
@@ -580,7 +589,7 @@ func (u *UI) layoutSlashPicker(gtx C, sp *slashPick) D {
 			return u.layoutCommandRow(gtx, in.Cmd, in.Current, in.Values, cmdH)
 		})
 	}
-	listN := min(n, 5)
+	listN := min(n, slashRows)
 	h := 2*pad + header.size.Y + cmdRow.size.Y + listN*rowH
 	r := gtx.Dp(16)
 	rect := image.Rect(0, 0, w, h)
@@ -635,15 +644,19 @@ func (u *UI) layoutSlashValue(gtx C, v slashValue, h int) D {
 			if v.id == "" {
 				return u.label(16, v.name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
 			}
+			title := v.title
+			if title == "" {
+				title = v.name
+			}
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D { return u.avatar(gtx, v.id, v.name, false, 36) }),
 				layout.Rigid(layout.Spacer{Width: 14}.Layout),
 				layout.Flexed(1, func(gtx C) D {
 					if v.sub == "" {
-						return u.label(15.5, v.name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
+						return u.label(15.5, title, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
 					}
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(u.label(15.5, v.name, p.Text, labelOpts{maxLines: 1}).Layout),
+						layout.Rigid(u.label(15.5, title, p.Text, labelOpts{maxLines: 1}).Layout),
 						layout.Rigid(u.label(13.5, v.sub, p.PopupSub, labelOpts{maxLines: 1}).Layout),
 					)
 				}),

@@ -82,3 +82,24 @@ func abs(x int) int {
 	}
 	return x
 }
+
+// TestKeepVisible checks that a picker's list scrolls only as far as it
+// must to show the highlighted row whole.
+func TestKeepVisible(t *testing.T) {
+	var l layout.List
+	for _, c := range []struct {
+		i, offset, first int
+	}{
+		{3, 0, 0},  // shows already
+		{7, 0, 2},  // below: it becomes the last row
+		{2, 0, 2},  // the first row
+		{2, 10, 2}, // the first row, partly scrolled away
+		{0, 0, 0},  // above
+	} {
+		l.Position.Offset = c.offset
+		keepVisible(&l, c.i, 6)
+		if l.Position.First != c.first || l.Position.Offset != 0 {
+			t.Errorf("row %d: first %d offset %d, want first %d", c.i, l.Position.First, l.Position.Offset, c.first)
+		}
+	}
+}

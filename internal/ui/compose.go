@@ -15,6 +15,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
@@ -69,7 +70,6 @@ func (u *UI) openDirect(id, name string) {
 	}
 	u.setPage(pageChats)
 	u.open(c)
-	u.requestFocus(&u.conv.composer)
 }
 
 func (u *UI) closeChat() {
@@ -142,8 +142,9 @@ func (u *UI) sendComposer() {
 		u.submitSlash(sp)
 		return
 	}
-	if u.mentionQuery() != nil {
-		u.pickMention(0)
+	if ms := u.mentionQuery(); ms != nil {
+		u.updateMentionSel(ms)
+		u.pickMention(u.conv.mentionSel)
 		return
 	}
 	if len(u.attach.files) > 0 {
@@ -249,37 +250,7 @@ func (u *UI) mentionQuery() *mentionState {
 			if info == nil {
 				return nil
 			}
-			matches := func(name string) bool {
-				n := strings.ToLower(strings.TrimPrefix(name, "~"))
-				return q == "" || strings.HasPrefix(n, q) || strings.Contains(n, " "+q)
-			}
-			var hits []model.Member
-			var me *model.Member
-			for _, m := range info.Members {
-				if m.Me {
-					if matches(m.Name) || matches(u.meName()) {
-						me = &m
-					}
-				} else if matches(m.Name) {
-					hits = append(hits, m)
-				}
-			}
-			sort.SliceStable(hits, func(a, b int) bool {
-				return !strings.HasPrefix(hits[a].Name, "~") && strings.HasPrefix(hits[b].Name, "~")
-			})
-			if me != nil {
-				hits = append(hits, *me) // yourself last
-			}
-			var special []model.Member
-			for _, id := range []string{mentionAllID, mentionAdminID} {
-				if id == mentionAdminID && !u.adminMention {
-					continue // an extra feature
-				}
-				if matches(id[1:]) {
-					special = append(special, model.Member{ID: id, Name: id[1:]})
-				}
-			}
-			hits = append(special, hits...)
+			hits := u.mentionHits(info, q)
 			if len(hits) == 0 {
 				return nil
 			}
@@ -293,6 +264,86 @@ func (u *UI) mentionQuery() *mentionState {
 	return nil
 }
 
+// mentionHitsKey is what mentionHits' answer depends on, besides the
+// members, whose cache chatMembers drops when it fetches them again.
+type mentionHitsKey struct {
+	query, me string
+	info      *model.ChatInfo
+	admin     bool
+}
+
+// mentionHits lists what the mention picker offers for query: "@all" and
+// "@admin", then the members it finds (see fuzzy.go), best first, saved
+// contacts before the rest, yourself last.
+func (u *UI) mentionHits(info *model.ChatInfo, query string) []model.Member {
+	c := &u.conv
+	k := mentionHitsKey{query: query, me: u.meName(), info: info, admin: u.adminMention}
+	if c.hitsOK && c.hitsKey == k {
+		return c.hits
+	}
+	type hit struct {
+		m     model.Member
+		score int
+	}
+	var hits []hit
+	var me *hit
+	for _, m := range info.Members {
+		s := matchExact // everyone, for a bare "@"
+		switch {
+		case query == "":
+		case m.Me:
+			s = personScore(query, "", m.Name, k.me)
+		default:
+			s = memberScore(m, query)
+		}
+		switch {
+		case s == 0:
+		case m.Me:
+			me = &hit{m, s}
+		default:
+			hits = append(hits, hit{m, s})
+		}
+	}
+	slices.SortStableFunc(hits, func(a, b hit) int {
+		if a.score != b.score {
+			return b.score - a.score
+		}
+		switch as, bs := a.m.Contact != "", b.m.Contact != ""; {
+		case as && !bs:
+			return -1
+		case bs && !as:
+			return 1
+		}
+		return 0
+	})
+	var out []model.Member
+	for _, id := range []string{mentionAllID, mentionAdminID} {
+		if id == mentionAdminID && !u.adminMention {
+			continue // an extra feature
+		}
+		if strings.HasPrefix(id[1:], query) {
+			out = append(out, model.Member{ID: id, Name: id[1:]})
+		}
+	}
+	for _, h := range hits {
+		out = append(out, h.m)
+	}
+	if me != nil {
+		out = append(out, me.m)
+	}
+	c.hitsKey, c.hits, c.hitsOK = k, out, true
+	return out
+}
+
+// mentionName is what picking a member puts after the "@": the name the
+// picker shows, without the "~".
+func (u *UI) mentionName(m model.Member) string {
+	if m.Me {
+		return u.meName()
+	}
+	return strings.TrimPrefix(memberTitle(m), "~")
+}
+
 // pickMention replaces the typed "@query" with the chosen member.
 func (u *UI) pickMention(i int) {
 	ms := u.mentionQuery()
@@ -300,15 +351,70 @@ func (u *UI) pickMention(i int) {
 		return
 	}
 	m := ms.members[i]
-	name := strings.TrimPrefix(m.Name, "~")
-	if m.Me {
-		name = u.meName()
-	}
+	name := u.mentionName(m)
 	ed := &u.conv.composer
 	ed.SetCaret(ms.start, ms.end)
 	ed.Insert("@" + name + " ")
 	u.conv.mentions = append(u.conv.mentions, mentionRef{name: name, jid: m.ID})
 	u.requestFocus(ed)
+}
+
+// mentionRows is how many rows the mention picker shows at once.
+const mentionRows = 6
+
+// updateMentionSel puts the highlight on the first row when the query
+// changes. The picker fading out keeps the row it had.
+func (u *UI) updateMentionSel(ms *mentionState) {
+	c := &u.conv
+	if ms == nil {
+		c.mentionSelFor = ""
+		return
+	}
+	q := itoa(ms.start) + "\x00" + ms.query + "\x00" + itoa(len(ms.members))
+	if q != c.mentionSelFor {
+		c.mentionSelFor, c.mentionSel = q, 0
+		c.mentionList.Position = layout.Position{}
+	}
+}
+
+// mentionKeys moves through the mention picker with the arrow keys, and
+// picks with Tab or Enter (even when Enter adds a line). It runs before the
+// composer reads its keys.
+func (u *UI) mentionKeys(gtx C) {
+	ms := u.mentionQuery()
+	u.updateMentionSel(ms)
+	if ms == nil {
+		return
+	}
+	c := &u.conv
+	ed := &c.composer
+	n := len(ms.members)
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Focus: ed, Name: key.NameUpArrow},
+			key.Filter{Focus: ed, Name: key.NameDownArrow},
+			key.Filter{Focus: ed, Name: key.NameTab},
+			key.Filter{Focus: ed, Name: key.NameReturn},
+			key.Filter{Focus: ed, Name: key.NameEnter},
+		)
+		if !ok {
+			break
+		}
+		e, ok := ev.(key.Event)
+		if !ok || e.State != key.Press {
+			continue
+		}
+		switch e.Name {
+		case key.NameUpArrow:
+			c.mentionSel = (c.mentionSel - 1 + n) % n
+		case key.NameDownArrow:
+			c.mentionSel = (c.mentionSel + 1) % n
+		default:
+			u.pickMention(c.mentionSel)
+			return
+		}
+		keepVisible(&c.mentionList.List, c.mentionSel, min(n, mentionRows))
+	}
 }
 
 // resetComposerAnims ends the composer's animations, for a chat switch.
@@ -332,6 +438,7 @@ func (u *UI) resetComposerAnims() {
 func (u *UI) chatMembers(chatID string) *model.ChatInfo {
 	if u.conv.membersFor != chatID {
 		u.conv.members, u.conv.membersFor = u.backend.Info(chatID), chatID
+		u.conv.hitsOK = false
 	}
 	return u.conv.members
 }
@@ -376,7 +483,7 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 	}
 	rowH := gtx.Dp(56)
 	pad := gtx.Dp(8)
-	n := min(len(ms.members), 6)
+	n := min(len(ms.members), mentionRows)
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	w := gtx.Constraints.Max.X
 	h := n*rowH + 2*pad
@@ -393,26 +500,30 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 		return clickable(gtx, cl, func(gtx C) D {
 			sz := image.Pt(gtx.Constraints.Max.X, rowH)
 			h := u.hover(gtx, cl)
-			if i == 0 {
+			if i == u.conv.mentionSel {
 				h = 1 // Enter picks it
 			}
 			if h > 0 {
 				fillRRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(10), faded(p.PopupHover, h))
 			}
 			gtx.Constraints = layout.Constraints{Max: sz}
-			name, sub := m.Name, ""
+			// A member's name, with their phone number when you haven't
+			// saved them.
+			name, sub, size, many := memberTitle(m), memberSub(m), unit.Sp(15.5), true
 			switch m.ID {
 			case mentionAllID:
-				sub = "Mention all members in this chat"
+				sub, size = "Mention all members in this chat", 16
 			case mentionAdminID:
-				sub = "Mention all admins in this chat"
+				sub, size = "Mention all admins in this chat", 16
+			default:
+				many = false
 			}
 			vcenter(gtx, rowH, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx C) D {
-							if sub == "" {
+							if !many {
 								return u.avatar(gtx, m.ID, m.Name, false, 36)
 							}
 							d := gtx.Dp(36)
@@ -422,10 +533,10 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 						layout.Rigid(layout.Spacer{Width: 14}.Layout),
 						layout.Flexed(1, func(gtx C) D {
 							if sub == "" {
-								return u.label(15.5, name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
+								return u.label(size, name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
 							}
 							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-								layout.Rigid(u.label(16, name, p.Text, labelOpts{maxLines: 1}).Layout),
+								layout.Rigid(u.label(size, name, p.Text, labelOpts{maxLines: 1}).Layout),
 								layout.Rigid(u.label(13.5, sub, p.PopupSub, labelOpts{maxLines: 1}).Layout),
 							)
 						}),
@@ -484,6 +595,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	p := u.pal
 	c := &u.conv
 	ms := u.mentionQuery()
+	u.updateMentionSel(ms) // the text may have changed since mentionKeys
 	if ms != nil {
 		c.mentionGhost = ms
 	}

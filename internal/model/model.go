@@ -198,10 +198,15 @@ type ChatList struct {
 
 // Member is a group participant, as listed in the group info panel.
 type Member struct {
-	ID    string
-	Name  string
-	Admin bool
-	Me    bool
+	ID   string
+	Name string
+	// Contact is the name you saved them under (or their business's name),
+	// Push the name they gave themselves, and Phone their formatted phone
+	// number, each when known. Name is the first of Contact, Phone and
+	// "~Push". The pickers that find people as you type use them.
+	Contact, Push, Phone string
+	Admin                bool
+	Me                   bool
 }
 
 // ChatInfo is what the contact or group info panel shows.

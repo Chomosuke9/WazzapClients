@@ -366,7 +366,6 @@ func (u *UI) groupCreated(e model.GroupCreatedEvent) {
 	}
 	u.setPage(pageChats)
 	u.open(c)
-	u.requestFocus(&u.conv.composer)
 }
 
 // pickGroupPhoto opens the file dialog for the group's picture, and crops

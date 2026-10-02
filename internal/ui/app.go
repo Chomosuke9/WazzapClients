@@ -182,6 +182,8 @@ type UI struct {
 		reply            *model.Message // message being replied to
 		mentions         []mentionRef   // @mentions picked for the draft
 		mentionList      widget.List
+		mentionSel       int    // the highlighted picker row, which Enter picks
+		mentionSelFor    string // the query mentionSel belongs to; a new one resets it
 		mentionDismissed string
 		selecting        bool            // "Select" mode
 		picked           map[string]bool // selected message IDs
@@ -197,6 +199,10 @@ type UI struct {
 		pinned               *model.Message  // shown in the pinned banner
 		members              *model.ChatInfo // group members for @mentions
 		membersFor           string
+		// mentionHits' answer for one query.
+		hitsKey mentionHitsKey
+		hits    []model.Member
+		hitsOK  bool
 
 		// Animations. A ghost is what a part showed before it went away,
 		// drawn while it fades out.
@@ -453,6 +459,9 @@ func (u *UI) SelectID(id string) {
 }
 
 func (u *UI) open(c *model.Chat) {
+	// Ready to type, like WhatsApp; a chat without a composer (a channel
+	// you don't run) lets the focus go.
+	u.requestFocus(&u.conv.composer)
 	if u.selected != nil && u.selected.ID == c.ID && u.selPage == u.page {
 		return
 	}
@@ -835,6 +844,7 @@ func (u *UI) update(gtx C) {
 	u.updatePaste(gtx)
 	u.ctrlEnterKeys(gtx)
 	u.slashKeys(gtx)
+	u.mentionKeys(gtx)
 	for {
 		ev, ok := u.conv.composer.Update(gtx)
 		if !ok {

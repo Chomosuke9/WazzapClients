@@ -117,3 +117,16 @@ func (u *UI) wheelList(gtx C, l *layout.List, lay layout.Widget) D {
 	event.Op(gtx.Ops, l)
 	return dims
 }
+
+// keepVisible scrolls list l, whose rows have one height and of which
+// rows show at once, just enough that row i shows whole: a picker's
+// highlighted row as the arrow keys move it.
+func keepVisible(l *layout.List, i, rows int) {
+	p := &l.Position
+	switch {
+	case i < p.First || i == p.First && p.Offset > 0:
+		p.First, p.Offset = i, 0
+	case i >= p.First+rows:
+		p.First, p.Offset = i-rows+1, 0
+	}
+}

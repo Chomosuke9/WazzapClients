@@ -54,6 +54,10 @@ func (u *UI) sendTools(f *attachFile) []sendTool {
 	t := func(key string, ic *icon.Icon, tool editTool) sendTool {
 		return sendTool{key: key, ic: ic, tool: tool, on: ed.tool == tool, run: func() { u.setTool(tool) }}
 	}
+	quality := icon.Hd
+	if a.quality == model.QualityRaw {
+		quality = icon.Raw
+	}
 	return []sendTool{
 		t("crop", icon.CropRotate, toolCrop),
 		t("filter", icWand, toolFilter),
@@ -70,7 +74,7 @@ func (u *UI) sendTools(f *attachFile) []sendTool {
 			u.openPicker(pickMedia, nil)
 			u.picker.tab = tabSticker
 		}},
-		{key: "hd", ic: icon.Hd, on: a.quality != model.QualityStandard, run: func() { u.openQualityMenu() }},
+		{key: "hd", ic: quality, on: a.quality != model.QualityStandard, run: func() { u.openQualityMenu() }},
 	}
 }
 

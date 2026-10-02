@@ -252,14 +252,14 @@ func (b *Backend) fillGroupInfo(ctx context.Context, info *model.ChatInfo, g *ty
 	for _, p := range g.Participants {
 		me := b.isMe(p.JID) || (!p.PhoneNumber.IsEmpty() && b.isMe(p.PhoneNumber))
 		m := model.Member{ID: b.canonical(ctx, p.JID).String(), Admin: p.IsAdmin || p.IsSuperAdmin, Me: me}
-		saved := false
 		if me {
 			m.Name = "You"
 		} else {
-			m.Name = b.memberName(ctx, p.JID, p.PhoneNumber)
-			saved = !strings.HasPrefix(m.Name, "+") && !strings.HasPrefix(m.Name, "~")
+			n := b.memberNames(ctx, p.JID, p.PhoneNumber)
+			m.Name = n.label(p.JID)
+			m.Contact, m.Push, m.Phone = first(n.saved, n.business), n.push, first(n.phone, n.redacted)
 		}
-		ms = append(ms, ranked{m, saved})
+		ms = append(ms, ranked{m, m.Contact != ""})
 	}
 	// You first, then admins, then saved contacts, then everyone else.
 	sort.SliceStable(ms, func(i, j int) bool {
@@ -280,9 +280,14 @@ func (b *Backend) fillGroupInfo(ctx context.Context, info *model.ChatInfo, g *ty
 	}
 }
 
-// memberName labels a group participant: saved name, business name, phone
-// number, then "~push name".
+// memberName labels a group participant (see contactNames.label).
 func (b *Backend) memberName(ctx context.Context, j, pn types.JID) string {
+	return b.memberNames(ctx, j, pn).label(j)
+}
+
+// memberNames gathers a group participant's names, under their LID or their
+// phone number pn.
+func (b *Backend) memberNames(ctx context.Context, j, pn types.JID) contactNames {
 	n := b.lookup(ctx, j)
 	if n.saved == "" && !pn.IsEmpty() {
 		if m := b.lookup(ctx, pn); m.saved != "" || m.business != "" {
@@ -292,5 +297,11 @@ func (b *Backend) memberName(ctx context.Context, j, pn types.JID) string {
 			n.phone = formatPhone(pn.User)
 		}
 	}
+	return n
+}
+
+// label is how a group participant is listed: saved name, business name,
+// phone number, then "~push name".
+func (n contactNames) label(j types.JID) string {
 	return first(n.saved, n.business, n.phone, tilde(n.push), n.redacted, j.User)
 }

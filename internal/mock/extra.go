@@ -125,7 +125,13 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 			if id == "" {
 				id = strings.ToLower(m.Sender) // demo messages may leave it out
 			}
-			info.Members = append(info.Members, model.Member{ID: id, Name: m.Sender})
+			mem := model.Member{ID: id, Name: m.Sender}
+			if push, ok := strings.CutPrefix(m.Sender, "~"); ok {
+				mem.Push = push // a hidden number, or Name would be it
+			} else {
+				mem.Contact, mem.Phone = m.Sender, "+62 812-5550-"+itoa4(len(m.Sender)*37)
+			}
+			info.Members = append(info.Members, mem)
 		}
 	}
 	for _, m := range b.msgs[chatID] {
