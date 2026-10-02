@@ -695,6 +695,7 @@ func shortcutSettings(enterSend bool) []settingsSection {
 		}},
 		{title: "Everywhere", rows: []settingRow{
 			k("Close a menu, dialog, panel or reply", "Esc"),
+			k("Show or hide the chat list", mod, "Shift", "L"),
 		}},
 	}
 }

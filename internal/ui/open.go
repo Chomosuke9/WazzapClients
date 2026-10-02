@@ -18,14 +18,19 @@ func openURL(link string) bool {
 	if err != nil || (p.Scheme != "http" && p.Scheme != "https") || p.Host == "" {
 		return false
 	}
+	return openTarget(p.String())
+}
+
+// openTarget hands a URL to the system, which opens it with its app.
+func openTarget(target string) bool {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", p.String())
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
 	case "darwin":
-		cmd = exec.Command("open", p.String())
+		cmd = exec.Command("open", target)
 	default:
-		cmd = exec.Command("xdg-open", p.String())
+		cmd = exec.Command("xdg-open", target)
 	}
 	if cmd.Start() != nil {
 		return false

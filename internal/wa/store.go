@@ -99,6 +99,14 @@ CREATE TABLE IF NOT EXISTS wz_members (
 );
 CREATE INDEX IF NOT EXISTS wz_members_jid ON wz_members (jid);
 CREATE INDEX IF NOT EXISTS wz_members_pn ON wz_members (pn) WHERE pn != '';
+CREATE TABLE IF NOT EXISTS wz_member_changes (
+	chat   TEXT NOT NULL,              -- group JID
+	ts     INTEGER NOT NULL,
+	name   TEXT NOT NULL DEFAULT '',   -- whose membership changed
+	actor  TEXT NOT NULL DEFAULT '',   -- who changed it, '' for themselves
+	action INTEGER NOT NULL DEFAULT 0  -- model.MemberAction
+);
+CREATE INDEX IF NOT EXISTS wz_member_changes_chat ON wz_member_changes (chat, ts);
 CREATE TABLE IF NOT EXISTS wz_list_chats (
 	list TEXT NOT NULL,
 	chat TEXT NOT NULL,
@@ -131,6 +139,9 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS wz_messages_pinned ON wz_messages (chat, pinned) WHERE pinned != 0`,
 	// For lastPush.
 	`CREATE INDEX IF NOT EXISTS wz_messages_sender ON wz_messages (sender_jid, ts) WHERE sender_push != ''`,
+	// For Gallery across all chats.
+	`CREATE INDEX IF NOT EXISTS wz_messages_media ON wz_messages (media, ts) WHERE media != 0`,
+	`CREATE INDEX IF NOT EXISTS wz_messages_starred ON wz_messages (ts) WHERE starred != 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {

@@ -92,6 +92,7 @@ func (u *UI) pressArea(gtx C, key string, area image.Rectangle) (right bool, rig
 type menuItem struct {
 	key     string
 	ic      *icon.Icon
+	glyph   func(gtx C, col color.NRGBA) D // drawn instead of ic
 	label   string
 	sub     string      // second line, e.g. "Muted always"
 	arrow   bool        // opens a submenu
@@ -109,15 +110,19 @@ const (
 	ctxNone ctxKind = iota
 	ctxChat
 	ctxMessage
-	ctxViewer     // the media viewer's ⋮ menu
-	ctxAttach     // the composer's attach menu
-	ctxQuality    // the attach tray's photo quality menu
-	ctxMute       // a chat's mute durations
-	ctxLists      // a chat's "Add to list" checkboxes, on their own
-	ctxStatusAdd  // the Status page's ⊕: post photos and videos, or text
-	ctxStatusMenu // the Status page's ⋮
-	ctxGroupPhoto // the new group's picture
-	ctxGroupTimer // the new group's disappearing messages
+	ctxViewer      // the media viewer's ⋮ menu
+	ctxAttach      // the composer's attach menu
+	ctxQuality     // the attach tray's photo quality menu
+	ctxMute        // a chat's mute durations
+	ctxLists       // a chat's "Add to list" checkboxes, on their own
+	ctxStatusAdd   // the Status page's ⊕: post photos and videos, or text
+	ctxStatusMenu  // the Status page's ⋮
+	ctxGroupPhoto  // the new group's picture
+	ctxGroupTimer  // the new group's disappearing messages
+	ctxCommunity   // the announcements' groups (chatID is the community's)
+	ctxConv        // the open chat's ⋮ menu
+	ctxTimer       // a chat's disappearing message timers
+	ctxGallerySort // the Media panel's sort order
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -217,7 +222,7 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 	var items []menuItem
 	add := func(it menuItem) { items = append(items, it) }
 	deleted := m.Kind == model.KindDeleted
-	if !deleted && !isChannelID(c.ID) {
+	if !deleted && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
 		add(menuItem{key: "reply", ic: icReply, label: "Reply", run: func() { u.startReply(m) }})
 	}
 	if c.IsGroup && !m.FromMe && m.SenderID != "" && !deleted {
@@ -330,6 +335,24 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		case ctxLists:
 			if c := u.chatByID(m.chatID); c != nil {
 				items = u.listItems(c)
+			}
+		case ctxConv:
+			if c := u.selected; c != nil && c.ID == m.chatID {
+				items = u.convMenuItems(c)
+			}
+		case ctxGallerySort:
+			if u.gallery.open {
+				items = u.gallerySortItems()
+			}
+		case ctxTimer:
+			if c := u.chatByID(m.chatID); c != nil {
+				items = u.timerItems(c)
+			}
+		case ctxCommunity:
+			for _, cm := range u.communities {
+				if cm.ID == m.chatID {
+					items = u.communityMenuItems(cm)
+				}
 			}
 		case ctxStatusAdd:
 			items = u.statusAddItems()
@@ -492,7 +515,7 @@ func (u *UI) menuPanel(gtx C, prefix string, items []menuItem) D {
 		if it.arrow {
 			extra += 28
 		}
-		if it.ic == nil && it.check == 0 {
+		if it.ic == nil && it.glyph == nil && it.check == 0 {
 			extra = 24 + 24
 		}
 		if it.tick {
@@ -542,7 +565,7 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 		}
 		return vcenter(gtx, h, func(gtx C) D {
 			left := unit.Dp(49)
-			if it.ic == nil && it.check == 0 {
+			if it.ic == nil && it.glyph == nil && it.check == 0 {
 				left = 24
 			}
 			return layout.Inset{Left: left, Right: 20}.Layout(gtx, func(gtx C) D {
@@ -588,6 +611,10 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 			ic = icCheckBox
 		case -1:
 			ic = icCheckBoxEmpty
+		}
+		if it.glyph != nil {
+			g := record(gtx, func(gtx C) D { return it.glyph(gtx, p.Text) })
+			g.at(gtx, gtx.Dp(26)-g.size.X/2, (dims.Size.Y-g.size.Y)/2)
 		}
 		if ic != nil {
 			sz := gtx.Dp(22)

@@ -30,10 +30,17 @@ type mediaViewer struct {
 	stripX follower // the thumbnail strip sliding to the current one
 
 	video videoView // the video being shown, if it is one
+
+	// items are what it shows when it was opened from the Media panel,
+	// which can be any chat's; nil means the open chat's pictures.
+	items []*model.Message
 }
 
 // viewerItems lists the chat's pictures and videos (KindImage), oldest first.
 func (u *UI) viewerItems() []*model.Message {
+	if u.viewer.items != nil {
+		return u.viewer.items
+	}
 	var out []*model.Message
 	for _, m := range u.msgs {
 		if m.Kind == model.KindImage {
@@ -52,6 +59,13 @@ func (u *UI) openViewer(m *model.Message) {
 	u.viewer.strip.Axis = layout.Horizontal
 	u.closePicker()
 	u.requestFocus(nil) // so arrow keys reach the viewer, not the composer
+}
+
+// openViewerOn opens the viewer on m among items, which can be from any
+// chat.
+func (u *UI) openViewerOn(items []*model.Message, m *model.Message) {
+	u.openViewer(m)
+	u.viewer.items = items
 }
 
 // forgetViewerImage releases the viewer's decoded copies of a picture.
@@ -94,7 +108,7 @@ func (u *UI) viewerMenuItems() []menuItem {
 	}
 	return []menuItem{
 		{key: "save", ic: icDownload, label: "Save as…", run: func() { u.backend.SaveMedia(m) }},
-		{key: "goto", ic: icChats, label: "Go to message", run: func() { u.closeViewer(); u.jumpTo(m.ID) }},
+		{key: "goto", ic: icChats, label: "Go to message", run: func() { u.closeViewer(); u.showMessage(m) }},
 		{key: "delete", ic: icDelete, label: "Delete", run: func() { u.closeViewer(); u.confirmDelete([]*model.Message{m}) }},
 	}
 }
@@ -117,7 +131,7 @@ func (u *UI) layoutViewer(gtx C) {
 	p := u.pal
 	items := u.viewerItems()
 	m, idx := u.viewerMsg(items)
-	if m == nil || u.selected == nil {
+	if m == nil || (u.selected == nil && v.items == nil) {
 		u.hideViewer()
 		return
 	}
@@ -155,8 +169,8 @@ func (u *UI) layoutViewer(gtx C) {
 	tools := []tool{
 		{"zoomout", icZoomOut, !v.zp.zoomed(), func() { v.zp.zoomCenter(v.zp.zoom / 1.5) }},
 		{"zoomin", icZoomIn, v.zp.zoom >= maxZoom, func() { v.zp.zoomCenter(max(1, v.zp.zoom) * 1.5) }},
-		{"goto", icChats, false, func() { u.closeViewer(); u.jumpTo(m.ID) }},
-		{"reply", icReply, isChannelID(m.ChatID), func() { u.closeViewer(); u.startReply(m) }},
+		{"goto", icChats, false, func() { u.closeViewer(); u.showMessage(m) }},
+		{"reply", icReply, isChannelID(m.ChatID), func() { u.closeViewer(); u.showMessage(m); u.startReply(m) }},
 		{"star", starIcon(m.Starred), false, func() { b.Star(m, !m.Starred) }},
 		{"pin", pinIcon(m.Pinned), isChannelID(m.ChatID), func() { b.PinMessage(m, !m.Pinned) }},
 		{"react", icEmoji, isChannelID(m.ChatID), func() { u.openPicker(pickReaction, m) }},
@@ -316,7 +330,10 @@ func pinIcon(on bool) *icon.Icon {
 // senderLabel names a message's author for headers: "You", the group
 // member, or the contact.
 func (u *UI) senderLabel(m *model.Message) (name, id string, group bool) {
-	c := u.selected
+	c := u.chatByID(m.ChatID)
+	if c == nil {
+		c = u.selected
+	}
 	switch {
 	case m.FromMe:
 		return "You", u.meID, false

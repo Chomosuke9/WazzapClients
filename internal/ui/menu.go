@@ -18,6 +18,7 @@ type menuState struct {
 	anchor        image.Point // top-right corner, in window coordinates below the title bar
 	scrim         widget.Clickable
 	theme, logout widget.Clickable
+	hideList      widget.Clickable
 	switchAcct    widget.Clickable // opens the account switcher beside the menu
 }
 
@@ -25,6 +26,10 @@ func (u *UI) updateMenu(gtx C) {
 	m := &u.menu
 	if m.theme.Clicked(gtx) {
 		u.setTheme(!u.dark)
+		m.open = false
+	}
+	if m.hideList.Clicked(gtx) {
+		u.setListHidden(true)
 		m.open = false
 	}
 	if m.logout.Clicked(gtx) {
@@ -68,7 +73,8 @@ func (u *UI) layoutMenu(gtx C) {
 		ic    *icon.Icon
 		more  bool // opens a submenu
 	}
-	items := []menuEntry{{click: &m.theme, label: themeLabel, ic: themeIcon}}
+	items := []menuEntry{{click: &m.theme, label: themeLabel, ic: themeIcon},
+		{click: &m.hideList, label: "Hide chat list", ic: icPanelClose}}
 	switchRow := -1
 	if len(u.accounts) > 0 {
 		switchRow = len(items)

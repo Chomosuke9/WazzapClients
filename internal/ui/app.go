@@ -112,6 +112,7 @@ type UI struct {
 
 	menu       menuState
 	filterMenu filterMenuState
+	split      splitState // the list column's width, or hidden (split.go)
 
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
 	ctx       ctxMenu
@@ -131,9 +132,13 @@ type UI struct {
 		key string
 		at  time.Time
 	}
-	pendingCopy string        // clipboard text waiting for a frame
-	textSel     textSelection // selected message text
-	focus       any           // editor to focus next frame (see requestFocus)
+	pendingCopy string         // clipboard text waiting for a frame
+	themes      map[string]int // chats' themes (chatThemes), as read from prefs
+	gallery     galleryState   // the Media panel (gallery.go)
+	secCode     secCode        // the security code the encryption dialog shows
+	link        groupLink      // the invite link the link dialog shows
+	textSel     textSelection  // selected message text
+	focus       any            // editor to focus next frame (see requestFocus)
 	focusReq    bool
 
 	anims    animStore                     // keyed fades: hovers, new messages, reactions
@@ -169,6 +174,7 @@ type UI struct {
 		list                widget.List
 		composer            widget.Editor
 		video, search, menu widget.Clickable
+		community           widget.Clickable // the announcements' group picker
 		attach, emoji, send widget.Clickable
 		// editorElsewhere is set while the send view shows: the
 		// composer's editor is its caption field.
@@ -179,6 +185,9 @@ type UI struct {
 		rowsVer         int
 		wallpaper       wallpaper
 		nbsp            map[int]float32 // NBSP advance per text size in px
+		// cardH is the height of the last message laid out, without the
+		// reaction pill that hangs under it.
+		cardH int
 
 		reply            *model.Message // message being replied to
 		mentions         []mentionRef   // @mentions picked for the draft
@@ -259,9 +268,11 @@ func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: timeNow, backend: b, syncPct: -1}
 	u.SetDark(true)
 	u.doodles = true
+	u.split.anim.snap(true)
 	if b != nil { // nil in some tests
 		u.SetDark(b.Pref(prefTheme) != "light")
 		u.doodles = prefOn(b, prefDoodles)
+		u.loadSplit()
 	}
 	u.images = newImageCache(240, 32<<20)
 	u.emojiImgs = newImageCache(600, 4<<20)
@@ -584,6 +595,7 @@ func (u *UI) Layout(gtx C) D {
 	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
 	u.layoutStatusText(gtx)
+	u.layoutGallery(gtx)
 	u.layoutViewer(gtx)
 	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
@@ -600,8 +612,7 @@ func (u *UI) layoutMain(gtx C) D {
 	p := u.pal
 	sz := gtx.Constraints.Max
 	railW := gtx.Dp(railWidth)
-	listW := int(float32(sz.X-railW) * 0.372)
-	listW = max(gtx.Dp(280), min(listW, gtx.Dp(430)))
+	listW := u.listWidth(gtx, sz.X-railW)
 	// A new page's list fades in and rises a little into place.
 	if u.page != u.pageSeen {
 		u.pageSeen = u.page
@@ -630,23 +641,16 @@ func (u *UI) layoutMain(gtx C) D {
 	defer clip.Rect(inner).Push(gtx.Ops).Pop()
 
 	gtx.Constraints = layout.Exact(image.Pt(pw, sz.Y))
-	return layout.Flex{}.Layout(gtx,
-		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(listW, sz.Y))
-			t := pushFx(gtx, 1, moveBy(0, float32(gtx.Dp(10))*(1-pageV)))
-			d := layout.Inset{Top: 1, Left: 1}.Layout(gtx, u.layoutPageSidebar)
-			t.Pop()
-			u.veil(gtx, image.Rect(1, 1, listW, sz.Y), p.Panel, pageV)
-			return d
-		}),
-		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(max(1, gtx.Dp(1)), sz.Y))
-			return fill(gtx, p.Divider)
-		}),
-		layout.Flexed(1, func(gtx C) D {
-			return layout.Inset{Top: 1}.Layout(gtx, u.layoutRightPane)
-		}),
-	)
+	return u.layoutSplit(gtx, image.Pt(pw, sz.Y), func(gtx C) D {
+		w := gtx.Constraints.Max.X
+		t := pushFx(gtx, 1, moveBy(0, float32(gtx.Dp(10))*(1-pageV)))
+		d := layout.Inset{Top: 1, Left: 1}.Layout(gtx, u.layoutPageSidebar)
+		t.Pop()
+		u.veil(gtx, image.Rect(1, 1, w, sz.Y), p.Panel, pageV)
+		return d
+	}, func(gtx C) D {
+		return layout.Inset{Top: 1}.Layout(gtx, u.layoutRightPane)
+	})
 }
 
 // layoutPageSidebar draws the list column of the selected page.
@@ -776,6 +780,7 @@ func (u *UI) update(gtx C) {
 	}
 	u.updateMenu(gtx)
 	u.updateFilterMenu(gtx)
+	u.galleryUpdate(gtx)
 	if u.sidebar.menu.Clicked(gtx) {
 		u.menu.open = !u.menu.open
 	}
@@ -788,21 +793,32 @@ func (u *UI) update(gtx C) {
 	if u.rail.archived.Clicked(gtx) {
 		u.sidebar.showArchived = u.page != pageChats || !u.sidebar.showArchived
 		u.setPage(pageChats)
+		u.setListHidden(false)
 		u.sidebar.list.Position = layout.Position{}
 	}
 	u.updateNewChat(gtx)
-	if u.rail.chats.Clicked(gtx) || u.sidebar.back.Clicked(gtx) {
+	// The open page's rail button hides its list, or shows it again.
+	if chats := u.rail.chats.Clicked(gtx); chats && u.page == pageChats && !u.sidebar.showArchived && u.newChat.step == ncNone {
+		u.setListHidden(!u.split.hidden)
+	} else if chats || u.sidebar.back.Clicked(gtx) {
 		u.newChat.step = ncNone
 		u.sidebar.showArchived = false
 		u.setPage(pageChats)
+		u.setListHidden(false)
 		u.sidebar.list.Position = layout.Position{}
 	}
 	for c, pg := range map[*widget.Clickable]page{&u.rail.calls: pageCalls, &u.rail.status: pageStatus,
 		&u.rail.channels: pageChannels, &u.rail.communities: pageCommunities, &u.rail.profile: pageSettings} {
 		if c.Clicked(gtx) {
-			u.setPage(pg)
+			if u.page == pg {
+				u.setListHidden(!u.split.hidden)
+			} else {
+				u.setPage(pg)
+				u.setListHidden(false)
+			}
 		}
 	}
+	u.splitKeys(gtx)
 	if u.conv.header.Clicked(gtx) && u.selected != nil && !isChannelID(u.selected.ID) {
 		if u.info.open {
 			u.info.open = false
@@ -822,6 +838,12 @@ func (u *UI) update(gtx C) {
 	}
 	if searchKey && u.selected != nil && u.selPage == u.page {
 		u.openChatSearch() // Ctrl+Shift+F, like WhatsApp Desktop
+	}
+	if u.conv.menu.Clicked(gtx) {
+		u.openConvMenu()
+	}
+	if u.conv.video.Clicked(gtx) {
+		u.callsUnsupported()
 	}
 	if u.conv.search.Clicked(gtx) {
 		if u.search.open {
@@ -905,6 +927,18 @@ func (u *UI) escape() {
 		u.closePicker()
 	case u.viewer.open:
 		u.closeViewer()
+	case u.gallery.open:
+		g := &u.gallery
+		switch {
+		case g.selecting:
+			g.selecting, g.picked = false, nil
+		case g.searching:
+			g.searching = false
+			g.query.SetText("")
+			u.loadGallery()
+		default:
+			u.closeGallery()
+		}
 	case u.slashShown(u.slashQuery()):
 		u.slash.dismissed, u.slash.problem = u.conv.composer.Text(), ""
 	case u.mentionQuery() != nil:
@@ -1015,6 +1049,12 @@ func (u *UI) applyEvents() {
 			}
 		case model.GroupEvent:
 			u.groupAnswered(e)
+		case model.SecurityCodeEvent:
+			if u.secCode.chatID == e.ChatID {
+				u.secCode.code, u.secCode.err = e.Code, e.Err
+			}
+		case model.GalleryEvent:
+			u.galleryLoaded(e)
 		case model.InviteEvent:
 			u.inviteLooked(e)
 		case model.JoinedEvent:
@@ -1408,5 +1448,62 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			}
 			ed.Insert("see you soon")
 		}
+	case "listwide", "listnarrow", "listhidden":
+		// The list column dragged wide or narrow, or hidden.
+		switch name {
+		case "listwide":
+			u.split.w = 800
+		case "listnarrow":
+			u.split.w = listMinW
+		default:
+			u.split.hidden = true
+			u.split.anim.snap(false)
+		}
+	case "gallery", "gallerydocs", "gallerylinks", "galleryselect", "chatgallery":
+		// The Media panel: every chat's media, docs or links, or the open
+		// chat's ("Media, links and docs").
+		if name == "chatgallery" {
+			u.openGallery(u.selected.ID, u.selected.Name)
+		} else {
+			u.openGallery("", "")
+		}
+		switch name {
+		case "gallerydocs":
+			u.gallery.tab = model.GalleryDocs
+			u.loadGallery()
+		case "gallerylinks":
+			u.gallery.tab = model.GalleryLinks
+			u.loadGallery()
+		}
+		u.applyEvents()
+		if name == "galleryselect" {
+			u.gallery.selecting = true
+			u.gallery.picked = u.gallery.list.msgs[:min(2, len(u.gallery.list.msgs))]
+		}
+		u.gallery.anim.snap(true)
+	case "convmenu", "timer":
+		// The open chat's ⋮ menu, or its disappearing message timers.
+		if name == "convmenu" {
+			u.openConvMenu()
+		} else {
+			u.openTimerMenu(u.selected)
+		}
+	case "theme":
+		u.openChatTheme(u.selected)
+		u.setChatTheme(u.selected.ID, 2)
+	case "encryption":
+		u.openEncryption(u.selected, u.selected.Name)
+		u.applyEvents()
+	case "addmember":
+		u.openAddMembers(u.selected)
+	case "invitelink":
+		u.openInviteLink(u.selected.ID)
+		u.applyEvents()
+	case "perms", "starred", "changes":
+		// The info panel's pages.
+		u.openInfo(u.selected.ID)
+		u.info.anim.snap(true)
+		u.openInfoSub(name)
+		u.applyEvents()
 	}
 }

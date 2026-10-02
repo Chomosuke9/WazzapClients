@@ -85,6 +85,9 @@ var (
 	icHelp          = icon.Help
 	icVerified      = icon.VerifiedFill
 	icCampaign      = icon.CampaignFill
+	icInfo          = icon.Info
+	icSort          = icon.Sort
+	icPanelClose    = icon.LeftPanelClose
 
 	// Chat and message menus.
 	icBellLine      = icon.Notifications
@@ -100,6 +103,7 @@ var (
 	icNext          = icon.ArrowBack.Mirrored()
 	icCheckBox      = icon.CheckBox
 	icCheckBoxEmpty = icon.CheckBoxOutlineBlank
+	icCheckBoxSome  = icon.IndeterminateCheckBox
 	icStarFill      = icon.StarFill
 	icPinFill       = icon.KeepFill
 	icAddReaction   = icon.AddReaction

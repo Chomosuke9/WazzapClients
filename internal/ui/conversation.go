@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +43,20 @@ type convRow struct {
 	// first marks the first message of a run from the same sender. It gets
 	// the bubble tail (and, in groups, the sender's name and avatar).
 	first bool
+	// group holds a run of stickers from one sender (msg is the first), laid
+	// out side by side (stickerrow.go). Nil for a single message.
+	group []*model.Message
+}
+
+// has reports whether the row shows message id.
+func (r convRow) has(id string) bool {
+	if r.msg == nil {
+		return false
+	}
+	if r.group == nil {
+		return r.msg.ID == id
+	}
+	return slices.ContainsFunc(r.group, func(m *model.Message) bool { return m.ID == id })
 }
 
 // rows rebuilds the flattened message list when the loaded messages change.
@@ -55,6 +70,7 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		rows = append(rows, convRow{kind: rowEncryption}) // the start of the chat
 	}
 	var prev *model.Message
+	ann := u.announcementsOf(c) != nil
 	// Notes go between the messages by time, after any that came earlier.
 	// Ones older than the loaded messages wait for their page, unless the
 	// chat's start is loaded (messages can be dated ahead of this clock).
@@ -70,11 +86,21 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		if newDay {
 			rows = append(rows, convRow{kind: rowDate, date: dateChip(m.Time, now)})
 		}
-		first := newDay || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID ||
+		// Announcements each have a card of their own.
+		first := ann || newDay || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID ||
 			m.Time.Sub(prev.Time) > 10*time.Minute
 		if u.unreadRow(c, m) {
 			rows = append(rows, convRow{kind: rowUnread})
 			first = true
+		}
+		// A sticker joins the stickers its sender sent just before.
+		if last := &rows[len(rows)-1]; !first && last.kind == rowMessage && groupsSticker(m) && groupsSticker(last.msg) && !ann {
+			if last.group == nil {
+				last.group = []*model.Message{last.msg}
+			}
+			last.group = append(last.group, m)
+			prev = m
+			continue
 		}
 		rows = append(rows, convRow{kind: rowMessage, msg: m, first: first})
 		prev = m
@@ -90,6 +116,12 @@ func (u *UI) rows(c *model.Chat) []convRow {
 
 func (u *UI) layoutConversation(gtx C) D {
 	c := u.selected
+	// The chat's theme colors its wallpaper and your bubbles.
+	if tp := u.chatPalette(c); tp != u.pal {
+		old := u.pal
+		u.pal = tp
+		defer func() { u.pal = old }()
+	}
 	u.conv.selV = u.conv.selAnim.step(gtx, u.conv.selecting, durGrow)
 	pinned := u.conv.pinned
 	// The send view covers the conversation; once it's all in, the chat
@@ -118,8 +150,12 @@ func (u *UI) layoutConversation(gtx C) D {
 			cgtx := gtx
 			cgtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: sz}
 			var cd D
-			if !isChannelID(c.ID) {
+			switch who := u.sendBlocked(c); {
+			case isChannelID(c.ID):
 				// Channels are read-only.
+			case who != "" && !u.conv.selecting && u.conv.selV == 0:
+				cd = u.layoutSendBlocked(cgtx, who)
+			default:
 				cd = u.layoutComposer(cgtx)
 			}
 			composer := m.Stop()
@@ -157,6 +193,11 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 				if ch := u.channelByID(c.ID); ch != nil {
 					sub = followers(ch.Followers)
 				}
+				// Announcements go by their community's name and picture.
+				cm := u.announcementsOf(c)
+				if cm != nil {
+					sub = "Announcements"
+				}
 				if c.Typing != "" {
 					sub = "typing…"
 					if c.IsGroup {
@@ -173,6 +214,35 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 				if c.Self {
 					name += " (You)"
 				}
+				if cm != nil {
+					name = cm.Name
+				}
+				calls := func(gtx C) D {
+					// Video call with a drop-down arrow, like WhatsApp's call picker.
+					return clickable(gtx, &u.conv.video, func(gtx C) D {
+						h := gtx.Dp(40)
+						if a := u.hover(gtx, &u.conv.video); a > 0 {
+							fillRRect(gtx, image.Rect(0, 0, gtx.Dp(60), h), h/2, faded(p.Hover, a))
+						}
+						gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(60), h))
+						return layout.Center.Layout(gtx, func(gtx C) D {
+							return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(iconW(icVideo, 27, p.IconStrong)),
+								layout.Rigid(iconW(icDropDown, 22, p.IconStrong)),
+							)
+						})
+					})
+				}
+				divider := func(gtx C) D {
+					h := gtx.Dp(24)
+					fillRect(gtx, image.Rect(0, 0, max(1, gtx.Dp(1)), h), p.Divider)
+					return D{Size: image.Pt(max(1, gtx.Dp(1)), h)}
+				}
+				if cm != nil {
+					// No calls in announcements; their community's groups instead.
+					calls = func(gtx C) D { return u.layoutCommunityButton(gtx, cm) }
+					divider = func(C) D { return D{} }
+				}
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Flexed(1, func(gtx C) D {
 						return clickable(gtx, &u.conv.header, func(gtx C) D {
@@ -181,6 +251,9 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 								layout.Rigid(func(gtx C) D {
 									if isChannelID(c.ID) {
 										return u.avatarOf(gtx, c.ID, avatarChannel, 41)
+									}
+									if cm != nil {
+										return u.avatarOf(gtx, cm.ID, avatarCommunity, 41)
 									}
 									return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 41)
 								}),
@@ -195,28 +268,9 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 							)
 						})
 					}),
-					layout.Rigid(func(gtx C) D {
-						// Video call with a drop-down arrow, like WhatsApp's call picker.
-						return clickable(gtx, &u.conv.video, func(gtx C) D {
-							h := gtx.Dp(40)
-							if a := u.hover(gtx, &u.conv.video); a > 0 {
-								fillRRect(gtx, image.Rect(0, 0, gtx.Dp(60), h), h/2, faded(p.Hover, a))
-							}
-							gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(60), h))
-							return layout.Center.Layout(gtx, func(gtx C) D {
-								return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-									layout.Rigid(iconW(icVideo, 27, p.IconStrong)),
-									layout.Rigid(iconW(icDropDown, 22, p.IconStrong)),
-								)
-							})
-						})
-					}),
+					layout.Rigid(calls),
 					layout.Rigid(layout.Spacer{Width: 12}.Layout),
-					layout.Rigid(func(gtx C) D {
-						h := gtx.Dp(24)
-						fillRect(gtx, image.Rect(0, 0, max(1, gtx.Dp(1)), h), p.Divider)
-						return D{Size: image.Pt(max(1, gtx.Dp(1)), h)}
-					}),
+					layout.Rigid(divider),
 					layout.Rigid(layout.Spacer{Width: 12}.Layout),
 					layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.conv.search, icSearch, 40, 26, p.IconStrong) }),
 					layout.Rigid(layout.Spacer{Width: 8}.Layout),
@@ -404,6 +458,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 					return u.layoutTyping(gtx, c.IsGroup, margin, typingV)
 				case r.kind == rowNote:
 					return u.layoutNote(gtx, r.note, maxBubble)
+				case r.group != nil:
+					return u.layoutStickerRow(gtx, c, r, maxBubble, margin)
 				default:
 					return u.layoutMessageRow(gtx, c, r, maxBubble, margin)
 				}
@@ -479,6 +535,10 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	m := r.msg
 	w := gtx.Constraints.Max.X
 	sel := u.conv.selecting
+	ann := u.announcementsOf(c) != nil
+	if ann {
+		maxW = annWidth(gtx, w)
+	}
 	rowKey := "row:" + m.ID
 	if sel && u.btn(rowKey).Clicked(gtx) {
 		if u.conv.picked[m.ID] {
@@ -490,39 +550,30 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	// Select mode moves incoming bubbles over for the checkboxes.
 	selV := easeOut(u.conv.selV)
 	shift := 0
-	if !m.FromMe {
+	if !m.FromMe && !ann {
 		shift = int(float32(max(0, gtx.Dp(44)-margin)) * selV)
 	}
 	cgtx := gtx
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(w-shift, gtx.Constraints.Max.Y)}
 	bubble := record(cgtx, func(gtx C) D { return u.layoutMessage(gtx, c, r, maxW) })
+	cardH := u.conv.cardH
 	x := shift
-	if m.FromMe {
+	switch {
+	case ann:
+		x = (w - bubble.size.X) / 2 // down the middle, whoever sent it
+	case m.FromMe:
 		x = w - bubble.size.X
 	}
 	h := bubble.size.Y
 	band := image.Rect(-margin, -gtx.Dp(2), w+margin, h+gtx.Dp(2))
 	if u.conv.flash == m.ID {
-		// The highlight fades in quickly and out slowly.
-		const in, out = 200 * time.Millisecond, 600 * time.Millisecond
-		left := u.conv.flashUntil.Sub(u.now())
-		if left > 0 {
-			a := min(1, float32(flashTime-left)/float32(in), float32(left)/float32(out))
-			fillRect(gtx, band, faded(argb(0x5dbf6e, 0x30), smooth(a)))
-			if left > out && flashTime-left > in {
-				gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil.Add(-out)})
-			} else {
-				gtx.Execute(op.InvalidateCmd{})
-			}
-		} else {
-			u.conv.flash = ""
-		}
+		u.drawFlash(gtx, band)
 	}
 	if sel && u.conv.picked[m.ID] {
 		fillRect(gtx, band, argb(0x5dbf6e, 0x26))
 	}
 	bubble.at(gtx, x, 0)
-	if c.IsGroup && r.first && !m.FromMe {
+	if c.IsGroup && r.first && !m.FromMe && !ann {
 		// The sender's avatar sits in the left margin, level with the bubble.
 		sz := gtx.Dp(29)
 		t := op.Offset(image.Pt(x-min(gtx.Dp(40), margin), 0)).Push(gtx.Ops)
@@ -543,7 +594,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			u.openMessageMenu(m)
 		}
 		// A double click on the text selects a word instead.
-		if double && m.Kind != model.KindDeleted && (u.textSel.id != m.ID || u.textSel.clicks < 2) {
+		if double && m.Kind != model.KindDeleted && (u.textSel.id != m.ID || u.textSel.clicks < 2) && u.sendBlocked(c) == "" {
 			u.startReply(m)
 		}
 		chev := u.btn("chev:" + m.ID)
@@ -559,7 +610,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 				bg = p.BubbleOut
 			}
 			fg := p.MetaIn
-			if m.Kind == model.KindImage {
+			if m.Kind == model.KindImage && !ann {
 				bg, fg = argb(0x000000, 0x60), rgb(0xffffff)
 			}
 			ct := op.Offset(image.Pt(bubble.size.X-gtx.Dp(26+5), gtx.Dp(4))).Push(gtx.Ops)
@@ -567,6 +618,14 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			u.chevronButton(gtx, chev, bg, fg)
 			fx.Pop()
 			ct.Pop()
+		}
+		if ann && m.Kind != model.KindDeleted && m.Kind != model.KindUnsupported && m.Kind != model.KindSticker {
+			// Announcements offer a forward button beside them, when there's room.
+			if bx := bubble.size.X + gtx.Dp(6); x+bx+gtx.Dp(34) <= w+margin {
+				ft := op.Offset(image.Pt(bx, 0)).Push(gtx.Ops)
+				u.annForwardButton(gtx, m, cardH)
+				ft.Pop()
+			}
 		}
 		t.Pop()
 	}
@@ -588,6 +647,24 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		t.Pop()
 	}
 	return D{Size: image.Pt(w, h)}
+}
+
+// drawFlash highlights band, the row of the message just jumped to. The
+// highlight fades in quickly and out slowly.
+func (u *UI) drawFlash(gtx C, band image.Rectangle) {
+	const in, out = 200 * time.Millisecond, 600 * time.Millisecond
+	left := u.conv.flashUntil.Sub(u.now())
+	if left <= 0 {
+		u.conv.flash = ""
+		return
+	}
+	a := min(1, float32(flashTime-left)/float32(in), float32(left)/float32(out))
+	fillRect(gtx, band, faded(argb(0x5dbf6e, 0x30), smooth(a)))
+	if left > out && flashTime-left > in {
+		gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil.Add(-out)})
+	} else {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 }
 
 func (u *UI) systemChip(gtx C, txt string) D {
@@ -717,11 +794,15 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 		u.conv.reactions[m.ID] = m.Reaction
 	}
 	var dims D
-	if m.Kind == model.KindSticker {
+	switch {
+	case m.Kind == model.KindSticker && u.announcementsOf(c) != nil:
+		dims = u.layoutAnnSticker(gtx, m, maxW)
+	case m.Kind == model.KindSticker:
 		dims = u.layoutStickerMessage(gtx, c, m, r.first, maxW)
-	} else {
+	default:
 		dims = u.layoutBubble(gtx, c, m, r.first, maxW)
 	}
+	u.conv.cardH = dims.Size.Y
 	if m.Reaction == "" {
 		return dims
 	}
@@ -739,6 +820,9 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 	}
 	ring := gtx.Dp(2)
 	py := dims.Size.Y - gtx.Dp(5)
+	if u.announcementsOf(c) != nil {
+		py = dims.Size.Y + gtx.Dp(3) // under the card, not on it
+	}
 	fx := fxStack{}
 	if u.anims.running(pop) {
 		v := u.anims.fade(gtx, pop, true, 380*time.Millisecond, 0)
@@ -774,6 +858,11 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		}
 	}
 
+	// An announcement's card is as wide as it may be, headed by its sender.
+	ann := u.announcementsOf(c) != nil
+	if ann {
+		tail = false
+	}
 	padL, padR, padT, padB := gtx.Dp(9), gtx.Dp(8), gtx.Dp(6), gtx.Dp(8)
 	if isImg {
 		padL, padR, padT, padB = gtx.Dp(3), gtx.Dp(3), gtx.Dp(3), gtx.Dp(3)
@@ -800,14 +889,29 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		sender = record(cgtx, u.label(13, m.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
 		contentW = max(contentW, sender.size.X)
 	}
+	var head part
+	headX := gtx.Dp(9) - padL // the header lines up with text
+	if ann && (out || m.Sender != "") {
+		hgtx := cgtx
+		hgtx.Constraints.Max.X = inner - 2*headX
+		hgtx.Constraints.Min.X = hgtx.Constraints.Max.X
+		head = record(hgtx, func(gtx C) D { return u.layoutAnnHeader(gtx, m) })
+	}
+	if ann {
+		contentW = inner
+	}
 
 	imgW, imgH := 0, 0
 	textInset := 0 // horizontal inset of text inside image bubbles
 	var img *imgEntry
 	if isImg {
 		imgW = min(inner, gtx.Dp(330))
+		maxPx := gtx.Dp(330)
+		if ann {
+			imgW, maxPx = inner, inner
+		}
 		imgH = imgW * 3 / 4
-		img = u.messageImage(m, gtx.Dp(330))
+		img = u.messageImage(m, maxPx)
 		if img != nil && img.state == imgReady {
 			ratio := float32(img.size.Y) / float32(img.size.X)
 			imgH = int(float32(imgW) * min(max(ratio, 0.4), 1.4))
@@ -967,6 +1071,14 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	// Place everything, then paint the bubble behind it.
 	macro := op.Record(gtx.Ops)
 	y := 0
+	if head.size.Y > 0 {
+		top := gtx.Dp(12) - padT
+		head.at(gtx, headX, top)
+		y = top + head.size.Y + gtx.Dp(6)
+		if isImg {
+			y += gtx.Dp(5)
+		}
+	}
 	if hasSender {
 		sx := 0
 		if isImg {
@@ -1349,20 +1461,26 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 	return D{Size: image.Pt(bw, bh)}
 }
 
-// layoutSticker draws a sticker without a bubble, with the time on a chip.
+// layoutSticker draws a sticker without a bubble, with the time on a chip
+// under its corner, colored like the sender's bubbles.
 func (u *UI) layoutSticker(gtx C, m *model.Message) D {
 	p := u.pal
 	sz := gtx.Dp(150)
 	u.stickerPicture(gtx, m, sz)
+	bg, metaCol := p.BubbleIn, p.MetaIn
+	if m.FromMe {
+		bg, metaCol = p.BubbleOut, p.MetaOut
+	}
 	meta := record(gtx, func(gtx C) D {
-		return u.card(gtx, 8, p.BubbleIn, func(gtx C) D {
+		return u.card(gtx, 8, bg, func(gtx C) D {
 			return layout.Inset{Left: 6, Right: 6, Top: 2, Bottom: 3}.Layout(gtx, func(gtx C) D {
-				return u.layoutMeta(gtx, m, p.MetaIn, nil)
+				return u.layoutMeta(gtx, m, metaCol, nil)
 			})
 		})
 	})
-	meta.at(gtx, sz-meta.size.X, sz-meta.size.Y)
-	return D{Size: image.Pt(sz, sz)}
+	y := sz + gtx.Dp(2)
+	meta.at(gtx, sz-meta.size.X, y)
+	return D{Size: image.Pt(sz, y+meta.size.Y)}
 }
 
 // stickerPicture draws a sticker (or its placeholder) in an sz square.

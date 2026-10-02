@@ -237,6 +237,7 @@ func (b *Backend) fillGroupInfo(ctx context.Context, info *model.ChatInfo, g *ty
 	info.Created = g.GroupCreated
 	info.Disappearing = g.DisappearingTimer
 	info.Announce, info.Locked = g.IsAnnounce, g.IsLocked
+	info.AdminsAdd, info.Approval = g.MemberAddMode == types.GroupMemberAddModeAdmin, g.IsJoinApprovalRequired
 	switch owner := g.OwnerJID; {
 	case owner.IsEmpty():
 	case b.isMe(owner) || (!g.OwnerPN.IsEmpty() && b.isMe(g.OwnerPN)):

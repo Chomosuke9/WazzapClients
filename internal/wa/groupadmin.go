@@ -52,6 +52,16 @@ func (b *Backend) ManageGroup(r model.GroupRequest) {
 			err = cli.SetGroupLocked(ctx, jid, r.On)
 		case model.GroupDescription:
 			err = cli.SetGroupTopic(ctx, jid, "", "", r.Text)
+		case model.GroupName:
+			err = cli.SetGroupName(ctx, jid, r.Text)
+		case model.GroupAddMode:
+			mode := types.GroupMemberAddModeAllMember
+			if r.On {
+				mode = types.GroupMemberAddModeAdmin
+			}
+			err = cli.SetGroupMemberAddMode(ctx, jid, mode)
+		case model.GroupApproval:
+			err = cli.SetGroupJoinApprovalMode(ctx, jid, r.On)
 		case model.GroupLink:
 			ev.Link, err = cli.GetGroupInviteLink(ctx, jid, r.On)
 			changed = false

@@ -272,6 +272,21 @@ func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 				Groups: []string{"zytro@g.us"}},
 		},
 		infos: map[string]*model.ChatInfo{
+			// Only admins post announcements: you run WazzapAgents, not the forum.
+			"fpam-ann@g.us": {
+				ID: "fpam-ann@g.us", Name: "Forum Penghitaman Anime Massal", IsGroup: true, Announce: true, Locked: true,
+				Members: []model.Member{
+					{ID: "me@lid", Name: "You", Me: true},
+					{ID: "alip@lid", Name: "~AlipReall65", Push: "AlipReall65", Admin: true},
+				},
+			},
+			"wa-ann@g.us": {
+				ID: "wa-ann@g.us", Name: "WazzapAgents", IsGroup: true, Announce: true, Locked: true,
+				Members: []model.Member{
+					{ID: "me@lid", Name: "You", Admin: true, Me: true},
+					{ID: "vivy@lid", Name: "Vivy", Admin: true},
+				},
+			},
 			"test@g.us": {
 				ID: "test@g.us", Name: "test", IsGroup: true,
 				About: "This group is dedicated for testing WhatsApp bot, specifically WazzapAgents",

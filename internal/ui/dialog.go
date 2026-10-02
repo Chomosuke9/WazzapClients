@@ -24,6 +24,7 @@ const (
 	dialogForward
 	dialogPoll
 	dialogInvite // a group's invite link (invite.go)
+	dialogTheme  // a chat's theme (chatmenu.go); title is the chat's ID
 )
 
 type dialogButton struct {
@@ -48,7 +49,9 @@ type dialogState struct {
 	// Forward picker, which also picks contacts to share, or the chats to
 	// share one contact with.
 	contacts bool
-	share    string // the contact to share
+	share    string   // the contact to share
+	addTo    string   // the group to add the picked people to
+	members  []string // addTo's members, left out of the list
 	fwd      []*model.Message
 	picked   []string // chat IDs, in the order they were picked
 	search   widget.Editor
@@ -153,6 +156,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.pollPanel)
 	case dialogInvite:
 		panel = record(gtx, u.invitePanel)
+	case dialogTheme:
+		panel = record(gtx, u.themePanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
@@ -279,7 +284,9 @@ func (u *UI) forwardPanel(gtx C) D {
 		u.closeDialog()
 	}
 	if u.btn("fwd:send").Clicked(gtx) && len(d.picked) > 0 && d.isOpen() {
-		if d.share != "" {
+		if d.addTo != "" {
+			u.addMembers(d.addTo, d.picked)
+		} else if d.share != "" {
 			for _, id := range d.picked {
 				m := u.backend.SendContacts(id, []string{d.share})
 				if m != nil && u.selected != nil && u.selected.ID == id {
@@ -310,6 +317,9 @@ func (u *UI) forwardPanel(gtx C) D {
 		if d.share != "" && (c.ID == d.share || isChannelID(c.ID)) {
 			continue
 		}
+		if d.addTo != "" && indexOf(d.members, c.ID) >= 0 {
+			continue // already in the group
+		}
 		if q == "" || strings.Contains(strings.ToLower(c.Name), q) {
 			chats = append(chats, c)
 		}
@@ -326,6 +336,8 @@ func (u *UI) forwardPanel(gtx C) D {
 	}
 	title := "Forward message to"
 	switch {
+	case d.addTo != "":
+		title = "Add member"
 	case d.share != "":
 		title = "Share contact"
 	case d.contacts:

@@ -38,6 +38,12 @@ type infoState struct {
 	// memberSearch filters a group's member list by memberQuery.
 	memberSearch bool
 	memberQuery  widget.Editor
+	// sub is the page shown inside the panel (infopages.go), or "" for
+	// the main one, whose scroll position subPos keeps.
+	sub     string
+	subPos  layout.Position
+	starred galleryList
+	changes []model.MemberChange
 }
 
 // infoPage is a panel to return to with the back arrow (a group's info
@@ -54,6 +60,7 @@ func (s *infoState) shown() bool { return s.open || s.anim.v > 0 }
 // under it.
 func (u *UI) hideInfo() {
 	u.info.open = false
+	u.info.sub = ""
 	u.info.back = nil
 	u.info.anim.snap(false)
 }
@@ -102,6 +109,7 @@ func (u *UI) infoBack() {
 
 func (u *UI) showInfo(chatID, name string) {
 	u.swapSearchForInfo()
+	u.info.sub = ""
 	if u.info.chatID != chatID {
 		u.info.list.Position = layout.Position{}
 		u.info.allMembers = false
@@ -122,7 +130,9 @@ const infoPadX = 21 // left edge of dividers, the description and the footer
 func (u *UI) layoutInfo(gtx C) D {
 	p := u.pal
 	if u.info.closeBtn.Clicked(gtx) {
-		if len(u.info.back) > 0 {
+		if u.info.sub != "" {
+			u.closeInfoSub()
+		} else if len(u.info.back) > 0 {
 			u.infoBack()
 		} else {
 			u.info.open = false
@@ -144,9 +154,14 @@ func (u *UI) layoutInfo(gtx C) D {
 		info.Name = info.Phone
 	}
 	dims := fill(gtx, p.Panel)
-	rows := u.infoRows(gtx, c, info)
+	var rows []layout.Widget
+	if u.info.sub != "" {
+		rows = u.infoSubRows(gtx, c, info)
+	} else {
+		rows = u.infoRows(gtx, c, info)
+	}
 	closeIc := icClose
-	if len(u.info.back) > 0 {
+	if len(u.info.back) > 0 || u.info.sub != "" {
 		closeIc = icBack
 	}
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -154,6 +169,9 @@ func (u *UI) layoutInfo(gtx C) D {
 			title := "Contact info"
 			if c.IsGroup {
 				title = "Group info"
+			}
+			if u.info.sub != "" {
+				title = infoSubTitle(u.info.sub)
 			}
 			return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
 				return layout.Inset{Left: 11.5}.Layout(gtx, func(gtx C) D {
@@ -188,9 +206,8 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		func(gtx C) D { return u.infoMedia(gtx, info) },
 		u.infoDivider(12.2, 6),
 	)
-	item := func(key string, it listItem) layout.Widget {
-		return func(gtx C) D { return u.layoutListItem(gtx, u.btn("info:"+key), it, infoGeom) }
-	}
+	item := u.infoItem
+	u.infoChatActions(gtx, c, info)
 	if u.btn("info:similar").Clicked(gtx) {
 		var members []model.Contact
 		for _, m := range info.Members {
@@ -212,21 +229,32 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		item("disappearing", listItem{glyph: disappearingIcon, title: "Disappearing messages", sub: disappearing}),
 		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: "Off"}),
 	)
-	rows = append(rows,
-		item("perms", listItem{ic: icSettings, title: "Group permissions"}),
-		u.infoDivider(12, 3.2),
-		func(gtx C) D {
+	admin := u.isAdminIn(info)
+	if admin {
+		rows = append(rows, item("perms", listItem{ic: icSettings, title: "Group permissions"}))
+	}
+	rows = append(rows, u.infoDivider(12, 3.2))
+	if u.inCommunity[c.ID] == nil {
+		rows = append(rows, func(gtx C) D {
 			return u.infoCircleRow(gtx, "community", func(gtx C) D {
 				return roundedSquare(gtx, 52, 12, p.Green, icGroupsFill, 32, rgb(0xffffff))
 			}, listItem{title: "Add group to a community", sub: "Bring members together in topic-based groups",
 				trailing: func(gtx C) D { return layout.Inset{Right: 27}.Layout(gtx, iconW(icChevronRight, 24, p.TextSecondary)) }}, 107)
-		},
+		})
+	}
+	rows = append(rows,
 		item("similar", listItem{ic: icGroupAdd, title: "Create a similar group", sub: "Start with the same members. You can add or remove people."}),
 		func(gtx C) D { return u.infoMembersHeader(gtx, info) },
-		u.greenAction("add", icPersonAddFill, "Add member", false),
-		u.greenAction("link", icLink, "Invite to group via link", false),
-		u.greenAction("email", icMail, "Invite to group via email", true),
 	)
+	if chat := u.chatByID(c.ID); chat != nil && u.canAddMembers(chat) {
+		rows = append(rows, u.greenAction("add", icPersonAddFill, "Add member", false))
+	}
+	if admin {
+		rows = append(rows,
+			u.greenAction("link", icLink, "Invite to group via link", false),
+			u.greenAction("email", icMail, "Invite to group via email", true),
+		)
+	}
 	members := info.Members
 	if u.info.memberSearch {
 		members = filterMembers(members, u.info.memberQuery.Text())
@@ -254,7 +282,7 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 	}
 	rows = append(rows,
 		func(gtx C) D { return layout.Spacer{Height: 1}.Layout(gtx) },
-		u.infoRow("changes", listItem{ic: icList, title: "See member changes"}, nil),
+		u.infoRow("changes", listItem{ic: icList, title: "See member changes"}, func() { u.openInfoSub(infoChanges) }),
 	)
 	// Actions on the chat need it in the chat list.
 	if chat := u.chatByID(c.ID); chat != nil {
@@ -403,6 +431,16 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 	if u.btn("info-action:search").Clicked(gtx) {
 		u.openChatSearch()
 	}
+	if u.btn("info-action:voice").Clicked(gtx) || u.btn("info-action:video").Clicked(gtx) {
+		u.callsUnsupported()
+	}
+	if u.btn("info-action:add").Clicked(gtx) {
+		if chat := u.chatByID(c.ID); chat != nil && u.canAddMembers(chat) {
+			u.openAddMembers(chat)
+		} else {
+			u.inform("Only admins can add members", "Only group admins can add people to this group.")
+		}
+	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(layout.Spacer{Height: 26}.Layout),
@@ -512,6 +550,9 @@ func (u *UI) infoAbout(gtx C, info *model.ChatInfo) D {
 // infoMedia is the "Media, links and docs" row with the newest pictures.
 func (u *UI) infoMedia(gtx C, info *model.ChatInfo) D {
 	p := u.pal
+	if u.btn("info:media").Clicked(gtx) {
+		u.openGallery(info.ID, info.Name)
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return u.layoutListItem(gtx, u.btn("info:media"), listItem{ic: icPermMedia, title: "Media, links and docs",

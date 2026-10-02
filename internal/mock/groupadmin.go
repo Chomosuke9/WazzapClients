@@ -76,6 +76,16 @@ func (b *Backend) ManageGroup(r model.GroupRequest) {
 		info.Locked = r.On
 	case model.GroupDescription:
 		info.About = r.Text
+	case model.GroupName:
+		info.Name = r.Text
+		if c := b.chat(r.ChatID); c != nil {
+			c.Name = r.Text
+			b.emitChat(c.ID)
+		}
+	case model.GroupAddMode:
+		info.AdminsAdd = r.On
+	case model.GroupApproval:
+		info.Approval = r.On
 	case model.GroupLink:
 		if r.On {
 			b.linkResets++

@@ -117,7 +117,7 @@ func (u *UI) jumpTo(id string) {
 	if u.selected == nil {
 		return
 	}
-	i := slices.IndexFunc(u.rows(u.selected), func(r convRow) bool { return r.msg != nil && r.msg.ID == id })
+	i := slices.IndexFunc(u.rows(u.selected), func(r convRow) bool { return r.has(id) })
 	if i < 0 {
 		i = u.loadAround(id)
 	}

@@ -71,6 +71,9 @@ type Backend struct {
 	searchMu     sync.Mutex
 	searchCancel context.CancelFunc // the running SearchMessages
 
+	galleryMu     sync.Mutex
+	galleryCancel context.CancelFunc // the running Gallery
+
 	accountMu      sync.Mutex  // guards the cached account details
 	accountFetched atomic.Bool // account details refreshed this session
 }
@@ -669,6 +672,15 @@ func (b *Backend) handle(evt any) {
 	case *events.GroupInfo:
 		if len(e.Join) > 0 || len(e.Leave) > 0 {
 			b.store.updateMembers(ctx, e.JID.String(), e.Join, e.Leave)
+		}
+		b.recordMemberChanges(ctx, e)
+		if e.Announce != nil || e.Locked != nil || e.Ephemeral != nil || e.MembershipApprovalMode != nil ||
+			len(e.Join)+len(e.Leave)+len(e.Promote)+len(e.Demote) > 0 {
+			// The info panel shows these: fetch it again when it's next asked for.
+			b.infoMu.Lock()
+			delete(b.infoFetched, e.JID.String())
+			b.infoMu.Unlock()
+			b.emit(model.InfoEvent{ChatID: e.JID.String()})
 		}
 		for _, j := range e.Leave {
 			if b.isMe(j) {

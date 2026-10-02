@@ -184,9 +184,18 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
                    opens at in unread.go; group invite links (the dialog that joins
-                   one) in invite.go;
+                   one) in invite.go; a community's announcements (cards down the
+                   middle headed by their sender, a forward button beside them, and
+                   "Only community admins can send messages" for members) in announce.go;
                    chat actions shared by menus and info panels (mute choices, lists,
-                   clear/exit/delete confirms) in chatactions.go; the New chat panel and the
+                   clear/exit/delete confirms) in chatactions.go; the open chat's ⋮ menu and
+                   the settings it shares with the info panel (disappearing timer, chat
+                   theme, encryption code, Add member, invite link) in chatmenu.go; the
+                   info panel's own pages (starred messages, group permissions, member
+                   changes) in infopages.go; the Media panel (the rail's Media button:
+                   media, docs and links from every chat, or one chat's) in gallery.go; the list column's
+                   draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
+                   line as fit, in stickerrow.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
                    settingsdetail.go
@@ -335,7 +344,9 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashrun (open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, invite,
-# delete, select, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
+# delete, select, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the Media panel:
+# gallery, gallerydocs, gallerylinks, galleryselect, chatgallery; the open chat's convmenu, timer, theme,
+# encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and

@@ -240,8 +240,10 @@ type ChatInfo struct {
 	// Disappearing is the disappearing-messages timer in seconds (0 = off).
 	Disappearing uint32
 	// Announce means only a group's admins can send messages, and Locked
-	// that only they can edit its info.
-	Announce, Locked bool
+	// that only they can edit its info. AdminsAdd means only they can add
+	// members, and Approval that they approve who joins.
+	Announce, Locked    bool
+	AdminsAdd, Approval bool
 	// MediaCount counts media, links and documents; Media holds the newest
 	// pictures to preview.
 	MediaCount int
@@ -483,6 +485,64 @@ type StickersEvent struct{}
 // NoticeEvent is a short message for a toast ("Saved to Downloads").
 type NoticeEvent struct{ Text string }
 
+// GalleryKind is what Backend.Gallery lists.
+type GalleryKind int
+
+const (
+	GalleryMedia   GalleryKind = iota // photos, videos and GIFs
+	GalleryDocs                       // documents
+	GalleryLinks                      // messages with web links
+	GalleryStarred                    // starred messages
+)
+
+// GalleryQuery asks Backend.Gallery for a page of a chat's (or, with
+// ChatID "", every chat's) media, documents, links or starred messages.
+type GalleryQuery struct {
+	Kind   GalleryKind
+	ChatID string
+	// Text keeps the messages whose SearchKey (or file name) contains its.
+	Text string
+	// Oldest lists the oldest first instead of the newest.
+	Oldest bool
+	// Offset and Limit pick the page.
+	Offset, Limit int
+}
+
+// GalleryEvent brings a page of Backend.Gallery. More reports that there
+// are more after it.
+type GalleryEvent struct {
+	Query GalleryQuery
+	Msgs  []*Message
+	More  bool
+}
+
+// SecurityCodeEvent answers Backend.SecurityCode: the 60 digit code that
+// both sides of a chat see, or Err.
+type SecurityCodeEvent struct {
+	ChatID, Code, Err string
+}
+
+// MemberChange is a group member joining, leaving or changing role.
+type MemberChange struct {
+	Time time.Time
+	// Name is whose membership changed, and By who did it ("" when they
+	// did it themselves or it isn't known).
+	Name, By string
+	Action   MemberAction
+}
+
+// MemberAction is what a MemberChange did.
+type MemberAction int
+
+const (
+	MemberJoined MemberAction = iota
+	MemberLeft
+	MemberAdded
+	MemberRemoved
+	MemberPromoted
+	MemberDemoted
+)
+
 // SearchEvent brings the results of Backend.SearchMessages.
 type SearchEvent struct {
 	ChatID, Query string
@@ -529,6 +589,12 @@ const (
 	// GroupSendInvite sends Members[0] the Invite that GroupAdd got for them,
 	// as a message in your chat with them.
 	GroupSendInvite
+	// GroupAddMode lets only admins add members (On), or everyone.
+	GroupAddMode
+	// GroupApproval makes admins approve new members (On), or not.
+	GroupApproval
+	// GroupName renames the group to Text.
+	GroupName
 )
 
 // GroupRequest is a change to a group you administer (Backend.ManageGroup).
@@ -641,6 +707,8 @@ func (GroupCreatedEvent) isEvent() {}
 func (StickersEvent) isEvent()     {}
 func (DeletedEvent) isEvent()      {}
 func (SearchEvent) isEvent()       {}
+func (GalleryEvent) isEvent()      {}
+func (SecurityCodeEvent) isEvent() {}
 func (AccountEvent) isEvent()      {}
 func (GroupEvent) isEvent()        {}
 func (InviteEvent) isEvent()       {}
@@ -785,6 +853,20 @@ type Backend interface {
 	// ExportChat writes a chat's messages as text into the Downloads folder
 	// in the background; a NoticeEvent reports the result.
 	ExportChat(chatID string)
+	// SetDisappearing sets a chat's disappearing messages timer (0 turns
+	// it off) in the background. An InfoEvent follows, or a NoticeEvent
+	// on failure.
+	SetDisappearing(chatID string, d time.Duration)
+	// SecurityCode works out the security code of a one-to-one chat in the
+	// background; a SecurityCodeEvent answers.
+	SecurityCode(chatID string)
+	// Gallery looks up a page of media, documents, links or starred
+	// messages in the background; a GalleryEvent answers. A new query
+	// cancels the last one.
+	Gallery(q GalleryQuery)
+	// MemberChanges lists who joined, left or changed role in a group
+	// since this computer saw it, newest first.
+	MemberChanges(chatID string) []MemberChange
 
 	// Pref and SetPref keep small UI preferences (recent emoji).
 	Pref(key string) string

@@ -23,7 +23,7 @@ import (
 
 // appPrefs are the preferences that belong to the app rather than to an
 // account: they carry over when another account opens.
-var appPrefs = []string{prefTheme, prefDoodles, prefEnterSend, prefBackground}
+var appPrefs = []string{prefTheme, prefDoodles, prefEnterSend, prefBackground, prefListWidth, prefListHidden}
 
 // accountRow is an account in the switcher.
 type accountRow struct {

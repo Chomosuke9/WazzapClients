@@ -107,7 +107,7 @@ func (u *UI) setMsgs(c *model.Chat, msgs []*model.Message) {
 	anchor += first
 	id := old[anchor].msg.ID
 	for k, r := range u.rows(c) {
-		if r.msg == nil || r.msg.ID != id {
+		if !r.has(id) {
 			continue
 		}
 		if known {
@@ -146,7 +146,7 @@ func (u *UI) loadAround(id string) int {
 	u.conv.list.ScrollToEnd = !u.conv.newerMore
 	clear(u.conv.heights) // by row index, of the old rows
 	for i, r := range u.rows(c) {
-		if r.msg != nil && r.msg.ID == id {
+		if r.has(id) {
 			// Set while the list may be laying out; see scrollMessages.
 			u.conv.scrollTo = &layout.Position{First: max(0, i-2), BeforeEnd: true}
 			return i

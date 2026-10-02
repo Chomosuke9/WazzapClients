@@ -48,9 +48,8 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 		func(gtx C) D { return u.infoMedia(gtx, info) },
 		u.infoDivider(12.2, 6),
 	)
-	item := func(key string, it listItem) layout.Widget {
-		return func(gtx C) D { return u.layoutListItem(gtx, u.btn("info:"+key), it, infoGeom) }
-	}
+	item := u.infoItem
+	u.infoChatActions(gtx, c, info)
 	disappearing := "Off"
 	if d := info.Disappearing; d > 0 {
 		disappearing = durationLabel(d)

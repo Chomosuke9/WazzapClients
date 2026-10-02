@@ -112,7 +112,7 @@ func (u *UI) layoutRail(gtx C) D {
 		}),
 		item(&u.rail.archived, onArchive, archive, archivedUnread, false),
 		layout.Flexed(1, layout.Spacer{}.Layout),
-		item(&u.rail.media, false, glyph(icMedia), 0, false),
+		item(&u.rail.media, u.gallery.open && u.gallery.chatID == "", glyph(icMedia), 0, false),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Top: 2, Bottom: 17}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
