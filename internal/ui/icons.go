@@ -112,6 +112,15 @@ var (
 	icVolumeFill    = icon.VolumeUpFill
 	icVolumeOffFill = icon.VolumeOffFill
 
+	// Extra features and slash commands.
+	icExtension       = icon.Extension
+	icTerminal        = icon.Terminal
+	icPersonRemove    = icon.PersonRemove
+	icAddModerator    = icon.AddModerator
+	icRemoveModerator = icon.RemoveModerator
+	icEditNote        = icon.EditNote
+	icLockOpen        = icon.LockOpen
+
 	// Emoji picker categories.
 	icEmojiPeople  = icon.Mood
 	icEmojiNature  = icon.Pets

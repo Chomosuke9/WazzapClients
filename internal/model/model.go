@@ -220,6 +220,9 @@ type ChatInfo struct {
 	CreatedBy string
 	// Disappearing is the disappearing-messages timer in seconds (0 = off).
 	Disappearing uint32
+	// Announce means only a group's admins can send messages, and Locked
+	// that only they can edit its info.
+	Announce, Locked bool
 	// MediaCount counts media, links and documents; Media holds the newest
 	// pictures to preview.
 	MediaCount int
@@ -487,6 +490,73 @@ type GroupCreatedEvent struct {
 // contacts (Backend.Account) changed.
 type AccountEvent struct{}
 
+// GroupAction is what a GroupRequest does.
+type GroupAction int
+
+const (
+	GroupAdd     GroupAction = iota // add Members
+	GroupRemove                     // remove Members
+	GroupPromote                    // make Members admins
+	GroupDemote                     // dismiss Members as admins
+	// GroupAnnounce lets only admins send messages (On), or everyone.
+	GroupAnnounce
+	// GroupLock lets only admins edit the group's info (On), or everyone.
+	GroupLock
+	// GroupDescription sets the description to Text ("" removes it).
+	GroupDescription
+	// GroupLink gets the invite link; On resets it, so the old one stops
+	// working.
+	GroupLink
+	// GroupSendInvite sends Members[0] the Invite that GroupAdd got for them,
+	// as a message in your chat with them.
+	GroupSendInvite
+)
+
+// GroupRequest is a change to a group you administer (Backend.ManageGroup).
+type GroupRequest struct {
+	// Ref is copied to the GroupEvent that answers the request.
+	Ref    string
+	ChatID string
+	Action GroupAction
+	// Members are chat IDs, or for GroupAdd also phone numbers with
+	// their country code ("+62 812 5550 1234").
+	Members []string
+	On      bool
+	Text    string
+	Invite  *GroupInvite
+}
+
+// GroupInvite is an invitation to join a group, which WhatsApp hands out
+// when someone's privacy settings don't let you add them.
+type GroupInvite struct {
+	Code    string
+	Expires time.Time
+}
+
+// GroupEvent answers Backend.ManageGroup.
+type GroupEvent struct {
+	Ref    string
+	ChatID string
+	// Err says why the request failed, or is "".
+	Err string
+	// Link is the invite link, for GroupLink.
+	Link string
+	// Members is what happened to each member, for GroupAdd,
+	// GroupRemove, GroupPromote and GroupDemote.
+	Members []MemberResult
+}
+
+// MemberResult is what a GroupRequest did to one member.
+type MemberResult struct {
+	ID   string
+	Name string
+	// Err says why it failed for them, or is "".
+	Err string
+	// Invite is set when their privacy settings refused GroupAdd; a
+	// GroupSendInvite request sends it to them.
+	Invite *GroupInvite
+}
+
 // DeletedEvent reports that messages were removed from a chat (deleted for
 // you, or the chat was cleared). IDs is nil when the whole chat was cleared.
 type DeletedEvent struct {
@@ -515,6 +585,7 @@ func (StickersEvent) isEvent()     {}
 func (DeletedEvent) isEvent()      {}
 func (SearchEvent) isEvent()       {}
 func (AccountEvent) isEvent()      {}
+func (GroupEvent) isEvent()        {}
 
 // StickerSet is a tab of the sticker picker.
 type StickerSet int
@@ -610,6 +681,10 @@ type Backend interface {
 	SendContacts(chatID string, contactIDs []string) *Message
 	// SendPoll sends a poll.
 	SendPoll(chatID string, p Poll) *Message
+	// SendNewSticker sends a sticker made on this computer (a 512x512
+	// WebP), as a reply to reply if it isn't nil, and returns it in its
+	// pending state. The upload runs in the background.
+	SendNewSticker(chatID string, webp []byte, reply *Message) *Message
 
 	// Chat list actions. Each is followed by a ChatEvent (or ChatsEvent).
 	SetArchived(chatID string, archived bool)
@@ -634,6 +709,10 @@ type Backend interface {
 	CreateGroup(g NewGroup)
 	// LeaveGroup exits a group.
 	LeaveGroup(chatID string)
+	// ManageGroup changes a group you administer in the background. A
+	// GroupEvent with the request's Ref answers, and an InfoEvent follows
+	// when the group's details changed.
+	ManageGroup(r GroupRequest)
 	// SetBlocked blocks or unblocks a contact. An InfoEvent follows, and a
 	// NoticeEvent on failure.
 	SetBlocked(chatID string, blocked bool)

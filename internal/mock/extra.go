@@ -7,6 +7,7 @@ import (
 	"image/jpeg"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -120,7 +121,11 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 	for _, m := range b.msgs[chatID] {
 		if m.Sender != "" && !seen[m.Sender] {
 			seen[m.Sender] = true
-			info.Members = append(info.Members, model.Member{ID: m.SenderID, Name: m.Sender})
+			id := m.SenderID
+			if id == "" {
+				id = strings.ToLower(m.Sender) // demo messages may leave it out
+			}
+			info.Members = append(info.Members, model.Member{ID: id, Name: m.Sender})
 		}
 	}
 	for _, m := range b.msgs[chatID] {

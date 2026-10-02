@@ -1,0 +1,737 @@
+package ui
+
+import (
+	"image"
+	"strings"
+	"time"
+	"unicode"
+
+	"gioui.org/font"
+	"gioui.org/io/event"
+	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/widget"
+
+	"github.com/chomosuke9/wazzapclients/internal/command"
+	"github.com/chomosuke9/wazzapclients/internal/filepick"
+	"github.com/chomosuke9/wazzapclients/internal/model"
+)
+
+// Slash commands, like Discord's: typing "/" at the start of a message
+// opens a picker of commands over the composer. Once one is picked it
+// shows the command with its options, and offers values for the option
+// being typed (members, contacts, choices). Enter runs it; what it did
+// shows as notes only you see, at the end of the chat. The commands
+// themselves are in internal/command.
+
+// slashState is the slash command picker and the commands' notes.
+type slashState struct {
+	on bool // prefSlash
+
+	// The picker for the composer's text, cached for one text, caret and
+	// set of members (see slashQuery).
+	cache    *slashPick
+	cacheKey slashKey
+	cacheOK  bool
+	contacts []*model.Contact // for Contact options, read when first needed
+
+	sel       int    // the highlighted row, or -1
+	selFor    string // the query sel belongs to; a new one resets it
+	navigated bool   // sel was moved with the arrow keys
+	dismissed string // composer text the picker was closed for (Esc)
+	problem   string // why Enter didn't run the command
+	problemAt string // the composer text it's about
+	list      widget.List
+	anim      tween
+	ghost     *slashPick // what the picker showed, while it fades out
+
+	notes   map[string][]*localNote           // per chat, oldest first
+	waiting map[string]func(model.GroupEvent) // group requests, by Ref
+	seq     int
+	done    chan func() // what Host.Do finished, to run on this goroutine
+}
+
+// localNote is a command's note in a chat.
+type localNote struct {
+	id   string
+	at   time.Time
+	note *command.Note
+}
+
+// maxNotes is how many notes a chat keeps; older ones go.
+const maxNotes = 20
+
+// slashKey is what the picker depends on.
+type slashKey struct {
+	text     string
+	caret    int
+	mentions int
+	chat     string
+	info     *model.ChatInfo
+	contacts int
+}
+
+// slashPick is what the picker shows for the composer's text.
+type slashPick struct {
+	in   command.Input
+	cmds []*command.Command // the commands matching the name being typed
+	opt  *command.Option    // the option being typed, or nil
+	vals []slashValue       // values to pick for it
+}
+
+// slashValue is a value the picker offers for an option: a member or
+// contact (id is set) or a choice.
+type slashValue struct {
+	id, name, sub string
+}
+
+// rows is how many rows the picker offers to pick from.
+func (sp *slashPick) rows() int {
+	if sp.in.Naming {
+		return len(sp.cmds)
+	}
+	return len(sp.vals)
+}
+
+// slashQuery reads the composer's text as a command, or returns nil when
+// it isn't one.
+func (u *UI) slashQuery() *slashPick {
+	s := &u.slash
+	c := u.selected
+	if !s.on || c == nil || u.postingStatus() || u.conv.editorElsewhere || isChannelID(c.ID) {
+		return nil
+	}
+	ed := &u.conv.composer
+	txt := ed.Text()
+	if !strings.HasPrefix(txt, "/") {
+		return nil
+	}
+	caret, _ := ed.Selection()
+	var info *model.ChatInfo
+	if c.IsGroup {
+		info = u.chatMembers(c.ID)
+	}
+	k := slashKey{txt, caret, len(u.conv.mentions), c.ID, info, len(s.contacts)}
+	if s.cacheOK && s.cacheKey == k {
+		return s.cache
+	}
+	s.cacheKey, s.cacheOK = k, true
+	s.cache = u.readSlash(txt, caret, c, info)
+	return s.cache
+}
+
+func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInfo) *slashPick {
+	var members []model.Member
+	if info != nil {
+		members = info.Members
+	}
+	mentions := make([]command.Mention, len(u.conv.mentions))
+	for i, m := range u.conv.mentions {
+		mentions[i] = command.Mention{Name: m.name, ID: m.jid}
+	}
+	in, ok := command.Parse(txt, caret, mentions, members)
+	if !ok {
+		return nil
+	}
+	sp := &slashPick{in: in}
+	if in.Naming {
+		sp.cmds = command.Matching(in.Name, c.IsGroup)
+		if len(sp.cmds) == 0 {
+			return nil // nothing to run here: it's just text
+		}
+		return sp
+	}
+	if in.Cmd.Group && !c.IsGroup {
+		return nil
+	}
+	if in.Current < 0 {
+		return sp
+	}
+	o := &in.Cmd.Options[in.Current]
+	sp.opt = o
+	// Values already given, except the one being typed.
+	taken := map[string]bool{}
+	for _, v := range in.Values[in.Current] {
+		if v.ID != "" && v.Start != in.WordStart {
+			taken[v.ID] = true
+		}
+	}
+	q := strings.ToLower(strings.TrimPrefix(in.Word, "@"))
+	matches := func(name string) bool {
+		n := strings.ToLower(strings.TrimPrefix(name, "~"))
+		return q == "" || strings.HasPrefix(n, q) || strings.Contains(n, " "+q)
+	}
+	switch o.Kind {
+	case command.Member:
+		for _, m := range members {
+			if m.ID != "" && o.Offers(m) && !taken[m.ID] && matches(m.Name) {
+				sp.vals = append(sp.vals, slashValue{id: m.ID, name: strings.TrimPrefix(m.Name, "~")})
+			}
+		}
+	case command.Contact:
+		inGroup := map[string]bool{}
+		for _, m := range members {
+			inGroup[m.ID] = true
+		}
+		if u.slash.contacts == nil {
+			u.slash.contacts = u.backend.Contacts()
+			if u.slash.contacts == nil {
+				u.slash.contacts = []*model.Contact{}
+			}
+		}
+		digits := strings.Map(func(r rune) rune {
+			if unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, q)
+		for _, ct := range u.slash.contacts {
+			phone := strings.Map(func(r rune) rune {
+				if unicode.IsDigit(r) {
+					return r
+				}
+				return -1
+			}, ct.Phone)
+			if inGroup[ct.ID] || taken[ct.ID] {
+				continue
+			}
+			if matches(ct.Name) || digits != "" && strings.Contains(phone, digits) {
+				sp.vals = append(sp.vals, slashValue{id: ct.ID, name: ct.Name, sub: ct.Phone})
+				if len(sp.vals) == 50 {
+					break
+				}
+			}
+		}
+	case command.Choice:
+		for _, ch := range o.Choices {
+			if strings.HasPrefix(ch, q) {
+				sp.vals = append(sp.vals, slashValue{name: ch})
+			}
+		}
+	}
+	return sp
+}
+
+// slashShown reports whether the picker shows for sp.
+func (u *UI) slashShown(sp *slashPick) bool {
+	return sp != nil && u.conv.composer.Text() != u.slash.dismissed
+}
+
+// slashEnterPicks reports whether Enter picks the highlighted row rather
+// than running the command: while naming it, typing a value, or before a
+// required option has one, or after choosing a row with the arrows.
+func (u *UI) slashEnterPicks(sp *slashPick) bool {
+	if !u.slashShown(sp) || sp.rows() == 0 {
+		return false
+	}
+	in := &sp.in
+	if in.Naming || u.slash.navigated {
+		return true
+	}
+	if in.Word != "" {
+		// Unless the value is complete already.
+		for _, v := range in.Values[in.Current] {
+			if v.Start == in.WordStart {
+				return !v.Done
+			}
+		}
+		return true
+	}
+	return sp.opt != nil && sp.opt.Required && len(in.Values[in.Current]) == 0
+}
+
+// updateSlashSel resets the highlighted row when the query changes.
+func (u *UI) updateSlashSel(sp *slashPick) {
+	s := &u.slash
+	q := ""
+	if sp != nil {
+		q = sp.in.Name + "\x00" + sp.in.Word + "\x00" + itoa(sp.in.Current) + "\x00" + itoa(sp.rows())
+	}
+	if q == s.selFor {
+		return
+	}
+	s.selFor, s.navigated = q, false
+	s.list.Position = layout.Position{}
+	s.sel = -1
+	if u.slashEnterPicks(sp) {
+		s.sel = 0
+	}
+}
+
+// slashKeys moves through the picker with the arrow keys, and picks with
+// Tab (or Enter, see slashEnterPicks). It runs before the composer reads
+// its keys.
+func (u *UI) slashKeys(gtx C) {
+	u.drainSlashDone()
+	sp := u.slashQuery()
+	u.updateSlashSel(sp)
+	if !u.slashShown(sp) || sp.rows() == 0 {
+		return
+	}
+	s := &u.slash
+	ed := &u.conv.composer
+	filters := []event.Filter{
+		key.Filter{Focus: ed, Name: key.NameUpArrow},
+		key.Filter{Focus: ed, Name: key.NameDownArrow},
+		key.Filter{Focus: ed, Name: key.NameTab},
+	}
+	if u.slashEnterPicks(sp) {
+		filters = append(filters, key.Filter{Focus: ed, Name: key.NameReturn}, key.Filter{Focus: ed, Name: key.NameEnter})
+	}
+	n := sp.rows()
+	for {
+		ev, ok := gtx.Event(filters...)
+		if !ok {
+			break
+		}
+		e, ok := ev.(key.Event)
+		if !ok || e.State != key.Press {
+			continue
+		}
+		switch e.Name {
+		case key.NameUpArrow:
+			s.sel = (max(s.sel, 0) - 1 + n) % n
+			s.navigated = true
+			s.list.ScrollTo(s.sel)
+		case key.NameDownArrow:
+			s.sel = (s.sel + 1) % n
+			s.navigated = true
+			s.list.ScrollTo(s.sel)
+		default:
+			u.pickSlash(sp, max(s.sel, 0))
+			return
+		}
+	}
+}
+
+// pickSlash puts picker row i in the composer: a command's name, or a
+// value for the option being typed.
+func (u *UI) pickSlash(sp *slashPick, i int) {
+	ed := &u.conv.composer
+	in := &sp.in
+	rs := []rune(ed.Text())
+	switch {
+	case in.Naming:
+		if i >= len(sp.cmds) {
+			return
+		}
+		ins := "/" + sp.cmds[i].Name
+		if in.WordEnd >= len(rs) || !unicode.IsSpace(rs[in.WordEnd]) {
+			ins += " "
+		}
+		ed.SetCaret(0, in.WordEnd)
+		ed.Insert(ins)
+	case i < len(sp.vals):
+		v := sp.vals[i]
+		ed.SetCaret(in.WordStart, in.WordEnd)
+		if v.id != "" {
+			ed.Insert("@" + v.name + " ")
+			u.conv.mentions = append(u.conv.mentions, mentionRef{name: v.name, jid: v.id})
+		} else {
+			ed.Insert(v.name + " ")
+		}
+	}
+	u.requestFocus(ed)
+}
+
+// submitSlash is Enter on a command: it picks the highlighted row, or runs
+// the command, or says what's missing.
+func (u *UI) submitSlash(sp *slashPick) {
+	s := &u.slash
+	if u.slashEnterPicks(sp) {
+		u.pickSlash(sp, max(s.sel, 0))
+		return
+	}
+	in := sp.in
+	txt := u.conv.composer.Text()
+	if p := in.Problem(); p != "" {
+		s.problem, s.problemAt = p, txt
+		s.dismissed = "" // the picker shows it
+		return
+	}
+	c := u.selected
+	ctx := &command.Context{Cmd: in.Cmd, Input: trimSpace(txt), Values: in.Values, Chat: c,
+		Reply: u.conv.reply, Backend: u.backend, Host: slashHost{u: u, chat: c.ID}}
+	if c.IsGroup {
+		ctx.Info = u.chatMembers(c.ID)
+	}
+	u.conv.composer.SetText("")
+	u.conv.reply = nil
+	u.conv.mentions = nil
+	command.Execute(ctx)
+	u.scrollMessages(layout.Position{})
+}
+
+// slashHost is what commands run in a chat get from the UI.
+type slashHost struct {
+	u    *UI
+	chat string
+}
+
+func (h slashHost) Note(n *command.Note) {
+	u := h.u
+	s := &u.slash
+	if s.notes == nil {
+		s.notes = map[string][]*localNote{}
+	}
+	s.seq++
+	ln := &localNote{id: "note-" + itoa(s.seq), at: u.now(), note: n}
+	ns := append(s.notes[h.chat], ln)
+	if len(ns) > maxNotes {
+		ns = ns[len(ns)-maxNotes:]
+	}
+	s.notes[h.chat] = ns
+	u.msgsVer++
+	u.anims.start(animKey{id: ln.id, tag: tagAppear})
+}
+
+func (h slashHost) Dismiss(n *command.Note) { h.u.dismissNote(h.chat, n) }
+
+func (u *UI) dismissNote(chat string, n *command.Note) {
+	s := &u.slash
+	ns := s.notes[chat]
+	for i, ln := range ns {
+		if ln.note == n {
+			s.notes[chat] = append(ns[:i:i], ns[i+1:]...)
+			u.msgsVer++
+			return
+		}
+	}
+}
+
+func (h slashHost) Group(r model.GroupRequest, done func(model.GroupEvent)) {
+	s := &h.u.slash
+	s.seq++
+	r.Ref = "cmd-" + itoa(s.seq)
+	if s.waiting == nil {
+		s.waiting = map[string]func(model.GroupEvent){}
+	}
+	s.waiting[r.Ref] = done
+	h.u.backend.ManageGroup(r)
+}
+
+func (h slashHost) Do(work func() func()) { h.u.slashDo(work) }
+
+// slashDo runs work on another goroutine and what it returns on the UI's.
+func (u *UI) slashDo(work func() func()) {
+	s := &u.slash
+	if s.done == nil {
+		s.done = make(chan func(), 8)
+	}
+	done, notify := s.done, u.images.invalidate
+	go func() {
+		done <- work()
+		if notify != nil {
+			notify()
+		}
+	}()
+}
+
+// drainSlashDone runs what slashDo's work returned.
+func (u *UI) drainSlashDone() {
+	for {
+		select {
+		case f := <-u.slash.done:
+			f()
+		default:
+			return
+		}
+	}
+}
+
+func (h slashHost) Copy(text string) {
+	h.u.pendingCopy = text
+	h.u.toast("Copied")
+}
+
+func (h slashHost) Confirm(title, body, action string, danger bool, run func()) {
+	h.u.confirm(title, body, dialogButton{label: action, danger: danger, primary: !danger, run: run})
+}
+
+func (h slashHost) PickImage(done func(path string)) {
+	h.u.slashDo(func() func() {
+		paths, err := filepick.Open("Choose a picture for the sticker", false,
+			filepick.Filter{Name: "Pictures", Exts: []string{"jpg", "jpeg", "png", "webp", "gif"}})
+		path := ""
+		if err == nil && len(paths) > 0 {
+			path = paths[0]
+		}
+		return func() { done(path) }
+	})
+}
+
+func (h slashHost) Sent(m *model.Message) {
+	u := h.u
+	if u.chatByID(m.ChatID) == nil && u.selected != nil && u.selected.ID == m.ChatID {
+		u.chats = append(u.chats, u.selected)
+	}
+	u.upsertMessage(m)
+}
+
+// groupAnswered hands a GroupEvent to the command waiting for it.
+func (u *UI) groupAnswered(e model.GroupEvent) {
+	if f := u.slash.waiting[e.Ref]; f != nil {
+		delete(u.slash.waiting, e.Ref)
+		f(e)
+	}
+}
+
+// slashHint is what the composer shows, faded, after the text of a
+// command: the options still to type.
+func (u *UI) slashHint(sp *slashPick) string {
+	in := &sp.in
+	if in.Cmd == nil {
+		return ""
+	}
+	var parts []string
+	for i, o := range in.Cmd.Options {
+		if len(in.Values) > i && len(in.Values[i]) > 0 {
+			continue
+		}
+		if o.Required {
+			parts = append(parts, o.Name)
+		} else {
+			parts = append(parts, "["+o.Name+"]")
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// paintSlashHint draws slashHint after the composer's text, when the
+// caret is at its end. sz is the editor's size.
+func (u *UI) paintSlashHint(gtx C, sz image.Point) {
+	sp := u.slashQuery()
+	if sp == nil {
+		return
+	}
+	ed := &u.conv.composer
+	if caret, _ := ed.Selection(); caret != ed.Len() {
+		return
+	}
+	hint := u.slashHint(sp)
+	if hint == "" {
+		return
+	}
+	if !strings.HasSuffix(ed.Text(), " ") {
+		hint = " " + hint
+	}
+	at := ed.CaretCoords().Round()
+	l := record(gtx, u.label(16, hint, u.pal.ComposerHint, labelOpts{maxLines: 1}).Layout)
+	defer clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, sz.Y)}.Push(gtx.Ops).Pop()
+	l.at(gtx, at.X+gtx.Dp(2), at.Y-l.size.Y+gtx.Dp(4))
+}
+
+// layoutSlashPicker draws the picker above the composer: the commands
+// matching the name being typed, or the command with its options and the
+// values to pick for the one being typed.
+func (u *UI) layoutSlashPicker(gtx C, sp *slashPick) D {
+	p := u.pal
+	s := &u.slash
+	in := &sp.in
+	n := sp.rows()
+	for i := range n {
+		if u.btn("slash:" + itoa(i)).Clicked(gtx) {
+			u.pickSlash(sp, i) // it keeps drawing while it changes
+		}
+	}
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	w := gtx.Constraints.Max.X
+	pad := gtx.Dp(8)
+	cmdH, rowH := gtx.Dp(60), gtx.Dp(52)
+	if in.Naming {
+		rowH = cmdH
+	}
+
+	// The header: what the rows are, or the option being typed, or why
+	// the command didn't run.
+	txt := u.conv.composer.Text()
+	header := record(gtx, func(gtx C) D {
+		return layout.Inset{Left: 12, Right: 12, Top: 4, Bottom: 6}.Layout(gtx, func(gtx C) D {
+			switch {
+			case s.problem != "" && s.problemAt == txt:
+				return u.label(14, s.problem, p.Danger, labelOpts{weight: font.Medium, maxLines: 2}).Layout(gtx)
+			case in.Naming:
+				t := "COMMANDS"
+				if in.Name != "" {
+					t = "COMMANDS MATCHING /" + strings.ToUpper(in.Name)
+				}
+				return u.label(12.5, t, p.PopupSub, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout(gtx)
+			case sp.opt != nil:
+				return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
+					layout.Rigid(u.label(14, sp.opt.Name, p.Text, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
+					layout.Rigid(layout.Spacer{Width: 8}.Layout),
+					layout.Flexed(1, u.label(13.5, sp.opt.Description, p.PopupSub, labelOpts{maxLines: 1}).Layout),
+				)
+			}
+			return u.label(12.5, "PRESS ENTER TO RUN", p.PopupSub, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout(gtx)
+		})
+	})
+	// While typing options, the command shows under the header.
+	var cmdRow part
+	if !in.Naming {
+		cmdRow = record(gtx, func(gtx C) D {
+			gtx.Constraints.Max.X = w - 2*pad
+			return u.layoutCommandRow(gtx, in.Cmd, in.Current, in.Values, cmdH)
+		})
+	}
+	listN := min(n, 5)
+	h := 2*pad + header.size.Y + cmdRow.size.Y + listN*rowH
+	r := gtx.Dp(16)
+	rect := image.Rect(0, 0, w, h)
+	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r, p.Shadow)
+	borderRRect(gtx, rect, r, p.Popup, p.PopupBorder)
+	y := pad
+	header.at(gtx, pad, y)
+	y += header.size.Y
+	if cmdRow.size.Y > 0 {
+		cmdRow.at(gtx, pad, y)
+		y += cmdRow.size.Y
+	}
+	if n == 0 {
+		return D{Size: image.Pt(w, h)}
+	}
+	defer clip.UniformRRect(rect, r).Push(gtx.Ops).Pop()
+	t := op.Offset(image.Pt(pad, y)).Push(gtx.Ops)
+	lgtx := gtx
+	lgtx.Constraints = layout.Exact(image.Pt(w-2*pad, listN*rowH))
+	s.list.Axis = layout.Vertical
+	u.scrollList(lgtx, &s.list, n, func(gtx C, i int) D {
+		cl := u.btn("slash:" + itoa(i))
+		return clickable(gtx, cl, func(gtx C) D {
+			sz := image.Pt(gtx.Constraints.Max.X, rowH)
+			hv := u.hover(gtx, cl)
+			if i == s.sel {
+				hv = 1
+			}
+			if hv > 0 {
+				fillRRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(10), faded(p.PopupHover, hv))
+			}
+			gtx.Constraints = layout.Constraints{Max: sz}
+			if in.Naming {
+				u.layoutCommandRow(gtx, sp.cmds[i], -1, nil, rowH)
+			} else {
+				u.layoutSlashValue(gtx, sp.vals[i], rowH)
+			}
+			return D{Size: sz}
+		})
+	})
+	t.Pop()
+	return D{Size: image.Pt(w, h)}
+}
+
+// layoutSlashValue draws a value the picker offers: a member or contact
+// with their picture, or a choice.
+func (u *UI) layoutSlashValue(gtx C, v slashValue, h int) D {
+	p := u.pal
+	return vcenter(gtx, h, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
+			if v.id == "" {
+				return u.label(16, v.name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
+			}
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx C) D { return u.avatar(gtx, v.id, v.name, false, 36) }),
+				layout.Rigid(layout.Spacer{Width: 14}.Layout),
+				layout.Flexed(1, func(gtx C) D {
+					if v.sub == "" {
+						return u.label(15.5, v.name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(u.label(15.5, v.name, p.Text, labelOpts{maxLines: 1}).Layout),
+						layout.Rigid(u.label(13.5, v.sub, p.PopupSub, labelOpts{maxLines: 1}).Layout),
+					)
+				}),
+			)
+		})
+	})
+}
+
+// layoutNote draws a command's note: a bubble only you see, with the
+// command as you ran it, what it did, its buttons, and a way to dismiss
+// it.
+func (u *UI) layoutNote(gtx C, ln *localNote, maxW int) D {
+	p := u.pal
+	n := ln.note
+	chat := u.selected.ID
+	for i, b := range n.Buttons {
+		if u.btn("note:"+ln.id+":"+itoa(i)).Clicked(gtx) && b.Run != nil {
+			b.Run()
+		}
+	}
+	if u.btn("note:" + ln.id + ":x").Clicked(gtx) {
+		u.dismissNote(chat, n)
+	}
+	inset := gtx.Dp(9)
+	inner := maxW - 2*inset
+	cgtx := gtx
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(inner, gtx.Constraints.Max.Y)}
+	title := record(cgtx, func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(iconW(icTerminal, 16, p.Green)),
+			layout.Rigid(layout.Spacer{Width: 6}.Layout),
+			layout.Rigid(u.label(13.5, n.Title, p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
+		)
+	})
+	col := p.Text
+	if n.Failed {
+		col = p.Danger
+	}
+	text := n.Text
+	if n.Busy && text == "" {
+		text = "Working…"
+	}
+	body := record(cgtx, u.label(15, text, col, labelOpts{maxLines: 0}).Layout)
+	footer := record(cgtx, func(gtx C) D {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(u.label(12.5, "Only you can see this · ", p.MetaIn, labelOpts{maxLines: 1}).Layout),
+			layout.Rigid(func(gtx C) D {
+				return clickable(gtx, u.btn("note:"+ln.id+":x"),
+					u.label(12.5, "Dismiss", p.BubbleButton, labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+			}),
+		)
+	})
+	var btns []part
+	for _, b := range n.Buttons {
+		col := p.BubbleButton
+		if b.Danger {
+			col = p.Danger
+		}
+		btns = append(btns, record(cgtx, u.label(15, b.Label, col, labelOpts{weight: font.Medium, maxLines: 1}).Layout))
+	}
+	w := max(title.size.X, body.size.X, footer.size.X, min(inner, gtx.Dp(240))) + 2*inset
+	btnH := gtx.Dp(42)
+	h := inset + title.size.Y + gtx.Dp(4) + body.size.Y + gtx.Dp(6) + len(btns)*btnH + footer.size.Y + gtx.Dp(7)
+	if len(btns) > 0 {
+		h += gtx.Dp(2)
+	}
+	u.paintBubble(gtx, w, h, p.BubbleIn, false, false)
+	y := inset
+	title.at(gtx, inset, y)
+	y += title.size.Y + gtx.Dp(4)
+	body.at(gtx, inset, y)
+	y += body.size.Y + gtx.Dp(6)
+	line := max(1, gtx.Dp(1))
+	for i, b := range btns {
+		fillRect(gtx, image.Rect(0, y, w, y+line), p.BubbleLine)
+		cl := u.btn("note:" + ln.id + ":" + itoa(i))
+		t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+		clickable(gtx, cl, func(gtx C) D {
+			sz := image.Pt(w, btnH)
+			if hv := u.hover(gtx, cl); hv > 0 {
+				fillRect(gtx, image.Rectangle{Max: sz}, faded(p.Hover, hv))
+			}
+			b.at(gtx, (w-b.size.X)/2, (btnH-b.size.Y)/2)
+			return D{Size: sz}
+		})
+		t.Pop()
+		y += btnH
+	}
+	if len(btns) > 0 {
+		fillRect(gtx, image.Rect(0, y, w, y+line), p.BubbleLine)
+		y += gtx.Dp(2)
+	}
+	footer.at(gtx, inset, y)
+	return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
+}

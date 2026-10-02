@@ -4,6 +4,7 @@ import (
 	"image"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"gioui.org/f32"
@@ -13,6 +14,8 @@ import (
 	"gioui.org/text"
 	"gioui.org/widget/material"
 	"golang.org/x/image/math/fixed"
+
+	"github.com/chomosuke9/wazzapclients/internal/command"
 )
 
 // The composer shows WhatsApp formatting as you type: *bold*, _italic_,
@@ -26,13 +29,31 @@ import (
 
 // Per-byte flags of the composer text, beside the textStyle bits.
 const (
+	cCommand = 1 << 5 // a slash command's name
 	cMark    = 1 << 6 // a formatting mark
 	cMention = 1 << 7 // a picked @mention
 )
 
 // composerRich reports whether the composer text needs paintComposerText.
 func (u *UI) composerRich(txt string) bool {
-	return strings.ContainsAny(txt, "*_~`") || len(u.mentionRanges(txt)) > 0
+	return strings.ContainsAny(txt, "*_~`") || len(u.mentionRanges(txt)) > 0 || u.commandName(txt) > 0
+}
+
+// commandName returns the length in bytes of the "/name" of a slash
+// command that can run in the open chat at the start of txt, or 0.
+func (u *UI) commandName(txt string) int {
+	c := u.selected
+	if !u.slash.on || !strings.HasPrefix(txt, "/") || c == nil || u.conv.editorElsewhere || u.postingStatus() {
+		return 0
+	}
+	n := strings.IndexFunc(txt, unicode.IsSpace)
+	if n < 0 {
+		n = len(txt)
+	}
+	if cmd := command.Lookup(txt[1:n]); cmd == nil || cmd.Group && !c.IsGroup {
+		return 0
+	}
+	return n
 }
 
 // composerFlags returns the style of each byte of txt, cached for the last
@@ -81,6 +102,9 @@ func (u *UI) composerFlags(txt string) []uint8 {
 			}
 			ri++
 		}
+	}
+	for i := range u.commandName(txt) {
+		fl[i] |= cCommand
 	}
 	c.richFor, c.richFlags = txt, fl
 	return fl
@@ -234,9 +258,16 @@ func (u *UI) paintComposerRun(gtx C, run []text.Glyph, f uint8, scroll int, em f
 	case f&cMention != 0:
 		col = p.Green
 	}
-	st := textStyle(f &^ (cMark | cMention))
+	st := textStyle(f &^ (cMark | cMention | cCommand))
 	if f&cMark != 0 {
 		st = 0
+	}
+	if f&cCommand != 0 {
+		// A command's name is bold, on a chip.
+		st = styleBold
+		pad := gtx.Dp(3)
+		r := image.Rect(x0-pad, base-int(em*0.98+0.5), x0+w+pad, base+int(em*0.3+0.5))
+		fillRRect(gtx, r, gtx.Dp(5), p.CodeBg)
 	}
 	if st&(styleCode|styleMono) != 0 {
 		r := image.Rect(x0, base-int(em*0.98+0.5), x0+w, base+int(em*0.26+0.5))

@@ -145,6 +145,9 @@ Gotchas already found in the pinned version (v0.10.x):
 - Key events go to whoever asks for them first in a frame. `updatePaste` reads Ctrl+V
   before the composer does: files or a picture on the clipboard (`internal/osclip`)
   open the send view, and anything else is handed back with `clipboard.ReadCmd`.
+- The slash command picker reads Up, Down, Tab and (when it picks) Enter before the
+  composer does, in `slashKeys`, and only while it offers rows; otherwise the editor
+  moves its caret with them as usual.
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
@@ -172,7 +175,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    text in textsel.go; searching a chat's messages (the panel that takes the info
                    panel's place) and a group's members in chatsearch.go; the composer's
                    formatting toolbar in formatbar.go; the attach
-                   menu, file tray and poll dialog in attach.go; posting your own status
+                   menu, file tray and poll dialog in attach.go; slash commands (their
+                   picker over the composer and the notes only you see) in slash.go, and
+                   the Extra features settings page in extras.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go;
                    chat actions shared by menus and info panels (mute choices, lists,
@@ -183,6 +188,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
+internal/command/  slash commands, like Discord's: the list (commands.go), parsing their options,
+                   and running them through a Host the UI implements. No Gio here
+internal/sticker/  turns a picture into a 512x512 sticker, with its own lossless WebP (VP8L)
+                   encoder: x/image only decodes WebP, and libwebp needs cgo or a WASM runtime
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
@@ -306,14 +315,15 @@ go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).
 # -view: chats, archived, status, channels, communities, settings, general, profile,
-# account, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, help,
+# account, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help,
 # info, statusviewer, contact (a group member's contact info:
 # -contact <id>, default the demo business vivy@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
-# Render one overlay with demo data (menu, accounts, loginaccounts, chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
+# Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashrun (open a
+# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
 # delete, select, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots

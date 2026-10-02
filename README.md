@@ -16,6 +16,9 @@ whatsmeow.
 - Media viewer and contact/group info panel
 - Light and dark themes
 - Messages stored locally in SQLite
+- Extras WhatsApp doesn't have: Discord-like slash commands (`/kick`, `/add`, `/promote`,
+  `/demote`, `/link`, `/lockdown`, `/description`, `/sticker`), which run from your own
+  account and can be turned off in Settings > Extra features
 
 ## Download
 
@@ -46,6 +49,8 @@ cmd/wazzap/       desktop app entry point
 cmd/screenshot/   headless renderer for UI previews and comparisons
 internal/model/   UI-facing types and the Backend interface
 internal/ui/      Gio user interface
+internal/command/ slash commands
+internal/sticker/ makes stickers (with a small lossless WebP encoder)
 internal/wa/      hypermeow backend and SQLite message store
 internal/mock/    demo backend with fake data
 ```

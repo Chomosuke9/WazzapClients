@@ -92,6 +92,7 @@ var settingsViews = map[string]struct {
 	"chatsettings":  {settingChats, ""},
 	"notifications": {settingNotifications, ""},
 	"shortcuts":     {settingShortcuts, ""},
+	"extras":        {settingExtras, ""},
 	"help":          {settingHelp, ""},
 }
 
@@ -217,6 +218,8 @@ func (u *UI) settingsPage() []settingsSection {
 		}
 	case settingShortcuts:
 		return shortcutSettings(prefOn(b, prefEnterSend))
+	case settingExtras:
+		return u.extrasSettings()
 	case settingHelp:
 		return helpSettings()
 	}

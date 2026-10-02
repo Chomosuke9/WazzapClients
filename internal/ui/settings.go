@@ -52,6 +52,7 @@ var settingsItems = [...]listItem{
 	{title: "Chats", sub: "Theme, wallpaper, chat settings"},
 	{ic: icBell, title: "Notifications", sub: "Messages, groups, sounds"},
 	{ic: icKeyboard, title: "Keyboard shortcuts", sub: "Quick actions"},
+	{ic: icExtension, title: "Extra features", sub: "Slash commands and more, not in WhatsApp"},
 	{ic: icHelp, title: "Help and feedback", sub: "Help centre, contact us, privacy policy"},
 	{ic: icLogout, title: "Log out", danger: true},
 }
@@ -64,6 +65,7 @@ const (
 	settingChats // drawn with the rail's Chats glyph
 	settingNotifications
 	settingShortcuts
+	settingExtras // this app's own features (extras.go)
 	settingHelp
 	settingLogout
 )

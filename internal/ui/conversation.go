@@ -28,6 +28,7 @@ const (
 	rowEncryption
 	rowMessage
 	rowTyping // someone typing, after the newest message
+	rowNote   // a slash command's note, which only you see (slash.go)
 )
 
 // convRow is one entry of the message list: a day separator, the
@@ -36,6 +37,7 @@ type convRow struct {
 	kind rowKind
 	date string
 	msg  *model.Message
+	note *localNote
 	// first marks the first message of a run from the same sender. It gets
 	// the bubble tail (and, in groups, the sender's name and avatar).
 	first bool
@@ -52,7 +54,15 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		rows = append(rows, convRow{kind: rowEncryption}) // the start of the chat
 	}
 	var prev *model.Message
+	// Notes go between the messages by time, after any that came earlier.
+	notes := u.slash.notes[c.ID]
 	for _, m := range u.msgs {
+		for len(notes) > 0 && notes[0].at.Before(m.Time) {
+			if prev != nil {
+				rows = append(rows, convRow{kind: rowNote, note: notes[0], first: true})
+			}
+			notes = notes[1:]
+		}
 		newDay := prev == nil || !sameDay(prev.Time, m.Time)
 		if newDay {
 			rows = append(rows, convRow{kind: rowDate, date: dateChip(m.Time, now)})
@@ -61,6 +71,11 @@ func (u *UI) rows(c *model.Chat) []convRow {
 			m.Time.Sub(prev.Time) > 10*time.Minute
 		rows = append(rows, convRow{kind: rowMessage, msg: m, first: first})
 		prev = m
+	}
+	if !u.conv.newerMore {
+		for _, n := range notes {
+			rows = append(rows, convRow{kind: rowNote, note: n, first: true})
+		}
 	}
 	u.conv.rows, u.conv.rowsFor, u.conv.rowsVer = rows, c, u.msgsVer
 	return rows
@@ -377,6 +392,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
 				case r.kind == rowTyping:
 					return u.layoutTyping(gtx, c.IsGroup, margin, typingV)
+				case r.kind == rowNote:
+					return u.layoutNote(gtx, r.note, maxBubble)
 				default:
 					return u.layoutMessageRow(gtx, c, r, maxBubble, margin)
 				}
@@ -384,6 +401,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		}
 		var dims D
 		switch {
+		case r.kind == rowNote && u.anims.running(animKey{id: r.note.id, tag: tagAppear}):
+			dims = u.appearing(gtx, r.note.id, row, func(C, float32) {})
 		case r.kind == rowMessage && u.anims.running(animKey{id: r.msg.ID, tag: tagAppear}):
 			dims = u.appearing(gtx, r.msg.ID, row, func(gtx C, v float32) {
 				// Where the typing row drew it: below the space the newest

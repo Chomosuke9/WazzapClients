@@ -138,6 +138,10 @@ func (u *UI) sendComposer() {
 	if u.selected == nil {
 		return
 	}
+	if sp := u.slashQuery(); sp != nil {
+		u.submitSlash(sp)
+		return
+	}
 	if u.mentionQuery() != nil {
 		u.pickMention(0)
 		return
@@ -221,8 +225,8 @@ type mentionState struct {
 // mentionQuery returns the mention being typed in a group chat, or nil.
 func (u *UI) mentionQuery() *mentionState {
 	c := u.selected
-	if c == nil || !c.IsGroup || u.postingStatus() {
-		return nil
+	if c == nil || !c.IsGroup || u.postingStatus() || u.slashQuery() != nil {
+		return nil // a command's picker offers members itself
 	}
 	ed := &u.conv.composer
 	caret, _ := ed.Selection()
@@ -311,6 +315,10 @@ func (u *UI) resetComposerAnims() {
 	c.replyGhost = nil
 	c.mentionAnim.snap(false)
 	c.mentionGhost = nil
+	c.richFor = "" // a command's name shows only where it runs
+	s := &u.slash
+	s.anim.snap(false)
+	s.ghost, s.contacts, s.dismissed, s.problem = nil, nil, "", ""
 	c.selAnim.snap(false)
 	c.selV = 0
 	c.sendAnim.snap(false)
@@ -480,6 +488,17 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	if mv == 0 {
 		c.mentionGhost = nil
 	}
+	sp := u.slashQuery()
+	if !u.slashShown(sp) {
+		sp = nil
+	}
+	if sp != nil {
+		u.slash.ghost = sp
+	}
+	spv := easeOut(u.slash.anim.step(gtx, sp != nil, popDur(sp != nil)))
+	if spv == 0 {
+		u.slash.ghost = nil
+	}
 	reply := c.reply
 	if reply != nil {
 		c.replyGhost = reply
@@ -492,7 +511,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	sv := easeOut(c.sendAnim.step(gtx, hasText, durSwitch))
 	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		var picker part
+		var picker, slashPicker part
 		if ghost := c.mentionGhost; ghost != nil {
 			picker = record(gtx, func(gtx C) D {
 				if ms == nil {
@@ -501,6 +520,16 @@ func (u *UI) layoutComposerBox(gtx C) D {
 					defer done()
 				}
 				return u.layoutMentionPicker(gtx, ghost)
+			})
+		}
+		if ghost := u.slash.ghost; ghost != nil {
+			slashPicker = record(gtx, func(gtx C) D {
+				if sp == nil {
+					var done func()
+					gtx, done = fadeOut(gtx)
+					defer done()
+				}
+				return u.layoutSlashPicker(gtx, ghost)
 			})
 		}
 		m := op.Record(gtx.Ops)
@@ -590,10 +619,15 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		r := lerpInt(gtx.Dp(28), gtx.Dp(20), rv)
 		fillRRect(gtx, image.Rectangle{Max: dims.Size}, min(dims.Size.Y/2, r), p.Composer)
 		call.Add(gtx.Ops)
-		if picker.size.Y > 0 {
-			fx := pushFx(gtx, mv, moveBy(0, float32(gtx.Dp(10))*(1-mv)))
-			picker.at(gtx, 0, -picker.size.Y-gtx.Dp(8))
-			fx.Pop()
+		for _, pk := range []struct {
+			p part
+			v float32
+		}{{picker, mv}, {slashPicker, spv}} {
+			if pk.p.size.Y > 0 {
+				fx := pushFx(gtx, pk.v, moveBy(0, float32(gtx.Dp(10))*(1-pk.v)))
+				pk.p.at(gtx, 0, -pk.p.size.Y-gtx.Dp(8))
+				fx.Pop()
+			}
 		}
 		u.conv.composerH = dims.Size.Y + gtx.Dp(18)
 		return dims
@@ -631,6 +665,7 @@ func (u *UI) layoutComposerEditor(gtx C, hint string) D {
 		if rich {
 			u.paintComposerText(gtx, e, txt, ed.Size)
 		}
+		u.paintSlashHint(gtx, ed.Size)
 		u.layoutFormatBar(gtx, &u.conv.composer)
 		return ed
 	})

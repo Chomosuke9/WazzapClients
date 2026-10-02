@@ -25,6 +25,10 @@ type Backend struct {
 	lists  []*model.ChatList
 	favs   map[string]bool // favourite stickers, by message
 	acc    *model.Account  // see demoAccount
+	// media holds the pictures of stickers sent with SendNewSticker, by
+	// chat and message ID.
+	media      map[string][]byte
+	linkResets int // invite links reset, to make a new one
 	extras
 }
 
@@ -180,8 +184,12 @@ func (b *Backend) Open(chatID string) {
 	}
 }
 
-func (b *Backend) Avatar(string) []byte            { return nil }
-func (b *Backend) MediaData(string, string) []byte { return nil }
+func (b *Backend) Avatar(string) []byte { return nil }
+func (b *Backend) MediaData(chatID, msgID string) []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.media[chatID+"/"+msgID]
+}
 func (b *Backend) Logout() {
 	// Back to linking, which the demo can't do.
 	b.emit(model.ChatsEvent{})

@@ -142,6 +142,7 @@ type UI struct {
 	pageSeen page                          // page shown last frame, to notice switches
 
 	newChat newChatState // the New chat panel over the chat list
+	slash   slashState   // slash commands and their notes (slash.go)
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
@@ -265,6 +266,7 @@ func New(b model.Backend) *UI {
 	u.conv.list.Axis = layout.Vertical
 	u.conv.list.ScrollToEnd = true
 	u.conv.composer.Submit = b == nil || prefOn(b, prefEnterSend)
+	u.slash.on = b == nil || prefOn(b, prefSlash)
 	u.conv.mentionList.Axis = layout.Vertical
 	u.hovered = make(map[string]bool)
 	return u
@@ -830,6 +832,7 @@ func (u *UI) update(gtx C) {
 	u.updateAttach()
 	u.updatePaste(gtx)
 	u.ctrlEnterKeys(gtx)
+	u.slashKeys(gtx)
 	for {
 		ev, ok := u.conv.composer.Update(gtx)
 		if !ok {
@@ -880,6 +883,8 @@ func (u *UI) escape() {
 		u.closePicker()
 	case u.viewer.open:
 		u.closeViewer()
+	case u.slashShown(u.slashQuery()):
+		u.slash.dismissed, u.slash.problem = u.conv.composer.Text(), ""
 	case u.mentionQuery() != nil:
 		ms := u.mentionQuery()
 		u.conv.mentionDismissed = string([]rune(u.conv.composer.Text())[ms.start:ms.end])
@@ -986,6 +991,8 @@ func (u *UI) applyEvents() {
 			if u.selected != nil && u.selected.ID == e.ChatID {
 				u.reloadMessages()
 			}
+		case model.GroupEvent:
+			u.groupAnswered(e)
 		case model.InfoEvent:
 			if u.conv.membersFor == e.ChatID {
 				u.conv.membersFor = ""
@@ -1154,7 +1161,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
-// switcher on the login screen "loginaccounts".
+// switcher on the login screen "loginaccounts"; slash commands in a group: the
+// picker "slash", /kick's options "slashkick", or the notes of commands run "slashrun".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1324,6 +1332,33 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.addFiles(statusChatID, []*attachFile{{Attachment: model.Attachment{Path: photo, Media: model.MediaImage}}})
 			u.attach.anim.snap(true)
 			u.conv.composer.SetText("Sunday at the beach")
+		}
+	case "slash", "slashkick", "slashrun":
+		// Slash commands (open a group with -ochat): the picker of
+		// commands, /kick's options, or the notes of commands run.
+		ed := &u.conv.composer
+		set := func(s string) {
+			ed.SetText(s)
+			ed.SetCaret(ed.Len(), ed.Len())
+		}
+		u.requestFocus(ed)
+		switch name {
+		case "slash":
+			set("/")
+		case "slashkick":
+			set("/kick ")
+		case "slashrun":
+			set("/kick ")
+			if sp := u.slashQuery(); sp != nil {
+				u.pickSlash(sp, 0)
+			}
+			u.sendComposer()
+			for _, s := range []string{"/link ", "/add +62 812 5550 0199", "/lockdown on"} {
+				u.applyEvents()
+				set(s)
+				u.sendComposer()
+			}
+			u.applyEvents()
 		}
 	case "mention", "mentioned":
 		// The mention picker, or a draft with picked mentions.
