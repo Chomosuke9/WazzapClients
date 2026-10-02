@@ -509,6 +509,25 @@ type ReceiptEvent struct {
 	Receipt Receipt
 }
 
+// MessageInfo is the "Message info" of one of your messages: when each
+// person it went to got it, read it and, for a voice message, played it.
+type MessageInfo struct {
+	// Receipts are those who got it, earliest reader first, then earliest
+	// delivery.
+	Receipts []PersonReceipt
+	// Members is how many people it went to (the group's members other
+	// than you), so that the rest are still to come; 1 in a chat with
+	// one person.
+	Members int
+}
+
+// PersonReceipt is when one person got and read a message. A zero time
+// means not yet.
+type PersonReceipt struct {
+	ID, Name                string
+	Delivered, Read, Played time.Time
+}
+
 // TypingEvent reports that someone started or stopped typing.
 type TypingEvent struct {
 	ChatID string
@@ -866,6 +885,9 @@ type Backend interface {
 	// Versions returns the earlier texts of an edited message, oldest
 	// first; m.Text is the newest.
 	Versions(m *Message) []Version
+	// MessageInfo returns who got and read one of your messages, and
+	// when. A ReceiptEvent for the message says it may have changed.
+	MessageInfo(m *Message) *MessageInfo
 	// SaveMedia saves a message's picture or file to the Downloads folder
 	// in the background; a NoticeEvent reports the result.
 	SaveMedia(m *Message)

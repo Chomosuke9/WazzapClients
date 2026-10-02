@@ -200,7 +200,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    (sendview.go), its photo editor (mediaedit.go) and the rendering of
                    edits and the send queue (editrender.go); replies, @mentions and
                    select mode live in compose.go; editing your messages (in the composer)
-                   and the Edit history dialog in edit.go; link previews, in bubbles and
+                   and the Edit history dialog in edit.go; Message info (who got and read
+                   one of your messages, and when; it takes the info panel's place) in
+                   msginfo.go; link previews, in bubbles and
                    over the composer, in linkpreview.go; drafts (what a chat's composer
                    and send view held when another chat opened, and the list's "Draft:")
                    in draft.go;
@@ -244,7 +246,9 @@ internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the
                    font (OFL), and its own lossless WebP (VP8L) encoder: x/image only decodes
                    WebP, and libwebp needs cgo or, translated to Go, adds megabytes
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution;
-                   albums (an albumMessage, then each picture pointing back to it) in album.go
+                   albums (an albumMessage, then each picture pointing back to it) in album.go;
+                   each person's receipts of your messages (wz_receipts, for Message info;
+                   a group message's ticks wait for every member) in receipts.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time

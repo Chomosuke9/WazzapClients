@@ -115,6 +115,15 @@ CREATE TABLE IF NOT EXISTS wz_edits (
 	mentions TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (chat, id, ts)
 );
+CREATE TABLE IF NOT EXISTS wz_receipts (
+	chat      TEXT NOT NULL,
+	id        TEXT NOT NULL,              -- one of your messages
+	who       TEXT NOT NULL,              -- who it went to, usually a LID
+	delivered INTEGER NOT NULL DEFAULT 0, -- unix seconds, 0 = not yet
+	read      INTEGER NOT NULL DEFAULT 0,
+	played    INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (chat, id, who)
+);
 CREATE TABLE IF NOT EXISTS wz_list_chats (
 	list TEXT NOT NULL,
 	chat TEXT NOT NULL,

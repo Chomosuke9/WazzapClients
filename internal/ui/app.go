@@ -93,6 +93,7 @@ type UI struct {
 
 	info     infoState
 	search   chatSearchState
+	msgInfo  msgInfoState
 	status   statusState
 	channel  channelState
 	commun   communityState
@@ -298,6 +299,7 @@ func New(b model.Backend) *UI {
 	u.info.list.Axis = layout.Vertical
 	u.search.list.Axis = layout.Vertical
 	u.search.query.SingleLine = true
+	u.msgInfo.list.Axis = layout.Vertical
 	u.status.list.Axis = layout.Vertical
 	u.channel.list.Axis = layout.Vertical
 	u.channel.search.SingleLine = true
@@ -454,6 +456,7 @@ func (u *UI) setPage(pg page) {
 	u.settings.detail = 0
 	u.hideInfo()
 	u.hideChatSearch()
+	u.hideMsgInfo()
 	u.status.viewer.close()
 	u.closeStatusText()
 	if u.postingStatus() {
@@ -523,6 +526,7 @@ func (u *UI) open(c *model.Chat) {
 		u.hideInfo()
 	}
 	u.hideChatSearch()
+	u.hideMsgInfo()
 	u.selected = c
 	u.loadLatest()
 	unread := c.Unread
@@ -733,7 +737,7 @@ func (u *UI) layoutPageSidebar(gtx C) D {
 // background over the whole pane: the card under it has none.
 func (u *UI) layoutRightPane(gtx C) D {
 	if u.selected != nil && u.selPage == u.page && u.page != pageStatus && u.page != pageSettings {
-		if !u.info.shown() && !u.search.shown() {
+		if !u.info.shown() && !u.search.shown() && !u.msgInfo.shown() {
 			return u.layoutConversation(gtx)
 		}
 		return u.layoutWithInfo(gtx)
@@ -784,6 +788,9 @@ func (u *UI) layoutWithInfo(gtx C) D {
 	open, panel, anim := u.info.open, u.layoutInfo, &u.info.anim
 	if u.search.shown() {
 		open, panel, anim = u.search.open, u.layoutChatSearch, &u.search.anim
+	}
+	if u.msgInfo.shown() {
+		open, panel, anim = u.msgInfo.open, u.layoutMsgInfo, &u.msgInfo.anim
 	}
 	v := easeOut(anim.step(gtx, open, durPanel))
 	infoW := max(gtx.Dp(340), int(float32(u.winWidth)*0.3))
@@ -1010,6 +1017,8 @@ func (u *UI) escape() {
 		}
 	case u.search.open:
 		u.search.open = false
+	case u.msgInfo.open:
+		u.msgInfo.open = false
 	case u.newChat.open():
 		u.newChatBack()
 	case u.conv.selecting:
@@ -1052,6 +1061,7 @@ func (u *UI) applyEvents() {
 			u.searchResults(e)
 		case model.ReceiptEvent:
 			u.applyReceipt(e)
+			u.msgInfoReceipt(e)
 		case model.TypingEvent:
 			if c := u.chatByID(e.ChatID); c != nil {
 				c.Typing, c.TypingID = "", ""
@@ -1280,7 +1290,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "linkpreview" (a link's preview
-// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
@@ -1384,6 +1394,11 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 				u.openEditHistory(m)
 				break
 			}
+		}
+	case "msginfo":
+		if lastOut != nil {
+			u.openMsgInfo(lastOut)
+			u.msgInfo.anim.snap(true)
 		}
 	case "select":
 		if lastIn != nil {

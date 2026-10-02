@@ -224,6 +224,9 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 	var items []menuItem
 	add := func(it menuItem) { items = append(items, it) }
 	deleted := m.Kind == model.KindDeleted
+	if m.FromMe && !deleted && !isChannelID(c.ID) && m.Receipt != model.Pending && m.Receipt != model.Failed {
+		add(menuItem{key: "info", ic: icInfo, label: "Message info", run: func() { u.openMsgInfo(m) }})
+	}
 	if !deleted && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
 		add(menuItem{key: "reply", ic: icReply, label: "Reply", run: func() { u.startReply(m) }})
 	}

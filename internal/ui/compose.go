@@ -82,6 +82,7 @@ func (u *UI) closeChat() {
 	u.selected = nil
 	u.hideInfo()
 	u.hideChatSearch()
+	u.hideMsgInfo()
 	u.endSelect()
 }
 

@@ -817,13 +817,17 @@ func (s *msgStore) setMessageFlag(ctx context.Context, chat, id, field string, v
 
 func (s *msgStore) deleteMessage(ctx context.Context, chat, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ?1 AND id = ?2;
-		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2`, chat, id)
+		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
+		DELETE FROM wz_receipts WHERE chat = ?1 AND id = ?2`, chat, id)
 	return err
 }
 
-// dropOrphanEdits deletes the versions of chat ?1's messages that are gone.
+// dropOrphanEdits deletes the versions and receipts of chat ?1's messages
+// that are gone.
 const dropOrphanEdits = `DELETE FROM wz_edits WHERE chat = ?1 AND NOT EXISTS
-	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_edits.chat AND m.id = wz_edits.id)`
+	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_edits.chat AND m.id = wz_edits.id);
+	DELETE FROM wz_receipts WHERE chat = ?1 AND NOT EXISTS
+	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_receipts.chat AND m.id = wz_receipts.id)`
 
 // clearChat deletes the chat's unstarred messages sent at or before upTo
 // (unix seconds), or all of them when upTo is 0.

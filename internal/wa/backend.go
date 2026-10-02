@@ -917,10 +917,38 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 	for i, id := range e.MessageIDs {
 		ids[i] = string(id)
 	}
-	if err := b.store.setReceipt(ctx, chat, ids, r); err != nil {
-		b.log.Warnf("store receipt: %v", err)
+	// Who got or read them, for Message info.
+	who := b.canonical(ctx, e.Sender).String()
+	ts := e.Timestamp.Unix()
+	for _, id := range ids {
+		pr := personReceipt{chat: chat, id: id, who: who, delivered: ts}
+		switch e.Type {
+		case types.ReceiptTypeRead:
+			pr.read = ts
+		case types.ReceiptTypePlayed:
+			pr.played = ts
+		}
+		if err := b.store.putReceipt(ctx, b.db, pr); err != nil {
+			b.log.Warnf("store receipt: %v", err)
+		}
 	}
-	b.emit(model.ReceiptEvent{ChatID: chat, IDs: ids, Receipt: r})
+	// A group message's ticks wait for every member.
+	byReceipt := map[model.Receipt][]string{}
+	for _, id := range ids {
+		rr := r
+		if e.IsGroup {
+			if g, ok := b.groupReceipt(ctx, chat, id); ok {
+				rr = g
+			}
+		}
+		byReceipt[rr] = append(byReceipt[rr], id)
+	}
+	for rr, ids := range byReceipt {
+		if err := b.store.setReceipt(ctx, chat, ids, rr); err != nil {
+			b.log.Warnf("store receipt: %v", err)
+		}
+		b.emit(model.ReceiptEvent{ChatID: chat, IDs: ids, Receipt: rr})
+	}
 }
 
 // onHistory stores a history sync chunk. All device-store lookups (message
@@ -939,6 +967,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		meta    chatMeta
 		msgs    []storedMsg
 		edits   []parsed
+		// receipts are who got your messages and when.
+		receipts []personReceipt
 	}
 	var convs []convData
 	var statuses []storedStatus
@@ -1002,6 +1032,18 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				continue
 			}
 			p.msg.ChatID = jid.String()
+			if p.msg.FromMe {
+				for _, ur := range hm.GetMessage().GetUserReceipt() {
+					who, err := types.ParseJID(ur.GetUserJID())
+					if err != nil {
+						continue
+					}
+					cd.receipts = append(cd.receipts, personReceipt{
+						chat: p.msg.ChatID, id: p.msg.ID, who: b.canonical(ctx, who).String(),
+						delivered: ur.GetReceiptTimestamp(), read: ur.GetReadTimestamp(), played: ur.GetPlayedTimestamp(),
+					})
+				}
+			}
 			if p.target != "" {
 				cd.edits = append(cd.edits, p)
 				continue
@@ -1031,6 +1073,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		for _, m := range cd.msgs {
 			if err := b.store.putMessage(ctx, tx, m); err != nil {
 				b.log.Warnf("history sync: message %s: %v", m.ID, err)
+			}
+		}
+		for _, r := range cd.receipts {
+			if err := b.store.putReceipt(ctx, tx, r); err != nil {
+				b.log.Warnf("history sync: receipt of %s: %v", r.id, err)
 			}
 		}
 	}

@@ -418,3 +418,40 @@ func (b *Backend) Edit(m *model.Message, d model.Draft) {
 func (b *Backend) Versions(m *model.Message) []model.Version {
 	return b.versions[m.ChatID+"/"+m.ID]
 }
+
+// MessageInfo makes up when the people a message went to got and read it,
+// in step with its ticks: a minute or two apart, after it was sent.
+func (b *Backend) MessageInfo(m *model.Message) *model.MessageInfo {
+	info := &model.MessageInfo{Members: 1}
+	var people []model.Member
+	if c := b.chat(m.ChatID); c != nil && c.IsGroup {
+		if ci := b.Info(m.ChatID); ci != nil {
+			for _, p := range ci.Members {
+				if !p.Me {
+					people = append(people, p)
+				}
+			}
+		}
+		info.Members = max(len(people), 1)
+	} else if c != nil {
+		people = []model.Member{{ID: c.ID, Name: c.Name}}
+	}
+	for i, p := range people {
+		r := model.PersonReceipt{ID: p.ID, Name: p.Name}
+		got := m.Receipt >= model.Delivered || m.Receipt == model.Sent && i < len(people)/2
+		read := m.Receipt == model.Read || m.Receipt == model.Delivered && i < len(people)/2
+		if got {
+			r.Delivered = m.Time.Add(time.Duration(i+1) * 20 * time.Second)
+		}
+		if read {
+			r.Read = r.Delivered.Add(time.Duration(i+2) * time.Minute)
+			if m.Media == model.MediaVoice {
+				r.Played = r.Read.Add(30 * time.Second)
+			}
+		}
+		if got {
+			info.Receipts = append(info.Receipts, r)
+		}
+	}
+	return info
+}

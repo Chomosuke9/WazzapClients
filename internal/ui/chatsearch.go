@@ -49,8 +49,9 @@ func (u *UI) openChatSearch() {
 		return
 	}
 	s := &u.search
-	if u.info.open {
+	if u.info.open || u.msgInfo.open {
 		u.hideInfo()
+		u.hideMsgInfo()
 		s.anim.snap(true)
 	}
 	if s.chatID != u.selected.ID {
@@ -74,8 +75,9 @@ func (u *UI) hideChatSearch() {
 // swapSearchForInfo closes the search panel at once when the info panel
 // opens, so one replaces the other instead of sliding.
 func (u *UI) swapSearchForInfo() {
-	if u.search.open {
+	if u.search.open || u.msgInfo.open {
 		u.hideChatSearch()
+		u.hideMsgInfo()
 		u.info.anim.snap(true)
 	}
 }
