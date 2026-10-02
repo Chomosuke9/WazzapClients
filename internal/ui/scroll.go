@@ -2,6 +2,7 @@ package ui
 
 import (
 	"math"
+	"runtime"
 	"time"
 
 	"gioui.org/io/event"
@@ -13,18 +14,60 @@ import (
 
 // Smooth wheel scrolling. Gio's List moves by a whole wheel notch (120px on
 // Windows) in one frame. wheelList takes the wheel events before the list
-// (and its scrollbar) does and hands the distance to it over a few frames,
-// easing out like WhatsApp Desktop. Touch drags still go to the list.
+// (and its scrollbar) does, and a critically damped spring pulls the list
+// to where the notches point. Its speed builds up and dies down without
+// jumps, and a notch that comes while it moves only moves where it heads,
+// so a spinning wheel glides instead of lurching at each notch. Touchpads
+// already scroll smoothly and move the list at once. Touch drags still go
+// to the list.
 
-// wheelTau is the time constant of the ease: a notch is 95% done after 3τ.
-const wheelTau = 45 * time.Millisecond
+// wheelSettle is how long the spring takes to cover 95% of a notch.
+const wheelSettle = 150 * time.Millisecond
 
-// wheelScroll is a list's wheel distance still to scroll. Only lists that
-// are moving have one.
+// wheelOmega is the spring's angular frequency (per second): a critically
+// damped spring covers 95% of a step in 4.74/ω.
+var wheelOmega = 4.74 / wheelSettle.Seconds()
+
+// wheelLead is the time a scroll's first frame moves the spring by. It is
+// shorter than any display's frame interval (4.2 ms at 240 Hz), so the
+// first step is never bigger than the ones after it.
+const wheelLead = 4 * time.Millisecond
+
+// wheelRest is the speed (px/s) under which a spring within half a pixel
+// of its target stops.
+const wheelRest = 20
+
+// wheelScroll is a list's wheel scroll in motion. Only lists that are
+// moving have one.
 type wheelScroll struct {
-	pending float32         // px, positive towards the end
-	last    time.Time       // frame that last moved the list
-	at      layout.Position // where that frame left the list
+	left float32 // px from where the list really is to the target, positive towards the end
+	vel  float32 // px/s, positive towards the end
+	// frac is how far the list really is past its whole-pixel offset:
+	// it moves by whole pixels and carries the rest.
+	frac float32
+	last time.Time       // frame that last moved the list
+	at   layout.Position // where that frame left the list
+}
+
+// step moves the spring on by dt seconds and returns the distance it
+// covered. It is the exact solution, so frames of any length move it alike.
+func (w *wheelScroll) step(dt float64) float32 {
+	om := wheelOmega
+	e, de := float64(w.left), -float64(w.vel) // distance left, and its rate
+	c := de + om*e
+	k := math.Exp(-om * dt)
+	e1 := (e + c*dt) * k
+	de1 := (de - om*c*dt) * k
+	w.left, w.vel = float32(e1), float32(-de1)
+	return float32(e - e1)
+}
+
+// wheelNotch reports whether a scroll of d px comes from a mouse wheel's
+// notches, which the spring eases in. Windows sends multiples of 120 for
+// those, and any amount from a precision touchpad. Other systems' deltas
+// are all eased.
+func wheelNotch(d float32) bool {
+	return runtime.GOOS != "windows" || math.Mod(float64(d), 120) == 0
 }
 
 // wheelList lays out list l with lay, smoothing its mouse wheel scrolling.
@@ -44,17 +87,17 @@ func (u *UI) wheelList(gtx C, l *layout.List, lay layout.Widget) D {
 
 	// Claim only what the list can still scroll, so wheel events at its
 	// ends go on to whatever is under it. The list clamps the rest.
-	var pending float32
+	var ahead float32 // px still to move
 	if w != nil {
-		pending = w.pending
+		ahead = w.left + w.frac
 	}
 	pos := l.Position
 	rng := pointer.ScrollRange{Min: -1e6, Max: 1e6}
 	if pos.First == 0 {
-		rng.Min = -max(0, pos.Offset+int(pending))
+		rng.Min = -max(0, pos.Offset+int(ahead))
 	}
 	if !pos.BeforeEnd {
-		rng.Max = max(0, -int(pending))
+		rng.Max = max(0, -int(ahead))
 	}
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: l, Kinds: pointer.Scroll, ScrollY: rng})
@@ -66,34 +109,39 @@ func (u *UI) wheelList(gtx C, l *layout.List, lay layout.Widget) D {
 			continue
 		}
 		if w == nil {
-			// Start moving this frame rather than the next.
-			w = &wheelScroll{last: gtx.Now.Add(-16 * time.Millisecond), at: l.Position}
+			w = &wheelScroll{last: gtx.Now.Add(-wheelLead), at: l.Position}
 			u.wheels[l] = w
 		}
-		w.pending += e.Scroll.Y
+		if wheelNotch(e.Scroll.Y) {
+			w.left += e.Scroll.Y
+		} else {
+			w.frac += e.Scroll.Y
+		}
 	}
 
 	if w != nil {
-		step := w.pending // all at once without a clock (cmd/screenshot)
-		if !gtx.Now.IsZero() {
-			dt := gtx.Now.Sub(w.last).Seconds()
-			step *= float32(1 - math.Exp(-dt/wheelTau.Seconds()))
+		if gtx.Now.IsZero() {
+			// No clock (cmd/screenshot): all at once.
+			w.frac += w.left
+			w.left, w.vel = 0, 0
+		} else {
+			w.frac += w.step(max(0, gtx.Now.Sub(w.last).Seconds()))
 		}
 		w.last = gtx.Now
-		// At least a pixel a frame, so the tail doesn't crawl.
-		d := int(step)
-		if d == 0 && step != 0 {
-			d = int(math.Copysign(1, float64(step)))
+		done := math.Abs(float64(w.left)) < 0.5 && math.Abs(float64(w.vel)) < wheelRest
+		if done {
+			w.frac += w.left
+			w.left = 0
 		}
-		if d != 0 {
+		if d := int(math.Round(float64(w.frac))); d != 0 {
 			if d < 0 && l.ScrollToEnd && !l.Position.BeforeEnd {
 				// Let go of the end, or the list snaps back to it.
 				l.Position.BeforeEnd = true
 			}
 			l.Position.Offset += d
-			w.pending -= float32(d)
+			w.frac -= float32(d)
 		}
-		if math.Abs(float64(w.pending)) < 1 {
+		if done {
 			delete(u.wheels, l)
 			w = nil
 		} else {
@@ -106,7 +154,7 @@ func (u *UI) wheelList(gtx C, l *layout.List, lay layout.Widget) D {
 	if w != nil {
 		atStart := l.Position.First == 0 && l.Position.Offset <= 0
 		atEnd := !l.Position.BeforeEnd
-		if atStart && w.pending < 0 || atEnd && w.pending > 0 {
+		if ahead := w.left + w.frac; atStart && ahead < 0 || atEnd && ahead > 0 {
 			delete(u.wheels, l)
 		}
 		w.at = l.Position

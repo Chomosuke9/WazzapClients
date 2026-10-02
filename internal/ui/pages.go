@@ -173,7 +173,7 @@ func (u *UI) layoutListItem(gtx C, c *widget.Clickable, it listItem, g listGeom)
 		return clickable(gtx, c, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			bg := mix(p.Panel, p.RowHover, u.hover(gtx, c))
-			return background(gtx, bg, 10, func(gtx C) D {
+			return background(gtx, u.rowBg(bg), 10, func(gtx C) D {
 				minH := g.height
 				if it.sub != "" || it.content != nil {
 					minH = g.subHeight

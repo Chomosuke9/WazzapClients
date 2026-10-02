@@ -121,6 +121,17 @@ Gotchas already found in the pinned version (v0.10.x):
   or a big `clip.RRect` fill, costs a screen-sized texture. Fill rounded rectangles with
   `fillRRect`/`paintRRect`, which only stencil the corners, and round a big panel's
   corner with a mask (`roundCorner`) instead of clipping it.
+- Gio blends every pixel of every draw, even one an opaque draw covers later. On a
+  2560x1600 window at 165 Hz with integrated graphics a full-window fill takes about
+  0.2 ms of every frame, and frames used to fill each pixel almost four times. Don't
+  paint a background under something opaque: the card around the panes has none,
+  the wallpaper's tile has its background in it, and list rows on the panel paint
+  nothing at rest (`rowBg`).
+- Task Manager's GPU % follows the GPU's clock, which drops with the load, so it
+  barely moves when a frame gets cheaper. Measure the GPU time per frame with the
+  `\GPU Engine(pid_<pid>_*engtype_3D)\Running Time` counter (100 ns units) during a
+  `memprobe -scroll` run. Gio presents through a blt-model swap chain, so DWM copies
+  and composes every frame (about as much GPU time again).
 - Gio's window thread waits for the UI goroutine while it delivers an event. Never
   `SendMessage` to the window from the UI goroutine (it hangs both); post instead,
   as `desktop.SetWindowIcon` does. `Window.Perform` and `Window.Option` wait for the
@@ -172,7 +183,8 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 ```
 cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
-cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory
+cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory;
+                   -scroll scrolls instead and prints frame times and the frame rate
 cmd/winres/        draws the app icon (icon.App) into the .exe's resources and installer/wazzap.ico;
                    run `go generate ./cmd/wazzap` after changing the icon, and commit both
 cmd/signrelease/   signs a release's SHA256SUMS with the update key (CI), or makes a new key
@@ -340,8 +352,14 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
   color and the parts on it one by one, or cover content on a plain background with a
   `veil` of that background.
 - Lay out vertical lists with `u.scrollList`, not `List.Layout`: besides the scrollbar,
-  it takes the mouse wheel before the list and eases each notch in over a few frames
-  instead of jumping (`wheelList`, `internal/ui/scroll.go`).
+  it takes the mouse wheel before the list and a critically damped spring eases the
+  notches in, its speed never jumping, even when a notch comes mid-scroll (`wheelList`,
+  `internal/ui/scroll.go`). On Windows, touchpad deltas (not multiples of 120) move
+  the list at once.
+- Frames go out one per display refresh, but start unevenly (4.5 to 7.5 ms apart at
+  165 Hz), and steps worked out from those times judder. The window's `gtx.Now` comes
+  from `frameClock` (`anim.go`), which moves by whole refresh intervals while frames
+  follow each other. Tests and `cmd/memprobe` draw with the real (or test) time.
 - Film an animation with `cmd/screenshot -film` (see Commands) to check its frames.
 - Run `gofmt`, `go vet ./...` and `go build ./...` before you finish.
 
@@ -354,9 +372,12 @@ go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/wazzap -background  # start in the tray, without a window
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
 go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
-# Scroll the chat list for 1200 frames and print frame times, CPU and GCs; -ballast
-# adds live heap like a long session's, -cpuprofile writes a profile:
+# Scroll the chat list for 1200 frames and print frame times, CPU, GCs, the frame
+# rate and late frames; -ballast adds live heap like a long session's, -cpuprofile
+# writes a profile. -chat scrolls the first chat's messages instead, and -size sets
+# the window in dp (1706x1040 is about a maximized 2560x1600 window at 150%):
 go run ./cmd/memprobe -data <copy> -scroll 1200 -ballast 60 -cpuprofile cpu.pprof
+go run ./cmd/memprobe -demo -scroll 2000 -size 1706x1040 -chat
 go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).

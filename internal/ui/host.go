@@ -155,6 +155,7 @@ type host struct {
 	events  chan event.Event // the window's events, see openWindow
 	ack     chan struct{}    // an event was handled
 	ops     op.Ops
+	clock   frameClock
 	focused bool
 	hwnd    uintptr // the window's handle on Windows, once known
 	// Files dragged over the window (see desktop.EnableDrop): dragging is
@@ -442,6 +443,7 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 	case app.FrameEvent:
 		h.pxPerDp = e.Metric.PxPerDp
 		gtx := app.NewContext(&h.ops, e)
+		gtx.Now = h.clock.next(gtx.Now)
 		u.Layout(gtx)
 		e.Frame(gtx.Ops)
 		h.idle.Reset(idleTrim)

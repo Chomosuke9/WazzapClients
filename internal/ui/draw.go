@@ -151,6 +151,15 @@ func fill(gtx C, col color.NRGBA) D {
 	return D{Size: sz}
 }
 
+// rowBg is the background to paint under a row on the panel: none while
+// it is the panel's own color. The GPU would still fill every pixel.
+func (u *UI) rowBg(col color.NRGBA) color.NRGBA {
+	if col == u.pal.Panel {
+		return color.NRGBA{}
+	}
+	return col
+}
+
 type labelOpts struct {
 	weight   font.Weight
 	maxLines int

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"runtime"
 	"testing"
 	"time"
 
@@ -56,6 +57,49 @@ func TestFollower(t *testing.T) {
 	gtx.Now = now.Add(time.Second)
 	if v := f.step(gtx, 20, 100*time.Millisecond); v != 20 {
 		t.Fatalf("at the end %v, want 20", v)
+	}
+}
+
+// TestFrameClock feeds the clock frames that start up to 1.5 ms before or
+// after the refreshes they are shown at, as they do at 165 Hz, and checks
+// that it hands out evenly spaced times close to the real ones.
+func TestFrameClock(t *testing.T) {
+	const period = 6060 * time.Microsecond
+	base := testNow()
+	jitter := []time.Duration{0, 1500, -1000, 1000, -500, 500, -1500, 0, 1200, -600}
+	start := func(k int) time.Time {
+		return base.Add(time.Duration(k)*period + jitter[k%len(jitter)]*time.Microsecond)
+	}
+	var c frameClock
+	var prev time.Time
+	k := 0
+	for ; k < 200; k++ {
+		now := start(k)
+		got := c.next(now)
+		if d := got.Sub(now); d > period/2 || d < -period/2 {
+			t.Fatalf("frame %d: %v from the real time", k, d)
+		}
+		if k >= 30 {
+			if step := got.Sub(prev); step < period-500*time.Microsecond || step > period+500*time.Microsecond {
+				t.Fatalf("frame %d: step %v, want about %v", k, step, period)
+			}
+		}
+		prev = got
+	}
+	// A late frame, shown a refresh later, moves on by two refreshes.
+	k++
+	got := c.next(start(k))
+	if step := got.Sub(prev); step < 2*period-500*time.Microsecond || step > 2*period+500*time.Microsecond {
+		t.Fatalf("after a late frame: step %v, want about %v", step, 2*period)
+	}
+	// After a pause the clock is the real time.
+	now := start(k).Add(time.Second)
+	if got := c.next(now); !got.Equal(now) {
+		t.Fatalf("after a pause: %v from the real time", got.Sub(now))
+	}
+	// So is a frame time of zero (cmd/screenshot draws without a clock).
+	if got := c.next(time.Time{}); !got.IsZero() {
+		t.Fatalf("zero time became %v", got)
 	}
 }
 
@@ -143,22 +187,51 @@ func TestWheelScroll(t *testing.T) {
 	frame(time.Second)
 	frame(time.Second)
 
+	// Two notches 70 ms apart at 165 Hz. The list moves by whole pixels
+	// each frame: those steps must grow and shrink gently, the second notch
+	// included, rather than jump.
 	sb := &u.sidebar.list.List
-	start := sb.Position
-	wheel(200, 330, 120)
-	frame(16 * time.Millisecond)
-	w := u.wheels[sb]
-	if w == nil || w.pending <= 0 || w.pending >= 120 {
-		t.Fatalf("after one frame: %+v, want part of the notch left", w)
+	const frameDt = 6060 * time.Microsecond
+	ahead := func() float32 {
+		if w := u.wheels[sb]; w != nil {
+			return w.left + w.frac
+		}
+		return 0
 	}
-	if sb.Position == start {
-		t.Fatal("the chat list didn't start moving in the first frame")
+	var steps []float32
+	var total, prev float32
+	for i := range 100 {
+		if i == 0 || i == 12 {
+			wheel(200, 330, 120)
+			prev += 120
+		}
+		frame(frameDt)
+		a := ahead()
+		steps = append(steps, prev-a)
+		total += prev - a
+		prev = a
 	}
-	for range 30 {
-		frame(16 * time.Millisecond)
+	if steps[0]+steps[1] <= 0 {
+		t.Fatalf("the chat list didn't start moving in two frames: %v", steps[:2])
 	}
-	if u.wheels[sb] != nil {
-		t.Fatalf("still scrolling after half a second: %+v", u.wheels[sb])
+	for i := 1; i < len(steps); i++ {
+		if d := steps[i] - steps[i-1]; d > 5 || d < -5 {
+			t.Fatalf("frame %d moved %v px after %v: a jump (steps %v)", i, steps[i], steps[i-1], steps[:i+1])
+		}
+	}
+	if u.wheels[sb] != nil || total != 240 {
+		t.Fatalf("after 0.6 s: moved %v of 240 px, still scrolling: %+v", total, u.wheels[sb])
+	}
+
+	// A precision touchpad's deltas, which aren't whole notches on
+	// Windows, move the list at once.
+	if runtime.GOOS == "windows" {
+		start := sb.Position
+		wheel(200, 330, 30)
+		frame(frameDt)
+		if sb.Position == start || u.wheels[sb] != nil {
+			t.Fatalf("a touchpad scroll: list at %+v from %+v, left to ease: %+v", sb.Position, start, u.wheels[sb])
+		}
 	}
 
 	conv := &u.conv.list.List

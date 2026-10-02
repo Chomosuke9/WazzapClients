@@ -442,7 +442,7 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 				avatar = func(gtx C) D { return u.communityGroupAvatar(gtx, c, cm, bg) }
 				text = func(gtx C) D { return u.layoutCommunityRowText(gtx, c, cm, o.verified, hover) }
 			}
-			return background(gtx, bg, 10, func(gtx C) D {
+			return background(gtx, u.rowBg(bg), 10, func(gtx C) D {
 				return vcenter(gtx, h, func(gtx C) D {
 					return layout.Inset{Left: left, Right: 14}.Layout(gtx, func(gtx C) D {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,

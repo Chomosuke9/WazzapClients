@@ -46,6 +46,77 @@ const (
 	typingGrace = 600 * time.Millisecond // the typing bubble stays after they stop
 )
 
+// frameClock evens out the frame times animations see. While animating,
+// frames go out one per display refresh, but they start unevenly: at
+// 165 Hz, Present lets go of the window anywhere from 4.5 to 7.5 ms after
+// the last frame. Animations that move by the time since the last frame
+// then move by uneven steps, which are shown evenly spaced, and a smooth
+// scroll judders as if it ran at a lower rate. While frames follow each
+// other, the clock moves on by whole refresh intervals (two when a frame
+// was late) and leans towards the real time; after a pause, or when the
+// frames come too unevenly, it is the real time.
+type frameClock struct {
+	last time.Time // the time given to the last frame
+	prev time.Time // the real time of the last frame
+	// The intervals between the latest frames that followed each other,
+	// and how many refreshes each one took. Their average is the refresh
+	// interval: a single interval is too uneven to tell.
+	gaps  [16]time.Duration
+	steps [16]int
+	n     int // intervals since frames started following each other
+}
+
+// clockGap is the longest interval between frames that still follow each
+// other: below 20 Hz there is no animation to keep even.
+const clockGap = 50 * time.Millisecond
+
+func (c *frameClock) next(now time.Time) time.Time {
+	if now.IsZero() {
+		return now
+	}
+	dt := now.Sub(c.prev)
+	c.prev = now
+	if c.last.IsZero() || dt <= 0 || dt > clockGap {
+		c.last, c.n = now, 0
+		return now
+	}
+	steps := 1
+	if p := c.period(); p > 0 {
+		steps = max(1, int((dt+p/2)/p))
+	}
+	i := c.n % len(c.gaps)
+	c.gaps[i], c.steps[i] = dt, steps
+	c.n++
+	if c.n < 4 {
+		c.last = now
+		return now
+	}
+	p := c.period()
+	t := c.last.Add(time.Duration(steps) * p)
+	drift := now.Sub(t)
+	if drift > p/2 || drift < -p/2 {
+		// Not one frame per refresh: follow the real time.
+		c.last, c.n = now, 0
+		return now
+	}
+	c.last = t.Add(drift / 8)
+	return c.last
+}
+
+// period is the average refresh interval of the latest frames.
+func (c *frameClock) period() time.Duration {
+	var sum time.Duration
+	steps := 0
+	for i := range min(c.n, len(c.gaps)) {
+		sum += c.gaps[i]
+		steps += c.steps[i]
+	}
+	if steps == 0 {
+		return 0
+	}
+	return sum / time.Duration(steps)
+}
+
 // popDur is how long a popup takes to open (on) or close.
 func popDur(on bool) time.Duration {
 	if on {

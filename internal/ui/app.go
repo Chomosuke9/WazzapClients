@@ -361,6 +361,21 @@ func (u *UI) ScrollChatList(dy int) bool {
 	return l.Position.BeforeEnd
 }
 
+// ScrollChat scrolls the open chat's messages by dy px and reports whether
+// they can scroll further that way (used by cmd/memprobe).
+func (u *UI) ScrollChat(dy int) bool {
+	l := &u.conv.list.List
+	if dy < 0 {
+		// Let go of the end, or the list snaps back to it.
+		l.Position.BeforeEnd = true
+	}
+	l.Position.Offset += dy
+	if dy < 0 {
+		return l.Position.First > 0 || l.Position.Offset > 0
+	}
+	return l.Position.BeforeEnd
+}
+
 // SetMe sets the user's own name and JID (used for screenshots).
 func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 
@@ -635,22 +650,33 @@ func (u *UI) layoutMain(gtx C) D {
 	// Chips row origin: panel border + header + search.
 	u.filterMenu.origin = image.Pt(railW+1+gtx.Dp(21), 1+gtx.Dp(68+43+11+34+6))
 
-	// The panels sit in a rounded, bordered card, like WhatsApp's.
+	// The panels sit in a rounded, bordered card, like WhatsApp's. It runs
+	// past the window's right and bottom edges, so only its top and left
+	// borders show.
+	//
+	// The GPU fills every pixel of every draw, even one that is covered
+	// later: a fill of the whole window takes about 0.2 ms of every frame
+	// on a 2560x1600 window with integrated graphics. So the card draws no
+	// background of its own: the list column fills its own, and so does
+	// the right pane (a conversation's wallpaper covers it all).
 	defer op.Offset(image.Pt(railW, 0)).Push(gtx.Ops).Pop()
 	pw := sz.X - railW
 	r := gtx.Dp(8)
-	card := image.Rect(0, 0, pw+r, sz.Y+r)
-	fillRRect(gtx, card, r, p.PanelBorder)
-	inner := card.Add(image.Pt(1, 1))
-	fillRRect(gtx, inner, r-1, p.Panel)
+	fillRect(gtx, image.Rect(0, 0, pw, 1), p.PanelBorder)
+	fillRect(gtx, image.Rect(0, 0, 1, sz.Y), p.PanelBorder)
+	// The panes start 1dp in from the borders: fill the rest of that dp.
+	in := gtx.Dp(1)
+	fillRect(gtx, image.Rect(1, 1, pw, in), p.Panel)
+	fillRect(gtx, image.Rect(1, 1, in, sz.Y), p.Panel)
 	// A rounded clip would be stenciled over the whole window every frame;
 	// clip to the rectangle and round the corner off afterwards instead.
 	defer roundCorner(gtx, r, p.PanelBorder, p.Frame)
-	defer clip.Rect(inner).Push(gtx.Ops).Pop()
+	defer clip.Rect(image.Rect(1, 1, pw, sz.Y)).Push(gtx.Ops).Pop()
 
 	gtx.Constraints = layout.Exact(image.Pt(pw, sz.Y))
 	return u.layoutSplit(gtx, image.Pt(pw, sz.Y), func(gtx C) D {
 		w := gtx.Constraints.Max.X
+		fillRect(gtx, image.Rect(0, 0, w, sz.Y), p.Panel)
 		t := pushFx(gtx, 1, moveBy(0, float32(gtx.Dp(10))*(1-pageV)))
 		d := layout.Inset{Top: 1, Left: 1}.Layout(gtx, u.layoutPageSidebar)
 		t.Pop()
@@ -690,7 +716,8 @@ func (u *UI) layoutPageSidebar(gtx C) D {
 }
 
 // layoutRightPane draws the open conversation (with the info panel beside
-// it), or the selected page's placeholder.
+// it), or the selected page's placeholder. Each of them paints its own
+// background over the whole pane: the card under it has none.
 func (u *UI) layoutRightPane(gtx C) D {
 	if u.selected != nil && u.selPage == u.page && u.page != pageStatus && u.page != pageSettings {
 		if !u.info.shown() && !u.search.shown() {

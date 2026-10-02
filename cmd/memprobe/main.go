@@ -83,8 +83,14 @@ func main() {
 	passes := flag.Int("passes", 1, "times to visit every chat and page; later passes show what caches keep")
 	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the passes (or of -scroll)")
 	scroll := flag.Int("scroll", 0, "instead of visiting chats, scroll the chat list up and down for this many frames")
+	scrollChat := flag.Bool("chat", false, "with -scroll, scroll the first chat's messages instead of the chat list")
+	size := flag.String("size", "1200x780", "window size in dp, WxH")
 	ballastMB := flag.Int("ballast", 0, "keep this many MB of extra live heap, as a long session's backend does")
 	flag.Parse()
+	var sw, sh float32
+	if _, err := fmt.Sscanf(*size, "%gx%g", &sw, &sh); err != nil {
+		log.Fatalf("-size: %v", err)
+	}
 	// As cmd/wazzap does.
 	rdebug.SetGCPercent(50)
 
@@ -120,7 +126,7 @@ func main() {
 	}
 	go func() {
 		w := new(app.Window)
-		w.Option(app.Title("memprobe"), app.Size(unit.Dp(1200), unit.Dp(780)), app.Decorated(false))
+		w.Option(app.Title("memprobe"), app.Size(unit.Dp(sw), unit.Dp(sh)), app.Decorated(false))
 		u := ui.New(backend)
 		u.Start(w.Invalidate)
 		pages := []string{"status", "channels", "communities", "settings", "chats"}
@@ -138,7 +144,7 @@ func main() {
 				t1 := time.Now()
 				e.Frame(gtx.Ops)
 				if frame >= 30 && trimmed == 0 && (*scroll == 0 || frame > 60) {
-					times.add(t1.Sub(t0), time.Since(t0))
+					times.add(t0, t1.Sub(t0), time.Since(t0))
 				}
 				frame++
 				w.Invalidate()
@@ -146,7 +152,7 @@ func main() {
 					if frame == 60 {
 						startProfile()
 					}
-					scrollFrame(u, frame, *scroll, &times)
+					scrollFrame(u, frame, *scroll, *scrollChat, &times)
 					continue
 				}
 				switch {
@@ -222,13 +228,17 @@ var scrollDir = 1
 // scrollFrame drives -scroll: it scrolls the chat list 12 px a frame (a
 // brisk wheel scroll at 60 Hz), turning around at either end, and
 // reports after n frames.
-func scrollFrame(u *ui.UI, frame, n int, times *frameTimes) {
+func scrollFrame(u *ui.UI, frame, n int, chat bool, times *frameTimes) {
 	switch {
 	case frame == 30:
 		report("first paint")
 		u.Select(0)
 	case frame > 60 && frame <= 60+n:
-		if !u.ScrollChatList(12 * scrollDir) {
+		scroll := u.ScrollChatList
+		if chat {
+			scroll = u.ScrollChat
+		}
+		if !scroll(12 * scrollDir) {
 			scrollDir = -scrollDir
 		}
 	case frame > 60+n:
@@ -251,23 +261,29 @@ func writeHeapProfile(path string) {
 	}
 }
 
-// frameTimes collects how long frames take on the CPU during a pass.
+// frameTimes collects how long frames take on the CPU during a pass, and
+// when they start.
 type frameTimes struct {
 	layout, frame []time.Duration
+	start         []time.Time
 	cpu0          time.Duration
 	gc0           uint32
 }
 
-func (t *frameTimes) add(layout, frame time.Duration) {
+func (t *frameTimes) add(start time.Time, layout, frame time.Duration) {
 	if t.layout == nil {
 		t.cpu0, t.gc0 = cpuTime(), gcCount()
 	}
+	t.start = append(t.start, start)
 	t.layout = append(t.layout, layout)
 	t.frame = append(t.frame, frame)
 }
 
 // report prints the pass's frame times: layout is building the frame (text
 // shaping included), frame adds rendering it (which may wait for vsync).
+// Then the frame rate and the time between frames: frames that came late
+// took more than 1.5 times the median, which is the display's refresh
+// interval when the window keeps up with it.
 func (t *frameTimes) report(pass int) {
 	stat := func(d []time.Duration) string {
 		s := slices.Clone(d)
@@ -281,6 +297,23 @@ func (t *frameTimes) report(pass int) {
 	}
 	fmt.Printf("pass %d: %d frames | layout %s | frame %s | process CPU %.2f s, %d GCs\n", pass, len(t.layout),
 		stat(t.layout), stat(t.frame), (cpuTime() - t.cpu0).Seconds(), gcCount()-t.gc0)
+	if n := len(t.start); n > 1 {
+		gaps := make([]time.Duration, n-1)
+		for i := range gaps {
+			gaps[i] = t.start[i+1].Sub(t.start[i])
+		}
+		slices.Sort(gaps)
+		med := gaps[len(gaps)/2]
+		late := 0
+		for _, g := range gaps {
+			if g > med*3/2 {
+				late++
+			}
+		}
+		fps := float64(n-1) / t.start[n-1].Sub(t.start[0]).Seconds()
+		fmt.Printf("        %.1f fps | between frames median %.2f p95 %.2f max %.2f ms | %d late\n", fps,
+			float64(med)/1e6, float64(gaps[len(gaps)*95/100])/1e6, float64(gaps[len(gaps)-1])/1e6, late)
+	}
 	*t = frameTimes{}
 }
 
