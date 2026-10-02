@@ -12,6 +12,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/chomosuke9/wazzapclients/internal/command"
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -281,5 +282,34 @@ func TestSlashStickerHint(t *testing.T) {
 		if got := st.u.slashHint(sp); got != c.hint {
 			t.Errorf("%q: hint %q, want %q", c.text, got, c.hint)
 		}
+	}
+}
+
+// TestNoteBeforeMessages checks that a note older than every loaded
+// message still shows when the chat's start is loaded: the demo chat's
+// messages are from 09:00 today, so a test run early in the day used to
+// lose its note.
+func TestNoteBeforeMessages(t *testing.T) {
+	st := newSlashTest(t, "work")
+	u := st.u
+	y, m, d := time.Now().Date()
+	u.now = func() time.Time { return time.Date(y, m, d, 5, 0, 0, 0, time.Local) }
+	slashHost{u: u, chat: "work"}.Note(&command.Note{Text: "Done."})
+	hasNote := func() bool {
+		for _, r := range u.rows(u.selected) {
+			if r.kind == rowNote {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasNote() {
+		t.Fatal("a note older than the chat's messages isn't shown")
+	}
+	// It belongs to an older page while that isn't loaded.
+	u.conv.olderMore = true
+	u.msgsVer++
+	if hasNote() {
+		t.Error("a note older than the loaded page is shown")
 	}
 }

@@ -55,10 +55,12 @@ func (u *UI) rows(c *model.Chat) []convRow {
 	}
 	var prev *model.Message
 	// Notes go between the messages by time, after any that came earlier.
+	// Ones older than the loaded messages wait for their page, unless the
+	// chat's start is loaded (messages can be dated ahead of this clock).
 	notes := u.slash.notes[c.ID]
 	for _, m := range u.msgs {
 		for len(notes) > 0 && notes[0].at.Before(m.Time) {
-			if prev != nil {
+			if prev != nil || !u.conv.olderMore {
 				rows = append(rows, convRow{kind: rowNote, note: notes[0], first: true})
 			}
 			notes = notes[1:]
