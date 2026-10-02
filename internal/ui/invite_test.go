@@ -14,19 +14,19 @@ func TestInviteJoin(t *testing.T) {
 	u.Start(func() {})
 	u.applyEvents()
 
-	u.openInvite("DemoInviteReuni")
+	u.openInvite("DemoInviteReunion")
 	u.applyEvents()
 	in := &u.dialog.invite
 	if in.group == nil || !in.group.Approval {
-		t.Fatalf("reuni: group %+v, err %q; want one that needs approval", in.group, in.err)
+		t.Fatalf("reunion: group %+v, err %q; want one that needs approval", in.group, in.err)
 	}
 	u.backend.JoinGroup(in.code)
 	u.applyEvents()
 	if u.dialog.isOpen() {
-		t.Error("reuni: the dialog stayed open after the request")
+		t.Error("reunion: the dialog stayed open after the request")
 	}
-	if u.chatByID("reuni@g.us") != nil {
-		t.Error("reuni: joined without an admin's approval")
+	if u.chatByID("reunion@g.us") != nil {
+		t.Error("reunion: joined without an admin's approval")
 	}
 
 	u.openInvite("DemoInviteFutsal")

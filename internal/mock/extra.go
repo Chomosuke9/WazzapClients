@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -152,7 +153,13 @@ func (b *Backend) commonGroups(id string) []model.CommonGroup {
 		}
 		for _, m := range b.msgs[c.ID] {
 			if m.SenderID == id {
-				out = append(out, model.CommonGroup{ID: c.ID, Name: c.Name, Members: c.Presence})
+				g := model.CommonGroup{ID: c.ID, Name: c.Name, Members: c.Presence}
+				for _, cm := range b.communities {
+					if c.ID == cm.Announcements || slices.Contains(cm.Groups, c.ID) {
+						g.Community, g.CommunityID = cm.Name, cm.ID
+					}
+				}
+				out = append(out, g)
 				break
 			}
 		}
@@ -217,13 +224,58 @@ func demoExtras(at func(daysAgo, h, m int) time.Time) extras {
 		channels: []*model.Channel{
 			{ID: "techdaily@newsletter", Name: "Tech Daily", Verified: true, Followers: 1200000, Following: true, Unread: 3, Time: at(0, 8, 0),
 				Last: &model.Message{Text: "The biggest launches of the week, in one thread 🧵", Time: at(0, 8, 0)}},
-			{ID: "resep@newsletter", Name: "Resep Nusantara", Followers: 82000, Following: true, Time: at(1, 17, 30),
-				Last: &model.Message{Media: model.MediaImage, Kind: model.KindImage, Text: "Rendang padang asli, langkah demi langkah", Time: at(1, 17, 30)}},
+			{ID: "resep@newsletter", Name: "Archipelago Recipes", Followers: 82000, Following: true, Time: at(1, 17, 30),
+				Last: &model.Message{Media: model.MediaImage, Kind: model.KindImage, Text: "Authentic Padang rendang, step by step", Time: at(1, 17, 30)}},
 		},
 		suggested: []*model.Channel{
 			{ID: "whatsapp@newsletter", Name: "WhatsApp", Verified: true, Followers: 220000000},
-			{ID: "bola@newsletter", Name: "Bola Nasional", Followers: 540000},
-			{ID: "gempa@newsletter", Name: "Info Gempa", Verified: true, Followers: 3100000},
+			{ID: "bola@newsletter", Name: "National Football", Followers: 540000},
+			{ID: "gempa@newsletter", Name: "Earthquake Alerts", Verified: true, Followers: 3100000},
+		},
+		communities: []*model.Community{
+			{ID: "alumni-hub@g.us", Name: "CS Alumni Hub", Announcements: "alumni-ann", Groups: []string{"uni", "jobs"}},
+			{ID: "product-hub@g.us", Name: "Product HQ", Announcements: "work-ann", Groups: []string{"work", "design"}},
+		},
+		infos: map[string]*model.ChatInfo{
+			// Only admins post announcements: Fajar runs the alumni hub, you run Product HQ.
+			"alumni-ann": {
+				ID: "alumni-ann", Name: "CS Alumni Hub", IsGroup: true, Announce: true, Locked: true,
+				Members: []model.Member{
+					{ID: "me@lid", Name: "You", Me: true},
+					{ID: "fajar", Name: "Fajar", Contact: "Fajar", Phone: "+62 812-5550-0518", Admin: true},
+				},
+			},
+			"work-ann": {
+				ID: "work-ann", Name: "Product HQ", IsGroup: true, Announce: true, Locked: true,
+				Members: []model.Member{
+					{ID: "me@lid", Name: "You", Admin: true, Me: true},
+					{ID: "andre", Name: "Andre", Contact: "Andre", Phone: "+62 812-5550-0222", Admin: true},
+				},
+			},
+			"shop": {
+				ID: "shop", Name: "Sunset Coffee", Phone: "+62 812-5550-0123", About: "Coffee, pastries and good mornings.",
+				Business: &model.Business{
+					Name: "Sunset Coffee", Category: "Cafe",
+					Description: "Small-batch coffee roasted in Bandung. Order ahead and skip the line.",
+					Address:     "12 Braga St., Bandung", Email: "hello@sunsetcoffee.example",
+					Websites: []string{"https://sunsetcoffee.example"}, TimeZone: "Asia/Jakarta",
+					Hours: []model.BusinessHours{
+						{Day: time.Sunday, Mode: "specific_hours", Open: 8 * 60, Close: 18 * 60},
+						{Day: time.Monday, Mode: "specific_hours", Open: 7 * 60, Close: 21 * 60},
+						{Day: time.Tuesday, Mode: "specific_hours", Open: 7 * 60, Close: 21 * 60},
+						{Day: time.Wednesday, Mode: "specific_hours", Open: 7 * 60, Close: 21 * 60},
+						{Day: time.Thursday, Mode: "specific_hours", Open: 7 * 60, Close: 21 * 60},
+						{Day: time.Friday, Mode: "specific_hours", Open: 7 * 60, Close: 22 * 60},
+						{Day: time.Saturday, Mode: "specific_hours", Open: 8 * 60, Close: 22 * 60},
+					},
+				},
+				MediaCount: 3,
+				Media: []*model.Message{
+					{ID: "s1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x8d6e63, ImageB: 0xd7ccc8},
+					{ID: "s2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x5d4037, ImageB: 0xbcaaa4},
+					{ID: "s3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xefebe9, ImageB: 0xa1887f},
+				},
+			},
 		},
 	}
 }

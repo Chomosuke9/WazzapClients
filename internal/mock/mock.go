@@ -31,6 +31,10 @@ type Backend struct {
 	linkResets int // invite links reset, to make a new one
 	// versions are the earlier texts of edited messages, by chat and ID.
 	versions map[string][]model.Version
+	// pics makes Avatar draw profile pictures (the demo has them, the
+	// reference data doesn't); avatars caches them by ID.
+	pics    bool
+	avatars map[string][]byte
 	extras
 }
 
@@ -40,18 +44,21 @@ var Clock = time.Now
 
 // New returns a demo backend with timestamps relative to the current time.
 func New() *Backend {
-	b := &Backend{msgs: make(map[string][]*model.Message), now: Clock}
+	b := &Backend{msgs: make(map[string][]*model.Message), now: Clock, pics: true}
 	for _, d := range demo(b.now()) {
 		for i, m := range d.Messages {
 			m.ID = fmt.Sprintf("%s-%d", d.ID, i)
 			m.ChatID = d.ID
+			if m.Sender != "" && m.SenderID == "" {
+				m.SenderID = strings.ToLower(m.Sender) // so their picture and info match
+			}
 			if m.FromMe && m.Receipt == model.Pending {
 				m.Receipt = model.Read
 			}
 		}
 		c := model.Chat{
 			ID: d.ID, Name: d.Name, IsGroup: d.IsGroup, Pinned: d.Pinned, Favorite: d.Favorite,
-			Muted: d.Muted, Unread: d.Unread, Mentioned: d.Mentioned, Presence: d.Presence, Typing: d.Typing,
+			Muted: d.Muted, Archived: d.Archived, Self: d.Self, Unread: d.Unread, Mentioned: d.Mentioned, Presence: d.Presence, Typing: d.Typing,
 		}
 		if n := len(d.Messages); n > 0 {
 			c.Last = d.Messages[n-1]
@@ -201,7 +208,6 @@ func (b *Backend) MarkRead(chatIDs []string) {
 	}
 }
 
-func (b *Backend) Avatar(string) []byte { return nil }
 func (b *Backend) MediaData(chatID, msgID string) []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -218,6 +224,7 @@ func (b *Backend) Close() {}
 type demoChat struct {
 	ID, Name, Presence, Typing       string
 	IsGroup, Pinned, Favorite, Muted bool
+	Archived, Self                   bool
 	Unread                           int
 	Mentioned                        bool
 	Messages                         []*model.Message
@@ -232,7 +239,7 @@ func demo(now time.Time) []*demoChat {
 		return &model.Message{FromMe: fromMe, Text: s, Time: t, Receipt: model.Read}
 	}
 	grp := func(sender string, t time.Time, s string) *model.Message {
-		return &model.Message{Sender: sender, Text: s, Time: t}
+		return &model.Message{Sender: sender, SenderID: strings.ToLower(sender), Text: s, Time: t}
 	}
 
 	rina := &demoChat{
@@ -241,7 +248,7 @@ func demo(now time.Time) []*demoChat {
 		Messages: []*model.Message{
 			txt(false, day(1, 19, 2), "Hey! Are we still on for the weekend trip?"),
 			txt(true, day(1, 19, 5), "Yes!! I already booked the villa in Ubud 🏡"),
-			txt(true, day(1, 19, 5), "Check in Friday 2pm, check out Sunday noon"),
+			{FromMe: true, Text: "Check in Friday 2pm, check out Sunday noon", Time: day(1, 19, 5), Receipt: model.Read, Starred: true},
 			txt(false, day(1, 19, 11), "Perfect. I'll bring the camera"),
 			txt(false, day(1, 19, 11), "Should we rent a car or just use Grab the whole time?"),
 			txt(true, day(1, 19, 20), "Rent a car I think, it's cheaper for 4 people and we can go to Tegallalang early in the morning before it gets crowded"),
@@ -257,21 +264,23 @@ func demo(now time.Time) []*demoChat {
 	}
 
 	family := &demoChat{
-		ID: "family", Name: "Keluarga Besar", IsGroup: true, Pinned: true, Unread: 14, Muted: true, Mentioned: true,
-		Presence: "Mama, Papa, Dimas, Sari, You",
+		ID: "family", Name: "Extended Family", IsGroup: true, Pinned: true, Unread: 14, Muted: true, Mentioned: true,
+		Presence: "Mom, Dad, Dimas, Sari, You",
 		Messages: []*model.Message{
-			grp("Mama", day(0, 6, 2), "Selamat pagi semua 🌞"),
-			grp("Papa", day(0, 6, 15), "Pagi. Jangan lupa makan siang di rumah hari Minggu ya"),
-			grp("Dimas", day(0, 7, 1), "Siap pa 👍"),
-			grp("Sari", day(0, 7, 3), "Aku bawa kue dari toko yang kemarin"),
+			grp("Mom", day(0, 6, 2), "Good morning everyone 🌞"),
+			grp("Dad", day(0, 6, 15), "Morning. Don't forget lunch at home on Sunday"),
+			grp("Dimas", day(0, 7, 1), "Got it, Dad 👍"),
+			grp("Sari", day(0, 7, 3), "I'll bring the cake from that shop we went to yesterday"),
 			// An album of five photos: a grid of four, the last one "+2".
 			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0xf6d365, ImageB: 0xfda085},
 			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0x84fab0, ImageB: 0x8fd3f4},
 			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0xa18cd1, ImageB: 0xfbc2eb},
 			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0xfccb90, ImageB: 0xd57eeb},
 			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0x5ee7df, ImageB: 0xb490ca},
-			txt(true, day(0, 7, 20), "Aku datang agak telat, jam 12an"),
-			grp("Mama", day(0, 9, 12), "Oke nak, hati-hati di jalan"),
+			txt(true, day(0, 7, 20), "I'll be a bit late, around noon"),
+			grp("Mom", day(0, 9, 12), "Okay sweetie, drive safe"),
+			{Sender: "Dad", Forwarded: true, Time: day(0, 9, 20),
+				Text: "Reminder: family photo on Saturday at 4pm, wear something bright 📸"},
 		},
 	}
 
@@ -287,7 +296,7 @@ func demo(now time.Time) []*demoChat {
 			{Sender: "Bima", SenderID: "bima", Kind: model.KindSticker, Media: model.MediaSticker, Time: day(0, 9, 31),
 				Quote: &model.Quote{Sender: "Clara", Text: "Release candidate is up on staging. ⁨\u2063@You⁩ can you check the release notes? ⁨@Bima⁩ too"}},
 			grp("Bima", day(0, 9, 34), "Nice, I'll run the smoke tests"),
-			{Sender: "Clara", Media: model.MediaDocument, Text: "Release notes v2.4.pdf", Time: day(0, 9, 36),
+			{Sender: "Clara", SenderID: "clara", Media: model.MediaDocument, Text: "Release notes v2.4.pdf", Time: day(0, 9, 36), Pinned: true,
 				FileName: "Release notes v2.4.pdf", FileSize: 1_284_000, FileType: "application/pdf", Pages: 3},
 			{Sender: "Andre", Media: model.MediaVoice, Duration: 42, Time: day(0, 9, 40),
 				Waveform: []byte{4, 9, 22, 41, 60, 52, 33, 70, 88, 64, 40, 21, 12, 30, 55, 79, 92, 71, 45, 28, 18, 36, 58,
@@ -303,10 +312,12 @@ func demo(now time.Time) []*demoChat {
 	chats := []*demoChat{
 		rina, family, work,
 		{ID: "budi", Name: "Budi Santoso", Presence: "last seen today at 08:12", Messages: []*model.Message{
-			txt(false, day(0, 8, 2), "Bro, jadi futsal nanti malam?"), {FromMe: true, Text: "Jadi, jam 8 ya", Time: day(0, 8, 10), Receipt: model.Delivered},
+			txt(false, day(0, 8, 2), "Bro, are we still on for futsal tonight?"), {FromMe: true, Text: "Yep, 8 o'clock", Time: day(0, 8, 10), Receipt: model.Read, Reaction: "👍"},
+			{Kind: model.KindDeleted, Time: day(0, 8, 14)},
+			txt(false, day(0, 8, 15), "Sorry, wrong chat. See you at 8!"),
 		}},
-		{ID: "shop", Name: "Kopi Senja", Presence: "Business account", Messages: []*model.Message{
-			{Text: "*Order #4821 is ready* ☕\nYour iced latte is waiting at the counter.", Footer: "Kopi Senja · Jl. Braga 12",
+		{ID: "shop", Name: "Sunset Coffee", Presence: "Business account", Messages: []*model.Message{
+			{Text: "*Order #4821 is ready* ☕\nYour iced latte is waiting at the counter.", Footer: "Sunset Coffee · 12 Braga St.",
 				Time: day(0, 7, 55), Buttons: []model.Button{
 					{Kind: model.ButtonReply, Label: "On my way", Value: "otw"},
 					{Kind: model.ButtonCopy, Label: "Copy code", Value: "KS-4821"},
@@ -316,28 +327,30 @@ func demo(now time.Time) []*demoChat {
 			{Text: "Eh, `/setting` isn't a command I know 😅\n\n> Say it in plain words, like \"turn off greetings\"\n> or \"add a rule\".\n\n**Menu** today:\n- Iced latte\n- ~Croissant~ _sold out_\n1. Pick up at the counter\n2. Show code `KS-4821`\n\n【注文】ご来店ありがとうございます！ *太字* 谢谢\n\n```\nQuiz for you - 1/3\n```",
 				Time: day(0, 7, 57)},
 		}},
-		{ID: "mom", Name: "Mama", Favorite: true, Presence: "online", Messages: []*model.Message{
-			txt(false, day(1, 20, 1), "Sudah makan belum?"), txt(true, day(1, 20, 30), "Sudah ma 😊"),
+		{ID: "mom", Name: "Mom", Favorite: true, Presence: "online", Messages: []*model.Message{
+			txt(false, day(1, 20, 1), "Have you eaten yet?"), txt(true, day(1, 20, 30), "Yes, Mom 😊"),
 		}},
 		{ID: "gym", Name: "Gym Buddies", IsGroup: true, Muted: true, Unread: 27, Presence: "Kevin, Leo, Mike, You", Messages: []*model.Message{
 			grp("Kevin", day(1, 21, 40), "Leg day tomorrow, no excuses 🦵"),
+			{Sender: "Leo", Kind: model.KindImage, Media: model.MediaVideo, Duration: 18, Text: "New PR on squats 💪",
+				Time: day(1, 21, 52), ImageA: 0x232526, ImageB: 0x414345},
 		}},
 		{ID: "clara", Name: "Clara Wijaya", Presence: "last seen yesterday at 23:40", Messages: []*model.Message{
 			{FromMe: true, Text: "Thanks for the review!", Time: day(1, 16, 3), Receipt: model.Read},
 		}},
-		{ID: "landlord", Name: "Pak Harto (Kos)", Presence: "last seen 2 days ago", Messages: []*model.Message{
-			txt(false, day(2, 10, 0), "Mas, pembayaran bulan ini sudah saya terima. Terima kasih"),
+		{ID: "landlord", Name: "Mr. Harto (Landlord)", Presence: "last seen 2 days ago", Messages: []*model.Message{
+			txt(false, day(2, 10, 0), "Hi, I've received this month's payment. Thank you"),
 		}},
 		{ID: "dewi", Name: "Dewi Lestari", Presence: "online", Messages: []*model.Message{
 			{FromMe: true, Text: "See you at the conference!", Time: day(3, 14, 22), Receipt: model.Delivered},
 		}},
 		{ID: "courier", Name: "+62 812-3456-7890", Presence: "", Messages: []*model.Message{
-			txt(false, day(4, 11, 5), "Paket sudah di depan pintu ya kak"),
+			txt(false, day(4, 11, 5), "Your package is at the front door"),
 		}},
-		{ID: "uni", Name: "Alumni TI 2019", IsGroup: true, Muted: true, Presence: "142 members", Messages: []*model.Message{
-			grp("Fajar", day(5, 19, 0), "Reuni tahun ini di Bandung, yang mau ikut isi form ya"),
-			grp("Fajar", day(5, 19, 2), "Yang mau jadi panitia gabung sini: "+inviteLink(inviteReuni)),
-			grp("Kevin", day(5, 19, 10), "Futsal tiap Kamis, join: "+inviteLink(inviteFutsal)),
+		{ID: "uni", Name: "CS Alumni 2019", IsGroup: true, Muted: true, Presence: "142 members", Messages: []*model.Message{
+			grp("Fajar", day(5, 19, 0), "This year's reunion is in Bandung, fill in the form if you want to come"),
+			grp("Fajar", day(5, 19, 2), "Want to join the organizing committee? Join here: "+inviteLink(inviteReunion)),
+			grp("Kevin", day(5, 19, 10), "Futsal every Thursday, join: "+inviteLink(inviteFutsal)),
 		}},
 		{ID: "andre", Name: "Andre", Presence: "last seen recently", Messages: []*model.Message{
 			{FromMe: true, Kind: model.KindImage, Text: "", Time: day(6, 12, 30), Receipt: model.Read, ImageA: 0xf7971e, ImageB: 0xffd200},
@@ -347,6 +360,40 @@ func demo(now time.Time) []*demoChat {
 		}},
 		{ID: "bank", Name: "Kevin Pratama", Presence: "last seen recently", Messages: []*model.Message{
 			txt(false, day(15, 9, 0), "Ok noted"),
+		}},
+
+		// Two communities (see demoExtras): CS Alumni Hub, where you're a
+		// member and only its admins post announcements, and Product HQ,
+		// which you run.
+		{ID: "alumni-ann", Name: "Announcements", IsGroup: true, Muted: true, Unread: 2, Messages: []*model.Message{
+			grp("Fajar", day(3, 10, 0), "Welcome to the CS Alumni Hub! News that matters to every group in the community lands here."),
+			{Sender: "Fajar", Kind: model.KindImage, Media: model.MediaImage, Text: "Reunion venue shortlist: vote in the 2019 group",
+				Time: day(1, 18, 30), ImageA: 0x1d976c, ImageB: 0x93f9b9, Reaction: "🎉"},
+			grp("Fajar", day(0, 8, 30), "Reunion registration closes on the 30th. Don't forget to fill in the form!"),
+		}},
+		{ID: "jobs", Name: "Alumni Jobs Board", IsGroup: true, Muted: true, Unread: 5, Presence: "Fajar, Kevin, Sari, You", Messages: []*model.Message{
+			grp("Kevin", day(1, 10, 15), "Backend engineer opening at my company, Go and Postgres. DM me if interested"),
+			grp("Sari", day(1, 10, 40), "Is it remote?"),
+			grp("Kevin", day(1, 10, 42), "Hybrid, two days in the office"),
+			grp("Fajar", day(0, 7, 5), "Reminder: no recruiter spam please, only real openings"),
+		}},
+		{ID: "work-ann", Name: "Announcements", IsGroup: true, Messages: []*model.Message{
+			{FromMe: true, Text: "Welcome to Product HQ! Every team's news goes here.", Time: day(8, 9, 0), Receipt: model.Read},
+			{FromMe: true, Kind: model.KindImage, Media: model.MediaImage, Text: "Q4 roadmap is out. Details in the Product Team group",
+				Time: day(2, 15, 10), Receipt: model.Read, ImageA: 0x667eea, ImageB: 0x764ba2},
+			{Sender: "Andre", SenderID: "andre", Text: "Heads up: the staging freeze starts Friday at noon", Time: day(0, 9, 45)},
+		}},
+		{ID: "design", Name: "Design Crew", IsGroup: true, Unread: 1, Presence: "Clara, Dewi, You", Messages: []*model.Message{
+			grp("Dewi", day(1, 15, 0), "Updated the onboarding mockups, take a look when you can"),
+			grp("Clara", day(1, 15, 20), "Love the new empty states! Can we try a darker header too?"),
+			txt(true, day(1, 15, 30), "Agree, I'll try both and share a comparison"),
+			grp("Dewi", day(0, 9, 40), "Comparison is in the Figma file 🎨"),
+		}},
+		{ID: "old-project", Name: "Old Project Group", IsGroup: true, Archived: true, Presence: "Andre, Bima, You", Messages: []*model.Message{
+			grp("Andre", day(40, 11, 0), "Project wrapped up, thanks everyone!"),
+		}},
+		{ID: "me@lid", Name: "Me Myself", Self: true, Messages: []*model.Message{
+			txt(true, day(2, 22, 15), "Buy oat milk, call the dentist, renew the passport"),
 		}},
 	}
 	return chats

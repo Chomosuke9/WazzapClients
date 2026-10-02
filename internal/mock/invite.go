@@ -2,25 +2,25 @@ package mock
 
 import "github.com/chomosuke9/wazzapclients/internal/model"
 
-// Demo invite links, posted in the "Alumni TI 2019" chat: one group needs
+// Demo invite links, posted in the "CS Alumni 2019" chat: one group needs
 // an admin's approval, the other lets you straight in.
 const (
-	inviteReuni  = "DemoInviteReuni"
-	inviteFutsal = "DemoInviteFutsal"
+	inviteReunion = "DemoInviteReunion"
+	inviteFutsal  = "DemoInviteFutsal"
 )
 
 // invitePreview describes the demo group of an invite code, or nil.
 func (b *Backend) invitePreview(code string) *model.GroupPreview {
 	now := b.now()
 	switch code {
-	case inviteReuni:
-		return &model.GroupPreview{ID: "reuni@g.us", Name: "🎓 Panitia Reuni TI 2019 🎉",
-			Description: "*REUNI AKBAR TI 2019*\n\nTempat koordinasi panitia reuni: venue, konsumsi, dokumentasi dan " +
-				"undangan. Rapat online tiap Kamis jam 8 malam, notulen dibagikan di sini. Yang belum isi form " +
-				"kesediaan, isi dulu ya sebelum masuk.",
+	case inviteReunion:
+		return &model.GroupPreview{ID: "reunion@g.us", Name: "🎓 CS 2019 Reunion Committee 🎉",
+			Description: "*CS 2019 GRAND REUNION*\n\nWhere the reunion committee coordinates: venue, catering, photos and " +
+				"invitations. Online meeting every Thursday at 8 pm, minutes are shared here. If you haven't " +
+				"filled in the availability form yet, please do that before joining.",
 			Created: now.AddDate(0, -2, -3), Size: 24, Faces: []string{"budi", "clara", "dewi", "sari"}, Approval: true}
 	case inviteFutsal:
-		return &model.GroupPreview{ID: "futsal@g.us", Name: "Futsal Kamis Malam", Created: now.AddDate(-1, 0, 0),
+		return &model.GroupPreview{ID: "futsal@g.us", Name: "Thursday Night Futsal", Created: now.AddDate(-1, 0, 0),
 			Size: 9, Faces: []string{"budi", "andre"}, Member: b.chat("futsal@g.us") != nil}
 	}
 	return nil

@@ -1397,7 +1397,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "contacts":
 		u.openContactPicker()
 	case "invite":
-		u.openInvite("DemoInviteReuni")
+		u.openInvite("DemoInviteReunion")
 	case "newchat", "newnumber":
 		u.openNewChat()
 		if name == "newnumber" {

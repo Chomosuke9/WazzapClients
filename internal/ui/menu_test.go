@@ -47,6 +47,10 @@ func TestMarkAllRead(t *testing.T) {
 		}
 	}
 
+	// The demo data has some starred messages already.
+	u.openStarred()
+	frame()
+	before := len(u.gallery.list.msgs)
 	var starred []*model.Message
 	for _, m := range u.msgs[max(0, len(u.msgs)-2):] {
 		u.backend.Star(m, true)
@@ -54,8 +58,8 @@ func TestMarkAllRead(t *testing.T) {
 	}
 	u.openStarred()
 	frame()
-	if got := len(u.gallery.list.msgs); got != len(starred) {
-		t.Errorf("Starred messages lists %d messages, want %d", got, len(starred))
+	if got, want := len(u.gallery.list.msgs), before+len(starred); got != want {
+		t.Errorf("Starred messages lists %d messages, want %d", got, want)
 	}
 	// The rail's Media button turns the panel to media, not closes it.
 	u.openGallery("", "")
