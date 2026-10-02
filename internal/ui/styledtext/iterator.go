@@ -5,6 +5,7 @@ package styledtext
 
 import (
 	"image"
+	"image/color"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -53,6 +54,9 @@ type textIterator struct {
 	baseline int
 	// carets, if not nil, collects the end of each cluster (see TextStyle.Carets).
 	carets []Caret
+	// color paints the outline glyphs. It is set again for every batch:
+	// a batch's color emoji leave their image as the current material.
+	color color.NRGBA
 }
 
 // processGlyph checks whether the glyph is visible within the iterator's configured
@@ -152,6 +156,7 @@ func (it *textIterator) paintGlyph(gtx layout.Context, shaper *text.Shaper, glyp
 	if glyph.Flags&text.FlagLineBreak > 0 || cap(line)-len(line) == 0 || !visibleOrBefore {
 		t := op.Offset(it.lineOff).Push(gtx.Ops)
 		outline := clip.Outline{Path: shaper.Shape(line)}.Op().Push(gtx.Ops)
+		paint.ColorOp{Color: it.color}.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
 		outline.Pop()
 		// Color emoji are bitmap glyphs, painted separately (as widget.Label does).

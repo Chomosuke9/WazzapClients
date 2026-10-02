@@ -123,7 +123,6 @@ func (t TextStyle) iterateSpan(gtx layout.Context, maxWidth int, span SpanStyle,
 	lineHeight := fixed.I(gtx.Sp(t.LineHeight))
 	// shape the text of the current span
 	macro := op.Record(gtx.Ops)
-	paint.ColorOp{Color: span.Color}.Add(gtx.Ops)
 	t.Shaper.LayoutString(text.Parameters{
 		Font:            span.Font,
 		PxPerEm:         fixed.I(gtx.Sp(span.Size)),
@@ -138,6 +137,7 @@ func (t TextStyle) iterateSpan(gtx layout.Context, maxWidth int, span SpanStyle,
 	ti := textIterator{
 		viewport: image.Rectangle{Max: gtx.Constraints.Max},
 		maxLines: 1,
+		color:    span.Color,
 	}
 	if t.Carets != nil {
 		ti.carets = []Caret{{}}
