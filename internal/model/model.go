@@ -117,6 +117,41 @@ type Message struct {
 	// Album is the ID of the album a photo or video was sent in, with
 	// others, or "". The chat shows an album's pictures as one grid.
 	Album string
+	// Edited is when the text (or caption) was last edited; zero when it
+	// never was.
+	Edited time.Time
+}
+
+// EditWindow is how long after sending a message you can edit it, as in
+// WhatsApp.
+const EditWindow = 15 * time.Minute
+
+// CanEdit reports whether you can still edit m at now: one of your own
+// sent text messages, photos or videos.
+func (m *Message) CanEdit(now time.Time) bool {
+	if !m.FromMe || m.Kind == KindDeleted || m.Kind == KindUnsupported || m.Forwarded ||
+		m.Receipt == Pending || m.Receipt == Failed || now.Sub(m.Time) > EditWindow {
+		return false
+	}
+	switch m.Media {
+	case MediaNone:
+		return m.Text != ""
+	case MediaImage, MediaVideo, MediaGIF:
+		return true
+	}
+	return false
+}
+
+// Version is one earlier text of an edited message.
+type Version struct {
+	Text string    // as Message.Text shows it
+	Time time.Time // when it was sent or edited to this
+}
+
+// MentionRef is an @mention in text to edit: the text shows "@" + Name,
+// and ID is who it notifies (a JID, or "@all" or "@admin").
+type MentionRef struct {
+	Name, ID string
 }
 
 // Chat is a one-to-one or group conversation. Messages are not part of it:
@@ -800,6 +835,15 @@ type Backend interface {
 	Star(m *Message, starred bool)
 	// PinMessage pins a message to the top of its chat, or unpins it.
 	PinMessage(m *Message, pinned bool)
+	// EditText returns the text of one of your messages to edit, with
+	// each @mention as "@Name", and the mentions in it.
+	EditText(m *Message) (string, []MentionRef)
+	// Edit replaces the text or caption of one of your messages (see
+	// CanEdit) with d's; d.Reply is ignored.
+	Edit(m *Message, d Draft)
+	// Versions returns the earlier texts of an edited message, oldest
+	// first; m.Text is the newest.
+	Versions(m *Message) []Version
 	// SaveMedia saves a message's picture or file to the Downloads folder
 	// in the background; a NoticeEvent reports the result.
 	SaveMedia(m *Message)

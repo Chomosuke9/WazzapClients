@@ -19,6 +19,7 @@ const (
 	prefSlash        = "slash_commands" // slash.go
 	prefAdminMention = "admin_mention"  // "@admin" in the mention picker
 	prefRawPhotos    = "raw_photos"     // Raw quality for photos
+	prefEditHistory  = "edit_history"   // the earlier texts of edited messages (edit.go)
 )
 
 // extraOn reports whether an extra feature is turned on.
@@ -38,6 +39,7 @@ func (u *UI) loadExtras() {
 	u.slash.on = extraOn(b, prefSlash)
 	u.adminMention = extraOn(b, prefAdminMention)
 	u.rawPhotos = extraOn(b, prefRawPhotos)
+	u.editHistory = extraOn(b, prefEditHistory)
 }
 
 // commandIcons are the commands' icons in the picker and in settings.
@@ -89,6 +91,10 @@ func (u *UI) extrasSettings() []settingsSection {
 						u.attach.quality = model.QualityHD
 					}
 				}),
+		}},
+		{title: "Messages", rows: []settingRow{
+			toggle(prefEditHistory, "Edit history", "See what an edited message said before: right-click it and pick Edit history",
+				&u.editHistory, nil),
 		}},
 	}
 	if on {

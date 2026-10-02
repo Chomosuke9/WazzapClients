@@ -29,6 +29,8 @@ type Backend struct {
 	// chat and message ID.
 	media      map[string][]byte
 	linkResets int // invite links reset, to make a new one
+	// versions are the earlier texts of edited messages, by chat and ID.
+	versions map[string][]model.Version
 	extras
 }
 
@@ -64,6 +66,11 @@ func New() *Backend {
 		return time.Date(y, mo, dd, h, m, 0, 0, now.Location())
 	})
 	b.addChannelPosts()
+	sent := b.find(&model.Message{ChatID: "rina", ID: "rina-8"}).Time
+	b.versions = map[string][]model.Version{"rina/rina-8": {
+		{Text: "Let's go there on Saturday", Time: sent},
+		{Text: "Let's go there on Saturday morning", Time: sent.Add(time.Minute)},
+	}}
 	b.lists = []*model.ChatList{{ID: "l1", Name: "Family", Chats: []string{"family", "mom"}}, {ID: "l2", Name: "Work"}}
 	return b
 }
@@ -241,7 +248,9 @@ func demo(now time.Time) []*demoChat {
 			{FromMe: false, Kind: model.KindImage, Text: "Found this spot near the villa", Time: day(0, 8, 41), ImageA: 0x3a7bd5, ImageB: 0x00d2ff},
 			{FromMe: true, Text: "Wow that looks amazing", Time: day(0, 8, 45), Receipt: model.Read, Reaction: "❤️",
 				Quote: &model.Quote{Sender: "Rina Kartika", Text: "📷 Found this spot near the villa"}},
-			txt(true, day(0, 8, 46), "Let's go there on Saturday"),
+			// Edited twice (see demoVersions).
+			{FromMe: true, Text: "Let's go there on Saturday morning, before it gets hot", Time: day(0, 8, 46),
+				Receipt: model.Read, Edited: day(0, 8, 49)},
 			txt(false, day(0, 9, 30), "Deal 😄"),
 			txt(false, day(0, 9, 31), "Also can you send me the villa address? My mom keeps asking"),
 		},

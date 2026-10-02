@@ -150,6 +150,14 @@ Gotchas already found in the pinned version (v0.10.x):
 - The slash command picker reads Up, Down, Tab and (when it picks) Enter before the
   composer does, in `slashKeys`, and only while it offers rows; otherwise the editor
   moves its caret with them as usual.
+- WhatsApp now sends most message edits as a `secretEncryptedMessage` (MESSAGE_EDIT),
+  decrypted with `DecryptSecretEncryptedMessage`, not as a `protocolMessage`. History
+  sync (`ParseWebMessage`) hands an edit out as the new content under the original's
+  ID with `IsEdit` set. `parse` turns all three into an edit; `putMessage` never lets
+  the original coming again overwrite an edited text.
+- modernc's SQLite binds every statement of a multi-statement `Exec` from the first
+  argument, so positional `?` in a second statement gets the wrong values. Use
+  numbered `?1`, `?2` (as `deleteChat` does) or separate `Exec` calls.
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
@@ -173,7 +181,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    (viewer.go); the send view for picked, pasted and dropped files
                    (sendview.go), its photo editor (mediaedit.go) and the rendering of
                    edits and the send queue (editrender.go); replies, @mentions and
-                   select mode live in compose.go;
+                   select mode live in compose.go; editing your messages (in the composer)
+                   and the Edit history dialog in edit.go;
                    document cards and the voice/audio player in files.go; selecting message
                    text in textsel.go; searching a chat's messages (the panel that takes the info
                    panel's place) and a group's members in chatsearch.go; the composer's
@@ -346,7 +355,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashrun (open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, invite,
-# delete, select, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the Media panel:
+# delete, select, edit, edits, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:

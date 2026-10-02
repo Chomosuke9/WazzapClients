@@ -830,8 +830,10 @@ func (b *Backend) onMessage(e *events.Message) {
 	switch {
 	case p.revoke:
 		_ = b.store.markDeleted(ctx, chat, p.target)
-	case p.edit != "":
-		_ = b.store.editText(ctx, chat, p.target, p.edit)
+	case p.edited:
+		if err := b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime); err != nil {
+			b.log.Warnf("edit %s in %s: %v", p.target, chat, err)
+		}
 	case p.pin != 0:
 		if p.pin > 0 {
 			_, _ = b.db.ExecContext(ctx, `UPDATE wz_messages SET pinned = 0 WHERE chat = ?`, chat)
@@ -1042,8 +1044,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			switch {
 			case p.revoke:
 				_ = b.store.markDeleted(ctx, chat, p.target)
-			case p.edit != "":
-				_ = b.store.editText(ctx, chat, p.target, p.edit)
+			case p.edited:
+				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime)
 			case p.pin != 0:
 				_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
 			default:

@@ -758,6 +758,11 @@ func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color
 			layout.Rigid(iconW(icStarFill, 14, col)),
 			layout.Rigid(layout.Spacer{Width: 3}.Layout))
 	}
+	if !m.Edited.IsZero() && m.Kind != model.KindDeleted {
+		children = append(children,
+			layout.Rigid(u.label(12.5, "Edited", col).Layout),
+			layout.Rigid(layout.Spacer{Width: 4}.Layout))
+	}
 	children = append(children, layout.Rigid(u.label(12.5, m.Time.Format("15:04"), col).Layout))
 	if m.FromMe && m.Kind != model.KindDeleted {
 		ic, tc := receiptIcon(m.Receipt, u.pal, true)

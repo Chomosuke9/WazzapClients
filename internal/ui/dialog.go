@@ -25,6 +25,7 @@ const (
 	dialogPoll
 	dialogInvite // a group's invite link (invite.go)
 	dialogTheme  // a chat's theme (chatmenu.go); title is the chat's ID
+	dialogEdits  // an edited message's earlier texts (edit.go)
 )
 
 type dialogButton struct {
@@ -61,6 +62,10 @@ type dialogState struct {
 
 	poll   pollState
 	invite inviteState
+
+	// Edit history: the message and its earlier texts.
+	editOf   *model.Message
+	versions []model.Version
 }
 
 // isOpen reports whether a dialog is open and not fading out.
@@ -158,6 +163,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.invitePanel)
 	case dialogTheme:
 		panel = record(gtx, u.themePanel)
+	case dialogEdits:
+		panel = record(gtx, u.editsPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

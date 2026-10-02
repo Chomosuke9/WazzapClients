@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"time"
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waWeb"
@@ -20,8 +21,13 @@ type parsed struct {
 	target   string // message ID a reaction/revoke/edit/pin applies to
 	reaction string
 	revoke   bool
-	edit     string
 	pin      int // 1 pinned, -1 unpinned
+
+	// An edit's new text and mentions, and when it was made.
+	edited       bool
+	edit         string
+	editMentions []string
+	editTime     time.Time
 }
 
 // content summarizes what a message shows.
@@ -234,14 +240,41 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		case waE2E.ProtocolMessage_REVOKE:
 			p.revoke = true
 		case waE2E.ProtocolMessage_MESSAGE_EDIT:
-			p.edit = describe(pm.GetEditedMessage()).text
-			if p.edit == "" {
-				return p, false
+			at := evt.Info.Timestamp
+			if ms := pm.GetTimestampMS(); ms > 0 {
+				at = time.UnixMilli(ms)
 			}
+			return p, p.setEdit(p.target, pm.GetEditedMessage(), at)
 		default:
 			return p, false
 		}
 		return p, p.target != ""
+	}
+	if sm := m.GetSecretEncryptedMessage(); sm != nil {
+		// Newer WhatsApp versions send edits encrypted with the edited
+		// message's secret.
+		if sm.GetSecretEncType() != waE2E.SecretEncryptedMessage_MESSAGE_EDIT {
+			return p, false
+		}
+		cli := b.client()
+		if cli == nil {
+			return p, false
+		}
+		dec, err := cli.DecryptSecretEncryptedMessage(ctx, evt)
+		if err != nil {
+			b.log.Warnf("decrypt edit of %s in %s: %v", sm.GetTargetMessageKey().GetID(), chat, err)
+			return p, false
+		}
+		dec = unwrap(dec)
+		if pm := dec.GetProtocolMessage(); pm.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT {
+			dec = pm.GetEditedMessage()
+		}
+		return p, p.setEdit(sm.GetTargetMessageKey().GetID(), dec, evt.Info.Timestamp)
+	}
+	if evt.IsEdit {
+		// ParseWebMessage (history sync) hands an edit out as the new
+		// content under the edited message's ID.
+		return p, p.setEdit(evt.Info.ID, m, evt.Info.Timestamp)
 	}
 
 	c := describe(m)
@@ -277,16 +310,33 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		p.msg.buttons = c.buttons
 		c.buttons.apply(msg)
 	}
-	p.msg.mentions = append([]string(nil), c.ctx.GetMentionedJID()...)
-	if c.ctx.GetNonJIDMentions() > 0 {
-		p.msg.mentions = append(p.msg.mentions, mentionAll)
-	}
-	for _, gm := range c.ctx.GetGroupMentions() {
-		p.msg.mentions = append(p.msg.mentions, groupMention(gm.GetGroupJID(), gm.GetGroupSubject()))
-	}
+	p.msg.mentions = mentionsOf(c.ctx)
 	msg.Forwarded = c.ctx.GetIsForwarded()
 	b.parseQuote(ctx, &p.msg, c.ctx)
 	return p, true
+}
+
+// mentionsOf returns the mentions of a message's context, as stored.
+func mentionsOf(ci *waE2E.ContextInfo) []string {
+	out := append([]string(nil), ci.GetMentionedJID()...)
+	if ci.GetNonJIDMentions() > 0 {
+		out = append(out, mentionAll)
+	}
+	for _, gm := range ci.GetGroupMentions() {
+		out = append(out, groupMention(gm.GetGroupJID(), gm.GetGroupSubject()))
+	}
+	return out
+}
+
+// setEdit makes p an edit of message target to the content of m, made at
+// at. It reports whether there is one.
+func (p *parsed) setEdit(target string, m *waE2E.Message, at time.Time) bool {
+	c := describe(m)
+	if target == "" || c.text == "" && c.media == model.MediaNone {
+		return false
+	}
+	p.target, p.edited, p.edit, p.editMentions, p.editTime = target, true, c.text, mentionsOf(c.ctx), at
+	return true
 }
 
 // parseQuote fills in the message a reply points to. The quoted content

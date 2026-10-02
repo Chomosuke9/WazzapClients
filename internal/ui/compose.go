@@ -50,6 +50,7 @@ func (u *UI) applyFocus(gtx C) {
 }
 
 func (u *UI) startReply(m *model.Message) {
+	u.cancelEdit()
 	u.conv.reply = m
 	u.requestFocus(&u.conv.composer)
 }
@@ -145,6 +146,10 @@ func (u *UI) sendComposer() {
 	if ms := u.mentionQuery(); ms != nil {
 		u.updateMentionSel(ms)
 		u.pickMention(u.conv.mentionSel)
+		return
+	}
+	if u.conv.edit.msg != nil {
+		u.finishEdit()
 		return
 	}
 	if len(u.attach.files) > 0 {
@@ -430,7 +435,7 @@ func (u *UI) mentionKeys(gtx C) {
 func (u *UI) resetComposerAnims() {
 	c := &u.conv
 	c.replyAnim.snap(false)
-	c.replyGhost = nil
+	c.replyGhost, c.ghostEdit = nil, false
 	c.mentionAnim.snap(false)
 	c.mentionGhost = nil
 	c.richFor = "" // a command's name shows only where it runs
@@ -623,9 +628,14 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	if spv == 0 {
 		u.slash.ghost = nil
 	}
-	reply := c.reply
+	// The bar above the input quotes the message being answered, or the
+	// one being edited.
+	reply, editing := c.reply, c.edit.msg != nil
+	if editing {
+		reply = c.edit.msg
+	}
 	if reply != nil {
-		c.replyGhost = reply
+		c.replyGhost, c.ghostEdit = reply, editing
 	}
 	rv := easeOut(c.replyAnim.step(gtx, reply != nil, durGrow))
 	if rv == 0 {
@@ -669,6 +679,9 @@ func (u *UI) layoutComposerBox(gtx C) D {
 						var done func()
 						gtx, done = fadeOut(gtx)
 						defer done()
+					}
+					if c.ghostEdit {
+						return u.layoutEditPreview(gtx, ghost)
 					}
 					return u.layoutReplyPreview(gtx, ghost)
 				})
@@ -728,7 +741,11 @@ func (u *UI) layoutComposerBox(gtx C) D {
 									if sv > 0 {
 										fx := pushFx(gtx, sv, scaleAt(mid, lerp(0.5, 1, sv)))
 										fillCircle(gtx, mid, sz/2, p.Green)
-										centerIn(gtx, sz, iconW(icSend, 21, p.OnGreen))
+										if editing {
+											centerIn(gtx, sz, iconW(icTick, 24, p.OnGreen))
+										} else {
+											centerIn(gtx, sz, iconW(icSend, 21, p.OnGreen))
+										}
 										fx.Pop()
 									}
 									return D{Size: image.Pt(sz, sz)}

@@ -235,6 +235,12 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		}
 		add(menuItem{key: "copy", ic: icCopy, label: "Copy", run: func() { u.copyText(stripIsolates(txt)) }})
 	}
+	if m.CanEdit(u.now()) && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
+		add(menuItem{key: "edit", ic: icEdit, label: "Edit", run: func() { u.startEdit(m) }})
+	}
+	if u.editHistory && !m.Edited.IsZero() && !deleted {
+		add(menuItem{key: "edits", ic: icEditNote, label: "Edit history", run: func() { u.openEditHistory(m) }})
+	}
 	if canSave(m) {
 		add(menuItem{key: "save", ic: icDownload, label: "Save as…", run: func() { b.SaveMedia(m) }})
 	}

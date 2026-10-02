@@ -150,7 +150,7 @@ type UI struct {
 	newChat newChatState // the New chat panel over the chat list
 	slash   slashState   // slash commands and their notes (slash.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
-	adminMention, rawPhotos bool
+	adminMention, rawPhotos, editHistory bool
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
@@ -190,6 +190,7 @@ type UI struct {
 		cardH int
 
 		reply            *model.Message // message being replied to
+		edit             msgEdit        // the message being edited (edit.go)
 		mentions         []mentionRef   // @mentions picked for the draft
 		mentionList      widget.List
 		mentionSel       int    // the highlighted picker row, which Enter picks
@@ -222,6 +223,7 @@ type UI struct {
 		// drawn while it fades out.
 		replyAnim    tween
 		replyGhost   *model.Message
+		ghostEdit    bool // replyGhost is the message being edited
 		mentionAnim  tween
 		mentionGhost *mentionState
 		selAnim      tween
@@ -500,6 +502,7 @@ func (u *UI) open(c *model.Chat) {
 	u.showUnread(unread)
 	u.conv.composer.SetText("")
 	u.conv.reply, u.conv.mentions = nil, nil
+	u.conv.edit = msgEdit{}
 	u.conv.reactions, u.conv.expanded = nil, nil
 	u.endSelect()
 	u.resetComposerAnims()
@@ -870,6 +873,7 @@ func (u *UI) update(gtx C) {
 		}
 	}
 	if u.conv.attach.Clicked(gtx) {
+		u.cancelEdit() // what you attach is a new message
 		u.openAttachMenu()
 	}
 	u.updateAttach()
@@ -964,6 +968,8 @@ func (u *UI) escape() {
 		u.newChatBack()
 	case u.conv.selecting:
 		u.endSelect()
+	case u.conv.edit.msg != nil:
+		u.cancelEdit()
 	case u.conv.reply != nil:
 		u.conv.reply = nil
 	case u.status.viewer.isOpen():
@@ -1228,7 +1234,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
-// "select", "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
@@ -1314,6 +1320,17 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "delete":
 		if lastOut != nil {
 			u.confirmDelete([]*model.Message{lastOut})
+		}
+	case "edit":
+		if lastOut != nil {
+			u.startEdit(lastOut)
+		}
+	case "edits":
+		for _, m := range u.msgs {
+			if !m.Edited.IsZero() {
+				u.openEditHistory(m)
+				break
+			}
 		}
 	case "select":
 		if lastIn != nil {

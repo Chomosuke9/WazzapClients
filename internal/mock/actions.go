@@ -360,3 +360,58 @@ func (b *Backend) SetBlocked(id string, blocked bool) {
 func (b *Backend) ExportChat(string) {
 	b.emit(model.NoticeEvent{Text: "Demo mode doesn't export chats."})
 }
+
+// EditText returns m's text with its mentions as "@Name".
+func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
+	x := b.find(m)
+	if x == nil {
+		return "", nil
+	}
+	var refs []model.MentionRef
+	var sb strings.Builder
+	for rest := x.Text; ; {
+		i := strings.IndexRune(rest, '⁨')
+		j := strings.IndexRune(rest, '⁩')
+		if i < 0 || j < i {
+			sb.WriteString(rest)
+			break
+		}
+		sb.WriteString(rest[:i])
+		name := strings.TrimLeft(rest[i+len("⁨"):j], string([]rune{model.MentionNotifies, model.MentionAdmins}))
+		sb.WriteString(name)
+		name = strings.TrimPrefix(name, "@")
+		id := "@" + name
+		if info := b.Info(m.ChatID); info != nil && name != "all" && name != "admin" {
+			for _, mb := range info.Members {
+				if mb.Name == name {
+					id = mb.ID
+				}
+			}
+		}
+		refs = append(refs, model.MentionRef{Name: name, ID: id})
+		rest = rest[j+len("⁩"):]
+	}
+	return sb.String(), refs
+}
+
+func (b *Backend) Edit(m *model.Message, d model.Draft) {
+	b.update(m, func(x *model.Message) {
+		if b.versions == nil {
+			b.versions = map[string][]model.Version{}
+		}
+		since := x.Edited
+		if since.IsZero() {
+			since = x.Time
+		}
+		k := x.ChatID + "/" + x.ID
+		b.versions[k] = append(b.versions[k], model.Version{Text: x.Text, Time: since})
+		x.Text, x.Edited = b.showMentions(m.ChatID, d), b.now()
+	})
+	if c := b.chat(m.ChatID); c != nil && c.Last != nil && c.Last.ID == m.ID {
+		b.emitChat(c.ID)
+	}
+}
+
+func (b *Backend) Versions(m *model.Message) []model.Version {
+	return b.versions[m.ChatID+"/"+m.ID]
+}
