@@ -1,6 +1,7 @@
 package command
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -135,8 +136,12 @@ func TestUsage(t *testing.T) {
 }
 
 func TestMatching(t *testing.T) {
-	if got := Matching("", false); len(got) != 1 || got[0].Name != "sticker" {
-		t.Errorf("outside groups: %v", got)
+	var outside []string
+	for _, c := range Matching("", false) {
+		outside = append(outside, c.Name)
+	}
+	if strings.Join(outside, " ") != "sticker purge calc" {
+		t.Errorf("outside groups: %v", outside)
 	}
 	if got := Matching("d", true); len(got) != 2 {
 		t.Errorf("d: %v", got)
@@ -169,5 +174,51 @@ func TestParseSeparator(t *testing.T) {
 			t.Errorf("%q: top %q, bottom %q, current %d; want %q, %q, %d",
 				c.text, get(0), get(1), in.Current, c.top, c.bottom, c.current)
 		}
+	}
+}
+
+func TestParseNumber(t *testing.T) {
+	s := "/purge 25"
+	in, ok := Parse(s, len([]rune(s)), nil, nil)
+	if !ok || in.Problem() != "" || in.Values[0][0].Text != "25" {
+		t.Fatalf("/purge 25 = %+v (%q)", in, in.Problem())
+	}
+	for _, s := range []string{"/purge 0", "/purge 101", "/purge five", "/purge "} {
+		in, _ := Parse(s, len([]rune(s)), nil, nil)
+		if in.Problem() == "" {
+			t.Errorf("%q runs", s)
+		}
+	}
+	// An optional number can be left out.
+	s = "/raffle"
+	in, _ = Parse(s+" ", len([]rune(s))+1, nil, testMembers)
+	if in.Problem() != "" || len(in.Values[0]) != 0 {
+		t.Fatalf("%q = %+v", s, in.Values)
+	}
+	s = "/raffle 3 tickets"
+	in, _ = Parse(s, len([]rune(s)), nil, testMembers)
+	if in.Problem() == "" {
+		t.Fatalf("%q runs", s)
+	}
+}
+
+func TestRaffleText(t *testing.T) {
+	text, ids := raffleText("Lady Luck smiles on", testMembers[1:3], 3)
+	want := "🎲 *Raffle*\nLady Luck smiles on:\n1. @budi\n2. @siti\n_Drawn at random from 3 members._"
+	if text != want || len(ids) != 2 || ids[0] != "budi@lid" {
+		t.Fatalf("raffleText = %q, %v", text, ids)
+	}
+}
+
+func TestRaffleLines(t *testing.T) {
+	seen := map[string]bool{}
+	for _, l := range raffleLines {
+		if l == "" || seen[l] || strings.ContainsAny(l[len(l)-1:], ":.!?") {
+			t.Errorf("raffle line %q", l)
+		}
+		seen[l] = true
+	}
+	if len(seen) != 100 {
+		t.Errorf("%d raffle lines, want 100", len(seen))
 	}
 }

@@ -8,6 +8,7 @@
 package command
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -26,6 +27,8 @@ const (
 	Contact
 	// Choice is one of Option.Choices.
 	Choice
+	// Number is a whole number from Option.Min to Option.Max.
+	Number
 )
 
 // Option is a value a command takes. Options are typed in order.
@@ -36,6 +39,8 @@ type Option struct {
 	// Multiple lets a Member or Contact option take several.
 	Multiple bool
 	Choices  []string
+	// Min and Max bound a Number option's value.
+	Min, Max int
 	// Until ends a Text option's value at this separator, so that the
 	// next option follows it: "/sticker top text#bottom text".
 	Until string
@@ -53,6 +58,10 @@ type Command struct {
 	// an admin.
 	Group, Admin bool
 	Run          func(c *Context) error
+	// Preview, when set, works out what the command would give with the
+	// options typed so far, which the composer shows as you type: text,
+	// or why it can't, with ok false ("" for nothing to show).
+	Preview func(in *Input) (text string, ok bool)
 }
 
 // Usage is the command with its options, as help shows it:
@@ -132,6 +141,19 @@ type Input struct {
 	// completes, and WordStart and WordEnd its rune offsets.
 	Word               string
 	WordStart, WordEnd int
+}
+
+// Text returns the first value of option name as typed, or "".
+func (in *Input) Text(name string) string {
+	if in.Cmd == nil {
+		return ""
+	}
+	for i, o := range in.Cmd.Options {
+		if o.Name == name && len(in.Values[i]) > 0 {
+			return in.Values[i][0].Text
+		}
+	}
+	return ""
 }
 
 // Missing returns the required options that have no value yet.
@@ -321,6 +343,18 @@ func (in *Input) assign(rs []rune, toks []token, mentions []Mention, members []m
 					continue
 				}
 				v.Err = "pick " + strings.Join(o.Choices, " or ")
+			}
+			in.Values[oi] = append(in.Values[oi], v)
+			ti++
+		case Number:
+			n, err := strconv.Atoi(t.text)
+			if err != nil && !o.Required {
+				oi++ // perhaps the next option's
+				continue
+			}
+			v := Value{Text: t.text, Start: t.start, End: t.end, Done: true}
+			if err != nil || n < o.Min || n > o.Max {
+				v.Err, v.Done = "type a number from "+strconv.Itoa(o.Min)+" to "+strconv.Itoa(o.Max), false
 			}
 			in.Values[oi] = append(in.Values[oi], v)
 			ti++

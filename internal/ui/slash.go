@@ -47,6 +47,7 @@ type slashState struct {
 	list      widget.List
 	anim      tween
 	ghost     *slashPick // what the picker showed, while it fades out
+	calcMore  bool       // /calc's calculator shows its functions (⋯)
 
 	notes   map[string][]*localNote           // per chat, oldest first
 	waiting map[string]func(model.GroupEvent) // group requests, by Ref
@@ -80,6 +81,10 @@ type slashPick struct {
 	cmds []*command.Command // the commands matching the name being typed
 	opt  *command.Option    // the option being typed, or nil
 	vals []slashValue       // values to pick for it
+	// preview is what the command would give (Command.Preview), and
+	// previewOK false when it says why it can't.
+	preview   string
+	previewOK bool
 }
 
 // slashValue is a value the picker offers for an option: a member or
@@ -147,6 +152,9 @@ func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInf
 	}
 	if in.Cmd.Group && !c.IsGroup {
 		return nil
+	}
+	if in.Cmd.Preview != nil {
+		sp.preview, sp.previewOK = in.Cmd.Preview(&in)
 	}
 	if in.Current < 0 {
 		return sp
@@ -362,7 +370,7 @@ func (u *UI) submitSlash(sp *slashPick) {
 	}
 	c := u.selected
 	ctx := &command.Context{Cmd: in.Cmd, Input: trimSpace(txt), Values: in.Values, Chat: c,
-		Reply: u.conv.reply, Backend: u.backend, Host: slashHost{u: u, chat: c.ID}}
+		Reply: u.conv.reply, Backend: u.backend, Now: u.now(), Host: slashHost{u: u, chat: c.ID}}
 	if c.IsGroup {
 		ctx.Info = u.chatMembers(c.ID)
 	}
@@ -494,6 +502,9 @@ func (u *UI) slashHint(sp *slashPick) string {
 	if in.Cmd == nil {
 		return ""
 	}
+	if sp.previewOK {
+		return " " + sp.preview // apart from the text it works out
+	}
 	var parts []string
 	for i, o := range in.Cmd.Options {
 		if len(in.Values) > i && len(in.Values[i]) > 0 {
@@ -540,6 +551,9 @@ func (u *UI) paintSlashHint(gtx C, sz image.Point) {
 // matching the name being typed, or the command with its options and the
 // values to pick for the one being typed.
 func (u *UI) layoutSlashPicker(gtx C, sp *slashPick) D {
+	if isCalcPick(sp) {
+		return u.layoutCalcPad(gtx, sp)
+	}
 	p := u.pal
 	s := &u.slash
 	in := &sp.in
@@ -565,6 +579,10 @@ func (u *UI) layoutSlashPicker(gtx C, sp *slashPick) D {
 			switch {
 			case s.problem != "" && s.problemAt == txt:
 				return u.label(14, s.problem, p.Danger, labelOpts{weight: font.Medium, maxLines: 2}).Layout(gtx)
+			case sp.preview != "" && sp.previewOK:
+				return u.label(22, sp.preview, p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout(gtx)
+			case sp.preview != "":
+				return u.label(14, sp.preview, p.Danger, labelOpts{weight: font.Medium, maxLines: 2}).Layout(gtx)
 			case in.Naming:
 				t := "COMMANDS"
 				if in.Name != "" {

@@ -1,6 +1,9 @@
 package command
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -63,6 +66,8 @@ type Context struct {
 	// Reply is the message the composer was replying to, or nil.
 	Reply   *model.Message
 	Backend model.Backend
+	// Now is when the command runs.
+	Now time.Time
 	Host
 }
 
@@ -82,6 +87,14 @@ func (c *Context) Text(name string) string {
 		return vs[0].Text
 	}
 	return ""
+}
+
+// Int returns option name's number, or def when it has none.
+func (c *Context) Int(name string, def int) int {
+	if n, err := strconv.Atoi(c.Text(name)); err == nil {
+		return n
+	}
+	return def
 }
 
 // IDs returns the members or contacts named by option name: their IDs, or

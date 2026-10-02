@@ -1240,7 +1240,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
 // switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
-// picker "slash", /kick's options "slashkick", or the notes of commands run "slashrun".
+// picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", or the notes
+// of commands run "slashrun".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1424,9 +1425,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.attach.anim.snap(true)
 			u.conv.composer.SetText("Sunday at the beach")
 		}
-	case "slash", "slashkick", "slashrun":
+	case "slash", "slashkick", "slashcalc", "slashrun":
 		// Slash commands (open a group with -ochat): the picker of
-		// commands, /kick's options, or the notes of commands run.
+		// commands, /kick's options, /calc's answer, or the notes of
+		// commands run.
 		u.slash.on = true // an extra feature, off by default
 		ed := &u.conv.composer
 		set := func(s string) {
@@ -1439,6 +1441,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			set("/")
 		case "slashkick":
 			set("/kick ")
+		case "slashcalc":
+			// Replying to a bill: its amounts are chips.
+			if c := u.selected; c != nil {
+				u.conv.reply = &model.Message{ID: "bill", ChatID: c.ID, Sender: c.Name, SenderID: c.ID,
+					Text: "Fried rice 25,000, iced tea 8K, parking 5,000", Time: u.now()}
+			}
+			u.slash.calcMore = true
+			set("/calc ceil((25000 + 8000 + 5000) ÷ 3)")
 		case "slashrun":
 			set("/kick ")
 			if sp := u.slashQuery(); sp != nil {

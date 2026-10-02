@@ -2,8 +2,11 @@ package command
 
 import (
 	"errors"
+	"math/rand/v2"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/sticker"
@@ -56,6 +59,24 @@ var All = []*Command{
 			{Name: "bottom", Description: "Text along the bottom", Kind: Text},
 		},
 		Run: runSticker,
+	},
+	{
+		Name: "purge", Description: "Deletes the last messages for everyone, or those up to the one you reply to",
+		Options: []Option{{Name: "count", Description: "How many messages to delete", Kind: Number,
+			Required: true, Min: 1, Max: maxPurge}},
+		Run: runPurge,
+	},
+	{
+		Name: "raffle", Description: "Draws members of the group at random and announces them", Group: true,
+		Options: []Option{{Name: "winners", Description: "How many to draw (1 if you leave it out)", Kind: Number, Min: 1, Max: 50}},
+		Run:     runRaffle,
+	},
+	{
+		Name: "calc", Description: "Works out a sum as you type, and sends it with the answer",
+		Options: []Option{{Name: "sum", Description: "Like 12 x 4500, 15k x 3 or 15% x 80000; ans is the last answer",
+			Kind: Text, Required: true}},
+		Run:     runCalc,
+		Preview: previewCalc,
 	},
 }
 
@@ -287,6 +308,186 @@ func runSticker(c *Context) error {
 		return errors.New("Reply to a photo or a sticker, or run /sticker without replying to pick a picture.")
 	}
 	return nil
+}
+
+// maxPurge is the most messages /purge deletes at once.
+const maxPurge = 100
+
+// revokeWindow is how long after sending a message it can still be
+// deleted for everyone (WhatsApp allows about two days).
+const revokeWindow = 60 * time.Hour
+
+// runPurge deletes the last count messages for everyone, or, replying to
+// a message, that one and the ones before it. Messages already deleted
+// don't count. Those you can't delete for everyone (others' outside
+// groups you administer, or too old) are left as they are.
+func runPurge(c *Context) error {
+	chat := c.Chat.ID
+	count := c.Int("count", 1)
+	msgs := purgeable(c.Backend, chat, c.Reply, count)
+	if len(msgs) == 0 {
+		return errors.New("There are no messages to delete.")
+	}
+	admin := c.Chat.IsGroup && c.Info != nil && isAdmin(c.Info)
+	var del []*model.Message
+	others, old, unsent := 0, 0, 0
+	for _, m := range msgs {
+		switch {
+		case !m.FromMe && !admin:
+			others++
+		case m.FromMe && (m.Receipt == model.Pending || m.Receipt == model.Failed):
+			unsent++
+		case c.Now.Sub(m.Time) > revokeWindow:
+			old++
+		default:
+			del = append(del, m)
+		}
+	}
+	var skipped []string
+	if others > 0 {
+		s := strconv.Itoa(others) + " from other people"
+		if c.Chat.IsGroup {
+			s += " (only group admins can delete those)"
+		}
+		skipped = append(skipped, s)
+	}
+	if old > 0 {
+		skipped = append(skipped, strconv.Itoa(old)+" too old to delete for everyone")
+	}
+	if unsent > 0 {
+		skipped = append(skipped, strconv.Itoa(unsent)+" not sent yet")
+	}
+	left := strings.Join(skipped, ", ")
+	if len(del) == 0 {
+		return errors.New("None of them can be deleted: " + left + ".")
+	}
+	body := ""
+	if left != "" {
+		body = "Left as they are: " + left + "."
+	}
+	c.Confirm("Delete "+plural(len(del), "message")+" for everyone?", body, "Delete for everyone", true, func() {
+		for _, m := range del {
+			c.Backend.Delete(m, true)
+		}
+		text := "Deleted " + plural(len(del), "message") + " for everyone."
+		if left != "" {
+			text += "\nLeft as they are: " + left + "."
+		}
+		c.Note(&Note{Title: c.Input, Text: text})
+	})
+	return nil
+}
+
+// purgeable returns up to count messages of a chat that aren't deleted
+// yet, newest first: the newest ones, or from reply back.
+func purgeable(b model.Backend, chat string, reply *model.Message, count int) []*model.Message {
+	var out []*model.Message
+	var page []*model.Message
+	if reply != nil {
+		page = b.MessagesFrom(chat, reply.ID, 1)
+		if len(page) == 0 {
+			return nil
+		}
+	} else {
+		page = b.Messages(chat, count)
+	}
+	for len(page) > 0 {
+		for i := len(page) - 1; i >= 0 && len(out) < count; i-- {
+			if page[i].Kind != model.KindDeleted {
+				out = append(out, page[i])
+			}
+		}
+		if len(out) == count {
+			break
+		}
+		page = b.MessagesBefore(chat, page[0].ID, count)
+	}
+	return out
+}
+
+// runRaffle draws winners from the group's members, you left out, and
+// sends them as a message that mentions them.
+func runRaffle(c *Context) error {
+	if c.Info == nil {
+		return errors.New("The group's members haven't loaded yet. Try again in a moment.")
+	}
+	var pool []model.Member
+	for _, m := range c.Info.Members {
+		if !m.Me && m.ID != "" {
+			pool = append(pool, m)
+		}
+	}
+	n := c.Int("winners", 1)
+	if len(pool) == 0 {
+		return errors.New("There's no one else in the group to draw.")
+	}
+	if n > len(pool) {
+		return errors.New("The group has only " + plural(len(pool), "other member") + " to draw from.")
+	}
+	rand.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+	text, ids := raffleText(raffleLines[rand.IntN(len(raffleLines))], pool[:n], len(pool))
+	if m := c.Backend.Send(c.Chat.ID, model.Draft{Text: text, Mentions: ids}); m != nil {
+		c.Sent(m)
+	}
+	return nil
+}
+
+// raffleText is the message announcing a raffle's winners, drawn from
+// pool members, under line (one of raffleLines), and the IDs it mentions.
+func raffleText(line string, winners []model.Member, pool int) (string, []string) {
+	var b strings.Builder
+	b.WriteString("🎲 *Raffle*\n" + line + ":")
+	ids := make([]string, len(winners))
+	for i, w := range winners {
+		ids[i] = w.ID
+		user, _, _ := strings.Cut(w.ID, "@")
+		b.WriteString("\n" + strconv.Itoa(i+1) + ". @" + user)
+	}
+	b.WriteString("\n_Drawn at random from " + plural(pool, "member") + "._")
+	return b.String(), ids
+}
+
+// lastAnswer is the answer of the last /calc, which "ans" stands for. Only
+// the UI goroutine runs commands.
+var lastAnswer float64
+
+// runCalc sends the sum with its answer: "12 x 4500 = 54 000".
+func runCalc(c *Context) error {
+	sum := strings.TrimSpace(c.Text("sum"))
+	v, err := Calc(sum, lastAnswer)
+	if err != nil {
+		return errors.New("Couldn't work that out: " + err.Error() + ".")
+	}
+	if m := c.Backend.Send(c.Chat.ID, model.Draft{Text: sum + " = " + FormatNumber(v), Reply: c.Reply}); m != nil {
+		lastAnswer = v
+		c.Sent(m)
+	}
+	return nil
+}
+
+// previewCalc shows the answer while the sum is typed. A sum that only
+// isn't finished yet shows nothing.
+func previewCalc(in *Input) (string, bool) {
+	sum := strings.TrimSpace(in.Text("sum"))
+	if sum == "" {
+		return "", false
+	}
+	v, err := Calc(sum, lastAnswer)
+	switch {
+	case errors.Is(err, errUnfinished):
+		return "", false
+	case err != nil:
+		return strings.ToUpper(err.Error()[:1]) + err.Error()[1:], false
+	}
+	return "= " + FormatNumber(v), true
+}
+
+// plural is "1 message" or "3 messages".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
 }
 
 // names lists names as a sentence: "A", "A and B", "A, B and C".

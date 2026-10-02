@@ -52,6 +52,9 @@ var commandIcons = map[string]*icon.Icon{
 	"lockdown":    icLockOutline,
 	"description": icEditNote,
 	"sticker":     icSticker,
+	"purge":       icDeleteSweep,
+	"raffle":      icCasino,
+	"calc":        icCalculate,
 }
 
 func commandIcon(name string) *icon.Icon {

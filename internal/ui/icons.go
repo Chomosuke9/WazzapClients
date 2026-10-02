@@ -122,6 +122,10 @@ var (
 	icRemoveModerator = icon.RemoveModerator
 	icEditNote        = icon.EditNote
 	icLockOpen        = icon.LockOpen
+	icCasino          = icon.Casino
+	icCalculate       = icon.Calculate
+	icDeleteSweep     = icon.DeleteSweep
+	icBackspace       = icon.Backspace
 
 	// Emoji picker categories.
 	icEmojiPeople  = icon.Mood
