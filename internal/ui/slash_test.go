@@ -28,7 +28,7 @@ type slashTest struct {
 }
 
 func newSlashTest(t *testing.T, chat string) *slashTest {
-	st := &slashTest{t: t, b: mock.New(), now: time.Now()}
+	st := &slashTest{t: t, b: mock.New(), now: testNow()}
 	st.b.SetPref(prefSlash, "on") // an extra feature, off by default
 	st.u = New(st.b)
 	st.u.Start(func() {})
@@ -292,8 +292,8 @@ func TestSlashStickerHint(t *testing.T) {
 func TestNoteBeforeMessages(t *testing.T) {
 	st := newSlashTest(t, "work")
 	u := st.u
-	y, m, d := time.Now().Date()
-	u.now = func() time.Time { return time.Date(y, m, d, 5, 0, 0, 0, time.Local) }
+	y, m, d := testNow().Date()
+	u.now = func() time.Time { return time.Date(y, m, d, 5, 0, 0, 0, time.UTC) }
 	slashHost{u: u, chat: "work"}.Note(&command.Note{Text: "Done."})
 	hasNote := func() bool {
 		for _, r := range u.rows(u.selected) {

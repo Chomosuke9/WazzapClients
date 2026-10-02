@@ -47,7 +47,7 @@ func TestSenderOpensContact(t *testing.T) {
 	u := New(mock.NewReference())
 	u.Start(func() {})
 	u.SelectID("test@g.us")
-	now := time.Now()
+	now := testNow()
 	var ops op.Ops
 	var r input.Router
 	frame := func() {

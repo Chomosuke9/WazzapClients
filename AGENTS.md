@@ -276,6 +276,11 @@ while the window is minimized and Gio draws no frames.
 - Watch memory use. Low RAM is the reason this project exists. Measure with
   `cmd/memprobe` before and after a change; the private working set is what Task Manager
   shows. Keep caches bounded by bytes, not just entries (see `imageCache`).
+- UI tests run on a clock of their own (`internal/ui/main_test.go`): 15:00 UTC on a fixed
+  day, moving on in real time, read by the mock (`mock.Clock`) and the UI. The demo chats
+  are dated "today at 09:02" by it, so on the real clock tests passed in one time zone or
+  hour and failed on CI, which runs in UTC. Use `testNow()` in tests, never `time.Now()`,
+  and backend code should read its clock (`b.now()`), not `time.Now()`.
 
 ## Animations
 

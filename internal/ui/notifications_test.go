@@ -2,7 +2,6 @@ package ui
 
 import (
 	"testing"
-	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -38,7 +37,7 @@ func newNotifyTest(t *testing.T) *notifyTest {
 }
 
 func (nt *notifyTest) receive(chat, sender, text string) *model.Message {
-	m := &model.Message{ID: text, ChatID: chat, Sender: sender, Text: text, Time: time.Now()}
+	m := &model.Message{ID: text, ChatID: chat, Sender: sender, Text: text, Time: testNow()}
 	nt.n.event(model.MessageEvent{Msg: m, New: true})
 	return m
 }
@@ -90,7 +89,7 @@ func TestNotifyQuietChats(t *testing.T) {
 	}
 	// Muted and archived chats still notify mentions and replies to you.
 	nt.receive("quiet@g.us", "Bob", "hey ⁨"+string(model.MentionNotifies)+"@You⁩")
-	m := &model.Message{ID: "r", ChatID: "old@lid", Text: "yes", Time: time.Now(),
+	m := &model.Message{ID: "r", ChatID: "old@lid", Text: "yes", Time: testNow(),
 		Quote: &model.Quote{Sender: "You", Text: "ok?"}}
 	nt.n.event(model.MessageEvent{Msg: m, New: true})
 	got := nt.flush(t)

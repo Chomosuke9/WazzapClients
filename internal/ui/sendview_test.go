@@ -32,7 +32,7 @@ type sendHarness struct {
 }
 
 func newSendHarness(t *testing.T) *sendHarness {
-	h := &sendHarness{t: t, u: New(mock.New()), now: time.Now()}
+	h := &sendHarness{t: t, u: New(mock.New()), now: testNow()}
 	h.u.Start(func() {})
 	h.u.SelectID("rina")
 	dir := t.TempDir()
@@ -345,7 +345,7 @@ func TestCenteredPicker(t *testing.T) {
 		u.SelectID("rina")
 		var ops op.Ops
 		var r input.Router
-		now := time.Now()
+		now := testNow()
 		frame := func() {
 			ops.Reset()
 			u.Layout(layout.Context{Ops: &ops, Now: now, Source: r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},

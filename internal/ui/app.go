@@ -246,9 +246,12 @@ type UI struct {
 	}
 }
 
+// timeNow is the time new UIs read; tests pin it to the mock's (main_test.go).
+var timeNow = time.Now
+
 // New builds the UI on top of a backend. Call Start before the first frame.
 func New(b model.Backend) *UI {
-	u := &UI{th: newTheme(), now: time.Now, backend: b, syncPct: -1}
+	u := &UI{th: newTheme(), now: timeNow, backend: b, syncPct: -1}
 	u.SetDark(true)
 	u.doodles = true
 	if b != nil { // nil in some tests

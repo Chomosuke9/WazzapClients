@@ -32,9 +32,13 @@ type Backend struct {
 	extras
 }
 
+// Clock is the time new demo backends read. They date their chats by it
+// ("today at 09:02"), so tests pin it to a fixed day.
+var Clock = time.Now
+
 // New returns a demo backend with timestamps relative to the current time.
 func New() *Backend {
-	b := &Backend{msgs: make(map[string][]*model.Message), now: time.Now}
+	b := &Backend{msgs: make(map[string][]*model.Message), now: Clock}
 	for _, d := range demo(b.now()) {
 		for i, m := range d.Messages {
 			m.ID = fmt.Sprintf("%s-%d", d.ID, i)

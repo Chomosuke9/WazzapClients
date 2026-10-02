@@ -245,7 +245,7 @@ func (b *Backend) SetMuted(id string, v bool, d time.Duration) {
 	b.setChat(id, func(c *model.Chat) {
 		c.Muted, c.MuteUntil = v, time.Time{}
 		if v && d > 0 {
-			c.MuteUntil = time.Now().Add(d)
+			c.MuteUntil = b.now().Add(d)
 		}
 	})
 }

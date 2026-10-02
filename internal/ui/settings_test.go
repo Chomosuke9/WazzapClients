@@ -77,7 +77,7 @@ func TestCtrlEnterSends(t *testing.T) {
 	if b.Pref(prefEnterSend) != "off" || u.conv.composer.Submit {
 		t.Fatal("Enter is send didn't turn off")
 	}
-	now := time.Now()
+	now := testNow()
 	var ops op.Ops
 	var r input.Router
 	frame := func() {

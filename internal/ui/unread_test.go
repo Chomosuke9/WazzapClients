@@ -3,7 +3,6 @@ package ui
 import (
 	"image"
 	"testing"
-	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -22,7 +21,7 @@ func TestOpenChatStaysRead(t *testing.T) {
 	var ops op.Ops
 	frame := func() {
 		ops.Reset()
-		u.Layout(layout.Context{Ops: &ops, Now: time.Now(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		u.Layout(layout.Context{Ops: &ops, Now: testNow(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 			Constraints: layout.Exact(image.Pt(1100, 700))})
 	}
 	frame()

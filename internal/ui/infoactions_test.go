@@ -21,7 +21,7 @@ func TestInfoActions(t *testing.T) {
 	u := New(b)
 	u.Start(func() {})
 	u.SelectID("family")
-	now := time.Now()
+	now := testNow()
 	var ops op.Ops
 	var r input.Router
 	frame := func() {
@@ -74,7 +74,7 @@ func TestInfoActions(t *testing.T) {
 		t.Fatalf("Notification settings opened menu %v", u.ctx.kind)
 	}
 	click("menu:8h")
-	if c := u.chatByID("family"); !c.Muted || c.MuteUntil.Sub(time.Now()) < 7*time.Hour {
+	if c := u.chatByID("family"); !c.Muted || c.MuteUntil.Sub(testNow()) < 7*time.Hour {
 		t.Errorf("Mute for 8 hours left muted=%v until %v", c.Muted, c.MuteUntil)
 	}
 	now = now.Add(9 * time.Hour)

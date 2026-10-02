@@ -60,7 +60,7 @@ func TestComposerClicks(t *testing.T) {
 	u := New(mock.New())
 	u.Start(func() {})
 	u.SelectID("rina")
-	now := time.Now()
+	now := testNow()
 	start := now
 	var ops op.Ops
 	var r input.Router

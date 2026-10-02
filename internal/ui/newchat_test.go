@@ -36,7 +36,7 @@ func TestPhoneDigits(t *testing.T) {
 func TestNewGroupFlow(t *testing.T) {
 	u := New(mock.New())
 	u.Start(func() {})
-	now := time.Now()
+	now := testNow()
 	var ops op.Ops
 	var r input.Router
 	frame := func() {

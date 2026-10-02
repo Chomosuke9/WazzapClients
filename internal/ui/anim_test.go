@@ -16,7 +16,7 @@ import (
 )
 
 func TestTween(t *testing.T) {
-	now := time.Now()
+	now := testNow()
 	gtx := C{Now: now}
 	var tw tween
 	if v := tw.step(gtx, true, 100*time.Millisecond); v != 0 {
@@ -42,7 +42,7 @@ func TestTween(t *testing.T) {
 }
 
 func TestFollower(t *testing.T) {
-	now := time.Now()
+	now := testNow()
 	gtx := C{Now: now}
 	var f follower
 	if v := f.step(gtx, 10, 100*time.Millisecond); v != 10 {
@@ -66,7 +66,7 @@ func TestIdleAtRest(t *testing.T) {
 	u := New(b)
 	u.Start(func() {})
 	u.SelectID("rina")
-	now := time.Now()
+	now := testNow()
 	var ops op.Ops
 	var r input.Router
 	frame := func() {
@@ -127,7 +127,7 @@ func TestWheelScroll(t *testing.T) {
 	u := New(mock.New())
 	u.Start(func() {})
 	u.SelectID("rina")
-	now := time.Now()
+	now := testNow()
 	var ops op.Ops
 	var r input.Router
 	frame := func(dt time.Duration) {

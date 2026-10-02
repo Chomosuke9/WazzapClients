@@ -58,7 +58,7 @@ func (b *longChat) index(id string) int {
 func TestMessagePaging(t *testing.T) {
 	const n = 1000
 	b := &longChat{Backend: mock.New(), id: "rina"}
-	start := time.Now().Add(-48 * time.Hour)
+	start := testNow().Add(-48 * time.Hour)
 	for i := range n {
 		b.msgs = append(b.msgs, &model.Message{
 			ID: fmt.Sprintf("long-%d", i), ChatID: b.id, FromMe: i%3 == 0,
@@ -68,7 +68,7 @@ func TestMessagePaging(t *testing.T) {
 	u := New(b)
 	u.Start(func() {})
 	u.SelectID(b.id)
-	now := time.Now()
+	now := testNow()
 	var ops op.Ops
 	var r input.Router
 	frame := func() {
@@ -169,7 +169,7 @@ func TestMessagePaging(t *testing.T) {
 	}
 
 	// A new message isn't inserted past the loaded end...
-	in := &model.Message{ID: "new-in", ChatID: b.id, Text: "hi", Time: time.Now()}
+	in := &model.Message{ID: "new-in", ChatID: b.id, Text: "hi", Time: testNow()}
 	u.upsertMessage(in)
 	if slices.Contains(u.msgs, in) {
 		t.Fatal("a new message was added to the old messages")
@@ -197,7 +197,7 @@ func TestMessagePaging(t *testing.T) {
 	}
 
 	// Sending from there goes back to the newest messages.
-	out := &model.Message{ID: "new-out", ChatID: b.id, FromMe: true, Text: "yo", Time: time.Now()}
+	out := &model.Message{ID: "new-out", ChatID: b.id, FromMe: true, Text: "yo", Time: testNow()}
 	u.upsertMessage(out)
 	if last := u.msgs[len(u.msgs)-1]; last != out || u.conv.newerMore {
 		t.Fatalf("after sending: last %s, newerMore %v", last.ID, u.conv.newerMore)
