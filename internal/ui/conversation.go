@@ -44,8 +44,10 @@ type convRow struct {
 	// the bubble tail (and, in groups, the sender's name and avatar).
 	first bool
 	// group holds a run of stickers from one sender (msg is the first), laid
-	// out side by side (stickerrow.go). Nil for a single message.
+	// out side by side (stickerrow.go), or with album set the pictures of
+	// an album, in one grid (album.go). Nil for a single message.
 	group []*model.Message
+	album bool
 }
 
 // has reports whether the row shows message id.
@@ -92,6 +94,15 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		if u.unreadRow(c, m) {
 			rows = append(rows, convRow{kind: rowUnread})
 			first = true
+		}
+		// A picture of an album joins the one before it in the album.
+		if last := &rows[len(rows)-1]; last.kind == rowMessage && !ann && (last.group == nil || last.album) && joinsAlbum(last.msg, m) {
+			if last.group == nil {
+				last.group, last.album = []*model.Message{last.msg}, true
+			}
+			last.group = append(last.group, m)
+			prev = m
+			continue
 		}
 		// A sticker joins the stickers its sender sent just before.
 		if last := &rows[len(rows)-1]; !first && last.kind == rowMessage && groupsSticker(m) && groupsSticker(last.msg) && !ann {
@@ -458,6 +469,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 					return u.layoutTyping(gtx, c.IsGroup, margin, typingV)
 				case r.kind == rowNote:
 					return u.layoutNote(gtx, r.note, maxBubble)
+				case r.album:
+					return u.layoutAlbumRow(gtx, c, r, maxBubble, margin)
 				case r.group != nil:
 					return u.layoutStickerRow(gtx, c, r, maxBubble, margin)
 				default:

@@ -48,36 +48,59 @@ func marshal(m proto.Message) []byte {
 // events hypermeow hands out.
 func unwrap(m *waE2E.Message) *waE2E.Message {
 	for i := 0; i < 4 && m != nil; i++ {
-		var inner *waE2E.Message
-		switch {
-		case m.GetDeviceSentMessage().GetMessage() != nil:
-			inner = m.GetDeviceSentMessage().GetMessage()
-		case m.GetEphemeralMessage().GetMessage() != nil:
-			inner = m.GetEphemeralMessage().GetMessage()
-		case m.GetViewOnceMessage().GetMessage() != nil:
-			inner = m.GetViewOnceMessage().GetMessage()
-		case m.GetViewOnceMessageV2().GetMessage() != nil:
-			inner = m.GetViewOnceMessageV2().GetMessage()
-		case m.GetViewOnceMessageV2Extension().GetMessage() != nil:
-			inner = m.GetViewOnceMessageV2Extension().GetMessage()
-		case m.GetDocumentWithCaptionMessage().GetMessage() != nil:
-			inner = m.GetDocumentWithCaptionMessage().GetMessage()
-		case m.GetEditedMessage().GetMessage() != nil:
-			inner = m.GetEditedMessage().GetMessage()
-		case m.GetBotInvokeMessage().GetMessage() != nil:
-			inner = m.GetBotInvokeMessage().GetMessage()
-		case m.GetLottieStickerMessage().GetMessage() != nil:
-			inner = m.GetLottieStickerMessage().GetMessage()
-		case m.GetAssociatedChildMessage().GetMessage() != nil:
-			inner = m.GetAssociatedChildMessage().GetMessage()
-		case m.GetGroupMentionedMessage().GetMessage() != nil:
-			inner = m.GetGroupMentionedMessage().GetMessage()
-		default:
+		inner := unwrapOnce(m)
+		if inner == nil {
 			return m
 		}
 		m = inner
 	}
 	return m
+}
+
+// unwrapOnce returns the message inside m's envelope, or nil when m has none.
+func unwrapOnce(m *waE2E.Message) *waE2E.Message {
+	switch {
+	case m.GetDeviceSentMessage().GetMessage() != nil:
+		return m.GetDeviceSentMessage().GetMessage()
+	case m.GetEphemeralMessage().GetMessage() != nil:
+		return m.GetEphemeralMessage().GetMessage()
+	case m.GetViewOnceMessage().GetMessage() != nil:
+		return m.GetViewOnceMessage().GetMessage()
+	case m.GetViewOnceMessageV2().GetMessage() != nil:
+		return m.GetViewOnceMessageV2().GetMessage()
+	case m.GetViewOnceMessageV2Extension().GetMessage() != nil:
+		return m.GetViewOnceMessageV2Extension().GetMessage()
+	case m.GetDocumentWithCaptionMessage().GetMessage() != nil:
+		return m.GetDocumentWithCaptionMessage().GetMessage()
+	case m.GetEditedMessage().GetMessage() != nil:
+		return m.GetEditedMessage().GetMessage()
+	case m.GetBotInvokeMessage().GetMessage() != nil:
+		return m.GetBotInvokeMessage().GetMessage()
+	case m.GetLottieStickerMessage().GetMessage() != nil:
+		return m.GetLottieStickerMessage().GetMessage()
+	case m.GetAssociatedChildMessage().GetMessage() != nil:
+		return m.GetAssociatedChildMessage().GetMessage()
+	case m.GetGroupMentionedMessage().GetMessage() != nil:
+		return m.GetGroupMentionedMessage().GetMessage()
+	}
+	return nil
+}
+
+// albumOf returns the ID of the album message a photo or video belongs
+// to, or "". The pictures of an album arrive as messages of their own
+// after it, each pointing back to it from its messageContextInfo, which
+// can sit on any of the envelopes around the picture.
+func albumOf(m *waE2E.Message) string {
+	for i := 0; i < 5 && m != nil; i++ {
+		a := m.GetMessageContextInfo().GetMessageAssociation()
+		if a.GetAssociationType() == waE2E.MessageAssociation_MEDIA_ALBUM {
+			if id := a.GetParentMessageKey().GetID(); id != "" {
+				return id
+			}
+		}
+		m = unwrapOnce(m)
+	}
+	return ""
 }
 
 func describe(m *waE2E.Message) content {
@@ -239,6 +262,9 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	msg.Text = c.text
 	msg.Time = evt.Info.Timestamp
 	msg.Thumb = c.thumb
+	if c.kind == model.KindImage {
+		msg.Album = first(albumOf(evt.RawMessage), albumOf(m))
+	}
 	c.file.apply(msg)
 	msg.Receipt = model.Sent
 	if evt.SourceWebMsg != nil && msg.FromMe {

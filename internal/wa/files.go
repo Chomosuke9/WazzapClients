@@ -339,6 +339,9 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		FileSize: st.Size(),
 		FileType: fileType(a),
 	}
+	if a.Media == model.MediaImage || a.Media == model.MediaVideo {
+		m.Album = a.Album
+	}
 	up := upload{path: a.Path}
 	switch a.Media {
 	case model.MediaImage:
@@ -494,6 +497,10 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 	sm.mediaBlob = marshal(inner)
 	if err := b.store.putMessage(b.ctx, b.db, sm); err != nil {
 		b.log.Errorf("store sent file: %v", err)
+	}
+	if m.Album != "" {
+		inAlbum(msg, jid, m.Album)
+		b.waitAlbum(ctx, m.Album)
 	}
 	b.sendAsync(m.ChatID, jid, m.ID, msg)
 }

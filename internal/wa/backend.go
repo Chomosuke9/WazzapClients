@@ -60,6 +60,7 @@ type Backend struct {
 	avatars   *fetcher
 	downloads *fetcher
 	playing   sync.Map // files being downloaded for OpenMedia and MediaFile, by path
+	albums    sync.Map // album ID → chan closed once the album message is sent (album.go)
 
 	subMu     sync.Mutex
 	subtitles map[string]string // group JID → participant list

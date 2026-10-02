@@ -203,7 +203,7 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		}
 		switch a.Media {
 		case model.MediaImage, model.MediaVideo:
-			x.Kind, x.ImageA, x.ImageB = model.KindImage, 0x5f6f7f, 0x9fafbf
+			x.Kind, x.ImageA, x.ImageB, x.Album = model.KindImage, 0x5f6f7f, 0x9fafbf, a.Album
 		case model.MediaDocument:
 			if x.Text == "" {
 				x.Text = x.FileName
@@ -211,6 +211,14 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		}
 	})
 	return b.copyOf(m)
+}
+
+// NewAlbum names an album after the chat's next message.
+func (b *Backend) NewAlbum(chatID string, photos, videos int) string {
+	if photos+videos < 2 {
+		return ""
+	}
+	return fmt.Sprintf("%s-album-%d", chatID, len(b.msgs[chatID]))
 }
 
 func (b *Backend) SendContacts(chatID string, ids []string) *model.Message {

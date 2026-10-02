@@ -109,6 +109,9 @@ type Message struct {
 	Waveform []byte
 	// ImageA and ImageB are gradient colors used by demo data instead of Thumb.
 	ImageA, ImageB uint32
+	// Album is the ID of the album a photo or video was sent in, with
+	// others, or "". The chat shows an album's pictures as one grid.
+	Album string
 }
 
 // Chat is a one-to-one or group conversation. Messages are not part of it:
@@ -181,6 +184,8 @@ type Attachment struct {
 	Quality Quality
 	// ViewOnce sends a photo or video that can be opened only once.
 	ViewOnce bool
+	// Album puts a photo or video in the album NewAlbum opened.
+	Album string
 }
 
 // Quality is the size a photo is sent at.
@@ -804,6 +809,10 @@ type Backend interface {
 	// reply and mentions), and returns it in its pending state. The upload
 	// runs in the background.
 	SendFile(chatID string, a Attachment, d Draft) *Message
+	// NewAlbum opens an album of photos and videos to send together: it
+	// sends the message that announces them and returns its ID, for each
+	// file's Attachment.Album, or "" when it can't.
+	NewAlbum(chatID string, photos, videos int) string
 	// SendContacts shares contacts (one-to-one chat IDs) as contact cards.
 	SendContacts(chatID string, contactIDs []string) *Message
 	// SendPoll sends a poll.
