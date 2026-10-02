@@ -21,6 +21,7 @@ import (
 	"rsc.io/qr"
 
 	"github.com/chomosuke9/wazzapclients/internal/accounts"
+	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -51,6 +52,8 @@ type UI struct {
 	winWidth int
 
 	backend model.Backend
+	// auto is the backend's scheduled messages and AFK (see withAuto).
+	auto    *auto.Backend
 	conn    model.ConnEvent
 	syncPct int // initial history sync progress; -1 when not syncing
 	me      string
@@ -267,7 +270,8 @@ var timeNow = time.Now
 
 // New builds the UI on top of a backend. Call Start before the first frame.
 func New(b model.Backend) *UI {
-	u := &UI{th: newTheme(), now: timeNow, backend: b, syncPct: -1}
+	b, a := withAuto(b)
+	u := &UI{th: newTheme(), now: timeNow, backend: b, auto: a, syncPct: -1}
 	u.SetDark(true)
 	u.doodles = true
 	u.split.anim.snap(true)
@@ -943,11 +947,11 @@ func (u *UI) escape() {
 		default:
 			u.closeGallery()
 		}
-	case u.slashShown(u.slashQuery()):
-		u.slash.dismissed, u.slash.problem = u.conv.composer.Text(), ""
 	case u.mentionQuery() != nil:
 		ms := u.mentionQuery()
 		u.conv.mentionDismissed = string([]rune(u.conv.composer.Text())[ms.start:ms.end])
+	case u.slashShown(u.slashQuery()):
+		u.slash.dismissed, u.slash.problem = u.conv.composer.Text(), ""
 	case len(u.attach.files) > 0:
 		// The send view: stop typing, put the tool down, drop the
 		// selection, then close.
@@ -1240,8 +1244,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
 // switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
-// picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", or the notes
-// of commands run "slashrun".
+// picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", a mention
+// in /schedule's message "slashschedule", or the notes of commands run "slashrun".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1425,10 +1429,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.attach.anim.snap(true)
 			u.conv.composer.SetText("Sunday at the beach")
 		}
-	case "slash", "slashkick", "slashcalc", "slashrun":
+	case "slash", "slashkick", "slashcalc", "slashschedule", "slashrun":
 		// Slash commands (open a group with -ochat): the picker of
-		// commands, /kick's options, /calc's answer, or the notes of
-		// commands run.
+		// commands, /kick's options, /calc's answer, a member picked in
+		// /schedule's message, or the notes of commands run.
 		u.slash.on = true // an extra feature, off by default
 		ed := &u.conv.composer
 		set := func(s string) {
@@ -1449,13 +1453,16 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			}
 			u.slash.calcMore = true
 			set("/calc ceil((25000 + 8000 + 5000) ÷ 3)")
+		case "slashschedule":
+			set("/schedule tomorrow 08:00 Standup in 10 minutes @")
 		case "slashrun":
 			set("/kick ")
 			if sp := u.slashQuery(); sp != nil {
 				u.pickSlash(sp, 0)
 			}
 			u.sendComposer()
-			for _, s := range []string{"/link ", "/add +62 812 5550 0199", "/lockdown on"} {
+			for _, s := range []string{"/link ", "/add +62 812 5550 0199", "/lockdown on",
+				"/schedule 2h Don't forget the demo", "/afk lunch, back at 2"} {
 				u.applyEvents()
 				set(s)
 				u.sendComposer()

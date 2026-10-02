@@ -17,6 +17,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/accounts"
+	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/desktop"
 	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -64,6 +65,7 @@ type Options struct {
 // it over (see openWindow), so requests are served even while a window is
 // open but minimized, when Gio draws no frames.
 func Run(b model.Backend, o Options) error {
+	b, _ = withAuto(b)
 	h := &host{
 		b:       b,
 		o:       o,
@@ -472,6 +474,24 @@ func (h *host) closeWindow() {
 	h.focused = false
 	dropCaches()
 	memtrim.Trim()
+}
+
+// withAuto returns b with scheduled messages and AFK replies (package
+// auto), which the host's backend has already: they go on without a
+// window.
+func withAuto(b model.Backend) (model.Backend, *auto.Backend) {
+	switch x := b.(type) {
+	case nil:
+		return nil, nil
+	case *auto.Backend:
+		return x, x
+	case hostBackend:
+		if a, ok := x.Backend.(*auto.Backend); ok {
+			return x, a
+		}
+	}
+	a := auto.Wrap(b, func() time.Time { return timeNow() })
+	return a, a
 }
 
 // hostBackend is the backend as a window's UI sees it: the host started

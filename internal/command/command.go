@@ -8,8 +8,10 @@
 package command
 
 import (
+	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -29,6 +31,9 @@ const (
 	Choice
 	// Number is a whole number from Option.Min to Option.Max.
 	Number
+	// When is a time, as ParseWhen reads it: one word ("21:00", "2h")
+	// or a day and a time ("tomorrow 08:00"). Choices are suggestions.
+	When
 )
 
 // Option is a value a command takes. Options are typed in order.
@@ -47,6 +52,9 @@ type Option struct {
 	// Filter narrows the members a Member option offers; nil offers all
 	// but you.
 	Filter func(m model.Member) bool
+	// Mentions lets @mentions be picked in a Text option, as in a
+	// message.
+	Mentions bool
 }
 
 // Command is a slash command.
@@ -141,6 +149,8 @@ type Input struct {
 	// completes, and WordStart and WordEnd its rune offsets.
 	Word               string
 	WordStart, WordEnd int
+	// Now is the time a Preview reads; the zero time is time.Now().
+	Now time.Time
 }
 
 // Text returns the first value of option name as typed, or "".
@@ -355,6 +365,24 @@ func (in *Input) assign(rs []rune, toks []token, mentions []Mention, members []m
 			v := Value{Text: t.text, Start: t.start, End: t.end, Done: true}
 			if err != nil || n < o.Min || n > o.Max {
 				v.Err, v.Done = "type a number from "+strconv.Itoa(o.Min)+" to "+strconv.Itoa(o.Max), false
+			}
+			in.Values[oi] = append(in.Values[oi], v)
+			ti++
+		case When:
+			v := Value{Text: t.text, Start: t.start, End: t.end}
+			if ti+1 < len(toks) && dayWord(strings.ToLower(t.text)) {
+				if n := toks[ti+1]; n.id == "" {
+					if _, _, ok := clock(strings.ToLower(n.text)); ok {
+						v.Text, v.End = t.text+" "+n.text, n.end
+						ti++
+					}
+				}
+			}
+			// Whether the time has passed is for when it runs.
+			if _, err := ParseWhen(v.Text, time.Now()); err != nil && !errors.As(err, new(outOfRange)) {
+				v.Err = err.Error()
+			} else {
+				v.Done = true
 			}
 			in.Values[oi] = append(in.Values[oi], v)
 			ti++

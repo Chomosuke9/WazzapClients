@@ -139,13 +139,13 @@ func (u *UI) sendComposer() {
 	if u.selected == nil {
 		return
 	}
-	if sp := u.slashQuery(); sp != nil {
-		u.submitSlash(sp)
-		return
-	}
 	if ms := u.mentionQuery(); ms != nil {
 		u.updateMentionSel(ms)
 		u.pickMention(u.conv.mentionSel)
+		return
+	}
+	if sp := u.slashQuery(); sp != nil {
+		u.submitSlash(sp)
 		return
 	}
 	if u.conv.edit.msg != nil {
@@ -179,9 +179,15 @@ func (u *UI) sendComposer() {
 // draftFrom makes a message of composer text, turning the picked
 // mentions in it into the protocol's.
 func (u *UI) draftFrom(txt string) model.Draft {
+	return u.draftWith(txt, u.conv.mentions, u.selected.ID)
+}
+
+// draftWith makes a message for chat of text with the mentions picked in
+// it.
+func (u *UI) draftWith(txt string, mentions []mentionRef, chat string) model.Draft {
 	d := model.Draft{Text: txt}
 	// Longer names first, so "@Al" doesn't eat the start of "@Alice".
-	refs := append([]mentionRef(nil), u.conv.mentions...)
+	refs := append([]mentionRef(nil), mentions...)
 	sort.SliceStable(refs, func(a, b int) bool { return len(refs[a].name) > len(refs[b].name) })
 	seen := map[string]bool{}
 	addJID := func(jid string) {
@@ -201,8 +207,8 @@ func (u *UI) draftFrom(txt string) model.Draft {
 			continue
 		case mentionAdminID:
 			d.MentionAdmins = true
-			d.Text = strings.ReplaceAll(d.Text, at, "@"+u.selected.ID)
-			if info := u.chatMembers(u.selected.ID); info != nil {
+			d.Text = strings.ReplaceAll(d.Text, at, "@"+chat)
+			if info := u.chatMembers(chat); info != nil {
 				for _, m := range info.Members {
 					if m.Admin && !m.Me {
 						addJID(m.ID)
@@ -231,7 +237,7 @@ type mentionState struct {
 // mentionQuery returns the mention being typed in a group chat, or nil.
 func (u *UI) mentionQuery() *mentionState {
 	c := u.selected
-	if c == nil || !c.IsGroup || u.postingStatus() || u.slashQuery() != nil {
+	if c == nil || !c.IsGroup || u.postingStatus() || !u.slashTakesMentions() {
 		return nil // a command's picker offers members itself
 	}
 	ed := &u.conv.composer
@@ -618,8 +624,8 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		c.mentionGhost = nil
 	}
 	sp := u.slashQuery()
-	if !u.slashShown(sp) {
-		sp = nil
+	if !u.slashShown(sp) || ms != nil {
+		sp = nil // the mention picker takes its place
 	}
 	if sp != nil {
 		u.slash.ghost = sp

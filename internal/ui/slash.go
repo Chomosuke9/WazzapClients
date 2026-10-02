@@ -142,6 +142,7 @@ func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInf
 	if !ok {
 		return nil
 	}
+	in.Now = u.now()
 	sp := &slashPick{in: in}
 	if in.Naming {
 		sp.cmds = command.Matching(in.Name, c.IsGroup)
@@ -211,7 +212,7 @@ func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInf
 				add(slashValue{id: ct.ID, name: ct.Name, sub: ct.Phone}, personScore(q, ct.Phone, ct.Name))
 			}
 		}
-	case command.Choice:
+	case command.Choice, command.When:
 		for _, ch := range o.Choices {
 			if strings.HasPrefix(ch, strings.ToLower(q)) {
 				sp.vals = append(sp.vals, slashValue{name: ch})
@@ -369,8 +370,9 @@ func (u *UI) submitSlash(sp *slashPick) {
 		return
 	}
 	c := u.selected
+	host := slashHost{u: u, chat: c.ID, mentions: u.conv.mentions}
 	ctx := &command.Context{Cmd: in.Cmd, Input: trimSpace(txt), Values: in.Values, Chat: c,
-		Reply: u.conv.reply, Backend: u.backend, Now: u.now(), Host: slashHost{u: u, chat: c.ID}}
+		Reply: u.conv.reply, Backend: u.backend, Now: u.now(), Auto: u.auto, Host: host}
 	if c.IsGroup {
 		ctx.Info = u.chatMembers(c.ID)
 	}
@@ -385,6 +387,8 @@ func (u *UI) submitSlash(sp *slashPick) {
 type slashHost struct {
 	u    *UI
 	chat string
+	// mentions are those picked in the command's text.
+	mentions []mentionRef
 }
 
 func (h slashHost) Note(n *command.Note) {
@@ -487,6 +491,16 @@ func (h slashHost) Sent(m *model.Message) {
 	u.upsertMessage(m)
 }
 
+func (h slashHost) Draft(text string) model.Draft { return h.u.draftWith(text, h.mentions, h.chat) }
+
+// slashTakesMentions reports whether the composer may offer @mentions:
+// unless its text is a command, or while the caret is in a command's
+// text that takes them (Option.Mentions).
+func (u *UI) slashTakesMentions() bool {
+	sp := u.slashQuery()
+	return sp == nil || !sp.in.Naming && sp.opt != nil && sp.opt.Kind == command.Text && sp.opt.Mentions
+}
+
 // groupAnswered hands a GroupEvent to the command waiting for it.
 func (u *UI) groupAnswered(e model.GroupEvent) {
 	if f := u.slash.waiting[e.Ref]; f != nil {
@@ -502,7 +516,7 @@ func (u *UI) slashHint(sp *slashPick) string {
 	if in.Cmd == nil {
 		return ""
 	}
-	if sp.previewOK {
+	if sp.previewOK && len(in.Missing()) == 0 {
 		return " " + sp.preview // apart from the text it works out
 	}
 	var parts []string

@@ -78,6 +78,26 @@ var All = []*Command{
 		Run:     runCalc,
 		Preview: previewCalc,
 	},
+	{
+		Name: "schedule", Description: "Sends a message later, even with the window closed",
+		Options: []Option{
+			{Name: "when", Description: "Like 21:00, 30m, 2h, tomorrow 08:00, fri 18:00 or 25/12 09:00", Kind: When,
+				Required: true, Choices: []string{"30m", "1h", "3h", "tomorrow 08:00"}},
+			{Name: "message", Description: "What to send; @mentions work as in any message", Kind: Text,
+				Required: true, Mentions: true},
+		},
+		Run:     runSchedule,
+		Preview: previewSchedule,
+	},
+	{
+		Name: "scheduled", Description: "Lists the messages scheduled in this chat, to send now or cancel",
+		Run: runScheduled,
+	},
+	{
+		Name: "afk", Description: "Replies for you while you're away, until you send a message",
+		Options: []Option{{Name: "reason", Description: "Why you're away, shown in the reply", Kind: Text}},
+		Run:     runAFK,
+	},
 }
 
 // busy shows that the command is working, and returns its note.

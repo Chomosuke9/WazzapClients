@@ -149,7 +149,9 @@ Gotchas already found in the pinned version (v0.10.x):
   open the send view, and anything else is handed back with `clipboard.ReadCmd`.
 - The slash command picker reads Up, Down, Tab and (when it picks) Enter before the
   composer does, in `slashKeys`, and only while it offers rows; otherwise the editor
-  moves its caret with them as usual.
+  moves its caret with them as usual. In a command's text that takes @mentions
+  (`Option.Mentions`, /schedule's message) the mention picker shows instead, and it
+  takes Enter first (`slashTakesMentions`).
 - WhatsApp now sends most message edits as a `secretEncryptedMessage` (MESSAGE_EDIT),
   decrypted with `DecryptSecretEncryptedMessage`, not as a `protocolMessage`. History
   sync (`ParseWebMessage`) hands an edit out as the new content under the original's
@@ -214,6 +216,9 @@ internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated)
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/command/  slash commands, like Discord's: the list (commands.go), parsing their options,
                    and running them through a Host the UI implements. No Gio here
+internal/auto/     scheduled messages (/schedule) and AFK replies (/afk): wraps the Backend
+                   (`withAuto`; the host's, so they go on without a window), sees its events
+                   and your sends, and keeps its state in the backend's prefs
 internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the embedded Anton
                    font (OFL), and its own lossless WebP (VP8L) encoder: x/image only decodes
                    WebP, and libwebp needs cgo or a WASM runtime
@@ -353,7 +358,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
-# Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashrun (open a
+# Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun (open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, invite,
 # delete, select, edit, edits, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,

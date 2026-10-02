@@ -126,6 +126,8 @@ var (
 	icCalculate       = icon.Calculate
 	icDeleteSweep     = icon.DeleteSweep
 	icBackspace       = icon.Backspace
+	icScheduleSend    = icon.ScheduleSend
+	icBedtime         = icon.Bedtime
 
 	// Emoji picker categories.
 	icEmojiPeople  = icon.Mood

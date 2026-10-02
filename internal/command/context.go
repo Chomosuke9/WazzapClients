@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -50,6 +51,9 @@ type Host interface {
 	PickImage(done func(path string))
 	// Sent shows a message you just sent.
 	Sent(m *model.Message)
+	// Draft makes a message of text typed in the composer, turning the
+	// @mentions picked in it into the protocol's.
+	Draft(text string) model.Draft
 }
 
 // Context is everything a running command may use.
@@ -68,6 +72,8 @@ type Context struct {
 	Backend model.Backend
 	// Now is when the command runs.
 	Now time.Time
+	// Auto sends scheduled messages and AFK replies; nil without it.
+	Auto *auto.Backend
 	Host
 }
 

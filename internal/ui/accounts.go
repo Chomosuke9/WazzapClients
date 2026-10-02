@@ -221,6 +221,7 @@ func (h *host) closeAccount(next model.Backend) {
 // useBackend makes b, just opened, the open account's backend and gives
 // the window a new UI for it.
 func (h *host) useBackend(b model.Backend) {
+	b, _ = withAuto(b)
 	h.b = b
 	h.conn, h.syncPct, h.queue = model.ConnEvent{}, -1, nil
 	if cur := h.o.Accounts.Current(); cur != nil && cur.Linked() {
