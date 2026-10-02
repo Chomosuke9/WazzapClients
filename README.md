@@ -1,71 +1,224 @@
-# WazzapClients
+<div align="center">
 
-A lightweight, native WhatsApp desktop client written in Go.
+# ⚡ WazzapClients
 
-WazzapClients aims to look and feel like the official WhatsApp Desktop app while using a
-small fraction of its memory: no WebView, no Electron. The UI is built with
-[Gio](https://gioui.org), and the WhatsApp protocol is handled by
+**WhatsApp Desktop, without the browser inside it.**
+
+A native WhatsApp client written in Go: no WebView, no Electron, no Chromium.
+It aims to look and feel like the official app while using a small fraction of its memory.
+
+[![Build](https://github.com/chomosuke9/wazzapclients/actions/workflows/build.yml/badge.svg)](https://github.com/chomosuke9/wazzapclients/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/chomosuke9/wazzapclients?include_prereleases&sort=semver)](https://github.com/chomosuke9/wazzapclients/releases)
+![Go](https://img.shields.io/github/go-mod/go-version/chomosuke9/wazzapclients)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-25D366)
+
+<img src="docs/screenshots/hero.png" alt="WazzapClients in its light and dark themes" width="900">
+
+</div>
+
+---
+
+## Why?
+
+The official desktop app is a whole web browser running one web page. WazzapClients draws
+its own UI on the GPU with [Gio](https://gioui.org) and talks to WhatsApp directly through
 [hypermeow](https://github.com/polymorfa/hypermeow), a performance-focused fork of
-whatsmeow.
+whatsmeow. You get the same app, pixel for pixel where it matters, in one small executable.
 
-## Features
+- **Native and light.** One Go binary. Caches are capped by size, and after ten idle seconds
+  the app hands memory back to the OS.
+- **Familiar.** Layouts, sizes and colors are measured against screenshots of the real app,
+  so nothing needs relearning.
+- **Local.** Messages are kept in a SQLite file on your computer.
+- **Stays in the tray.** Closing the window frees its GPU memory, and the connection keeps
+  running so notifications still arrive.
 
-- Link to your account by scanning a QR code, like WhatsApp Web
-- Chats, groups, communities, channels and status updates
-- Replies, @mentions, emoji picker, forwarding, deleting and multi-select
-- Media viewer and contact/group info panel
-- Light and dark themes
-- Messages stored locally in SQLite
-- Extras WhatsApp doesn't have, off until you turn them on in Settings > Extra features:
-  Discord-like slash commands (`/kick`, `/add`, `/promote`, `/demote`, `/link`, `/lockdown`,
-  `/description`, `/sticker top text#bottom text`) that run from your own account, `@admin` to mention a
-  group's admins, and Raw quality to send photos as they are
+## A tour
+
+### Everything you'd expect
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/login.png" alt="Login with a QR code"></td>
+    <td width="50%"><img src="docs/screenshots/group-info.png" alt="Group info panel"></td>
+  </tr>
+  <tr>
+    <td><b>Link with a QR code</b>, like WhatsApp Web, and choose how much history to copy from your phone.</td>
+    <td><b>Groups and their info panel:</b> pinned messages, documents, voice notes, typing indicators, members and settings.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/reactions.png" alt="Message menu with reactions"></td>
+    <td><img src="docs/screenshots/search.png" alt="Searching a chat"></td>
+  </tr>
+  <tr>
+    <td><b>Reactions, replies, forwarding, pinning, starring</b>, select mode and deleting, from a right-click.</td>
+    <td><b>Search inside a chat</b>, with matches highlighted. Clicking one jumps to it, even far back.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/emoji.png" alt="Emoji picker"></td>
+    <td><img src="docs/screenshots/gallery.png" alt="Media panel"></td>
+  </tr>
+  <tr>
+    <td><b>Emoji and stickers</b>, including animated ones, with search and recents.</td>
+    <td><b>The Media panel:</b> photos, videos, docs and links from every chat, or from just one.</td>
+  </tr>
+</table>
+
+### Status, channels and communities
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/screenshots/status.png" alt="Status updates"></td>
+    <td width="33%"><img src="docs/screenshots/channels.png" alt="Channels"></td>
+    <td width="33%"><img src="docs/screenshots/communities.png" alt="Communities"></td>
+  </tr>
+  <tr>
+    <td>View and post <b>status updates</b>: text, photos and videos.</td>
+    <td>Follow and read <b>channels</b>.</td>
+    <td><b>Communities</b> with their announcements and groups.</td>
+  </tr>
+</table>
+
+### A photo editor before you send
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/editor.png" alt="Drawing, text and emoji on a photo"></td>
+    <td width="50%"><img src="docs/screenshots/filter.png" alt="Photo filters"></td>
+  </tr>
+  <tr>
+    <td>Crop, rotate, draw, add text, shapes, emoji and stickers, or blur part of the picture.</td>
+    <td>Filters, and a choice of Standard or HD quality. Pick files, paste them or drop them on the window.</td>
+  </tr>
+</table>
+
+### Things WhatsApp doesn't do
+
+These are all **off until you turn them on** in *Settings > Extra features*. They only use what
+WhatsApp already lets every linked device do, and they run from your own account.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/slash.png" alt="Slash command picker"></td>
+    <td width="50%"><img src="docs/screenshots/calc.png" alt="The /calc command"></td>
+  </tr>
+  <tr>
+    <td><b>Slash commands, like Discord.</b> Type <code>/</code> to manage a group you run without opening a single menu.</td>
+    <td><b><code>/calc</code></b> works out the answer as you type and picks up the amounts in the message you reply to. Splitting a bill takes one line.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/scheduled.png" alt="Scheduled messages and AFK"></td>
+    <td><img src="docs/screenshots/edits.png" alt="Edit history"></td>
+  </tr>
+  <tr>
+    <td><b><code>/schedule</code></b> sends a message later, even with the window closed. <b><code>/afk</code></b> replies for you while you're away.</td>
+    <td><b>Edit history</b> shows what an edited message said before each edit.</td>
+  </tr>
+</table>
+
+<details>
+<summary><b>All the slash commands</b></summary>
+
+| Command | What it does |
+| --- | --- |
+| `/add <contact>` | Adds people to the group |
+| `/kick <member>` | Removes members from the group |
+| `/promote <member>` / `/demote <member>` | Makes members admins, or dismisses admins |
+| `/link` | Shows the group's invite link |
+| `/lockdown on\|off` | Lets only admins send messages, or everyone again |
+| `/description <text>` | Changes the group description |
+| `/sticker top text#bottom text` | Turns a photo into a sticker, meme text included |
+| `/purge <count>` | Deletes your last messages for everyone |
+| `/raffle <winners>` | Draws group members at random and announces them |
+| `/calc <sum>` | A calculator: `12 x 4500`, `15k x 3`, `15% x 80000` |
+| `/schedule <when> <message>` | Sends later: `21:00`, `2h`, `tomorrow 08:00`, `fri 18:00` |
+| `/scheduled` | Lists the chat's scheduled messages, to send now or cancel |
+| `/afk <reason>` | Auto-replies while you're away, until you send something |
+
+Group commands work in groups where you're an admin. You'll also find **`@admin`**, which
+mentions every admin of a group at once, and **Raw quality**, which sends JPEG and PNG
+photos exactly as they are.
+
+</details>
+
+### And plenty more
+
+- 🌗 Light and dark themes, with WhatsApp's doodle wallpaper
+- 👥 Several linked accounts. Only the open one stays connected, which keeps memory low
+- 🔔 System notifications, with Reply and Mark as read on Windows
+- 📝 Drafts that stay with each chat, @mentions, and a formatting toolbar (bold, italic, strikethrough, code)
+- 🎙️ Voice messages and videos played by the system's own decoders (no bundled codecs)
+- 📌 Pinned, archived and muted chats, Favourites and custom lists, disappearing messages, chat themes
+- 🔗 Group invite links, polls, contacts, albums and documents
+- ⬆️ Built-in updates from signed GitHub releases (*Settings > Help > Check for updates*)
 
 ## Download
 
-Prebuilt packages for Windows (amd64) and Linux (amd64) are published on the
-[Releases](https://github.com/chomosuke9/wazzapclients/releases) page and as artifacts of
-each CI run. On Windows, `WazzapClients-Setup.exe` installs it for your user (no admin
-rights); `WazzapClients-windows-amd64.exe` is the same app without an installer.
-**Settings > Help > Check for updates** installs a newer release in place. See
-[docs/releasing.md](docs/releasing.md) for details.
+Prebuilt packages for **Windows** (amd64) and **Linux** (amd64) are on the
+[Releases](https://github.com/chomosuke9/wazzapclients/releases) page and attached to every CI run.
+
+- `WazzapClients-Setup.exe` installs the app for your user only. It doesn't need admin rights.
+- `WazzapClients-windows-amd64.exe` is the same app without an installer.
+
+To update, use **Settings > Help > Check for updates**, which installs the new release in place.
+See [docs/releasing.md](docs/releasing.md) for how releases are made and signed.
+
+## Try it without an account
+
+Want to look around first? The demo mode starts the app with made-up chats and no network.
+All the screenshots above come from it.
+
+```sh
+go run ./cmd/wazzap -demo
+```
 
 ## Build from source
 
-Requires the Go version in `go.mod`. On Linux, install Gio's
-[system dependencies](https://gioui.org/doc/install/linux) first.
+You need the Go version in `go.mod`. On Linux, first install Gio's
+[system dependencies](https://gioui.org/doc/install/linux).
 
 ```sh
-sh patches/apply.sh            # once after cloning: patched go-text (see patches/)
-go run ./cmd/wazzap            # run the app and link it via QR code
-go run ./cmd/wazzap -demo      # run with fake chats, no network
+sh patches/apply.sh            # once after cloning: builds the patched go-text (see patches/)
+go run ./cmd/wazzap            # run the app and link it with a QR code
+go run ./cmd/wazzap -demo      # made-up chats, no network
 go run ./cmd/wazzap -debug     # log protocol traffic
+go run ./cmd/wazzap -background  # start in the tray, without a window
 go build ./...
 ```
 
-Your session and messages are stored in `%AppData%\WazzapClients\wazzap.db` on Windows
-(the user config directory on other platforms).
+Your session and messages are stored in `%AppData%\WazzapClients\wazzap.db` on Windows,
+and in the user config directory on other platforms.
 
-## Project layout
+## How it fits together
 
 ```
-cmd/wazzap/       desktop app entry point
-cmd/screenshot/   headless renderer for UI previews and comparisons
-internal/model/   UI-facing types and the Backend interface
-internal/ui/      Gio user interface
-internal/command/ slash commands
-internal/sticker/ makes stickers (with a small lossless WebP encoder)
-internal/wa/      hypermeow backend and SQLite message store
-internal/mock/    demo backend with fake data
+cmd/wazzap/        the desktop app
+cmd/screenshot/    renders the UI headlessly to PNG, or next to a real WhatsApp screenshot
+cmd/memprobe/      memory and frame-time benchmark (Windows)
+internal/model/    what the UI sees: chats, messages, events, and the Backend interface
+internal/ui/       the Gio interface, from the chat list to the photo editor
+internal/wa/       hypermeow backend and the SQLite message store
+internal/mock/     the demo backend
+internal/command/  slash commands
+internal/auto/     scheduled messages and AFK replies
+internal/sticker/  makes stickers, with its own small lossless WebP encoder
+internal/video/    plays video and audio with the OS's decoder
+internal/notify/   system notifications
+internal/desktop/  tray icon, start at login, single instance
+internal/update/   signed self-updates
 ```
+
+The UI never touches protocol types. `internal/wa` turns hypermeow events into
+`internal/model` events, and the UI drains them on its own goroutine, so UI state needs no locks.
 
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md) before changing code. It covers conventions, Gio gotchas in
-the pinned version, and the screenshot tooling used to match WhatsApp Desktop. Run
-`gofmt`, `go vet ./...` and `go build ./...` before sending changes.
+Read [AGENTS.md](AGENTS.md) before changing code. It covers the conventions, the gotchas
+found in the pinned Gio version, and the screenshot tooling used to match WhatsApp Desktop.
+Low memory use is the reason this project exists, so measure with `cmd/memprobe` before and
+after a change. Run `gofmt`, `go vet ./...` and `go build ./...` before you send it.
 
 ## Disclaimer
 
-This is an unofficial client, not affiliated with or endorsed by WhatsApp or Meta. Using
-third-party clients may violate WhatsApp's Terms of Service; use it at your own risk.
+This is an unofficial client. It isn't affiliated with or endorsed by WhatsApp or Meta.
+Using a third-party client may break WhatsApp's Terms of Service, so use it at your own risk.
