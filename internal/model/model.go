@@ -125,12 +125,15 @@ type Chat struct {
 	Favorite  bool
 	Self      bool // the "message yourself" chat
 	// Unread counts unread messages; -1 means marked as unread.
-	Unread   int
-	Time     time.Time // last activity, used for ordering
-	Last     *Message
-	Typing   string // who is typing; empty when nobody is
-	TypingID string // in groups, the ID of who is typing
-	Presence string // header subtitle, e.g. "online"
+	Unread int
+	// Mentioned means one of the unread messages of a group mentions you
+	// (or everyone) or replies to you. It only counts while Unread > 0.
+	Mentioned bool
+	Time      time.Time // last activity, used for ordering
+	Last      *Message
+	Typing    string // who is typing; empty when nobody is
+	TypingID  string // in groups, the ID of who is typing
+	Presence  string // header subtitle, e.g. "online"
 }
 
 // Message text shows a resolved @mention as "\u2068@Name\u2069" (Unicode
@@ -141,6 +144,17 @@ const (
 	// MentionAdmins marks "@admin", which notifies the group's admins.
 	MentionAdmins = '\u2062'
 )
+
+// ForMe reports whether m, as a backend resolved it, mentions you (or
+// everyone) or replies to one of your messages. meID is your JID, which a
+// reply's SenderID may hold when its Sender isn't "You".
+func (m *Message) ForMe(meID string) bool {
+	if strings.ContainsRune(m.Text, MentionNotifies) {
+		return true
+	}
+	q := m.Quote
+	return q != nil && (q.Sender == "You" || q.SenderID != "" && q.SenderID == meID)
+}
 
 // Draft is an outgoing text message.
 type Draft struct {
@@ -562,6 +576,44 @@ type MemberResult struct {
 	Invite *GroupInvite
 }
 
+// GroupPreview is what a group's invite link tells about the group
+// before you join it.
+type GroupPreview struct {
+	ID          string // the group's JID
+	Name        string
+	Description string
+	Created     time.Time
+	// Size counts the group's members, and Faces are a few of them (chat
+	// IDs) to show.
+	Size  int
+	Faces []string
+	// Approval means an admin must approve your request to join.
+	Approval bool
+	// Member means you are in the group already.
+	Member bool
+	// Community means the link is a community's, which this app can't join.
+	Community bool
+}
+
+// InviteEvent answers Backend.GroupInvite. Group is nil when the link
+// can't be used, and Err says why. The group's picture, if it has one,
+// is the Avatar of Group.ID by then.
+type InviteEvent struct {
+	Code  string
+	Group *GroupPreview
+	Err   string
+}
+
+// JoinedEvent answers Backend.JoinGroup: ChatID is the group you joined,
+// after a ChatEvent for it; Requested means an admin must approve your
+// request first. Err says why it failed.
+type JoinedEvent struct {
+	Code      string
+	ChatID    string
+	Requested bool
+	Err       string
+}
+
 // DeletedEvent reports that messages were removed from a chat (deleted for
 // you, or the chat was cleared). IDs is nil when the whole chat was cleared.
 type DeletedEvent struct {
@@ -591,6 +643,8 @@ func (DeletedEvent) isEvent()      {}
 func (SearchEvent) isEvent()       {}
 func (AccountEvent) isEvent()      {}
 func (GroupEvent) isEvent()        {}
+func (InviteEvent) isEvent()       {}
+func (JoinedEvent) isEvent()       {}
 
 // StickerSet is a tab of the sticker picker.
 type StickerSet int
@@ -712,6 +766,13 @@ type Backend interface {
 	// CreateGroup creates a group in the background; a GroupCreatedEvent
 	// answers, after a ChatEvent for the new chat.
 	CreateGroup(g NewGroup)
+	// GroupInvite looks up the group of an invite link's code (the part
+	// after https://chat.whatsapp.com/) in the background; an InviteEvent
+	// answers.
+	GroupInvite(code string)
+	// JoinGroup joins the group of an invite link's code, or asks its
+	// admins to let you in, in the background; a JoinedEvent answers.
+	JoinGroup(code string)
 	// LeaveGroup exits a group.
 	LeaveGroup(chatID string)
 	// ManageGroup changes a group you administer in the background. A

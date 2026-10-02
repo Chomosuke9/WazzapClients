@@ -23,12 +23,14 @@ const (
 	dialogConfirm
 	dialogForward
 	dialogPoll
+	dialogInvite // a group's invite link (invite.go)
 )
 
 type dialogButton struct {
 	label   string
 	primary bool // filled green
 	danger  bool // filled red
+	flat    bool // green text alone, without the outline
 	run     func()
 }
 
@@ -54,7 +56,8 @@ type dialogState struct {
 	chats    []*model.Chat // matching chats, a buffer reused every frame
 	bar      tween         // the send bar, shown once a chat is picked
 
-	poll pollState
+	poll   pollState
+	invite inviteState
 }
 
 // isOpen reports whether a dialog is open and not fading out.
@@ -148,6 +151,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.forwardPanel)
 	case dialogPoll:
 		panel = record(gtx, u.pollPanel)
+	case dialogInvite:
+		panel = record(gtx, u.invitePanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
@@ -254,6 +259,9 @@ func (u *UI) dialogButton(gtx C, key string, bt dialogButton) D {
 			fg, bg, border = p.OnGreen, p.Green, p.Green
 		}
 		bg = mix(bg, p.Text, 0.08*u.hover(gtx, c))
+		if bt.flat {
+			border = bg
+		}
 		lbl := record(gtx, u.label(14.5, bt.label, fg, labelOpts{weight: font.Medium, maxLines: 1}).Layout)
 		h := gtx.Dp(40)
 		w := lbl.size.X + gtx.Dp(48)

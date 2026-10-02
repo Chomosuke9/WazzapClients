@@ -29,6 +29,7 @@ const (
 	rowMessage
 	rowTyping // someone typing, after the newest message
 	rowNote   // a slash command's note, which only you see (slash.go)
+	rowUnread // "N unread messages", above the first of them (unread.go)
 )
 
 // convRow is one entry of the message list: a day separator, the
@@ -71,6 +72,10 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		}
 		first := newDay || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID ||
 			m.Time.Sub(prev.Time) > 10*time.Minute
+		if u.unreadRow(c, m) {
+			rows = append(rows, convRow{kind: rowUnread})
+			first = true
+		}
 		rows = append(rows, convRow{kind: rowMessage, msg: m, first: first})
 		prev = m
 	}
@@ -335,7 +340,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 
 	if p := u.conv.scrollTo; p != nil {
 		u.conv.list.Position = *p
-		u.conv.scrollTo = nil
+		u.conv.list.Position.Offset -= gtx.Dp(u.conv.scrollAbove)
+		u.conv.scrollTo, u.conv.scrollAbove = nil, 0
 	}
 	if g := &u.conv.glide; g.pending {
 		g.pending, g.active = false, true
@@ -367,7 +373,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		r := rows[i]
 		in := layout.Inset{Left: dp(gtx, margin), Right: dp(gtx, margin)}
 		switch {
-		case r.kind == rowDate, r.kind == rowEncryption:
+		case r.kind == rowDate, r.kind == rowEncryption, r.kind == rowUnread:
 			in.Top, in.Bottom = 10, 6
 		case r.kind == rowTyping:
 			// The newest message keeps its bottom space, so the gap above
@@ -392,6 +398,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 					return layout.N.Layout(gtx, func(gtx C) D { return u.systemChip(gtx, r.date) })
 				case r.kind == rowEncryption:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
+				case r.kind == rowUnread:
+					return layout.N.Layout(gtx, func(gtx C) D { return u.unreadChip(gtx, u.conv.unread.n) })
 				case r.kind == rowTyping:
 					return u.layoutTyping(gtx, c.IsGroup, margin, typingV)
 				case r.kind == rowNote:
@@ -867,7 +875,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		o := richOpts{italic: italic, prefix: prefix, suffix: suffix}
 		if lead == nil {
 			if !u.conv.selecting {
-				o.sel = m.ID
+				o.sel, o.links = m.ID, m.ID
 			}
 			if !out {
 				o.pills = pillMe

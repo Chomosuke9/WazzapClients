@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -150,6 +151,7 @@ const (
 	decoCode   spanDeco = 1 << iota // inline code, on a tinted background
 	decoStrike                      // struck through
 	decoPill                        // a mention of you, on a rounded tint
+	decoLink                        // a link, underlined until hovered
 )
 
 // pillFor says which mentions get a pill: the ones that notify you.
@@ -191,6 +193,12 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, 
 			deco = append(deco, cur)
 		}
 	}
+	addLink := func(s string, f font.Font) {
+		prev := cur
+		cur |= decoLink
+		add(s, f, p.Link)
+		cur = prev
+	}
 	for _, r := range parseFormatting(text) {
 		f := base
 		if r.style&styleBold != 0 {
@@ -222,7 +230,7 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, 
 			if i >= 0 {
 				seg = rest[:i]
 			}
-			u.addLinks(seg, f, col, add)
+			addLinks(seg, f, col, add, addLink)
 			if i < 0 {
 				break
 			}
@@ -314,6 +322,9 @@ type richOpts struct {
 	prefix, suffix string
 	// more, if set, ends the text with a "Read more" link that clicks it.
 	more *widget.Clickable
+	// links, if set, makes the text's links clickable: it tells their
+	// buttons apart from other texts'.
+	links string
 	// sel, if set, is the message whose text can be selected.
 	sel string
 }
@@ -346,13 +357,36 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 			spans = append([]styledtext.SpanStyle{{Font: plain, Size: size, Color: col, Content: o.prefix}}, spans...)
 			deco = append([]spanDeco{0}, deco...)
 		}
+		// Links take clicks unless the text can't be used (select mode),
+		// and lose their underline while hovered.
+		var linkKeys map[int]string
+		if o.links != "" {
+			for j, dc := range deco {
+				if dc&decoLink == 0 {
+					continue
+				}
+				if linkKeys == nil {
+					linkKeys = map[int]string{}
+					deco = slices.Clone(deco)
+				}
+				key := "lk:" + o.links + ":" + itoa(i) + ":" + itoa(j)
+				linkKeys[j] = key
+				c := u.btn(key)
+				if c.Clicked(gtx) {
+					u.openLink(spans[j].Content)
+				}
+				if c.Hovered() {
+					deco[j] &^= decoLink
+				}
+			}
+		}
 		link := -1
 		if i == len(blocks)-1 {
 			if o.more != nil {
 				link = len(spans)
 				medium := plain
 				medium.Weight = font.Medium
-				spans = append(spans, styledtext.SpanStyle{Font: medium, Size: size, Color: u.pal.TickRead, Content: readMoreLabel})
+				spans = append(spans, styledtext.SpanStyle{Font: medium, Size: size, Color: u.pal.Link, Content: readMoreLabel})
 				deco = append(deco, 0)
 			}
 			if o.suffix != "" {
@@ -378,10 +412,12 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 			body.size.Y = gtx.Sp(22) // an empty line
 		} else {
 			var onSpan func(gtx C, idx int, d D)
-			if link >= 0 {
+			if link >= 0 || linkKeys != nil {
 				onSpan = func(gtx C, idx int, d D) {
 					if idx == link {
 						clickable(gtx, o.more, func(gtx C) D { return D{Size: d.Size} })
+					} else if key, ok := linkKeys[idx]; ok {
+						clickable(gtx, u.btn(key), func(gtx C) D { return D{Size: d.Size} })
 					}
 				}
 			}
@@ -476,10 +512,14 @@ func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, o
 		})
 	}
 	fn := onSpan
-	if all&decoStrike != 0 {
+	if all&(decoStrike|decoLink) != 0 {
 		fn = func(gtx C, idx int, d D) {
 			if deco[idx]&decoStrike != 0 {
 				y := d.Baseline - gtx.Sp(spans[idx].Size)*3/10
+				fillRect(gtx, image.Rect(0, y, d.Size.X, y+max(1, gtx.Dp(1))), spans[idx].Color)
+			}
+			if deco[idx]&decoLink != 0 {
+				y := d.Baseline + max(1, gtx.Sp(spans[idx].Size)/8)
 				fillRect(gtx, image.Rect(0, y, d.Size.X, y+max(1, gtx.Dp(1))), spans[idx].Color)
 			}
 			if onSpan != nil {
@@ -491,17 +531,38 @@ func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, o
 	return st.Layout(gtx, fn)
 }
 
-func (u *UI) addLinks(s string, f font.Font, col color.NRGBA, add func(string, font.Font, color.NRGBA)) {
+// addLinks adds the text s, its links with addLink.
+func addLinks(s string, f font.Font, col color.NRGBA, add func(string, font.Font, color.NRGBA), addLink func(string, font.Font)) {
 	for s != "" {
 		loc := linkRe.FindStringIndex(s)
 		if loc == nil {
 			add(s, f, col)
 			return
 		}
+		end := loc[0] + len(trimLink(s[loc[0]:loc[1]]))
 		add(s[:loc[0]], f, col)
-		add(s[loc[0]:loc[1]], f, u.pal.TickRead)
+		addLink(s[loc[0]:end], f)
+		add(s[end:loc[1]], f, col)
 		s = s[loc[1]:]
 	}
+}
+
+// trimLink drops the punctuation that ends a sentence, not the link, from
+// a link found in text ("see https://example.com." or "(www.example.com)").
+func trimLink(s string) string {
+	for len(s) > 0 {
+		switch s[len(s)-1] {
+		case '.', ',', ';', ':', '!', '?', '\'', '"':
+		case ')':
+			if strings.Count(s, "(") >= strings.Count(s, ")") {
+				return s // part of the link, like Wikipedia's
+			}
+		default:
+			return s
+		}
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // Long messages show their start and a "Read more" link, like WhatsApp.
@@ -524,6 +585,12 @@ func readMoreCut(s string, clicks int) (string, bool) {
 		}
 		maxRunes, maxLines = maxRunes*readMoreStep, maxLines*readMoreStep
 	}
+	return cutText(s, maxRunes, maxLines)
+}
+
+// cutText returns the start of s, up to about maxRunes runes and maxLines
+// lines, and whether there is more; see readMoreCut.
+func cutText(s string, maxRunes, maxLines int) (string, bool) {
 	// Leave a little slack, so "Read more" never reveals only a few words.
 	if utf8.RuneCountInString(s) <= maxRunes*5/4 && strings.Count(s, "\n") < maxLines*5/4 {
 		return s, false

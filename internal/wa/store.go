@@ -125,6 +125,8 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_messages ADD COLUMN buttons TEXT NOT NULL DEFAULT ''`, // JSON buttonsInfo
 	`ALTER TABLE wz_messages ADD COLUMN file TEXT NOT NULL DEFAULT ''`,    // JSON fileInfo
+	// 1 when an unread message of a group is for you; see addUnread.
+	`ALTER TABLE wz_chats ADD COLUMN mentioned INTEGER NOT NULL DEFAULT 0`,
 	// For pinnedMessage; after the pinned column exists.
 	`CREATE INDEX IF NOT EXISTS wz_messages_pinned ON wz_messages (chat, pinned) WHERE pinned != 0`,
 	// For lastPush.
@@ -222,15 +224,16 @@ func (s *msgStore) setName(ctx context.Context, jid, name string) error {
 // chatMeta is the chat state carried by a history sync conversation.
 type chatMeta struct {
 	pinned, mutedUntil, lastTS int64
-	archived                   bool
+	archived, mentioned        bool
 	unread                     int
 }
 
 func (s *msgStore) setMeta(ctx context.Context, x execer, jid string, m chatMeta) error {
 	_, err := x.ExecContext(ctx, `
-		UPDATE wz_chats SET pinned = ?, muted_until = ?, archived = ?, unread = ?, last_ts = MAX(last_ts, ?)
+		UPDATE wz_chats SET pinned = ?, muted_until = ?, archived = ?, unread = ?, mentioned = ?,
+			last_ts = MAX(last_ts, ?)
 		WHERE jid = ?`,
-		m.pinned, m.mutedUntil, boolInt(m.archived), m.unread, m.lastTS, jid)
+		m.pinned, m.mutedUntil, boolInt(m.archived), m.unread, boolInt(m.mentioned), m.lastTS, jid)
 	return err
 }
 
@@ -240,8 +243,14 @@ func (s *msgStore) setField(ctx context.Context, jid, field string, v any) error
 	return err
 }
 
-func (s *msgStore) addUnread(ctx context.Context, jid string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_chats SET unread = MAX(unread, 0) + 1 WHERE jid = ?`, jid)
+// addUnread counts one more unread message, which is for you (forMe) or
+// not. A chat's mentioned flag starts over with its unread count, so it
+// needs no clearing wherever the chat is read.
+func (s *msgStore) addUnread(ctx context.Context, jid string, forMe bool) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE wz_chats SET unread = MAX(unread, 0) + 1,
+			mentioned = (unread > 0 AND mentioned != 0) OR ?
+		WHERE jid = ?`, boolInt(forMe), jid)
 	return err
 }
 
@@ -507,7 +516,7 @@ type rawChat struct {
 
 const chatQuery = `
 	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts, c.favorite,
-		m.id, m.sender_jid, m.sender_push, m.sender_name, m.from_me, m.ts, m.kind, m.media, m.duration, m.text, m.receipt, m.mentions
+		c.mentioned, m.id, m.sender_jid, m.sender_push, m.sender_name, m.from_me, m.ts, m.kind, m.media, m.duration, m.text, m.receipt, m.mentions
 	FROM wz_chats c
 	LEFT JOIN wz_messages m ON m.rowid = (
 		SELECT rowid FROM wz_messages WHERE chat = c.jid ORDER BY ts DESC, rowid DESC LIMIT 1
@@ -517,6 +526,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	var (
 		c                                 model.Chat
 		isGroup, archived, unread, fav    int
+		mentioned                         int
 		pinned, mutedUntil, lastTS        int64
 		mID, mSender, mPush, mText, mMent sql.NullString
 		mLegacy                           sql.NullString
@@ -524,7 +534,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		mReceipt                          sql.NullInt64
 	)
 	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS, &fav,
-		&mID, &mSender, &mPush, &mLegacy, &mFromMe, &mTS, &mKind, &mMedia, &mDur, &mText, &mReceipt, &mMent)
+		&mentioned, &mID, &mSender, &mPush, &mLegacy, &mFromMe, &mTS, &mKind, &mMedia, &mDur, &mText, &mReceipt, &mMent)
 	if err != nil {
 		return rawChat{}, err
 	}
@@ -537,6 +547,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	c.Favorite = fav != 0
 	c.Archived = archived != 0
 	c.Unread = unread
+	c.Mentioned = mentioned != 0 && unread > 0
 	c.Time = time.Unix(lastTS, 0)
 	rc := rawChat{Chat: &c}
 	if mID.Valid {

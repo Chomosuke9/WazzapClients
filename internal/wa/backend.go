@@ -822,10 +822,7 @@ func (b *Backend) onMessage(e *events.Message) {
 			return
 		}
 		if !p.msg.FromMe {
-			if !seen {
-				_ = b.store.addUnread(ctx, chat)
-				isNew = true
-			}
+			isNew = !seen // counted once resolved, below
 		} else if p.msg.Media == model.MediaSticker && len(p.msg.mediaBlob) > 0 {
 			b.recentSticker(p.msg.mediaBlob, p.msg.Time, "", "") // sent from another device
 		}
@@ -835,8 +832,15 @@ func (b *Backend) onMessage(e *events.Message) {
 		p.target = p.msg.ID
 	}
 	if r, ok := b.store.message(ctx, chat, p.target); ok {
-		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, e.Info.IsGroup), New: isNew})
+		m := b.resolve(ctx, r, e.Info.IsGroup)
+		if isNew {
+			// A group shows "@" while an unread message is for you.
+			_ = b.store.addUnread(ctx, chat, e.Info.IsGroup && m.ForMe(""))
+		}
+		b.emit(model.MessageEvent{Msg: m, New: isNew})
 		b.emitChat(chat)
+	} else if isNew {
+		_ = b.store.addUnread(ctx, chat, false)
 	}
 }
 
@@ -943,6 +947,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			mutedUntil: mute,
 			archived:   conv.GetArchived(),
 			unread:     int(conv.GetUnreadCount()),
+			mentioned:  conv.GetUnreadMentionCount() > 0,
 			lastTS:     int64(max(conv.GetConversationTimestamp(), conv.GetLastMsgTimestamp())),
 		}
 		for _, hm := range conv.GetMessages() {

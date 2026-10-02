@@ -15,6 +15,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/text"
+	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"rsc.io/qr"
@@ -193,6 +194,10 @@ type UI struct {
 		// scrollTo is a scroll position requested while the list may be
 		// laying out (from a click inside a message); see scrollMessages.
 		scrollTo *layout.Position
+		// scrollAbove is room to leave above scrollTo's row.
+		scrollAbove unit.Dp
+		// unread is the "N unread messages" divider (unread.go).
+		unread unreadDivider
 		// olderMore and newerMore report stored messages past either end
 		// of msgs (see paging.go).
 		olderMore, newerMore bool
@@ -475,11 +480,13 @@ func (u *UI) open(c *model.Chat) {
 	u.hideChatSearch()
 	u.selected = c
 	u.loadLatest()
+	unread := c.Unread
 	c.Unread = 0
 	u.backend.Open(c.ID)
 	u.chatRead(c.ID)
 	u.conv.list.Position = layout.Position{}
 	u.conv.list.ScrollToEnd = true
+	u.showUnread(unread)
 	u.conv.composer.SetText("")
 	u.conv.reply, u.conv.mentions = nil, nil
 	u.conv.reactions, u.conv.expanded = nil, nil
@@ -1008,6 +1015,10 @@ func (u *UI) applyEvents() {
 			}
 		case model.GroupEvent:
 			u.groupAnswered(e)
+		case model.InviteEvent:
+			u.inviteLooked(e)
+		case model.JoinedEvent:
+			u.inviteJoined(e)
 		case model.InfoEvent:
 			if u.conv.membersFor == e.ChatID {
 				u.conv.membersFor = ""
@@ -1134,6 +1145,9 @@ func (u *UI) upsertMessage(m *model.Message) {
 		return // not loaded yet; it loads with its page
 	}
 	u.msgsVer++
+	if i == len(u.msgs) && m.FromMe {
+		u.clearUnread() // you're caught up
+	}
 	if i == len(u.msgs) && u.now().Sub(m.Time) < time.Minute {
 		// A new message slides in at the bottom (history arrives older).
 		u.anims.start(animKey{id: m.ID, tag: tagAppear})
@@ -1171,7 +1185,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "delete",
-// "select", "attach", "poll", "contacts", "tray", "search" (the search panel, with
+// "select", "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
@@ -1282,6 +1296,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openPoll()
 	case "contacts":
 		u.openContactPicker()
+	case "invite":
+		u.openInvite("DemoInviteReuni")
 	case "newchat", "newnumber":
 		u.openNewChat()
 		if name == "newnumber" {

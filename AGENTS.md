@@ -182,7 +182,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    the Extra features settings page in extras.go (the app's own features,
                    such as slash commands, @admin and Raw photos: each off until turned on); posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
-                   animation helpers in anim.go;
+                   animation helpers in anim.go; the "N unread messages" divider a chat
+                   opens at in unread.go; group invite links (the dialog that joins
+                   one) in invite.go;
                    chat actions shared by menus and info panels (mute choices, lists,
                    clear/exit/delete confirms) in chatactions.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
@@ -332,7 +334,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashrun (open a
-# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply,
+# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, invite,
 # delete, select, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots

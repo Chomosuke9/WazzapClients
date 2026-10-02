@@ -197,13 +197,7 @@ func (n *notifier) wanted(id string, c chatInfo, known bool, ms []*model.Message
 }
 
 // forMe reports whether m mentions you (or everyone) or replies to you.
-func (n *notifier) forMe(m *model.Message) bool {
-	if strings.ContainsRune(m.Text, model.MentionNotifies) {
-		return true
-	}
-	q := m.Quote
-	return q != nil && (q.Sender == "You" || q.SenderID != "" && q.SenderID == n.meID)
-}
+func (n *notifier) forMe(m *model.Message) bool { return m.ForMe(n.meID) }
 
 // notification describes the notification of chat id, whose newest
 // message is m, for count messages.

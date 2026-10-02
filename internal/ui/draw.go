@@ -238,6 +238,13 @@ func (u *UI) badge(gtx C, n int) D {
 	return D{Size: image.Pt(w, h)}
 }
 
+// mentionMark is the green "@" beside a chat's unread badge while one of
+// its unread messages mentions or replies to you.
+func (u *UI) mentionMark(gtx C) D {
+	gtx.Constraints.Min = image.Point{}
+	return vcenter(gtx, gtx.Dp(21), u.label(19, "@", u.pal.Green, labelOpts{weight: font.Bold, maxLines: 1}).Layout)
+}
+
 func itoa(n int) string {
 	if n <= 0 {
 		return "0"

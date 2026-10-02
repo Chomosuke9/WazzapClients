@@ -49,7 +49,7 @@ func New() *Backend {
 		}
 		c := model.Chat{
 			ID: d.ID, Name: d.Name, IsGroup: d.IsGroup, Pinned: d.Pinned, Favorite: d.Favorite,
-			Muted: d.Muted, Unread: d.Unread, Presence: d.Presence, Typing: d.Typing,
+			Muted: d.Muted, Unread: d.Unread, Mentioned: d.Mentioned, Presence: d.Presence, Typing: d.Typing,
 		}
 		if n := len(d.Messages); n > 0 {
 			c.Last = d.Messages[n-1]
@@ -206,6 +206,7 @@ type demoChat struct {
 	ID, Name, Presence, Typing       string
 	IsGroup, Pinned, Favorite, Muted bool
 	Unread                           int
+	Mentioned                        bool
 	Messages                         []*model.Message
 }
 
@@ -241,7 +242,7 @@ func demo(now time.Time) []*demoChat {
 	}
 
 	family := &demoChat{
-		ID: "family", Name: "Keluarga Besar", IsGroup: true, Pinned: true, Unread: 14, Muted: true,
+		ID: "family", Name: "Keluarga Besar", IsGroup: true, Pinned: true, Unread: 14, Muted: true, Mentioned: true,
 		Presence: "Mama, Papa, Dimas, Sari, You",
 		Messages: []*model.Message{
 			grp("Mama", day(0, 6, 2), "Selamat pagi semua 🌞"),
@@ -314,6 +315,8 @@ func demo(now time.Time) []*demoChat {
 		}},
 		{ID: "uni", Name: "Alumni TI 2019", IsGroup: true, Muted: true, Presence: "142 members", Messages: []*model.Message{
 			grp("Fajar", day(5, 19, 0), "Reuni tahun ini di Bandung, yang mau ikut isi form ya"),
+			grp("Fajar", day(5, 19, 2), "Yang mau jadi panitia gabung sini: "+inviteLink(inviteReuni)),
+			grp("Kevin", day(5, 19, 10), "Futsal tiap Kamis, join: "+inviteLink(inviteFutsal)),
 		}},
 		{ID: "andre", Name: "Andre", Presence: "last seen recently", Messages: []*model.Message{
 			{FromMe: true, Kind: model.KindImage, Text: "", Time: day(6, 12, 30), Receipt: model.Read, ImageA: 0xf7971e, ImageB: 0xffd200},

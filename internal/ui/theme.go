@@ -27,6 +27,7 @@ type Palette struct {
 	Doodle                       color.NRGBA
 	BubbleIn, BubbleOut          color.NRGBA
 	MetaIn, MetaOut, TickRead    color.NRGBA
+	Link                         color.NRGBA // web links in messages
 	TextOut, SecondaryOut        color.NRGBA
 	QuoteIn, QuoteOut            color.NRGBA
 	BubbleLine, BubbleButton     color.NRGBA // dividers and text of message buttons
@@ -101,6 +102,7 @@ var darkPalette = Palette{
 	Doodle:   rgb(0x292c2b),
 	BubbleIn: rgb(0x242626), BubbleOut: rgb(0x254d39),
 	MetaIn: rgb(0xaaacab), MetaOut: rgb(0xa3c0b0), TickRead: rgb(0x53bdeb),
+	Link:    rgb(0x5dbf6e),
 	TextOut: rgb(0xfafafa), SecondaryOut: rgb(0xa6c2b4),
 	QuoteIn: rgb(0x1d1f1f), QuoteOut: rgb(0x1f4232),
 	DateChip: rgb(0x1d1f1e), DateChipText: rgb(0xa6a8a8),
@@ -149,6 +151,7 @@ var lightPalette = Palette{
 	Doodle:   rgb(0xe8e1d8),
 	BubbleIn: rgb(0xffffff), BubbleOut: rgb(0xd9fdd3),
 	MetaIn: rgb(0x667781), MetaOut: rgb(0x5b7a66), TickRead: rgb(0x53bdeb),
+	Link:    rgb(0x027eb5),
 	TextOut: rgb(0x0a0a0a), SecondaryOut: rgb(0x587a64),
 	QuoteIn: rgb(0xf5f6f6), QuoteOut: rgb(0xd1f4cc),
 	DateChip: rgb(0xffffff), DateChipText: rgb(0x54656f),

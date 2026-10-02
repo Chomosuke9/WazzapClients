@@ -709,6 +709,9 @@ func (u *UI) rowIndicators(c *model.Chat, chev float32) []layout.FlexChild {
 	if c.Muted {
 		row = append(row, indicator(iconW(icMuted, 20, p.TextSecondary)))
 	}
+	if c.Unread > 0 && c.Mentioned {
+		row = append(row, indicator(u.mentionMark))
+	}
 	if c.Unread > 0 {
 		row = append(row, indicator(func(gtx C) D { return u.badge(gtx, c.Unread) }))
 	} else if c.Unread < 0 {
