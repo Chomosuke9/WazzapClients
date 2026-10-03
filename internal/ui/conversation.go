@@ -899,6 +899,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		bg, quoteBg, textCol, metaCol, secondary = p.BubbleOut, p.QuoteOut, p.TextOut, p.MetaOut, p.SecondaryOut
 	}
 	isImg := m.Kind == model.KindImage
+	// An unopened view once message is a card, framed like a picture.
+	voCard := m.Kind == model.KindViewOnce && !m.Opened
+	framed := isImg || voCard
 	footerText, buttons := m.Footer, m.Buttons
 	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported {
 		footerText, buttons = "", nil
@@ -922,7 +925,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		tail = false
 	}
 	padL, padR, padT, padB := gtx.Dp(9), gtx.Dp(8), gtx.Dp(6), gtx.Dp(8)
-	if isImg {
+	if framed {
 		padL, padR, padT, padB = gtx.Dp(3), gtx.Dp(3), gtx.Dp(3), gtx.Dp(3)
 	}
 	inner := maxW - padL - padR
@@ -978,10 +981,15 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		textInset = gtx.Dp(6)
 	}
 
+	if u.btn("vo:" + m.ID).Clicked(gtx) { // before the card lays the button out
+		u.openViewOnce(m)
+		voCard = m.Kind == model.KindViewOnce && !m.Opened
+	}
 	const textSize = unit.Sp(15.7)
 	text := m.Text
 	italic := false
 	var lead layout.Widget // icon before the text (media types, deleted)
+	var voc part           // an unopened view once message's card
 	switch {
 	case m.Kind == model.KindDeleted:
 		text, textCol, italic = "This message was deleted", secondary, true
@@ -992,15 +1000,15 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	case m.Kind == model.KindUnsupported:
 		text, textCol, italic = "This message couldn't load. Open the message on your phone to view it.", secondary, true
 		lead = iconW(icUnsupported, 19, secondary)
+	case voCard:
+		text, textInset = "", gtx.Dp(6)
+		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, 0, meta.size, quoteBg, secondary) })
+		contentW = max(contentW, voc.size.X)
 	case m.Kind == model.KindViewOnce:
-		text = u.viewOnceText(gtx, m)
-		mark := p.Green
-		if !u.canOpenViewOnce(m) {
-			textCol, mark = secondary, secondary
-		}
+		text, textCol, italic = u.viewOnceText(gtx, m), secondary, true
 		lead = func(gtx C) D {
 			defer op.Offset(image.Pt(0, gtx.Dp(2))).Push(gtx.Ops).Pop() // level with the text
-			return u.viewOnceMark(gtx, 20, mark)
+			return u.viewOnceRingIcon(gtx, 20, secondary, false)
 		}
 	case hasAttachment(m):
 		text = attachmentCaption(m) // under the document card or player
@@ -1139,6 +1147,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 			quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, contentW, qm) })
 		}
 	}
+	if voc.size.X > 0 && voc.size.X < contentW {
+		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, contentW, meta.size, quoteBg, secondary) })
+	}
 	if link.size.X > 0 && link.size.X < contentW {
 		link = record(cgtx, func(gtx C) D { return u.layoutLinkCard(gtx, m, contentW, 7, quoteBg, textCol, secondary) })
 	}
@@ -1148,9 +1159,6 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if u.btn("img:" + m.ID).Clicked(gtx) {
 		u.openViewer(m)
 	}
-	if u.btn("vo:" + m.ID).Clicked(gtx) {
-		u.openViewOnce(m)
-	}
 
 	// Place everything, then paint the bubble behind it.
 	macro := op.Record(gtx.Ops)
@@ -1159,26 +1167,26 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		top := gtx.Dp(12) - padT
 		head.at(gtx, headX, top)
 		y = top + head.size.Y + gtx.Dp(6)
-		if isImg {
+		if framed {
 			y += gtx.Dp(5)
 		}
 	}
 	if hasSender {
 		sx := 0
-		if isImg {
+		if framed {
 			sx = textInset
 			y += gtx.Dp(3)
 		}
 		sender.at(gtx, sx, y)
 		u.senderButton(gtx, m, image.Pt(sx, y), sender.size)
 		y += sender.size.Y + gtx.Dp(2)
-		if isImg {
+		if framed {
 			y += gtx.Dp(3)
 		}
 	}
 	if m.Forwarded && m.Kind != model.KindDeleted {
 		fx := 0
-		if isImg {
+		if framed {
 			fx = textInset
 			y += gtx.Dp(2)
 		}
@@ -1208,6 +1216,11 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		} else {
 			y += gtx.Dp(4)
 		}
+	}
+	if voc.size.Y > 0 {
+		voc.at(gtx, 0, y)
+		y += voc.size.Y
+		meta.at(gtx, contentW-meta.size.X-gtx.Dp(8), y-meta.size.Y-gtx.Dp(5))
 	}
 	if isImg {
 		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, img)
@@ -1256,7 +1269,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		if isImg {
 			y += gtx.Dp(5)
 		}
-	case text == "" && !isImg && att.size.Y == 0:
+	case text == "" && !isImg && att.size.Y == 0 && voc.size.Y == 0:
 		meta.at(gtx, contentW-meta.size.X, y)
 		y += meta.size.Y
 	}

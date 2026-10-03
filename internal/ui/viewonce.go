@@ -8,6 +8,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
 
@@ -95,21 +96,74 @@ func (u *UI) viewOnceText(gtx C, m *model.Message) string {
 
 // viewOnceMark is the view once badge as an icon, size dp square.
 func (u *UI) viewOnceMark(gtx C, size unit.Dp, col color.NRGBA) D {
+	return u.viewOnceRingIcon(gtx, size, col, true)
+}
+
+// viewOnceRingIcon is the view once ring, size dp square, around a 1
+// unless one is false (an opened message's).
+func (u *UI) viewOnceRingIcon(gtx C, size unit.Dp, col color.NRGBA, one bool) D {
 	s := gtx.Dp(size)
-	viewOnceRing(gtx, u, image.Pt(s/2, s/2), s*2/5, col, unit.Sp(float32(size)*0.48))
+	sp := unit.Sp(float32(size) * 0.48)
+	if !one {
+		sp = 0
+	}
+	viewOnceRing(gtx, u, image.Pt(s/2, s/2), s*2/5, col, sp)
 	return D{Size: image.Pt(s, s)}
 }
 
-// viewOnceRing draws WhatsApp's view once badge: a circle, dashed round
-// its lower left, around a 1 of size sp.
+// layoutViewOnceCard draws an unopened view once message as WhatsApp
+// does: a card with the badge and what it holds, which opens it, and
+// room in its lower right for the bubble's meta (metaSize). The card is
+// w wide, or as narrow as it may be when w is 0.
+func (u *UI) layoutViewOnceCard(gtx C, m *model.Message, w int, metaSize image.Point, bg, secondary color.NRGBA) D {
+	p := u.pal
+	mark := p.Green
+	if !u.canOpenViewOnce(m) {
+		mark = secondary
+	}
+	pad, ring, gap := gtx.Dp(10), gtx.Dp(26), gtx.Dp(6)
+	lgtx := gtx
+	lgtx.Constraints.Min = image.Point{}
+	lgtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-2*pad-ring-gap)
+	label := record(lgtx, u.label(15.7, u.viewOnceText(gtx, m), secondary, labelOpts{maxLines: 1}).Layout)
+	if w == 0 {
+		w = max(gtx.Dp(150), 2*pad+ring+gap+label.size.X, metaSize.X+2*gtx.Dp(8))
+		w = min(w, gtx.Constraints.Max.X)
+	}
+	rowH := max(ring, label.size.Y)
+	h := gtx.Dp(9) + rowH + gtx.Dp(10) + metaSize.Y + gtx.Dp(5)
+	card := image.Rect(0, 0, w, h)
+	btn := u.btn("vo:" + m.ID)
+	cg := gtx
+	cg.Constraints = layout.Exact(card.Size())
+	clickable(cg, btn, func(gtx C) D {
+		fillRRect(gtx, card, gtx.Dp(7), mix(bg, p.Text, 0.06*u.hover(gtx, btn)))
+		return D{Size: card.Size()}
+	})
+	top := gtx.Dp(9)
+	t := op.Offset(image.Pt(pad-gtx.Dp(3), top+(rowH-ring)/2)).Push(gtx.Ops)
+	u.viewOnceRingIcon(gtx, 26, mark, true)
+	t.Pop()
+	label.at(gtx, pad-gtx.Dp(3)+ring+gap, top+(rowH-label.size.Y)/2)
+	return D{Size: card.Size()}
+}
+
+// viewOnceRing draws WhatsApp's view once badge: a circle, solid round
+// its left and dashed round its right, around a 1 of size sp (none if 0).
 func viewOnceRing(gtx C, u *UI, mid image.Point, r int, col color.NRGBA, sp unit.Sp) {
 	c := f32.Pt(float32(mid.X), float32(mid.Y))
-	w := max(1, float32(r)*0.15)
-	// A full arc at the top, then dashes round to it.
-	strokeArc(gtx, c, float32(r), -math.Pi*0.9, math.Pi*1.3, w, col)
+	w := max(1, float32(r)*0.16)
+	// A solid arc from just right of the bottom, round the left, to just
+	// right of the top, then three dashes down the right.
+	const start, sweep, dash = math.Pi * 0.45, math.Pi * 1.1, math.Pi * 0.12
+	strokeArc(gtx, c, float32(r), start, sweep, w, col)
+	gap := float32(2*math.Pi-sweep-3*dash) / 4
 	for i := range 3 {
-		a := math.Pi*0.55 + float32(i)*math.Pi*0.22
-		strokeArc(gtx, c, float32(r), a, math.Pi*0.1, w, col)
+		a := start + sweep + gap + float32(i)*(dash+gap)
+		strokeArc(gtx, c, float32(r), a, dash, w, col)
+	}
+	if sp == 0 {
+		return
 	}
 	one := record(gtx, func(gtx C) D {
 		gtx.Constraints.Min = image.Point{}
