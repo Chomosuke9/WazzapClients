@@ -1013,7 +1013,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		o := richOpts{italic: italic, prefix: prefix, suffix: suffix}
 		if lead == nil {
 			if !u.conv.selecting {
-				o.sel, o.links = m.ID, m.ID
+				o.sel, o.links, o.mentions = m.ID, m.ID, m
 			}
 			if !out {
 				o.pills = pillMe

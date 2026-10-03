@@ -258,7 +258,7 @@ func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions st
 		}
 		m := mention(b.senderName(ctx, j, "", ""))
 		if b.isMe(j.ToNonAD()) {
-			m = markedMention(model.MentionNotifies, "You")
+			m = markedMention(model.MentionNotifies, b.myName())
 		}
 		text = strings.ReplaceAll(text, "@"+j.User, m)
 	}
@@ -285,6 +285,15 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 	return m
 }
 
+// myName is how a mention of you shows: your profile name, as in
+// WhatsApp, or "You" before it is known.
+func (b *Backend) myName() string {
+	if cli := b.client(); cli != nil && cli.Store.PushName != "" {
+		return cli.Store.PushName
+	}
+	return "You"
+}
+
 // mention formats a resolved @mention. The Unicode isolate marks around it
 // are invisible; the UI uses them to highlight the whole name.
 func mention(name string) string { return "\u2068@" + name + "\u2069" }
@@ -306,7 +315,7 @@ func (b *Backend) guessMentions(ctx context.Context, text string) string {
 		for _, server := range []string{types.HiddenUserServer, types.DefaultUserServer} {
 			j := types.NewJID(user, server)
 			if b.isMe(j) {
-				return markedMention(model.MentionNotifies, "You")
+				return markedMention(model.MentionNotifies, b.myName())
 			}
 			n := b.lookup(ctx, j)
 			name := first(n.saved, n.business, tilde(n.push))

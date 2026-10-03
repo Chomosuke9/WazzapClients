@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // TestLinkSpans checks which part of a text is a link: not the punctuation
@@ -89,5 +91,38 @@ func TestLinkHoverClick(t *testing.T) {
 	frame()
 	if u.dialog.kind != dialogInvite || u.dialog.invite.code != "DemoInviteFutsal" {
 		t.Fatalf("clicking the link opened dialog %d (code %q), want the invite", u.dialog.kind, u.dialog.invite.code)
+	}
+}
+
+// TestMentionClick checks that only mentions of people are clickable, and
+// that clicking one shows their contact info.
+func TestMentionClick(t *testing.T) {
+	b := mock.New()
+	u := New(b)
+	u.Start(func() {})
+	u.applyEvents()
+	var m *model.Message
+	for _, x := range b.Messages("work", 100) {
+		if strings.Contains(x.Text, "@Bima") {
+			m = x
+		}
+	}
+	if m == nil {
+		t.Fatal("no demo message mentions Bima")
+	}
+	spans, deco := u.richSpans(m.Text, 15, u.pal.Text, false, pillMe)
+	got := ""
+	for i, s := range spans {
+		if deco[i]&decoMention != 0 {
+			got += s.Content
+		}
+	}
+	if got != "@Bima" {
+		t.Fatalf("clickable mentions %q, want only @Bima", got)
+	}
+	u.openChatByID("work")
+	u.openMention(m, "@Bima")
+	if !u.info.open || u.info.chatID != "bima" || u.selected.ID != "work" {
+		t.Fatalf("clicking @Bima showed info %q (open %v) in chat %q, want bima's in work", u.info.chatID, u.info.open, u.selected.ID)
 	}
 }

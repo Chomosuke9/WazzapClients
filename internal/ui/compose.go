@@ -73,6 +73,21 @@ func (u *UI) openDirect(id, name string) {
 	u.open(c)
 }
 
+// openMention shows the contact info of the person m mentions as mention
+// ("@Name", as shown), like clicking a mention in WhatsApp.
+func (u *UI) openMention(m *model.Message, mention string) {
+	_, refs := u.backend.EditText(m)
+	for _, r := range refs {
+		if displayText("@"+r.Name) != mention {
+			continue
+		}
+		if !strings.HasPrefix(r.ID, "@") && r.ID != u.meID {
+			u.openContact(r.ID, r.Name)
+		}
+		return
+	}
+}
+
 func (u *UI) closeChat() {
 	u.stashDraft()
 	if u.attach.chatID != statusChatID {

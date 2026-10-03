@@ -148,10 +148,11 @@ var linkRe = regexp.MustCompile(`https?://[^\s\x{2068}\x{2069}]+|www\.[^\s\x{206
 type spanDeco uint8
 
 const (
-	decoCode   spanDeco = 1 << iota // inline code, on a tinted background
-	decoStrike                      // struck through
-	decoPill                        // a mention of you, on a rounded tint
-	decoLink                        // a link, underlined until hovered
+	decoCode    spanDeco = 1 << iota // inline code, on a tinted background
+	decoStrike                       // struck through
+	decoPill                         // a mention of you, on a rounded tint
+	decoLink                         // a link, underlined until hovered
+	decoMention                      // a mention of someone, underlined while hovered
 )
 
 // pillFor says which mentions get a pill: the ones that notify you.
@@ -249,7 +250,12 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, 
 				add("\u00a0"+strings.ReplaceAll(mentionMarks.Replace(name), " ", "\u00a0")+"\u00a0", mf, p.Green)
 				cur = prev
 			} else {
+				prev := cur
+				if r, _ := utf8.DecodeRuneInString(name); r != model.MentionNotifies && r != model.MentionAdmins {
+					cur |= decoMention
+				}
 				add(mentionMarks.Replace(name), mf, p.Green)
+				cur = prev
 			}
 			if j < len(rest) {
 				rest = rest[j+len(string(mentionEnd)):]
@@ -325,6 +331,9 @@ type richOpts struct {
 	// links, if set, makes the text's links clickable: it tells their
 	// buttons apart from other texts'.
 	links string
+	// mentions, if set with links, is the message whose text this is: a
+	// click on a mention of someone opens a chat with them.
+	mentions *model.Message
 	// sel, if set, is the message whose text can be selected.
 	sel string
 }
@@ -358,11 +367,13 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 			deco = append([]spanDeco{0}, deco...)
 		}
 		// Links take clicks unless the text can't be used (select mode),
-		// and lose their underline while hovered.
+		// and lose their underline while hovered. Mentions of people take
+		// clicks too, and are underlined while hovered.
 		var linkKeys map[int]string
 		if o.links != "" {
 			for j, dc := range deco {
-				if dc&decoLink == 0 {
+				isMention := dc&decoMention != 0 && o.mentions != nil
+				if dc&decoLink == 0 && !isMention {
 					continue
 				}
 				if linkKeys == nil {
@@ -373,10 +384,14 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 				linkKeys[j] = key
 				c := u.btn(key)
 				if c.Clicked(gtx) {
-					u.openLink(spans[j].Content)
+					if isMention {
+						u.openMention(o.mentions, spans[j].Content)
+					} else {
+						u.openLink(spans[j].Content)
+					}
 				}
 				if c.Hovered() {
-					deco[j] &^= decoLink
+					deco[j] ^= decoLink
 				}
 			}
 		}
