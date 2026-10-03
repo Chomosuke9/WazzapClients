@@ -16,6 +16,7 @@ import (
 	"github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/polymorfa/hypermeow/types/events"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -133,6 +134,13 @@ func (b *Backend) fetchAvatar(id string) {
 	} else {
 		params := &whatsmeow.GetProfilePictureParams{Preview: true, IsCommunity: b.store.isCommunity(ctx, id)}
 		info, err = cli.GetProfilePictureInfo(ctx, jid, params)
+		// Your own picture may only be found under your other ID (the LID
+		// of a phone number, or the other way round).
+		if other := b.ownOtherID(jid); !other.IsEmpty() && (err != nil || info == nil) {
+			if i, e := cli.GetProfilePictureInfo(ctx, other, params); e == nil && i != nil {
+				info, err = i, nil
+			}
+		}
 	}
 	switch {
 	case errors.Is(err, whatsmeow.ErrProfilePictureNotSet), errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized),
@@ -155,6 +163,49 @@ func (b *Backend) fetchAvatar(id string) {
 		return
 	}
 	b.emit(model.AvatarEvent{ID: id})
+}
+
+// ownOtherID returns your LID for your phone number JID and your phone
+// number JID for your LID, or an empty JID for anyone else.
+func (b *Backend) ownOtherID(j types.JID) types.JID {
+	cli := b.client()
+	if cli == nil || cli.Store.ID == nil || cli.Store.LID.IsEmpty() {
+		return types.EmptyJID
+	}
+	pn, lid := cli.Store.ID.ToNonAD(), cli.Store.LID.ToNonAD()
+	switch j = j.ToNonAD(); j {
+	case pn:
+		return lid
+	case lid:
+		return pn
+	}
+	return types.EmptyJID
+}
+
+// onPicture refreshes the cached picture of a user or group that changed
+// it, under each ID the UI may ask for it by.
+func (b *Backend) onPicture(e *events.Picture) {
+	ctx := b.ctx
+	j := e.JID.ToNonAD()
+	ids := []types.JID{j, b.canonical(ctx, j)}
+	if other := b.ownOtherID(j); !other.IsEmpty() {
+		ids = append(ids, other)
+	}
+	seen := map[string]bool{}
+	for _, jid := range ids {
+		id := jid.String()
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if e.Remove {
+			if os.WriteFile(b.avatarPath(id), nil, 0o600) == nil {
+				b.emit(model.AvatarEvent{ID: id})
+			}
+			continue
+		}
+		b.avatars.add(id, func() { b.fetchAvatar(id) }) // emits AvatarEvent
+	}
 }
 
 func (b *Backend) channelPictureInfo(ctx context.Context, jid types.JID) (*types.ProfilePictureInfo, error) {

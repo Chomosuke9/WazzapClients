@@ -14,7 +14,9 @@ import (
 
 	_ "golang.org/x/image/webp" // or WebP
 
+	"github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/appstate"
+	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
 
@@ -168,6 +170,8 @@ func (b *Backend) onAccountEvent(evt any) {
 		}()
 	case *events.PushNameSetting:
 		b.emit(model.AccountEvent{})
+	case *events.Picture:
+		b.onPicture(e)
 	case *events.IdentityChange:
 		if b.Pref(prefSecurityNotify) != "on" || e.JID.Server == types.GroupServer {
 			return
@@ -209,10 +213,20 @@ func (b *Backend) SetAbout(about string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 		defer cancel()
+		// The GraphQL mutation is refused for some accounts (400 Bad
+		// Request); the older status IQ still works for them.
 		if err := cli.SetStatusMessage(ctx, types.SetStatusInput{Text: &about}); err != nil {
-			b.log.Warnf("set about: %v", err)
-			b.emit(model.NoticeEvent{Text: "Couldn't change your about."})
-			return
+			b.log.Debugf("set about (mex): %v", err)
+			if _, err := cli.DangerousInternals().SendIQ(ctx, whatsmeow.DangerousInfoQuery{
+				Namespace: "status",
+				Type:      "set",
+				To:        types.ServerJID,
+				Content:   []waBinary.Node{{Tag: "status", Content: []byte(about)}},
+			}); err != nil {
+				b.log.Warnf("set about: %v", err)
+				b.emit(model.NoticeEvent{Text: "Couldn't change your about."})
+				return
+			}
 		}
 		b.saveAccount(func(a *model.Account) { a.About = about })
 	}()
