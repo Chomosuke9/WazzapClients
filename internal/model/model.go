@@ -393,6 +393,10 @@ type Poll struct {
 	Options  []string
 	// Multiple lets voters pick more than one option.
 	Multiple bool
+	// HideVoters hides who voted for what: everyone sees only the counts.
+	HideVoters bool
+	// End is when voting closes; zero means never.
+	End time.Time
 }
 
 // ChatList is a custom chat list ("Add to list").

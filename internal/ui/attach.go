@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/io/clipboard"
@@ -633,7 +634,12 @@ type pollState struct {
 	question widget.Editor
 	options  []*widget.Editor
 	multiple bool
-	list     widget.List
+	hide     bool // hide voter names
+	// ends sets an end time: endDate (2006-01-02) and endTime (15:04),
+	// local time.
+	ends             bool
+	endDate, endTime widget.Editor
+	list             widget.List
 }
 
 // maxPollOptions is WhatsApp's limit.
@@ -646,6 +652,9 @@ func (u *UI) openPoll() {
 	pl.question.Submit = true
 	pl.multiple = true
 	pl.list.Axis = layout.Vertical
+	for _, ed := range []*widget.Editor{&pl.endDate, &pl.endTime} {
+		ed.SingleLine, ed.Submit = true, true
+	}
 	for range 2 {
 		pl.options = append(pl.options, &widget.Editor{SingleLine: true, Submit: true})
 	}
@@ -653,19 +662,40 @@ func (u *UI) openPoll() {
 }
 
 // poll returns the poll to send, or false while it lacks a question
-// or two options.
-func (pl *pollState) poll() (model.Poll, bool) {
-	q := model.Poll{Question: trimSpace(pl.question.Text()), Multiple: pl.multiple}
+// or two options, or its end time isn't one after now.
+func (pl *pollState) poll(now time.Time) (model.Poll, bool) {
+	q := model.Poll{Question: trimSpace(pl.question.Text()), Multiple: pl.multiple, HideVoters: pl.hide}
 	for _, ed := range pl.options {
 		if o := trimSpace(ed.Text()); o != "" {
 			q.Options = append(q.Options, o)
 		}
 	}
-	return q, q.Question != "" && len(q.Options) >= 2
+	ok := q.Question != "" && len(q.Options) >= 2
+	if pl.ends {
+		end, valid := pl.end(now)
+		q.End, ok = end, ok && valid
+	}
+	return q, ok
+}
+
+// end reads the end time, and whether it is a time after now.
+func (pl *pollState) end(now time.Time) (time.Time, bool) {
+	t, err := time.ParseInLocation("2006-01-02 15:04",
+		trimSpace(pl.endDate.Text())+" "+trimSpace(pl.endTime.Text()), now.Location())
+	return t, err == nil && t.After(now)
+}
+
+// startEnd fills in the end time WhatsApp suggests: a day from now, at
+// the next whole minute.
+func (pl *pollState) startEnd(now time.Time) {
+	t := now.Truncate(time.Minute).Add(time.Minute + 24*time.Hour)
+	pl.endDate.SetText(t.Format("2006-01-02"))
+	pl.endTime.SetText(t.Format("15:04"))
 }
 
 // pollPanel is the "Create poll" dialog: a question, options that grow as
-// you fill them, and whether voters may pick several.
+// you fill them, whether voters may pick several, whether their names
+// are hidden, and when voting ends.
 func (u *UI) pollPanel(gtx C) D {
 	d := &u.dialog
 	pl := &d.poll
@@ -676,8 +706,20 @@ func (u *UI) pollPanel(gtx C) D {
 	if u.btn("poll:multi").Clicked(gtx) {
 		pl.multiple = !pl.multiple
 	}
+	if u.btn("poll:hide").Clicked(gtx) {
+		pl.hide = !pl.hide
+	}
+	now := u.now().Local()
+	if u.btn("poll:ends").Clicked(gtx) {
+		if pl.ends = !pl.ends; pl.ends {
+			pl.startEnd(now)
+		}
+	}
 	// Enter moves to the next field.
 	fields := append([]*widget.Editor{&pl.question}, pl.options...)
+	if pl.ends {
+		fields = append(fields, &pl.endDate, &pl.endTime)
+	}
 	for i, ed := range fields {
 		for {
 			ev, ok := ed.Update(gtx)
@@ -693,7 +735,7 @@ func (u *UI) pollPanel(gtx C) D {
 	if n := len(pl.options); n < maxPollOptions && trimSpace(pl.options[n-1].Text()) != "" {
 		pl.options = append(pl.options, &widget.Editor{SingleLine: true, Submit: true})
 	}
-	poll, ok := pl.poll()
+	poll, ok := pl.poll(now)
 	if u.btn("poll:send").Clicked(gtx) && ok && d.isOpen() && u.selected != nil {
 		if m := u.backend.SendPoll(u.selected.ID, poll); m != nil {
 			u.upsertMessage(m)
@@ -726,26 +768,24 @@ func (u *UI) pollPanel(gtx C) D {
 			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return u.pollField(gtx, ed, hint) })
 		})
 	}
-	rows = append(rows, func(gtx C) D {
-		cl := u.btn("poll:multi")
-		return clickable(gtx, cl, func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return background(gtx, mix(p.Dialog, p.Hover, u.hover(gtx, cl)), 0, func(gtx C) D {
-				return vcenter(gtx, gtx.Dp(56), func(gtx C) D {
-					return layout.Inset{Left: 24, Right: 24}.Layout(gtx, func(gtx C) D {
-						box, col := icCheckBoxEmpty, p.TextSecondary
-						if pl.multiple {
-							box, col = icCheckBox, p.Green
-						}
-						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Flexed(1, u.label(15, "Allow multiple answers", p.Text, labelOpts{maxLines: 1}).Layout),
-							layout.Rigid(iconW(box, 24, col)),
-						)
-					})
-				})
+	rows = append(rows,
+		heading("Settings"),
+		func(gtx C) D { return u.pollCheck(gtx, "poll:multi", "Allow multiple answers", pl.multiple) },
+		func(gtx C) D { return u.pollCheck(gtx, "poll:hide", "Hide voter names", pl.hide) },
+		func(gtx C) D { return u.pollCheck(gtx, "poll:ends", "Set end time", pl.ends) },
+	)
+	if pl.ends {
+		_, valid := pl.end(now)
+		rows = append(rows, func(gtx C) D {
+			return layout.Inset{Left: 24, Right: 24, Bottom: 8}.Layout(gtx, func(gtx C) D {
+				return layout.Flex{}.Layout(gtx,
+					layout.Flexed(1, func(gtx C) D { return u.pollLine(gtx, &pl.endDate, "YYYY-MM-DD", !valid) }),
+					layout.Rigid(layout.Spacer{Width: 16}.Layout),
+					layout.Flexed(1, func(gtx C) D { return u.pollLine(gtx, &pl.endTime, "HH:MM", !valid) }),
+				)
 			})
 		})
-	})
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
@@ -781,27 +821,58 @@ func (u *UI) pollPanel(gtx C) D {
 	)
 }
 
+// pollCheck is a row of the poll dialog's settings that a click turns on
+// and off.
+func (u *UI) pollCheck(gtx C, key, label string, on bool) D {
+	p := u.pal
+	cl := u.btn(key)
+	return clickable(gtx, cl, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return background(gtx, mix(p.Dialog, p.Hover, u.hover(gtx, cl)), 0, func(gtx C) D {
+			return vcenter(gtx, gtx.Dp(56), func(gtx C) D {
+				return layout.Inset{Left: 24, Right: 24}.Layout(gtx, func(gtx C) D {
+					box, col := icCheckBoxEmpty, p.TextSecondary
+					if on {
+						box, col = icCheckBox, p.Green
+					}
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, u.label(15, label, p.Text, labelOpts{maxLines: 1}).Layout),
+						layout.Rigid(iconW(box, 24, col)),
+					)
+				})
+			})
+		})
+	})
+}
+
 // pollField is a line of text with an underline that turns green while
 // focused.
 func (u *UI) pollField(gtx C, ed *widget.Editor, hint string) D {
+	return layout.Inset{Left: 24, Right: 24}.Layout(gtx, func(gtx C) D { return u.pollLine(gtx, ed, hint, false) })
+}
+
+// pollLine is pollField without its margins; bad underlines it in red
+// while it isn't focused.
+func (u *UI) pollLine(gtx C, ed *widget.Editor, hint string, bad bool) D {
 	p := u.pal
-	return layout.Inset{Left: 24, Right: 24}.Layout(gtx, func(gtx C) D {
-		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		m := op.Record(gtx.Ops)
-		dims := layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
-			e := material.Editor(u.th, ed, hint)
-			e.TextSize = 15.5
-			e.Color = p.Text
-			e.HintColor = p.TextSecondary
-			return e.Layout(gtx)
-		})
-		call := m.Stop()
-		call.Add(gtx.Ops)
-		line, col := max(1, gtx.Dp(1)), p.Divider
-		if gtx.Focused(ed) {
-			line, col = gtx.Dp(2), p.Green
-		}
-		fillRect(gtx, image.Rect(0, dims.Size.Y-line, dims.Size.X, dims.Size.Y), col)
-		return dims
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	m := op.Record(gtx.Ops)
+	dims := layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
+		e := material.Editor(u.th, ed, hint)
+		e.TextSize = 15.5
+		e.Color = p.Text
+		e.HintColor = p.TextSecondary
+		return e.Layout(gtx)
 	})
+	call := m.Stop()
+	call.Add(gtx.Ops)
+	line, col := max(1, gtx.Dp(1)), p.Divider
+	switch {
+	case gtx.Focused(ed):
+		line, col = gtx.Dp(2), p.Green
+	case bad:
+		line, col = gtx.Dp(2), p.Danger
+	}
+	fillRect(gtx, image.Rect(0, dims.Size.Y-line, dims.Size.X, dims.Size.Y), col)
+	return dims
 }

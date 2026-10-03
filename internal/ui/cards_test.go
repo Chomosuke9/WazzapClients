@@ -2,6 +2,9 @@ package ui
 
 import (
 	"testing"
+	"time"
+
+	"gioui.org/widget"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -106,5 +109,36 @@ func TestCardButtons(t *testing.T) {
 	quiet := &model.Message{Media: model.MediaEventInvite, Event: &model.EventInfo{Name: "Picnic"}}
 	if b := cardButtons(quiet); len(b) != 0 {
 		t.Errorf("an event nobody answered: %+v", b)
+	}
+}
+
+// TestPollEndTime checks the poll dialog's end time: it starts a day
+// ahead and must stay after now.
+func TestPollEndTime(t *testing.T) {
+	now := testNow()
+	var pl pollState
+	pl.question.SetText("Lunch?")
+	for _, o := range []string{"Pizza", "Sushi"} {
+		ed := &widget.Editor{}
+		ed.SetText(o)
+		pl.options = append(pl.options, ed)
+	}
+	pl.ends, pl.hide = true, true
+	pl.startEnd(now)
+	q, ok := pl.poll(now)
+	if want := now.Truncate(time.Minute).Add(24*time.Hour + time.Minute); !ok || !q.End.Equal(want) || !q.HideVoters {
+		t.Fatalf("default end: %v %v, want %v", q.End, ok, want)
+	}
+	pl.endDate.SetText(now.Add(-24 * time.Hour).Format("2006-01-02"))
+	if _, ok := pl.poll(now); ok {
+		t.Error("an end time in the past can be sent")
+	}
+	pl.endDate.SetText("tomorrow")
+	if _, ok := pl.poll(now); ok {
+		t.Error("an unreadable end date can be sent")
+	}
+	pl.ends = false
+	if q, ok := pl.poll(now); !ok || !q.End.IsZero() {
+		t.Errorf("without an end time: %v %v", q.End, ok)
 	}
 }

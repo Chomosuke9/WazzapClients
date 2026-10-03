@@ -668,6 +668,18 @@ func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 		n = 0 // any number
 	}
 	msg := cli.BuildPollCreation(p.Question, p.Options, n)
+	// WhatsApp sends a poll that hides voters or ends as a V6 one, with
+	// the fields left out when unset (receivers check their presence).
+	if p.HideVoters || !p.End.IsZero() {
+		pc := msg.PollCreationMessage
+		if p.HideVoters {
+			pc.HideParticipantName = proto.Bool(true)
+		}
+		if !p.End.IsZero() {
+			pc.EndTime = proto.Int64(p.End.UnixMilli())
+		}
+		msg.PollCreationMessage, msg.PollCreationMessageV6 = nil, pc
+	}
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Media: model.MediaPoll,
 		Text: p.Question, Time: time.Now(), Receipt: model.Pending, Poll: &model.PollState{Max: n}}
 	for _, o := range p.Options {
