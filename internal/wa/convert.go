@@ -91,6 +91,8 @@ func unwrapOnce(m *waE2E.Message) *waE2E.Message {
 		return m.GetLottieStickerMessage().GetMessage()
 	case m.GetAssociatedChildMessage().GetMessage() != nil:
 		return m.GetAssociatedChildMessage().GetMessage()
+	case m.GetGroupStatusMessageV2().GetMessage() != nil:
+		return m.GetGroupStatusMessageV2().GetMessage()
 	case m.GetGroupMentionedMessage().GetMessage() != nil:
 		return m.GetGroupMentionedMessage().GetMessage()
 	}

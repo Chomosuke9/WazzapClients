@@ -344,11 +344,18 @@ func (u *UI) addFiles(chatID string, files []*attachFile) {
 		u.toast(auto.GhostText)
 		return
 	}
-	if chatID == statusChatID {
-		if u.page != pageStatus {
+	if isStatusDestination(chatID) {
+		if u.page != pageStatus || chatID != u.statusDestination() {
 			// The Status page was left while the file dialog was open.
 			removeTemps(files)
 			return
+		}
+		if statusGroup(chatID) != "" {
+			for _, f := range files {
+				if f.Media == model.MediaDocument && hasExt(f.Path, audioExts) {
+					f.Media = model.MediaAudio
+				}
+			}
 		}
 		files = u.statusFiles(files)
 	} else if (u.selected == nil || u.selected.ID != chatID) && !isChannelID(chatID) && u.chatByID(chatID) != nil {
@@ -357,7 +364,7 @@ func (u *UI) addFiles(chatID string, files []*attachFile) {
 		u.draftFiles(chatID, files)
 		return
 	}
-	if len(a.files) > 0 && a.chatID != chatID || chatID != statusChatID &&
+	if len(a.files) > 0 && a.chatID != chatID || !isStatusDestination(chatID) &&
 		(u.selected == nil || u.selected.ID != chatID || isChannelID(chatID)) {
 		removeTemps(files)
 		return
@@ -403,7 +410,7 @@ func classify(path string) model.Media {
 
 // attachPaths adds dropped or pasted files to the open chat's send view.
 func (u *UI) attachPaths(paths []string) {
-	statusPage := u.page == pageStatus && (len(u.attach.files) == 0 || u.attach.chatID == statusChatID)
+	statusPage := u.page == pageStatus && (len(u.attach.files) == 0 || isStatusDestination(u.attach.chatID))
 	if !statusPage && (u.selected == nil || isChannelID(u.selected.ID) || u.selPage != u.page) {
 		u.toast("Open a chat to send files to it.")
 		return
@@ -423,7 +430,7 @@ func (u *UI) attachPaths(paths []string) {
 	}
 	if statusPage {
 		// Dropped on the Status page, they become status updates.
-		u.addFiles(statusChatID, files)
+		u.addFiles(u.statusDestination(), files)
 		return
 	}
 	u.addFiles(u.selected.ID, files)
@@ -599,7 +606,7 @@ func (u *UI) sendAttachments() {
 	if f := a.current(); f != nil {
 		f.caption = u.conv.composer.Text()
 	}
-	status := a.chatID == statusChatID
+	status := isStatusDestination(a.chatID)
 	if !status {
 		u.openAlbum(a.chatID, a.files)
 	}

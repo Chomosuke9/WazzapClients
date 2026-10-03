@@ -557,8 +557,9 @@ func uploadMedia(ctx context.Context, cli *whatsmeow.Client, m *model.Message, u
 			e.ViewOnce = proto.Bool(true)
 		}
 		msg, inner = &waE2E.Message{VideoMessage: e}, e
-	case model.MediaAudio:
+	case model.MediaAudio, model.MediaVoice:
 		e := &waE2E.AudioMessage{
+			PTT: proto.Bool(m.Media == model.MediaVoice),
 			URL: proto.String(res.URL), DirectPath: proto.String(res.DirectPath), MediaKey: res.MediaKey,
 			FileEncSHA256: res.FileEncSHA256, FileSHA256: res.FileSHA256, FileLength: proto.Uint64(res.FileLength),
 			Mimetype: proto.String(m.FileType), Seconds: proto.Uint32(uint32(m.Duration)),

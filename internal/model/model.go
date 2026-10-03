@@ -518,10 +518,14 @@ type CommonGroup struct {
 
 // StatusUpdate is one status post.
 type StatusUpdate struct {
-	ID    string
-	Media Media
-	Text  string
-	Thumb []byte
+	SenderID, Sender string // author, also for updates in a group
+	FileType         string
+	FromMe           bool
+	Duration         int
+	ID               string
+	Media            Media
+	Text             string
+	Thumb            []byte
 	// Background is the ARGB color behind a text status.
 	Background uint32
 	Time       time.Time
@@ -534,7 +538,8 @@ type StatusUpdate struct {
 // StatusThread is everything one contact posted in the last 24 hours,
 // oldest first.
 type StatusThread struct {
-	ID      string // poster's JID
+	ID      string // poster or group JID
+	Group   bool
 	Name    string
 	Mine    bool
 	Updates []*StatusUpdate
@@ -546,6 +551,7 @@ func (t *StatusThread) Last() *StatusUpdate { return t.Updates[len(t.Updates)-1]
 // StatusPost is a status update to post: Text on a Background color, or
 // a photo or video (File) with Text as its caption.
 type StatusPost struct {
+	GroupID    string // empty for a personal status
 	Text       string
 	Background uint32 // ARGB, for text
 	File       *Attachment

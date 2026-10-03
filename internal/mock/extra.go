@@ -42,7 +42,7 @@ func (b *Backend) ViewStatus(threadID, statusID string) {
 // preview.
 func (b *Backend) PostStatus(p model.StatusPost) {
 	b.posted++
-	up := &model.StatusUpdate{ID: "posted-" + strconv.Itoa(b.posted), Text: p.Text, Background: p.Background, Time: b.now()}
+	up := &model.StatusUpdate{ID: "posted-" + strconv.Itoa(b.posted), FromMe: true, Sender: "You", SenderID: "me", Text: p.Text, Background: p.Background, Time: b.now()}
 	if f := p.File; f != nil {
 		up.Media = f.Media
 		if st, err := os.Stat(f.Path); f.Media == model.MediaImage && err == nil && st.Size() < 8<<20 {
@@ -51,12 +51,15 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 	}
 	var mine *model.StatusThread
 	for _, t := range b.statuses {
-		if t.Mine {
+		if p.GroupID == "" && t.Mine || p.GroupID != "" && t.Group && t.ID == p.GroupID {
 			mine = t
 		}
 	}
 	if mine == nil {
 		mine = &model.StatusThread{ID: "me", Mine: true}
+		if p.GroupID != "" {
+			mine = &model.StatusThread{ID: p.GroupID, Name: "Group status", Group: true}
+		}
 		b.statuses = append([]*model.StatusThread{mine}, b.statuses...)
 	}
 	mine.Updates = append(mine.Updates, up)

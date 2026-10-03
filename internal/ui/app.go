@@ -460,7 +460,7 @@ func (u *UI) ShowContact(id string, first, offset int) {
 }
 
 func (u *UI) setPage(pg page) {
-	if u.page == pg {
+	if u.page == pg && (pg != pageStatus || u.status.groupID == "") {
 		return
 	}
 	// Leaving a page counts as having seen it, as does opening it.
@@ -473,6 +473,7 @@ func (u *UI) setPage(pg page) {
 		}
 	}
 	u.page = pg
+	u.status.groupID = ""
 	u.closeNewChat()
 	u.settings.detail = 0
 	u.hideInfo()
@@ -772,7 +773,7 @@ func (u *UI) layoutRightPane(gtx C) D {
 		}
 		return u.layoutWithInfo(gtx)
 	}
-	if u.page == pageStatus && u.attach.chatID == statusChatID {
+	if u.page == pageStatus && isStatusDestination(u.attach.chatID) {
 		// Photos and videos to post cover the pane like a chat's send view.
 		if sv := u.sendViewStep(gtx); sv > 0 {
 			if sv < 1 {
@@ -1537,6 +1538,25 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 		if name == "quality" {
 			u.openQualityMenu()
+		}
+	case "groupstatus", "groupstatustext", "groupstatusviewer":
+		if u.selected == nil || !u.selected.IsGroup {
+			return
+		}
+		id, title := u.selected.ID, u.selected.Name
+		u.openGroupStatus(id)
+		t := &model.StatusThread{ID: id, Name: title, Group: true, Updates: []*model.StatusUpdate{
+			{ID: "group-story-preview", Sender: "Rina", SenderID: "rina", Text: "See you all this weekend!", Background: 0xff6e257e, Time: u.now()},
+		}}
+		u.statuses = []*model.StatusThread{t}
+		if name == "groupstatustext" {
+			u.openStatusText()
+			u.status.text.ed.SetText("A little update for the group")
+			u.status.text.anim.snap(true)
+		}
+		if name == "groupstatusviewer" {
+			u.status.viewer.show(t)
+			u.status.viewer.anim.snap(true)
 		}
 	case "statusadd", "statusmenu", "statusprivacy", "statustext", "statussend":
 		// Posting a status, from the Status page.

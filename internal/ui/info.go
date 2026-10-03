@@ -418,7 +418,7 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 		// A group member's info offers to message them instead.
 		actions = []action{{"message", icChats, "Message"}, {"share", icForward, "Share"}}
 	case info.IsGroup:
-		actions = []action{{"voice", icCallLine, "Voice"}, {"video", icVideoLine, "Video"}, {"add", icPersonAdd, "Add"}, {"search", icSearch, "Search"}}
+		actions = []action{{"voice", icCallLine, "Voice"}, {"status", icAddCircle, "Status"}, {"add", icPersonAdd, "Add"}, {"search", icSearch, "Search"}}
 	default:
 		actions = []action{{"voice", icCallLine, "Voice"}, {"video", icVideoLine, "Video"}, {"search", icSearch, "Search"}}
 	}
@@ -427,6 +427,9 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 	}
 	if u.btn("info-action:share").Clicked(gtx) {
 		u.openShareContact(c.ID)
+	}
+	if info.IsGroup && u.btn("info-action:status").Clicked(gtx) {
+		u.openGroupStatus(c.ID)
 	}
 	if u.btn("info-action:search").Clicked(gtx) {
 		u.openChatSearch()
@@ -513,6 +516,9 @@ func (u *UI) infoAction(gtx C, key string, ic *icon.Icon, label string) D {
 				bg := mix(p.Hover, rgb(0xffffff), 0.06*u.hover(gtx, c))
 				fillRRect(gtx, image.Rectangle{Max: sz}, sz.Y/2, bg)
 				gtx.Constraints = layout.Exact(sz)
+				if key == "status" {
+					return layout.Center.Layout(gtx, func(gtx C) D { return statusIcon(gtx, 27, p.IconStrong, false) })
+				}
 				return layout.Center.Layout(gtx, iconW(ic, 27, p.IconStrong))
 			}),
 			layout.Rigid(layout.Spacer{Height: 7}.Layout),

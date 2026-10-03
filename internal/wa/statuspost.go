@@ -25,7 +25,18 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 	if cli == nil || cli.Store.ID == nil {
 		return
 	}
+	if p.GroupID != "" {
+		j, err := types.ParseJID(p.GroupID)
+		if err != nil || j.Server != types.GroupServer {
+			b.emit(model.NoticeEvent{Text: "Invalid group for status."})
+			return
+		}
+	}
+	if p.File == nil && strings.TrimSpace(p.Text) == "" {
+		return
+	}
 	st := storedStatus{
+		group:  p.GroupID,
 		id:     cli.GenerateMessageID(),
 		sender: b.ownJID("").String(),
 		fromMe: true,
@@ -42,7 +53,7 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 		if !b.storeStatus(st) {
 			return
 		}
-		go b.sendStatus(cli, st.id, msg)
+		go b.sendStatus(cli, st.id, msg, p.GroupID)
 		return
 	}
 
@@ -69,16 +80,26 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 			return
 		}
 		m.Duration = mp4Seconds(a.Path)
+	case model.MediaVoice, model.MediaAudio:
+		if p.GroupID == "" {
+			b.emit(model.NoticeEvent{Text: "Audio posting is available for group status."})
+			return
+		}
+		if _, err := os.Stat(a.Path); err != nil {
+			b.emit(model.NoticeEvent{Text: "Couldn't read " + name + "."})
+			return
+		}
 	default:
-		b.emit(model.NoticeEvent{Text: "Only photos and videos can be posted to your status."})
+		b.emit(model.NoticeEvent{Text: "This file cannot be posted as a status."})
 		return
 	}
-	st.c.media, st.c.thumb = a.Media, m.Thumb
+	st.c.media, st.c.thumb, st.c.duration = a.Media, m.Thumb, m.Duration
+	st.c.file.Type = m.FileType
 	if !b.storeStatus(st) {
 		return
 	}
 	go func() {
-		if m.Media == model.MediaVideo {
+		if m.Media == model.MediaVideo || m.Media == model.MediaAudio || m.Media == model.MediaVoice {
 			if st, err := os.Stat(a.Path); err == nil && st.Size() <= maxLocalCopy {
 				// Your own update plays without a download. Copied here,
 				// not on the UI goroutine that posts it.
@@ -96,7 +117,8 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 		if _, err := b.db.ExecContext(b.ctx, `UPDATE wz_status SET media_blob = ? WHERE id = ?`, marshal(inner), st.id); err != nil {
 			b.log.Warnf("store status media %s: %v", st.id, err)
 		}
-		b.sendStatus(cli, st.id, msg)
+		b.emit(model.MediaEvent{ChatID: statusChat, MsgID: st.id})
+		b.sendStatus(cli, st.id, msg, p.GroupID)
 	}()
 }
 
@@ -122,12 +144,19 @@ func (b *Backend) storeStatus(st storedStatus) bool {
 
 // sendStatus sends a status update to the contacts your status privacy
 // lets see it (hypermeow works them out for status@broadcast).
-func (b *Backend) sendStatus(cli *whatsmeow.Client, id string, msg *waE2E.Message) {
+func (b *Backend) sendStatus(cli *whatsmeow.Client, id string, msg *waE2E.Message, group string) {
 	if !cli.IsConnected() {
 		b.statusFailed(id, errors.New("offline"))
 		return
 	}
-	if _, err := cli.SendMessage(b.ctx, types.StatusBroadcastJID, msg, whatsmeow.SendRequestExtra{ID: id}); err != nil {
+	to := types.StatusBroadcastJID
+	extra := whatsmeow.SendRequestExtra{ID: id}
+	if group != "" {
+		to, _ = types.ParseJID(group) // validated by PostStatus
+		msg, extra = groupStatusMessage(msg)
+		extra.ID = id
+	}
+	if _, err := cli.SendMessage(b.ctx, to, msg, extra); err != nil {
 		b.statusFailed(id, err)
 		return
 	}
@@ -152,7 +181,8 @@ func (b *Backend) dropStatus(ctx context.Context, id string) {
 		return // keep the mark, to try again on the next start
 	}
 	path := b.mediaPath(statusChat, id)
-	for _, p := range []string{path, path + ".mp4"} {
+	files, _ := filepath.Glob(path + ".*")
+	for _, p := range append(files, path) {
 		_ = os.Remove(p)
 	}
 	_, _ = b.db.ExecContext(ctx, `DELETE FROM wz_meta WHERE key = ?`, pendingStatus+id)

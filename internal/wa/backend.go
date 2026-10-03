@@ -865,7 +865,7 @@ func (b *Backend) resyncAppStateOnce() {
 
 func (b *Backend) onMessage(e *events.Message) {
 	ctx := b.ctx
-	if isStatus(e.Info.Chat) {
+	if isStatus(e.Info.Chat) || isGroupStatus(e) || b.isGroupStatusRevoke(e) {
 		b.onStatus(e)
 		return
 	}
@@ -1012,6 +1012,22 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 	}
 	switch e.Type {
 	case types.ReceiptTypeReadSelf:
+		if len(e.MessageIDs) > 0 {
+			args := []any{chat}
+			for _, id := range e.MessageIDs {
+				args = append(args, id)
+			}
+			result, err := b.db.ExecContext(ctx, `UPDATE wz_status SET viewed = 1 WHERE group_jid = ? AND id IN (`+placeholders(len(e.MessageIDs))+`)`, args...)
+			if err == nil {
+				n, _ := result.RowsAffected()
+				if n > 0 {
+					b.emit(model.StatusEvent{})
+				}
+				if n == int64(len(e.MessageIDs)) {
+					return
+				}
+			}
+		}
 		b.updateChat(e.Chat, "unread", 0, false)
 		return
 	case types.ReceiptTypeDelivered:
@@ -1138,6 +1154,12 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			}
 			evt, err := cli.ParseWebMessage(raw, hm.GetMessage())
 			if err != nil {
+				continue
+			}
+			if isGroupStatus(evt) {
+				if st, ok := b.parseStatus(ctx, evt); ok && st.revoke == "" {
+					statuses = append(statuses, st)
+				}
 				continue
 			}
 			p, ok := b.parse(ctx, evt)

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/layout"
@@ -23,7 +24,7 @@ import (
 
 // postingStatus reports whether the send view holds status updates.
 func (u *UI) postingStatus() bool {
-	return len(u.attach.files) > 0 && u.attach.chatID == statusChatID
+	return len(u.attach.files) > 0 && isStatusDestination(u.attach.chatID)
 }
 
 // statusFiles keeps the photos and videos among files: nothing else can be
@@ -31,14 +32,18 @@ func (u *UI) postingStatus() bool {
 func (u *UI) statusFiles(files []*attachFile) []*attachFile {
 	var keep []*attachFile
 	for _, f := range files {
-		if f.Media == model.MediaImage || f.Media == model.MediaVideo {
+		if f.Media == model.MediaImage || f.Media == model.MediaVideo || u.status.groupID != "" && (f.Media == model.MediaAudio || f.Media == model.MediaVoice) {
 			keep = append(keep, f)
 		} else {
 			removeTemps([]*attachFile{f})
 		}
 	}
 	if len(keep) < len(files) {
-		u.toast("Only photos and videos can be posted to your status.")
+		message := "Only photos and videos can be posted to your status."
+		if u.status.groupID != "" {
+			message = "Choose photos, videos or audio for this group status."
+		}
+		u.toast(message)
 	}
 	return keep
 }
@@ -49,10 +54,14 @@ func (u *UI) openStatusAdd() {
 }
 
 func (u *UI) statusAddItems() []menuItem {
-	return []menuItem{
+	items := []menuItem{
 		{key: "st-photos", ic: icPhotosFill, label: "Photos & videos", run: u.pickStatusMedia},
 		{key: "st-text", ic: icEdit, label: "Text", run: u.openStatusText},
 	}
+	if u.status.groupID != "" {
+		items = append(items, menuItem{key: "st-audio", ic: icMic, label: "Audio", run: u.pickGroupStatusAudio})
+	}
+	return items
 }
 
 func (u *UI) statusMenuItems() []menuItem {
@@ -63,11 +72,11 @@ func (u *UI) statusMenuItems() []menuItem {
 
 // pickStatusMedia opens the file dialog for photos and videos to post.
 func (u *UI) pickStatusMedia() {
-	if a := &u.attach; len(a.files) > 0 && a.chatID != statusChatID {
+	if a := &u.attach; len(a.files) > 0 && a.chatID != u.statusDestination() {
 		u.toast("Send or close the files you're attaching to a chat first.")
 		return
 	}
-	u.pickFiles(statusChatID, "Choose photos and videos", []filepick.Filter{
+	u.pickFiles(u.statusDestination(), "Choose photos and videos", []filepick.Filter{
 		{Name: "Photos and videos", Exts: append(append([]string(nil), photoExts...), videoExts...)},
 	})
 }
@@ -114,6 +123,7 @@ const maxStatusText = 700
 
 // statusTextState is the text status composer.
 type statusTextState struct {
+	groupID string
 	open    bool
 	closing bool // fading out
 	anim    tween
@@ -126,6 +136,7 @@ func (s *statusTextState) isOpen() bool { return s.open && !s.closing }
 func (u *UI) openStatusText() {
 	s := &u.status.text
 	s.open, s.closing = true, false
+	s.groupID = u.status.groupID
 	s.ed.Submit, s.ed.MaxLen, s.ed.Alignment = true, maxStatusText, text.Middle
 	s.ed.SetText("")
 	s.color = int(u.now().Unix()/60) % len(statusColors)
@@ -147,7 +158,7 @@ func (u *UI) postStatusText() {
 	if !s.isOpen() || txt == "" {
 		return
 	}
-	u.backend.PostStatus(model.StatusPost{Text: txt, Background: statusColors[s.color]})
+	u.backend.PostStatus(model.StatusPost{GroupID: s.groupID, Text: txt, Background: statusColors[s.color]})
 	u.closeStatusText()
 }
 
@@ -242,6 +253,19 @@ func (u *UI) layoutStatusText(gtx C) {
 	})
 	box.at(gtx, (sz.X-w)/2, (sz.Y-box.size.Y)/2)
 
+	if s.groupID != "" {
+		name := "Group status"
+		if c := u.chatByID(s.groupID); c != nil {
+			name = "Status · " + c.Name
+		}
+		label := record(gtx, func(gtx C) D {
+			gtx.Constraints.Min = image.Point{}
+			gtx.Constraints.Max.X = max(0, sz.X-gtx.Dp(96))
+			return u.label(16, name, white, labelOpts{maxLines: 1}).Layout(gtx)
+		})
+		label.at(gtx, (sz.X-label.size.X)/2, gtx.Dp(76))
+	}
+
 	// Characters left, once it's getting long.
 	if left := maxStatusText - n; left <= 100 {
 		cnt := record(gtx, u.label(14, itoa(left), argb(0xffffff, 0xc0)).Layout)
@@ -258,4 +282,34 @@ func (u *UI) layoutStatusText(gtx C) {
 		})
 		tr.Pop()
 	}
+}
+
+// A separate UI destination prevents a group story becoming a chat attachment.
+const groupStatusPrefix = "group-status:"
+
+func isStatusDestination(id string) bool {
+	return id == statusChatID || strings.HasPrefix(id, groupStatusPrefix)
+}
+func statusGroup(id string) string {
+	if strings.HasPrefix(id, groupStatusPrefix) {
+		return strings.TrimPrefix(id, groupStatusPrefix)
+	}
+	return ""
+}
+func (u *UI) statusDestination() string {
+	if u.status.groupID != "" {
+		return groupStatusPrefix + u.status.groupID
+	}
+	return statusChatID
+}
+func (u *UI) pickGroupStatusAudio() {
+	if a := &u.attach; len(a.files) > 0 && a.chatID != u.statusDestination() {
+		u.toast("Send or close your current attachments first.")
+		return
+	}
+	u.pickFiles(u.statusDestination(), "Choose audio for group status", []filepick.Filter{{Name: "Audio", Exts: []string{"ogg", "opus", "mp3", "m4a", "wav", "aac"}}})
+}
+func (u *UI) openGroupStatus(id string) {
+	u.setPage(pageStatus)
+	u.status.groupID = id
 }

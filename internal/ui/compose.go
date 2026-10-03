@@ -90,7 +90,7 @@ func (u *UI) openMention(m *model.Message, mention string) {
 
 func (u *UI) closeChat() {
 	u.stashDraft()
-	if u.attach.chatID != statusChatID {
+	if !isStatusDestination(u.attach.chatID) {
 		u.dropAttachments()
 	}
 	u.resetComposerAnims()

@@ -21,6 +21,7 @@ import (
 )
 
 type statusState struct {
+	groupID   string
 	menu, add widget.Clickable
 	list      widget.List
 	viewer    statusViewer
@@ -43,9 +44,15 @@ func statusTime(t, now time.Time) string {
 // (unseen) and viewed updates from contacts.
 func (u *UI) layoutStatusList(gtx C) D {
 	p := u.pal
+	if u.status.groupID != "" && u.btn("st:all").Clicked(gtx) {
+		u.setPage(pageStatus)
+	}
 	var mine *model.StatusThread
 	var recent, viewed []*model.StatusThread
 	for _, t := range u.statuses {
+		if u.status.groupID != "" && (!t.Group || t.ID != u.status.groupID) {
+			continue
+		}
 		switch {
 		case t.Mine:
 			mine = t
@@ -77,14 +84,32 @@ func (u *UI) layoutStatusList(gtx C) D {
 	if u.status.add.Clicked(gtx) {
 		u.openStatusAdd()
 	}
-	if u.status.menu.Clicked(gtx) {
+	if u.status.menu.Clicked(gtx) && u.status.groupID == "" {
 		u.ctx = ctxMenu{kind: ctxStatusMenu, at: u.mouse}
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			return u.pageHeader(gtx, "Status",
-				layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.status.menu, icMenu, 40, 25, p.IconStrong) }),
+			title := "Status"
+			if u.status.groupID != "" {
+				title = "Group status"
+				if c := u.chatByID(u.status.groupID); c != nil {
+					title = c.Name
+				}
+			}
+			return u.pageHeader(gtx, title,
+				layout.Rigid(func(gtx C) D {
+					if u.status.groupID == "" {
+						return D{}
+					}
+					return u.iconButton(gtx, u.btn("st:all"), icBack, 40, 25, p.IconStrong)
+				}),
+				layout.Rigid(func(gtx C) D {
+					if u.status.groupID != "" {
+						return D{}
+					}
+					return u.iconButton(gtx, &u.status.menu, icMenu, 40, 25, p.IconStrong)
+				}),
 				layout.Rigid(layout.Spacer{Width: 8}.Layout),
 				u.headerButton(&u.status.add, icAddCircle, 27),
 			)
@@ -97,7 +122,11 @@ func (u *UI) layoutStatusList(gtx C) D {
 						sub = statusTime(mine.Last().Time, now)
 					}
 					return layout.Inset{Bottom: 9.5}.Layout(gtx, func(gtx C) D {
-						return u.statusRow(gtx, "status:me", mine, "My status", sub, 72, true)
+						title := "My status"
+						if u.status.groupID != "" {
+							title, sub = "Add group status", "Visible to members for 24 hours"
+						}
+						return u.statusRow(gtx, "status:me", mine, title, sub, 72, true)
 					})
 				}
 				e := entries[i-1]
@@ -235,7 +264,7 @@ func (u *UI) statusPreview(gtx C, t *model.StatusThread, up *model.StatusUpdate,
 	if t.Mine {
 		id, name = u.meID, u.meName()
 	}
-	u.avatar(gtx, id, name, false, dp(gtx, px))
+	u.avatar(gtx, id, name, t.Group, dp(gtx, px))
 }
 
 func argbColor(c uint32) color.NRGBA {
@@ -304,7 +333,7 @@ func (v *statusViewer) replying(gtx C) bool {
 // what a reply to it quotes.
 func statusMsg(t *model.StatusThread, up *model.StatusUpdate) *model.Message {
 	return &model.Message{ID: up.ID, ChatID: statusChatID, Kind: model.KindImage, Media: up.Media,
-		Text: up.Text, Thumb: up.Thumb, Time: up.Time, FromMe: t.Mine, Sender: t.Name, SenderID: t.ID}
+		Text: up.Text, Thumb: up.Thumb, Time: up.Time, FromMe: t.Mine || up.FromMe, Sender: firstStatusAuthor(t, up), SenderID: firstStatusAuthorID(t, up), Duration: up.Duration, FileType: up.FileType}
 }
 
 // syncStatusVideo starts the update's video, and stops the last one when
@@ -313,7 +342,7 @@ func (u *UI) syncStatusVideo(t *model.StatusThread, up *model.StatusUpdate) {
 	v := &u.status.viewer
 	vv := &v.video
 	m := statusMsg(t, up)
-	if !isVideo(m) {
+	if !isVideo(m) && m.Media != model.MediaVoice && m.Media != model.MediaAudio {
 		if vv.msgID != "" {
 			vv.stop()
 		}
@@ -350,7 +379,7 @@ func (u *UI) sendStatusReply() {
 	v := &u.status.viewer
 	t := v.thread
 	txt := trimSpace(v.reply.Text())
-	if !v.isOpen() || t.Mine || txt == "" {
+	if !v.isOpen() || t.Mine || t.Group || txt == "" {
 		return
 	}
 	m := u.backend.Send(t.ID, model.Draft{Text: txt, Reply: statusMsg(t, t.Updates[v.index])})
@@ -488,7 +517,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	}
 	if v.isOpen() && v.shownAt.IsZero() {
 		v.shownAt = now
-		if up := t.Updates[v.index]; !up.Viewed && !t.Mine {
+		if up := t.Updates[v.index]; !up.Viewed && !t.Mine && !up.FromMe {
 			up.Viewed = true
 			u.backend.ViewStatus(t.ID, up.ID)
 		}
@@ -530,7 +559,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	// The update itself, centered in a portrait frame, with the reply box
 	// under it for someone else's status.
 	replyH := 0
-	if !t.Mine {
+	if !t.Mine && !t.Group {
 		replyH = gtx.Dp(64)
 	}
 	frameH := sz.Y - gtx.Dp(120) - replyH
@@ -569,12 +598,15 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	if t.Mine {
 		name, id = "My status", u.meID
 	}
+	if t.Group {
+		name = t.Name + " · " + up.Sender
+	}
 	white := rgb(0xffffff)
 	hdr := op.Offset(image.Pt(frame.Min.X, y+h+gtx.Dp(14))).Push(gtx.Ops)
 	hg := gtx
 	hg.Constraints = layout.Constraints{Max: image.Pt(frame.Dx(), gtx.Dp(48))}
 	layout.Flex{Alignment: layout.Middle}.Layout(hg,
-		layout.Rigid(func(gtx C) D { return u.avatar(gtx, id, name, false, 40) }),
+		layout.Rigid(func(gtx C) D { return u.avatar(gtx, id, name, t.Group, 40) }),
 		layout.Rigid(layout.Spacer{Width: 12}.Layout),
 		layout.Flexed(1, func(gtx C) D {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -618,7 +650,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	u.iconButton(gtx, &v.closeBtn, icClose, 48, 30, white)
 	cb.Pop()
 
-	if !t.Mine {
+	if !t.Mine && !t.Group {
 		u.layoutStatusReply(gtx, image.Rect(frame.Min.X, frame.Max.Y+gtx.Dp(14), frame.Max.X, frame.Max.Y+gtx.Dp(14)+gtx.Dp(48)))
 	}
 }
@@ -691,7 +723,8 @@ func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusU
 	}
 	fillRect(gtx, r, rgb(0x000000))
 	var img *imgEntry
-	vid := isVideo(statusMsg(t, up))
+	audio := up.Media == model.MediaVoice || up.Media == model.MediaAudio
+	vid := isVideo(statusMsg(t, up)) || audio
 	vv := &u.status.viewer.video
 	switch {
 	case up.Media == model.MediaImage:
@@ -700,8 +733,13 @@ func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusU
 		if e := u.images.get("sm:"+id, max(r.Dx(), r.Dy()), func() []byte { return b.MediaData(statusChatID, id) }); e.state == imgReady {
 			img = e
 		}
-	case vid && vv.msgID == up.ID:
+	case vid && !audio && vv.msgID == up.ID:
 		img = u.videoFrame(vv, r.Size())
+	}
+	if audio {
+		tr := op.Offset(r.Min.Add(image.Pt((r.Dx()-gtx.Dp(64))/2, r.Dy()/3))).Push(gtx.Ops)
+		icMic.Layout(gtx, 64, u.pal.OnGreen)
+		tr.Pop()
 	}
 	if img == nil && len(up.Thumb) > 0 {
 		th := up.Thumb
@@ -739,7 +777,7 @@ func (u *UI) layoutStatusVideoCenter(gtx C, t *model.StatusThread, up *model.Sta
 	vv := &u.status.viewer.video
 	rad := gtx.Dp(34)
 	switch {
-	case vv.loading || vv.player != nil && vv.size == (image.Point{}):
+	case vv.loading || vv.player != nil && vv.size == (image.Point{}) && up.Media != model.MediaAudio && up.Media != model.MediaVoice:
 		s := gtx.Dp(44)
 		fillCircle(gtx, c, rad, argb(0x000000, 0x90))
 		tr := op.Offset(c.Sub(image.Pt(s/2, s/2))).Push(gtx.Ops)
@@ -775,3 +813,16 @@ func (u *UI) layoutStatusVideoCenter(gtx C, t *model.StatusThread, up *model.Sta
 
 // statusChatID is the chat ID under which status media is downloaded.
 const statusChatID = "status@broadcast"
+
+func firstStatusAuthor(t *model.StatusThread, up *model.StatusUpdate) string {
+	if up.Sender != "" {
+		return up.Sender
+	}
+	return t.Name
+}
+func firstStatusAuthorID(t *model.StatusThread, up *model.StatusUpdate) string {
+	if up.SenderID != "" {
+		return up.SenderID
+	}
+	return t.ID
+}

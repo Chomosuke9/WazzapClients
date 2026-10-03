@@ -70,7 +70,11 @@ func (u *UI) loadVideo(vv *videoView, m *model.Message) {
 		return
 	}
 	vv.loading = false
-	p, err := video.Open(path, u.images.invalidate)
+	open := video.Open
+	if m.Media == model.MediaVoice || m.Media == model.MediaAudio {
+		open = video.OpenAudio
+	}
+	p, err := open(path, u.images.invalidate)
 	if err != nil {
 		vv.external = true
 		return

@@ -174,6 +174,9 @@ var migrations = []string{
 	`ALTER TABLE wz_status ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
 	// 1 once a view once message (model.KindViewOnce) was opened here.
 	`ALTER TABLE wz_messages ADD COLUMN opened INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_status ADD COLUMN group_jid TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wz_status ADD COLUMN duration INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE wz_status ADD COLUMN file_type TEXT NOT NULL DEFAULT ''`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {

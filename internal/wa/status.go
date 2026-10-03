@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -28,6 +29,7 @@ func isStatus(j types.JID) bool {
 // storedStatus is one status update as kept in wz_status.
 type storedStatus struct {
 	id, sender, push string
+	group            string
 	fromMe           bool
 	ts               time.Time
 	c                content
@@ -37,7 +39,7 @@ type storedStatus struct {
 
 // parseStatus interprets a message posted to status@broadcast.
 func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedStatus, bool) {
-	m := evt.Message
+	m := unwrap(evt.Message)
 	if m == nil {
 		return storedStatus{}, false
 	}
@@ -59,6 +61,15 @@ func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedS
 		ts:     evt.Info.Timestamp,
 		c:      c,
 	}
+	if isGroupStatus(evt) {
+		s.group = evt.Info.Chat.String()
+		for _, a := range c.ctx.GetStatusAttributions() {
+			if author, err := types.ParseJID(a.GetGroupStatus().GetAuthorJID()); err == nil && evt.Info.Sender.IsEmpty() && (author.Server == types.HiddenUserServer || author.Server == types.DefaultUserServer) {
+				s.sender = b.canonical(ctx, author).String()
+				break
+			}
+		}
+	}
 	if w := evt.SourceWebMsg; w != nil && !s.fromMe {
 		st := w.GetStatus()
 		s.viewed = st == waWeb.WebMessageInfo_READ || st == waWeb.WebMessageInfo_PLAYED
@@ -72,12 +83,12 @@ func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) err
 		return err
 	}
 	_, err := x.ExecContext(ctx, `
-		INSERT INTO wz_status (id, sender, push, from_me, ts, media, text, bg, thumb, media_blob, viewed)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_status (id, sender, push, from_me, ts, media, text, bg, thumb, media_blob, viewed, group_jid, duration, file_type)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET viewed = MAX(wz_status.viewed, excluded.viewed),
 			thumb = COALESCE(excluded.thumb, wz_status.thumb)`,
 		st.id, st.sender, st.push, boolInt(st.fromMe), st.ts.Unix(), int(st.c.media), st.c.text, int64(st.c.bg),
-		st.c.thumb, st.c.blob, boolInt(st.viewed))
+		st.c.thumb, st.c.blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type)
 	return err
 }
 
@@ -129,6 +140,7 @@ func (s *msgStore) statusMessage(ctx context.Context, id string) *waE2E.Message 
 
 type statusRow struct {
 	sender, push string
+	group        string
 	fromMe       bool
 	u            *model.StatusUpdate
 }
@@ -152,7 +164,7 @@ func (s *msgStore) dropStatuses(ctx context.Context, before time.Time) []string 
 
 // recentStatuses returns updates newer than since, oldest first.
 func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statusRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, sender, push, from_me, ts, media, text, bg, thumb, viewed, revoked
+	rows, err := s.db.QueryContext(ctx, `SELECT id, sender, push, from_me, ts, media, text, bg, thumb, viewed, revoked, group_jid, duration, file_type
 		FROM wz_status WHERE ts >= ? ORDER BY ts`, since.Unix())
 	if err != nil {
 		return nil, err
@@ -166,7 +178,7 @@ func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statu
 			fromMe, media, viewed int
 			ts, bg, revoked       int64
 		)
-		if err := rows.Scan(&u.ID, &r.sender, &r.push, &fromMe, &ts, &media, &u.Text, &bg, &u.Thumb, &viewed, &revoked); err != nil {
+		if err := rows.Scan(&u.ID, &r.sender, &r.push, &fromMe, &ts, &media, &u.Text, &bg, &u.Thumb, &viewed, &revoked, &r.group, &u.Duration, &u.FileType); err != nil {
 			return nil, err
 		}
 		u.Time = time.Unix(ts, 0)
@@ -175,7 +187,9 @@ func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statu
 		if revoked != 0 {
 			u.Revoked = time.UnixMilli(revoked)
 		}
-		u.Viewed = viewed != 0 && fromMe == 0 // your own ring stays green
+		u.Viewed = r.group != "" && fromMe != 0 || viewed != 0 && fromMe == 0 // your own ring stays green
+		u.FromMe = fromMe != 0
+		u.SenderID = r.sender
 		r.fromMe = fromMe != 0
 		r.u = &u
 		out = append(out, r)
@@ -216,7 +230,8 @@ func (b *Backend) Statuses() []*model.StatusThread {
 	// Old updates go, with their downloaded pictures and videos.
 	for _, id := range b.store.dropStatuses(ctx, since) {
 		path := b.mediaPath(statusChat, id)
-		for _, p := range []string{path, path + ".failed", path + ".mp4"} {
+		files, _ := filepath.Glob(path + ".*") // hashed cache key, including audio extensions
+		for _, p := range append(files, path) {
 			_ = os.Remove(p)
 		}
 	}
@@ -229,7 +244,9 @@ func (b *Backend) Statuses() []*model.StatusThread {
 	var threads []*model.StatusThread
 	for _, r := range rows {
 		id := r.sender
-		if r.fromMe {
+		if r.group != "" {
+			id = r.group
+		} else if r.fromMe {
 			id = "me"
 		}
 		t := byID[id]
@@ -239,8 +256,19 @@ func (b *Backend) Statuses() []*model.StatusThread {
 				j, _ := types.ParseJID(r.sender)
 				t.Name = b.statusName(ctx, j, r.push)
 			}
+			if r.group != "" {
+				t.ID, t.Group, t.Mine, t.Name = r.group, true, false, r.group
+				if c, ok := b.store.chat(ctx, r.group); ok {
+					t.Name = c.Name
+				}
+			}
 			byID[id] = t
 			threads = append(threads, t)
+		}
+		j, _ := types.ParseJID(r.sender)
+		r.u.Sender = b.statusName(ctx, j, r.push)
+		if r.fromMe {
+			r.u.Sender = "You"
 		}
 		t.Updates = append(t.Updates, r.u)
 	}
@@ -270,8 +298,21 @@ func (b *Backend) ViewStatus(threadID, statusID string) {
 	if cli == nil || err != nil || !cli.IsConnected() || b.ghost() {
 		return
 	}
+	chat := types.StatusBroadcastJID
+	if sender.Server == types.GroupServer {
+		chat = sender
+		var author string
+		var fromMe bool
+		if err := b.db.QueryRowContext(b.ctx, `SELECT sender, from_me FROM wz_status WHERE id = ? AND group_jid = ?`, statusID, threadID).Scan(&author, &fromMe); err != nil || fromMe {
+			return
+		}
+		sender, err = types.ParseJID(author)
+		if err != nil || sender.IsEmpty() {
+			return
+		}
+	}
 	go func() {
-		if err := cli.MarkRead(b.ctx, []types.MessageID{statusID}, time.Now(), types.StatusBroadcastJID, sender); err != nil {
+		if err := cli.MarkRead(b.ctx, []types.MessageID{statusID}, time.Now(), chat, sender); err != nil {
 			b.log.Debugf("mark status read: %v", err)
 		}
 	}()

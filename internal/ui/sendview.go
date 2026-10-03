@@ -518,7 +518,7 @@ func (u *UI) layoutCaption(gtx C, f *attachFile, bottom int, open bool) int {
 	c := &u.conv
 	sz := gtx.Constraints.Max
 	// Statuses can't be view once.
-	once := (f.Media == model.MediaImage || f.Media == model.MediaVideo) && u.attach.chatID != statusChatID
+	once := (f.Media == model.MediaImage || f.Media == model.MediaVideo) && !isStatusDestination(u.attach.chatID)
 	onceW := 0
 	if once {
 		onceW = gtx.Dp(40 + 14)
