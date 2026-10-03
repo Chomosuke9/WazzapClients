@@ -632,7 +632,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			u.openMessageMenu(m)
 		}
 		// A double click on the text selects a word instead.
-		if double && m.Kind != model.KindDeleted && (u.textSel.id != m.ID || u.textSel.clicks < 2) && u.sendBlocked(c) == "" {
+		if double && m.Kind != model.KindDeleted && m.Revoked.IsZero() && (u.textSel.id != m.ID || u.textSel.clicks < 2) && u.sendBlocked(c) == "" {
 			u.startReply(m)
 		}
 		chev := u.btn("chev:" + m.ID)
@@ -782,6 +782,14 @@ func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color
 		children = append(children,
 			layout.Rigid(iconW(icStarFill, 14, col)),
 			layout.Rigid(layout.Spacer{Width: 3}.Layout))
+	}
+	if !m.Revoked.IsZero() && m.Kind != model.KindDeleted {
+		// Kept with Keep deleted messages (extras.go).
+		children = append(children,
+			layout.Rigid(iconW(icBlock, 14, u.pal.Danger)),
+			layout.Rigid(layout.Spacer{Width: 2}.Layout),
+			layout.Rigid(u.label(12.5, "Deleted", u.pal.Danger).Layout),
+			layout.Rigid(layout.Spacer{Width: 4}.Layout))
 	}
 	if !m.Edited.IsZero() && m.Kind != model.KindDeleted {
 		children = append(children,

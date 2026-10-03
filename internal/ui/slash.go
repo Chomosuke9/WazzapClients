@@ -148,13 +148,17 @@ func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInf
 	in.Now = u.now()
 	sp := &slashPick{in: in}
 	if in.Naming {
-		sp.cmds = command.Matching(in.Name, c.IsGroup)
+		for _, cmd := range command.Matching(in.Name, c.IsGroup) {
+			if u.commandOn(cmd) {
+				sp.cmds = append(sp.cmds, cmd)
+			}
+		}
 		if len(sp.cmds) == 0 {
 			return nil // nothing to run here: it's just text
 		}
 		return sp
 	}
-	if in.Cmd.Group && !c.IsGroup {
+	if in.Cmd.Group && !c.IsGroup || !u.commandOn(in.Cmd) {
 		return nil
 	}
 	if in.Cmd.Preview != nil {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 
 	"gioui.org/font"
@@ -22,6 +23,13 @@ const (
 	prefEditHistory  = "edit_history"   // the earlier texts of edited messages (edit.go)
 )
 
+// grayCmdPref is the preference that turns on a gray command.
+func grayCmdPref(name string) string { return "cmd_" + name }
+
+// commandOn reports whether a command can be used: a gray one only once
+// its own switch is on.
+func (u *UI) commandOn(c *command.Command) bool { return !c.Gray || u.grayCmds[c.Name] }
+
 // extraOn reports whether an extra feature is turned on.
 func extraOn(b model.Backend, key string) bool { return b != nil && b.Pref(key) == "on" }
 
@@ -40,6 +48,13 @@ func (u *UI) loadExtras() {
 	u.adminMention = extraOn(b, prefAdminMention)
 	u.rawPhotos = extraOn(b, prefRawPhotos)
 	u.editHistory = extraOn(b, prefEditHistory)
+	u.keepDeleted = extraOn(b, model.PrefKeepDeleted)
+	u.grayCmds = map[string]bool{}
+	for _, c := range command.All {
+		if c.Gray && extraOn(b, grayCmdPref(c.Name)) {
+			u.grayCmds[c.Name] = true
+		}
+	}
 	// A window opening in ghost mode shows it at once.
 	u.ghostFx.bar.snap(u.ghostMode())
 	u.ghostFx.compose.snap(u.ghostMode())
@@ -71,64 +86,103 @@ func commandIcon(name string) *icon.Icon {
 	return icTerminal
 }
 
-// extrasSettings is the Extra features page.
+// extraToggle is the switch of an extra feature, kept in flag. changed,
+// when set, runs after it flips.
+func (u *UI) extraToggle(key, title, sub string, flag *bool, changed func()) settingRow {
+	b, on := u.backend, *flag
+	return settingRow{key: key, kind: setToggle, on: on, title: title, sub: sub, run: func() {
+		*flag = !on
+		setExtra(b, key, !on)
+		if changed != nil {
+			changed()
+		}
+	}}
+}
+
+// extrasSettings is the Extra features page. The ethically gray ones have
+// a page of their own (graySettings).
 func (u *UI) extrasSettings() []settingsSection {
-	b := u.backend
-	toggle := func(key, title, sub string, flag *bool, changed func()) settingRow {
-		on := *flag
-		return settingRow{key: key, kind: setToggle, on: on, title: title, sub: sub, run: func() {
-			*flag = !on
-			setExtra(b, key, !on)
-			if changed != nil {
-				changed()
-			}
-		}}
-	}
-	on := u.slash.on
 	secs := []settingsSection{
 		{title: "Slash commands", rows: []settingRow{
-			toggle(prefSlash, "Slash commands", "Type / at the start of a message to run a command, like in Discord",
+			u.extraToggle(prefSlash, "Slash commands", "Type / at the start of a message to run a command, like in Discord",
 				&u.slash.on, func() { u.conv.richFor = "" }), // the composer starts or stops showing commands
 		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
 		{title: "Mentions", rows: []settingRow{
-			toggle(prefAdminMention, "@admin", "Type @admin in a group to mention all of its admins at once",
+			u.extraToggle(prefAdminMention, "@admin", "Type @admin in a group to mention all of its admins at once",
 				&u.adminMention, nil),
 		}},
 		{title: "Photos", rows: []settingRow{
-			toggle(prefRawPhotos, "Raw quality", "Offer Raw when sending photos: JPEG and PNG files go as they are, not scaled or compressed",
+			u.extraToggle(prefRawPhotos, "Raw quality", "Offer Raw when sending photos: JPEG and PNG files go as they are, not scaled or compressed",
 				&u.rawPhotos, func() {
 					if !u.rawPhotos && u.attach.quality == model.QualityRaw {
 						u.attach.quality = model.QualityHD
 					}
 				}),
 		}},
-		{title: "Messages", rows: []settingRow{
-			toggle(prefEditHistory, "Edit history", "See what an edited message said before: right-click it and pick Edit history",
-				&u.editHistory, nil),
-		}},
+		{rows: []settingRow{{key: "gray", ic: icExtensionGray, title: "Ethically gray features",
+			sub: "Edit history, deleted messages and more", run: func() { u.openSettingsSub("gray") }}},
+			note: "Extra features aren't made by WhatsApp. They only use what WhatsApp lets every linked device do."},
 	}
-	if on {
-		sec := settingsSection{title: "Commands"}
+	if u.slash.on {
+		var cmds []*command.Command
 		for _, c := range command.All {
+			if !c.Gray { // gray ones have a switch of their own
+				cmds = append(cmds, c)
+			}
+		}
+		// A row that shows or hides the list, under the switch that turns
+		// them on.
+		title, ic := fmt.Sprintf("Show the %d commands", len(cmds)), icChevronRight
+		if u.cmdsOpen {
+			title, ic = "Hide the commands", icChevron
+		}
+		sec := settingsSection{title: "Commands", rows: []settingRow{{key: "cmds", title: title, trailing: ic,
+			run: func() { u.cmdsOpen = !u.cmdsOpen }}}}
+		for _, c := range cmds {
+			if !u.cmdsOpen {
+				break
+			}
 			sec.rows = append(sec.rows, settingRow{key: "cmd:" + c.Name, kind: setCustom, w: func(gtx C) D {
 				return layout.Inset{Left: 18.5, Right: 29}.Layout(gtx, func(gtx C) D {
 					return u.layoutCommandRow(gtx, c, -1, nil, gtx.Dp(64))
 				})
 			}})
 		}
-		// Under the switch that turns them on.
 		secs = append(secs[:1], append([]settingsSection{sec}, secs[1:]...)...)
 	}
-	secs[len(secs)-1].note = appendNote(secs[len(secs)-1].note,
-		"Extra features aren't made by WhatsApp. They only use what WhatsApp lets every linked device do.")
 	return secs
 }
 
-func appendNote(a, b string) string {
-	if a == "" {
-		return b
+// graySettings is the Ethically gray features page: features that let you
+// see or do what the people you talk to wouldn't expect.
+func (u *UI) graySettings() []settingsSection {
+	secs := []settingsSection{{title: "Messages", rows: []settingRow{
+		u.extraToggle(prefEditHistory, "Edit history", "See what an edited message said before: right-click it and pick Edit history",
+			&u.editHistory, nil),
+		u.extraToggle(model.PrefKeepDeleted, "Keep deleted messages",
+			"When someone deletes a message for everyone, keep showing it, marked Deleted",
+			&u.keepDeleted, nil),
+	}, note: "These let you see or do what the people you talk to wouldn't expect, so use them with care. " +
+		"Messages deleted while Keep deleted messages is off can't be brought back."}}
+	cmds := settingsSection{title: "Commands"}
+	for _, c := range command.All {
+		if !c.Gray {
+			continue
+		}
+		flag := u.grayCmds[c.Name]
+		cmds.rows = append(cmds.rows, u.extraToggle(grayCmdPref(c.Name), "/"+c.Name, c.Description, &flag, func() {
+			u.grayCmds[c.Name] = flag
+			u.slash.cacheOK = false // the picker offers it, or stops
+			u.conv.richFor = ""
+			if c.Name == "ghost" && !flag && u.ghostMode() {
+				u.setGhost(false) // no way left to turn it off
+			}
+		}))
 	}
-	return a + " " + b
+	if !u.slash.on {
+		cmds.note = "These also need Slash commands, on the Extra features page."
+	}
+	return append(secs, cmds)
 }
 
 // layoutCommandRow draws a command: its icon, its name with a chip per

@@ -65,7 +65,11 @@ type Command struct {
 	// Group commands run only in groups, and Admin ones only where you're
 	// an admin.
 	Group, Admin bool
-	Run          func(c *Context) error
+	// Gray commands do what the people you talk to wouldn't expect (like
+	// reading without read receipts). Each needs a switch of its own, under
+	// the Extra features page's "Ethically gray features".
+	Gray bool
+	Run  func(c *Context) error
 	// Preview, when set, works out what the command would give with the
 	// options typed so far, which the composer shows as you type: text,
 	// or why it can't, with ok false ("" for nothing to show).

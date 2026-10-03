@@ -688,6 +688,9 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		}
 		txt := last.Text
 		italic := false
+		if !last.Revoked.IsZero() && last.Kind != model.KindDeleted {
+			children = append(children, small(icBlock, p.Danger, 17, 4))
+		}
 		switch {
 		case last.Kind == model.KindDeleted:
 			children = append(children, small(icBlock, p.TextSecondary, 17, 4))

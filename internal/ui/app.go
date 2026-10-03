@@ -170,8 +170,12 @@ type UI struct {
 	newChat newChatState // the New chat panel over the chat list
 	slash   slashState   // slash commands and their notes (slash.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
-	adminMention, rawPhotos, editHistory bool
-	ghostFx                              ghostAnims // ghost mode coming and going (ghost.go)
+	adminMention, rawPhotos, editHistory, keepDeleted bool
+	// grayCmds are the gray commands turned on, by name (extras.go).
+	grayCmds map[string]bool
+	// cmdsOpen shows the list of commands on the Extra features page.
+	cmdsOpen bool
+	ghostFx  ghostAnims // ghost mode coming and going (ghost.go)
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
@@ -1579,6 +1583,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			}
 			u.applyEvents()
 		case "ghost":
+			u.grayCmds["ghost"] = true // a gray command, off by default
 			set("/ghost ")
 			u.sendComposer()
 		}

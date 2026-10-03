@@ -225,10 +225,12 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 	var items []menuItem
 	add := func(it menuItem) { items = append(items, it) }
 	deleted := m.Kind == model.KindDeleted
+	// A message kept after its sender deleted it is gone for everyone else.
+	revoked := !m.Revoked.IsZero()
 	if m.FromMe && !deleted && !isChannelID(c.ID) && m.Receipt != model.Pending && m.Receipt != model.Failed {
 		add(menuItem{key: "info", ic: icInfo, label: "Message info", run: func() { u.openMsgInfo(m) }})
 	}
-	if !deleted && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
+	if !deleted && !revoked && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
 		add(menuItem{key: "reply", ic: icReply, label: "Reply", run: func() { u.startReply(m) }})
 	}
 	if c.IsGroup && !m.FromMe && m.SenderID != "" && !deleted {
@@ -254,7 +256,7 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		if m.Kind != model.KindUnsupported {
 			add(menuItem{key: "forward", ic: icForward, label: "Forward", run: func() { u.openForward([]*model.Message{m}) }})
 		}
-		if !isChannelID(c.ID) {
+		if !isChannelID(c.ID) && !revoked {
 			if m.Pinned {
 				add(menuItem{key: "pin", ic: icPin, label: "Unpin", run: func() { b.PinMessage(m, false) }})
 			} else {

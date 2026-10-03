@@ -96,6 +96,7 @@ var settingsViews = map[string]struct {
 	"notifications": {settingNotifications, ""},
 	"shortcuts":     {settingShortcuts, ""},
 	"extras":        {settingExtras, ""},
+	"gray":          {settingExtras, "gray"},
 	"help":          {settingHelp, ""},
 }
 
@@ -161,6 +162,8 @@ func (u *UI) settingsTitle() string {
 		return "Blocked contacts"
 	case "theme":
 		return "Theme"
+	case "gray":
+		return "Ethically gray features"
 	}
 	return settingsItems[s.detail-1].title
 }
@@ -175,6 +178,8 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.timerChoices()
 	case "blocked":
 		return u.blockedContacts()
+	case "gray":
+		return u.graySettings()
 	case "theme":
 		return []settingsSection{{title: "Choose a theme", rows: []settingRow{
 			{key: "light", kind: setRadio, title: "Light", on: !u.dark, run: func() { u.setTheme(false) }},

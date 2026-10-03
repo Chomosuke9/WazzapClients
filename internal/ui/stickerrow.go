@@ -169,7 +169,7 @@ func (u *UI) stickerCell(gtx C, c *model.Chat, m *model.Message, pt part, at ima
 		if right {
 			u.openMessageMenu(m)
 		}
-		if double && m.Kind != model.KindDeleted && u.sendBlocked(c) == "" {
+		if double && m.Kind != model.KindDeleted && m.Revoked.IsZero() && u.sendBlocked(c) == "" {
 			u.startReply(m)
 		}
 	}

@@ -50,7 +50,7 @@ func (u *UI) commandName(txt string) int {
 	if n < 0 {
 		n = len(txt)
 	}
-	if cmd := command.Lookup(txt[1:n]); cmd == nil || cmd.Group && !c.IsGroup {
+	if cmd := command.Lookup(txt[1:n]); cmd == nil || cmd.Group && !c.IsGroup || !u.commandOn(cmd) {
 		return 0
 	}
 	return n

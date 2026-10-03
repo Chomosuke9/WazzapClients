@@ -100,7 +100,7 @@ var All = []*Command{
 	},
 	{
 		Name: "ghost", Description: "Goes invisible: no read receipts, shown offline, no sending, until you turn it off",
-		Run: runGhost,
+		Gray: true, Run: runGhost,
 	},
 }
 

@@ -267,6 +267,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		switch pm.GetType() {
 		case waE2E.ProtocolMessage_REVOKE:
 			p.revoke = true
+			p.msg.FromMe, p.msg.Time = evt.Info.IsFromMe, evt.Info.Timestamp
 		case waE2E.ProtocolMessage_MESSAGE_EDIT:
 			at := evt.Info.Timestamp
 			if ms := pm.GetTimestampMS(); ms > 0 {

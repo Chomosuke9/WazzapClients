@@ -116,6 +116,7 @@ var (
 
 	// Extra features and slash commands.
 	icExtension       = icon.Extension
+	icExtensionGray   = icon.ExtensionQuestion
 	icTerminal        = icon.Terminal
 	icPersonRemove    = icon.PersonRemove
 	icAddModerator    = icon.AddModerator

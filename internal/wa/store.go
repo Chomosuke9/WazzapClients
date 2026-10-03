@@ -167,6 +167,9 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN link TEXT NOT NULL DEFAULT ''`,   // JSON linkInfo
 	`ALTER TABLE wz_chats ADD COLUMN general INTEGER NOT NULL DEFAULT 0`, // 1 for a community's General chat
 	`ALTER TABLE wz_messages ADD COLUMN extra TEXT NOT NULL DEFAULT ''`,  // JSON extraInfo
+	// Unix milliseconds its sender deleted it for everyone, for a message
+	// kept with model.PrefKeepDeleted; 0 otherwise.
+	`ALTER TABLE wz_messages ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -386,10 +389,18 @@ func (s *msgStore) setReaction(ctx context.Context, chat, id, emoji string) erro
 func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?3, media = 0, text = '', thumb = NULL, media_blob = NULL,
 		quote_sender = '', quote_text = '', quote_media = 0, quote_id = '', pinned = 0, buttons = '', file = '', edited = 0,
-			extra = ''
+			extra = '', revoked = 0
 		WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2`, chat, id, int(model.KindDeleted))
+	return err
+}
+
+// markRevoked flags a message its sender deleted for everyone at at,
+// keeping what it said (model.PrefKeepDeleted).
+func (s *msgStore) markRevoked(ctx context.Context, chat, id string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET revoked = ?, pinned = 0
+		WHERE chat = ? AND id = ? AND kind != ? AND revoked = 0`, at.UnixMilli(), chat, id, int(model.KindDeleted))
 	return err
 }
 
@@ -492,7 +503,7 @@ type rawMsg struct {
 
 const msgColumns = `chat, id, sender_jid, sender_push, sender_name, from_me, ts, kind, media, duration, text, receipt,
 	quote_sender, quote_text, quote_media, quote_id, mentions, reaction, starred, pinned, forwarded, thumb, buttons, file,
-	album, edited, link, extra`
+	album, edited, link, extra, revoked`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -511,11 +522,11 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		forwarded           int
 		buttons, file, link string
 		extra               string
-		edited              int64
+		edited, revoked     int64
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &r.legacyName, &fromMe, &ts, &kind, &media, &m.Duration,
 		&m.Text, &receipt, &r.quoteJID, &quoteText, &quoteMedia, &r.quoteID, &r.mentions, &reaction,
-		&starred, &pinned, &forwarded, &thumb, &buttons, &file, &m.Album, &edited, &link, &extra)
+		&starred, &pinned, &forwarded, &thumb, &buttons, &file, &m.Album, &edited, &link, &extra, &revoked)
 	if err != nil {
 		return r, err
 	}
@@ -529,6 +540,9 @@ func scanMessage(sc scanner) (rawMsg, error) {
 	m.Thumb = thumb
 	if edited != 0 {
 		m.Edited = time.UnixMilli(edited)
+	}
+	if revoked != 0 {
+		m.Revoked = time.UnixMilli(revoked)
 	}
 	m.SenderID = r.senderJID
 	if quoteText != "" || r.quoteJID != "" || quoteMedia != 0 {

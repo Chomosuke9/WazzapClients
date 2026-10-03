@@ -231,7 +231,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    messages as bubbles after a chat's newest (send now, edit, cancel) and
                    the AFK bar above the chat list in scheduled.go; and
                    the Extra features settings page in extras.go (the app's own features,
-                   such as slash commands, @admin and Raw photos: each off until turned on); posting your own status
+                   such as slash commands, @admin and Raw photos: each off until turned on), and
+                   its Ethically gray features page (Edit history, Keep deleted messages, and
+                   commands marked Gray, like /ghost, each with a switch of its own); posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
                    opens at in unread.go; group invite links (the dialog that joins

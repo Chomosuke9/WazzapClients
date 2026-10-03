@@ -125,6 +125,9 @@ type Message struct {
 	// Edited is when the text (or caption) was last edited; zero when it
 	// never was.
 	Edited time.Time
+	// Revoked is when its sender deleted it for everyone, for a message
+	// kept with PrefKeepDeleted; zero otherwise.
+	Revoked time.Time
 	// Link is the preview of a link in Text, or nil. Its picture is Thumb.
 	Link *LinkPreview
 	// Location is where a location message points (its map is Thumb),
@@ -956,6 +959,12 @@ const HistoryDefaultDays = 90
 // and shows you offline. Backends watch SetPref for it, so that turning it
 // on or off takes effect at once.
 const PrefGhost = "ghost"
+
+// PrefKeepDeleted is the Pref key of the "Keep deleted messages" extra
+// feature, on when "on": a message someone else deletes for everyone keeps
+// its content and gets Revoked instead of turning into "This message was
+// deleted".
+const PrefKeepDeleted = "keep_deleted"
 
 // Backend is everything the UI needs from a WhatsApp connection.
 //

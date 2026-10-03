@@ -846,7 +846,7 @@ func (b *Backend) onMessage(e *events.Message) {
 	isNew := false
 	switch {
 	case p.revoke:
-		_ = b.store.markDeleted(ctx, chat, p.target)
+		b.revoke(ctx, chat, p)
 	case p.edited:
 		if err := b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime); err != nil {
 			b.log.Warnf("edit %s in %s: %v", p.target, chat, err)
@@ -906,6 +906,21 @@ func (b *Backend) onMessage(e *events.Message) {
 	} else if isNew {
 		_ = b.store.addUnread(ctx, chat, false)
 	}
+}
+
+// revoke applies a delete for everyone. With model.PrefKeepDeleted on, a
+// message someone else deleted keeps its content and is only flagged;
+// your own deletes (from another device) still remove it.
+func (b *Backend) revoke(ctx context.Context, chat string, p parsed) {
+	if !p.msg.FromMe && b.Pref(model.PrefKeepDeleted) == "on" {
+		at := p.msg.Time
+		if at.IsZero() {
+			at = time.Now()
+		}
+		_ = b.store.markRevoked(ctx, chat, p.target, at)
+		return
+	}
+	_ = b.store.markDeleted(ctx, chat, p.target)
 }
 
 func (b *Backend) onReceipt(e *events.Receipt) {
@@ -1127,7 +1142,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			chat := cd.jid.String()
 			switch {
 			case p.revoke:
-				_ = b.store.markDeleted(ctx, chat, p.target)
+				b.revoke(ctx, chat, p)
 			case p.edited:
 				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime)
 			case p.pin != 0:

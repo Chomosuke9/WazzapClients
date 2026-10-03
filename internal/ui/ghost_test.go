@@ -28,8 +28,31 @@ func (st *slashTest) unread(chat string) int {
 	return -1
 }
 
+// TestGrayCommandOff checks that a gray command is neither offered nor
+// run until its own switch is on.
+func TestGrayCommandOff(t *testing.T) {
+	st := newSlashTest(t, "work")
+	st.typeText("/gh")
+	if sp := st.u.slashQuery(); sp != nil {
+		t.Fatalf("/ghost offered while its switch is off: %+v", sp.cmds)
+	}
+	st.typeText("/ghost ")
+	if sp := st.u.slashQuery(); sp != nil {
+		t.Fatal("/ghost read as a command while its switch is off")
+	}
+	st.b.SetPref(grayCmdPref("ghost"), "on")
+	st.u.loadExtras()
+	st.u.slash.cacheOK = false
+	st.typeText("/gh")
+	if sp := st.u.slashQuery(); sp == nil || len(sp.cmds) != 1 || sp.cmds[0].Name != "ghost" {
+		t.Fatal("/ghost not offered with its switch on")
+	}
+}
+
 func TestSlashGhost(t *testing.T) {
 	st := newSlashTest(t, "work")
+	st.b.SetPref(grayCmdPref("ghost"), "on") // a gray command, off by default
+	st.u.loadExtras()
 	st.typeText("/ghost ")
 	st.press(key.NameReturn)
 	if !st.u.ghostMode() || st.b.Pref(model.PrefGhost) != "on" {
