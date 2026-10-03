@@ -62,6 +62,14 @@ whatsmeow. You get the same app, pixel for pixel where it matters, in one small 
     <td><b>Emoji and stickers</b>, including animated ones, with search and recents.</td>
     <td><b>The Media panel:</b> photos, videos, docs and links from every chat, or from just one.</td>
   </tr>
+  <tr>
+    <td><img src="docs/screenshots/poll.png" alt="A poll and its votes"></td>
+    <td><img src="docs/screenshots/msginfo.png" alt="Message info"></td>
+  </tr>
+  <tr>
+    <td><b>Polls</b> you vote in with a click, and who voted for what. Locations, contacts and events show as cards.</td>
+    <td><b>Message info:</b> who each of your messages was delivered to and read by, and when.</td>
+  </tr>
 </table>
 
 ### Status, channels and communities
@@ -114,7 +122,22 @@ WhatsApp already lets every linked device do, and they run from your own account
     <td><b><code>/schedule</code></b> sends a message later, even with the window closed. <b><code>/afk</code></b> replies for you while you're away.</td>
     <td><b>Edit history</b> shows what an edited message said before each edit.</td>
   </tr>
+  <tr>
+    <td><img src="docs/screenshots/privacy.png" alt="Privacy mode"></td>
+    <td><img src="docs/screenshots/ghost.png" alt="Ghost mode"></td>
+  </tr>
+  <tr>
+    <td><b>Privacy mode</b> for when others can see your screen: names and messages turn into bars and pictures blur until you point at them. Ctrl+Shift+P or the eye in the title bar. <b>Block screen recording</b> keeps the window out of captures.</td>
+    <td><b><code>/ghost</code></b> reads chats and statuses invisibly: no read receipts, shown offline, and nothing sent from you until you turn it off.</td>
+  </tr>
 </table>
+
+A page of its own, *Ethically gray features*, holds the ones that show more than the sender
+meant you to see. Each has its own switch:
+
+- 🗑️ **Keep deleted messages** keeps messages and statuses deleted for everyone, marked Deleted.
+- 👁️ **Replay view once** opens view once messages as often as you like, screenshots allowed.
+- 👻 **`/ghost`** and ✏️ **Edit history**, above.
 
 <details>
 <summary><b>All the slash commands</b></summary>
@@ -134,6 +157,7 @@ WhatsApp already lets every linked device do, and they run from your own account
 | `/schedule <when> <message>` | Sends later: `21:00`, `2h`, `tomorrow 08:00`, `fri 18:00` |
 | `/scheduled` | Lists the chat's scheduled messages, to send now or cancel |
 | `/afk <reason>` | Auto-replies while you're away, until you send something |
+| `/ghost` | Goes invisible: no read receipts, shown offline, no sending (an ethically gray feature) |
 
 Group commands work in groups where you're an admin. You'll also find **`@admin`**, which
 mentions every admin of a group at once, and **Raw quality**, which sends JPEG and PNG
@@ -149,7 +173,11 @@ photos exactly as they are.
 - 📝 Drafts that stay with each chat, @mentions, and a formatting toolbar (bold, italic, strikethrough, code)
 - 🎙️ Voice messages and videos played by the system's own decoders (no bundled codecs)
 - 📌 Pinned, archived and muted chats, Favourites and custom lists, disappearing messages, chat themes
-- 🔗 Group invite links, polls, contacts, albums and documents
+- 📊 Polls with Hide voter names and an end time when you create one
+- 🔗 Link previews, sent and received, with WhatsApp's big picture; group invite links, albums and documents
+- 1️⃣ View once messages, opened once, with screenshots blocked while one is shown
+- 🔍 Font size from 80% to 200% (*Settings > General*, or Ctrl with +, - and 0)
+- 🅰️ Initials on a color for people without a profile picture, and clickable @mentions
 - ⬆️ Built-in updates from signed GitHub releases (*Settings > Help > Check for updates*)
 
 ## Download
