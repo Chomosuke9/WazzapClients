@@ -146,6 +146,17 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 	link := d.Link.Shown(d.Text)
 	if link {
 		m.Link, m.Thumb = d.Link, d.LinkThumb
+		if img := d.LinkImage; len(img.Data) > 0 {
+			l := *d.Link
+			l.W, l.H = img.W, img.H
+			m.Link = &l
+			// Ours to show at once; the upload makes it the others'.
+			path := b.mediaPath(chatID, m.ID)
+			_ = os.MkdirAll(filepath.Dir(path), 0o700)
+			if err := os.WriteFile(path, img.Data, 0o600); err != nil {
+				b.log.Warnf("save link preview picture: %v", err)
+			}
+		}
 	}
 	if ci := b.draftContext(chatID, d, &sm); ci != nil || link {
 		e := &waE2E.ExtendedTextMessage{
@@ -153,13 +164,24 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			ContextInfo:           ci,
 			InviteLinkGroupTypeV2: waE2E.ExtendedTextMessage_DEFAULT.Enum(),
 		}
+		var prep func(context.Context)
 		if link {
 			addLink(e, d.Link, d.LinkThumb)
+			if len(d.LinkImage.Data) > 0 {
+				img := d.LinkImage
+				prep = func(ctx context.Context) {
+					b.uploadLinkImage(ctx, cli, e, img)
+					if blob := linkImageOf(e); blob != nil {
+						b.setMediaBlob(chatID, m.ID, blob)
+					}
+				}
+			}
 		}
 		msg = &waE2E.Message{ExtendedTextMessage: e}
 		if d.MentionAdmins {
 			msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 		}
+		return b.storeAndSendAfter(jid, sm, msg, nil, prep)
 	}
 	return b.storeAndSend(jid, sm, msg, nil)
 }
@@ -188,6 +210,12 @@ func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) 
 //
 // If the server rejects msg and fallback is given, fallback is sent instead.
 func (b *Backend) storeAndSend(jid types.JID, sm storedMsg, msg, fallback *waE2E.Message) *model.Message {
+	return b.storeAndSendAfter(jid, sm, msg, fallback, nil)
+}
+
+// storeAndSendAfter is storeAndSend that first runs prep, if not nil, on
+// the sending goroutine: an upload that fills in msg.
+func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg, fallback *waE2E.Message, prep func(context.Context)) *model.Message {
 	ctx, chatID, m := b.ctx, sm.ChatID, sm.Message
 	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
 		b.log.Errorf("store chat %s: %v", chatID, err)
@@ -196,7 +224,7 @@ func (b *Backend) storeAndSend(jid types.JID, sm storedMsg, msg, fallback *waE2E
 		b.log.Errorf("store outgoing message: %v", err)
 	}
 	b.emitChat(chatID)
-	b.sendAsyncOr(chatID, jid, m.ID, msg, fallback)
+	b.sendAsyncPrep(chatID, jid, m.ID, msg, fallback, prep)
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		return b.resolve(ctx, r, jid.Server == types.GroupServer)
 	}
@@ -212,8 +240,16 @@ func (b *Backend) sendAsync(chatID string, jid types.JID, id string, msg *waE2E.
 // sendAsyncOr is sendAsync that sends fallback instead when the server
 // rejects msg.
 func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg, fallback *waE2E.Message) {
+	b.sendAsyncPrep(chatID, jid, id, msg, fallback, nil)
+}
+
+// sendAsyncPrep is sendAsyncOr that runs prep, if not nil, before sending.
+func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fallback *waE2E.Message, prep func(context.Context)) {
 	cli := b.client()
 	go func() {
+		if prep != nil {
+			prep(b.ctx)
+		}
 		_, err := cli.SendMessage(b.ctx, jid, msg, whatsmeow.SendRequestExtra{ID: id})
 		if err != nil && fallback != nil {
 			b.log.Warnf("send to %s: %v; sending the fallback", chatID, err)
@@ -280,6 +316,9 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 		e := &waE2E.ExtendedTextMessage{Text: proto.String(raw.Text), ContextInfo: ci}
 		if raw.Link.Shown(raw.Text) {
 			addLink(e, raw.Link, raw.Thumb)
+			if media == model.MediaNone {
+				copyLinkImage(e, blob)
+			}
 		}
 		msg = &waE2E.Message{ExtendedTextMessage: e}
 	}

@@ -230,16 +230,21 @@ func (b *Backend) download(chatID, msgID string) {
 	if err != nil || len(blob) == 0 {
 		return
 	}
-	var msg whatsmeow.DownloadableMessage
+	var get func() ([]byte, error)
 	switch media {
 	case model.MediaImage:
 		m := &waE2E.ImageMessage{}
 		err = proto.Unmarshal(blob, m)
-		msg = m
+		get = func() ([]byte, error) { return cli.Download(ctx, m) }
 	case model.MediaSticker:
 		m := &waE2E.StickerMessage{}
 		err = proto.Unmarshal(blob, m)
-		msg = m
+		get = func() ([]byte, error) { return cli.Download(ctx, m) }
+	case model.MediaNone:
+		// A link preview's big picture (linkImageOf).
+		m := &waE2E.ExtendedTextMessage{}
+		err = proto.Unmarshal(blob, m)
+		get = func() ([]byte, error) { return cli.DownloadThumbnail(ctx, m) }
 	default:
 		return
 	}
@@ -248,7 +253,7 @@ func (b *Backend) download(chatID, msgID string) {
 	}
 	path := b.mediaPath(chatID, msgID)
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
-	data, err := cli.Download(ctx, msg)
+	data, err := get()
 	if errors.Is(err, whatsmeow.ErrInvalidMediaSHA256) && chatID == stickerChat && len(data) > 0 {
 		// A synced sticker's plaintext hash comes from its app state index,
 		// which may be missing or a different hash. The file passed its MAC

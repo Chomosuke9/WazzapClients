@@ -131,6 +131,9 @@ type LinkPreview struct {
 	URL         string // the link as it appears in the text
 	Title       string
 	Description string
+	// W and H are the size of its big picture, which the wide card shows
+	// above the title (Backend.MediaData has it); 0 without one.
+	W, H int
 }
 
 // Shown reports whether a message with text should show the preview: an
@@ -237,6 +240,15 @@ type Draft struct {
 	// LinkThumb its picture (a small JPEG).
 	Link      *LinkPreview
 	LinkThumb []byte
+	// LinkImage is the picture big, for the wide card WhatsApp shows above
+	// the title, or empty.
+	LinkImage LinkImage
+}
+
+// LinkImage is a link preview's big picture: a JPEG, W x H.
+type LinkImage struct {
+	Data []byte
+	W, H int
 }
 
 // Attachment is a file to send.

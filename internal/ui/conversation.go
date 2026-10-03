@@ -1088,6 +1088,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	var link part
 	if hasLinkCard(m) {
 		lw := min(inner, max(contentW, gtx.Dp(320)))
+		if wideLink(m) {
+			lw = min(inner, max(contentW, gtx.Dp(wideLinkW)))
+		}
 		link = record(cgtx, func(gtx C) D { return u.layoutLinkCard(gtx, m, lw, 7, quoteBg, textCol, secondary) })
 		contentW = max(contentW, link.size.X)
 	}
@@ -1382,7 +1385,7 @@ func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width
 // the downloaded media, or the embedded thumbnail while that loads.
 func (u *UI) messageImage(m *model.Message, maxPx int) *imgEntry {
 	b := u.backend
-	if m.Media == model.MediaImage || m.Media == model.MediaSticker {
+	if m.Media == model.MediaImage || m.Media == model.MediaSticker || wideLink(m) {
 		full := u.images.get("m:"+m.ChatID+"/"+m.ID, maxPx, func() []byte { return b.MediaData(m.ChatID, m.ID) })
 		if full.state == imgReady {
 			return full

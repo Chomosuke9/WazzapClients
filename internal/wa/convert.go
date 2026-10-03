@@ -123,6 +123,9 @@ func describe(m *waE2E.Message) content {
 			c.link = &model.LinkPreview{URL: e.GetMatchedText(), Title: e.GetTitle(),
 				Description: e.GetDescription()}
 			c.linkPic = e.GetJPEGThumbnail()
+			if c.blob = linkImageOf(e); c.blob != nil {
+				c.link.W, c.link.H = int(e.GetThumbnailWidth()), int(e.GetThumbnailHeight())
+			}
 		}
 		return c
 	case m.GetImageMessage() != nil:

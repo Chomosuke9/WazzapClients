@@ -59,6 +59,11 @@ func TestFetch(t *testing.T) {
 	if err != nil || th.Width != thumbSide || th.Height != thumbSide {
 		t.Fatalf("thumb %dx%d, %v", th.Width, th.Height, err)
 	}
+	// A wide picture also comes big, for the card above the title.
+	if im, err := jpeg.DecodeConfig(bytes.NewReader(p.Image)); err != nil || im.Width != 600 || im.Height != 300 ||
+		p.W != 600 || p.H != 300 {
+		t.Fatalf("image %dx%d (%dx%d), %v", im.Width, im.Height, p.W, p.H, err)
+	}
 
 	if p, err := Fetch(ctx, srv.URL+"/titled"); err != nil || p.Title != "Just a title" || p.Thumb != nil {
 		t.Fatalf("titled page: %+v, %v", p, err)

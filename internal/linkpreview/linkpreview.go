@@ -31,6 +31,11 @@ type Preview struct {
 	Description string
 	// Thumb is the page's picture as a small square JPEG, or nil.
 	Thumb []byte
+	// Image is the picture as a JPEG at most imageSide px on the long
+	// side, W x H, for the wide card above the title, or nil when the
+	// picture is too small for one.
+	Image []byte
+	W, H  int
 }
 
 const (
@@ -38,6 +43,8 @@ const (
 	maxImage  = 4 << 20
 	maxPixels = 6_000_000 // decoded, an RGBA picture takes 4 bytes a pixel
 	thumbSide = 200
+	imageSide = 1024 // what WhatsApp sends
+	minWide   = 400  // narrower pictures only get the small square
 	maxTitle  = 300
 	maxDesc   = 600
 	userAgent = "WhatsApp/2" // sites hand their preview tags to WhatsApp's fetcher
@@ -64,11 +71,11 @@ func Fetch(ctx context.Context, link string) (*Preview, error) {
 	}
 	if strings.HasPrefix(typ, "image/") {
 		// A link to a picture: show the picture, named by its file.
-		th, err := thumb(body)
-		if err != nil {
+		p := &Preview{Title: lastSegment(final)}
+		if pictures(p, body) != nil {
 			return nil, ErrNoPreview
 		}
-		return &Preview{Title: lastSegment(final), Thumb: th}, nil
+		return p, nil
 	}
 	tags := parse(body)
 	p := &Preview{
@@ -81,8 +88,12 @@ func Fetch(ctx context.Context, link string) (*Preview, error) {
 	if img := first(tags["og:image:secure_url"], tags["og:image"], tags["og:image:url"], tags["twitter:image"],
 		tags["twitter:image:src"]); img != "" {
 		if iu, err := final.Parse(img); err == nil && (iu.Scheme == "http" || iu.Scheme == "https") {
-			if data, _, _, err := get(ctx, iu.String(), maxImage); err == nil {
-				p.Thumb, _ = thumb(data)
+			// Some sites make the picture on the first request for it
+			// (GitHub's), which can fail or time out: ask twice.
+			for try := 0; try < 2 && p.Thumb == nil && ctx.Err() == nil; try++ {
+				if data, _, _, err := get(ctx, iu.String(), maxImage); err == nil {
+					pictures(p, data)
+				}
 			}
 		}
 	}
@@ -159,16 +170,27 @@ func parse(page []byte) map[string]string {
 	}
 }
 
-// thumb makes the small square JPEG a preview carries of a picture.
-func thumb(data []byte) ([]byte, error) {
+// pictures makes p's pictures of the picture in data: the small square
+// JPEG a preview always carries and, for a picture big enough, the wide one.
+func pictures(p *Preview, data []byte) error {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if cfg.Width*cfg.Height > maxPixels {
-		return nil, errors.New("linkpreview: the picture is too big")
+		return errors.New("linkpreview: the picture is too big")
 	}
-	return photo.Square(data, thumbSide)
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	if p.Thumb, err = photo.SquareOf(img, thumbSide); err != nil {
+		return err
+	}
+	if cfg.Width >= minWide && cfg.Width >= cfg.Height {
+		p.Image, p.W, p.H, _ = photo.Fit(img, imageSide)
+	}
+	return nil
 }
 
 func first(s ...string) string {

@@ -23,6 +23,15 @@ func hasLinkCard(m *model.Message) bool {
 	return m.Kind == model.KindText && m.Media == model.MediaNone && m.Link.Shown(m.Text)
 }
 
+// wideLink reports whether a message's link preview has a big picture,
+// which its card shows above the title.
+func wideLink(m *model.Message) bool {
+	return m.Link != nil && m.Link.W > 0 && m.Link.H > 0
+}
+
+// wideLinkW is how wide a bubble gets for a wide card.
+const wideLinkW = 360
+
 // linkDomain returns the host a link goes to, without "www.".
 func linkDomain(link string) string {
 	if !strings.Contains(link, "://") {
@@ -36,13 +45,19 @@ func linkDomain(link string) string {
 }
 
 // layoutLinkCard draws a message's link preview, width wide: its picture
-// on the left, then the page's title, description and domain. Clicking it
-// opens the link.
+// on the left, then the page's title, description and domain. A big
+// picture (wideLink) goes above them instead, the card's width. Clicking
+// it opens the link.
 func (u *UI) layoutLinkCard(gtx C, m *model.Message, width int, radius unit.Dp, bg, textCol, secondary color.NRGBA) D {
 	l := m.Link
+	wide := wideLink(m)
 	hasPic := len(m.Thumb) > 0 || m.ImageA != 0 || m.ImageB != 0
-	side := 0
-	if hasPic {
+	side, picH := 0, 0
+	switch {
+	case wide:
+		// As tall as the picture is for the width, cropped to a square.
+		picH = min(width, max(width/4, width*l.H/l.W))
+	case hasPic:
 		side = gtx.Dp(88)
 	}
 	padX, padY := gtx.Dp(10), gtx.Dp(8)
@@ -66,11 +81,23 @@ func (u *UI) layoutLinkCard(gtx C, m *model.Message, width int, radius unit.Dp, 
 		rows = append(rows, layout.Rigid(u.label(13, d, secondary, labelOpts{maxLines: 1}).Layout))
 	}
 	txt := record(tgtx, func(gtx C) D { return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...) })
-	h := max(side, txt.size.Y+2*padY)
+	h := max(side, txt.size.Y+2*padY) + picH
 
 	r := gtx.Dp(radius)
 	fillRRect(gtx, image.Rect(0, 0, width, h), r, bg)
-	if hasPic {
+	if wide {
+		pr := image.Rect(0, 0, width, picH)
+		func() {
+			defer clip.RRect{Rect: pr, NW: r, NE: r}.Push(gtx.Ops).Pop()
+			if img := u.messageImage(m, width); img != nil && img.state == imgReady {
+				paintCover(gtx, img.op, img.size, pr)
+			} else if m.ImageA != 0 || m.ImageB != 0 {
+				u.gradientImage(gtx, pr, m.ImageA, m.ImageB)
+			} else {
+				fillRect(gtx, pr, u.pal.Hover)
+			}
+		}()
+	} else if hasPic {
 		pr := image.Rect(0, 0, side, h)
 		func() {
 			defer clip.RRect{Rect: pr, NW: r, SW: r}.Push(gtx.Ops).Pop()
@@ -83,7 +110,7 @@ func (u *UI) layoutLinkCard(gtx C, m *model.Message, width int, radius unit.Dp, 
 			}
 		}()
 	}
-	txt.at(gtx, side+padX, (h-txt.size.Y)/2)
+	txt.at(gtx, side+padX, picH+(h-picH-txt.size.Y)/2)
 
 	sz := image.Pt(width, h)
 	if !u.conv.selecting {

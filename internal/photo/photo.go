@@ -133,6 +133,11 @@ func Square(data []byte, side int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return SquareOf(img, side)
+}
+
+// SquareOf is Square of a decoded picture.
+func SquareOf(img image.Image, side int) ([]byte, error) {
 	b := img.Bounds()
 	s := min(b.Dx(), b.Dy())
 	crop := image.Rect(0, 0, s, s).Add(b.Min).Add(image.Pt((b.Dx()-s)/2, (b.Dy()-s)/2))
@@ -147,4 +152,19 @@ func Square(data []byte, side int) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// Fit scales img down to at most side px on the long side and returns it
+// as a JPEG, with its size.
+func Fit(img image.Image, side int) ([]byte, int, int, error) {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if s := max(w, h); s > side {
+		w, h = max(1, side*w/s), max(1, side*h/s)
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, flatten(Shrink(img, w, h)), &jpeg.Options{Quality: 80}); err != nil {
+		return nil, 0, 0, err
+	}
+	return buf.Bytes(), w, h, nil
 }

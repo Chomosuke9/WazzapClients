@@ -188,6 +188,7 @@ func (u *UI) sendComposer() {
 	if r := u.composerPreview(d.Text); r != nil {
 		d.Link = &model.LinkPreview{URL: r.url, Title: r.prev.Title, Description: r.prev.Description}
 		d.LinkThumb = r.prev.Thumb
+		d.LinkImage = model.LinkImage{Data: r.prev.Image, W: r.prev.W, H: r.prev.H}
 	}
 	u.conv.link.reset()
 	u.conv.composer.SetText("")
