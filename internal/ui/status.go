@@ -565,7 +565,20 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		layout.Flexed(1, func(gtx C) D {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(u.label(16, name, white, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
-				layout.Rigid(u.label(13.5, statusTime(up.Time, u.now()), argb(0xffffff, 0xb0)).Layout),
+				layout.Rigid(func(gtx C) D {
+					tl := u.label(13.5, statusTime(up.Time, u.now()), argb(0xffffff, 0xb0))
+					if up.Revoked.IsZero() {
+						return tl.Layout(gtx)
+					}
+					// Kept with Keep deleted messages (extras.go).
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(tl.Layout),
+						layout.Rigid(layout.Spacer{Width: 8}.Layout),
+						layout.Rigid(iconW(icBlock, 14, u.pal.Danger)),
+						layout.Rigid(layout.Spacer{Width: 2}.Layout),
+						layout.Rigid(u.label(13.5, "Deleted", u.pal.Danger).Layout),
+					)
+				}),
 			)
 		}),
 		layout.Rigid(func(gtx C) D {

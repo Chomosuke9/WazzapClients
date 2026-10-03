@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/polymorfa/hypermeow/proto/waCommon"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/polymorfa/hypermeow/types/events"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -90,5 +92,51 @@ func TestPendingStatusDroppedOnStart(t *testing.T) {
 	}
 	if v := b.store.meta(b.ctx, pendingStatus+"unsent"); v != "" {
 		t.Errorf("the pending mark stayed: %q", v)
+	}
+}
+
+// TestKeepDeletedStatus checks that with Keep deleted messages on, a status
+// its poster deletes stays and is flagged, and goes with the feature off.
+func TestKeepDeletedStatus(t *testing.T) {
+	b := testBackend(t)
+	now := time.Now()
+	poster := types.NewJID("555", types.HiddenUserServer)
+	post := func(id string) {
+		b.onStatus(&events.Message{
+			Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: types.StatusBroadcastJID, Sender: poster},
+				ID: types.MessageID(id), Timestamp: now},
+			Message: &waE2E.Message{Conversation: proto.String("status " + id)}})
+	}
+	revoke := func(id string, at time.Time) {
+		b.onStatus(&events.Message{
+			Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: types.StatusBroadcastJID, Sender: poster},
+				ID: types.MessageID("R" + id), Timestamp: at},
+			Message: &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+				Key:  &waCommon.MessageKey{ID: proto.String(id)},
+				Type: waE2E.ProtocolMessage_REVOKE.Enum(),
+			}}})
+	}
+	updates := func() map[string]*model.StatusUpdate {
+		out := map[string]*model.StatusUpdate{}
+		for _, th := range b.Statuses() {
+			for _, up := range th.Updates {
+				out[up.ID] = up
+			}
+		}
+		return out
+	}
+
+	post("S1")
+	revoke("S1", now.Add(time.Minute))
+	if _, ok := updates()["S1"]; ok {
+		t.Error("off: the deleted status stayed")
+	}
+
+	b.SetPref(model.PrefKeepDeleted, "on")
+	at := now.Add(2 * time.Minute).Truncate(time.Millisecond)
+	post("S2")
+	revoke("S2", at)
+	if up := updates()["S2"]; up == nil || up.Text != "status S2" || !up.Revoked.Equal(at) {
+		t.Errorf("on: got %+v, want it kept and revoked at %v", up, at)
 	}
 }

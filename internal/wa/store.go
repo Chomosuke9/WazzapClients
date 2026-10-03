@@ -170,6 +170,8 @@ var migrations = []string{
 	// Unix milliseconds its sender deleted it for everyone, for a message
 	// kept with model.PrefKeepDeleted; 0 otherwise.
 	`ALTER TABLE wz_messages ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
+	// The same for a status update.
+	`ALTER TABLE wz_status ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {

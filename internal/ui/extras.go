@@ -160,7 +160,7 @@ func (u *UI) graySettings() []settingsSection {
 		u.extraToggle(prefEditHistory, "Edit history", "See what an edited message said before: right-click it and pick Edit history",
 			&u.editHistory, nil),
 		u.extraToggle(model.PrefKeepDeleted, "Keep deleted messages",
-			"When someone deletes a message for everyone, keep showing it, marked Deleted",
+			"When someone deletes a message for everyone or a status, keep showing it, marked Deleted",
 			&u.keepDeleted, nil),
 	}, note: "These let you see or do what the people you talk to wouldn't expect, so use them with care. " +
 		"Messages deleted while Keep deleted messages is off can't be brought back."}}

@@ -518,6 +518,9 @@ type StatusUpdate struct {
 	Background uint32
 	Time       time.Time
 	Viewed     bool
+	// Revoked is when its poster deleted it, for an update kept with
+	// PrefKeepDeleted; zero otherwise.
+	Revoked time.Time
 }
 
 // StatusThread is everything one contact posted in the last 24 hours,

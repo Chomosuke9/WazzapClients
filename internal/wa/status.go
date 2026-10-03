@@ -32,7 +32,7 @@ type storedStatus struct {
 	ts               time.Time
 	c                content
 	viewed           bool
-	revoke           string // ID of a status that was deleted
+	revoke           string // ID of a status that was deleted (ts and fromMe are the delete's)
 }
 
 // parseStatus interprets a message posted to status@broadcast.
@@ -43,7 +43,7 @@ func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedS
 	}
 	if pm := m.GetProtocolMessage(); pm != nil {
 		if pm.GetType() == waE2E.ProtocolMessage_REVOKE && pm.GetKey().GetID() != "" {
-			return storedStatus{revoke: pm.GetKey().GetID()}, true
+			return storedStatus{revoke: pm.GetKey().GetID(), fromMe: evt.Info.IsFromMe, ts: evt.Info.Timestamp}, true
 		}
 		return storedStatus{}, false
 	}
@@ -78,6 +78,13 @@ func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) err
 			thumb = COALESCE(excluded.thumb, wz_status.thumb)`,
 		st.id, st.sender, st.push, boolInt(st.fromMe), st.ts.Unix(), int(st.c.media), st.c.text, int64(st.c.bg),
 		st.c.thumb, st.c.blob, boolInt(st.viewed))
+	return err
+}
+
+// markStatusRevoked flags a status its poster deleted at at, keeping it
+// (model.PrefKeepDeleted).
+func (s *msgStore) markStatusRevoked(ctx context.Context, id string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_status SET revoked = ? WHERE id = ? AND revoked = 0`, at.UnixMilli(), id)
 	return err
 }
 
@@ -145,7 +152,7 @@ func (s *msgStore) dropStatuses(ctx context.Context, before time.Time) []string 
 
 // recentStatuses returns updates newer than since, oldest first.
 func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statusRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, sender, push, from_me, ts, media, text, bg, thumb, viewed
+	rows, err := s.db.QueryContext(ctx, `SELECT id, sender, push, from_me, ts, media, text, bg, thumb, viewed, revoked
 		FROM wz_status WHERE ts >= ? ORDER BY ts`, since.Unix())
 	if err != nil {
 		return nil, err
@@ -157,14 +164,17 @@ func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statu
 			r                     statusRow
 			u                     model.StatusUpdate
 			fromMe, media, viewed int
-			ts, bg                int64
+			ts, bg, revoked       int64
 		)
-		if err := rows.Scan(&u.ID, &r.sender, &r.push, &fromMe, &ts, &media, &u.Text, &bg, &u.Thumb, &viewed); err != nil {
+		if err := rows.Scan(&u.ID, &r.sender, &r.push, &fromMe, &ts, &media, &u.Text, &bg, &u.Thumb, &viewed, &revoked); err != nil {
 			return nil, err
 		}
 		u.Time = time.Unix(ts, 0)
 		u.Media = model.Media(media)
 		u.Background = uint32(bg)
+		if revoked != 0 {
+			u.Revoked = time.UnixMilli(revoked)
+		}
 		u.Viewed = viewed != 0 && fromMe == 0 // your own ring stays green
 		r.fromMe = fromMe != 0
 		r.u = &u
@@ -176,6 +186,20 @@ func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statu
 func (b *Backend) onStatus(e *events.Message) {
 	st, ok := b.parseStatus(b.ctx, e)
 	if !ok {
+		return
+	}
+	// Like revoke: with Keep deleted messages on, someone else's deleted
+	// status stays (until it expires) and is only flagged.
+	if st.revoke != "" && !st.fromMe && b.Pref(model.PrefKeepDeleted) == "on" {
+		at := st.ts
+		if at.IsZero() {
+			at = time.Now()
+		}
+		if err := b.store.markStatusRevoked(b.ctx, st.revoke, at); err != nil {
+			b.log.Warnf("flag deleted status %s: %v", st.revoke, err)
+			return
+		}
+		b.emit(model.StatusEvent{})
 		return
 	}
 	if err := b.store.putStatus(b.ctx, b.db, st); err != nil {
