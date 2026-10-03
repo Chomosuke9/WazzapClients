@@ -272,6 +272,7 @@ func demo(now time.Time) []*demoChat {
 			txt(false, day(1, 19, 11), "Should we rent a car or just use Grab the whole time?"),
 			txt(true, day(1, 19, 20), "Rent a car I think, it's cheaper for 4 people and we can go to Tegallalang early in the morning before it gets crowded"),
 			{FromMe: false, Kind: model.KindImage, Text: "Found this spot near the villa", Time: day(0, 8, 41), ImageA: 0x3a7bd5, ImageB: 0x00d2ff},
+			{FromMe: false, Kind: model.KindViewOnce, Media: model.MediaImage, Time: day(0, 8, 42), ImageA: 0xff9a8b, ImageB: 0xff6a88},
 			{FromMe: true, Text: "Wow that looks amazing", Time: day(0, 8, 45), Receipt: model.Read, Reaction: "❤️",
 				Quote: &model.Quote{Sender: "Rina Kartika", Text: "📷 Found this spot near the villa"}},
 			// Edited twice (see demoVersions).
@@ -289,6 +290,8 @@ func demo(now time.Time) []*demoChat {
 			grp("Mom", day(0, 6, 2), "Good morning everyone 🌞"),
 			grp("Dad", day(0, 6, 15), "Morning. Don't forget lunch at home on Sunday"),
 			grp("Dimas", day(0, 7, 1), "Got it, Dad 👍"),
+			// A view once photo whose media only the phone got.
+			{Sender: "Dimas", Kind: model.KindViewOnce, Media: model.MediaImage, OnPhone: true, Time: day(0, 7, 2)},
 			grp("Sari", day(0, 7, 3), "I'll bring the cake from that shop we went to yesterday"),
 			// An album of five photos: a grid of four, the last one "+2".
 			{Sender: "Sari", Kind: model.KindImage, Media: model.MediaImage, Time: day(0, 7, 4), Album: "family-album", ImageA: 0xf6d365, ImageB: 0xfda085},

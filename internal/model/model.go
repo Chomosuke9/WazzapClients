@@ -34,6 +34,9 @@ const (
 	KindSticker      // borderless picture
 	// KindUnsupported is a message of a type the app can't show.
 	KindUnsupported
+	// KindViewOnce is a view once photo, video or voice message: a pill
+	// that opens it (see Message.Opened and Message.OnPhone).
+	KindViewOnce
 )
 
 // ButtonKind is what a message button does.
@@ -138,6 +141,11 @@ type Message struct {
 	Contacts []ContactCard
 	Poll     *PollState
 	Event    *EventInfo
+	// Opened is set on a view once message (KindViewOnce) once it was
+	// opened on this computer, and OnPhone while its media never came to
+	// it: WhatsApp sends view once media only to the phone, so it shows
+	// once someone replies to it, which carries it along.
+	Opened, OnPhone bool
 }
 
 // Location is a place or position someone shared.
@@ -969,6 +977,11 @@ const PrefGhost = "ghost"
 // deleted".
 const PrefKeepDeleted = "keep_deleted"
 
+// PrefViewOnceReplay is the Pref key of the "Replay view once" extra
+// feature, on when "on": a view once message opens as often as you like,
+// and screenshots of it aren't blocked.
+const PrefViewOnceReplay = "view_once_replay"
+
 // Backend is everything the UI needs from a WhatsApp connection.
 //
 // Methods are called from the UI goroutine and must not block for long.
@@ -1022,6 +1035,8 @@ type Backend interface {
 	Star(m *Message, starred bool)
 	// PinMessage pins a message to the top of its chat, or unpins it.
 	PinMessage(m *Message, pinned bool)
+	// OpenedViewOnce marks a view once message opened on this computer.
+	OpenedViewOnce(m *Message)
 	// EditText returns the text of one of your messages to edit, with
 	// each @mention as "@Name", and the mentions in it.
 	EditText(m *Message) (string, []MentionRef)

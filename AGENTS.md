@@ -183,6 +183,13 @@ Gotchas already found in the pinned version (v0.10.x):
   does those the same way. hypermeow can't send an event answer (it has no stanza
   type for it), so the app shows answers but doesn't send them. Your own votes are
   stored under `meVoter`, since they come from your phone number or your LID.
+- WhatsApp sends view once media only to the phone. Linked devices get a stanza with
+  `<unavailable type="view_once"/>` and no ciphertext, which hypermeow hands out as an
+  `events.UndecryptableMessage`; `onUndecryptable` stores it as a `KindViewOnce`
+  placeholder (`OnPhone`). A reply quoting it often carries its media key, and
+  `fillViewOnce` gives the placeholder that media. While one is shown the window is kept
+  out of screenshots (`desktop.BlockCapture`, `SetWindowDisplayAffinity` posted to the
+  window's thread through the drop target's subclass).
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
@@ -232,8 +239,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    the AFK bar above the chat list in scheduled.go; and
                    the Extra features settings page in extras.go (the app's own features,
                    such as slash commands, @admin and Raw photos: each off until turned on), and
-                   its Ethically gray features page (Edit history, Keep deleted messages, and
-                   commands marked Gray, like /ghost, each with a switch of its own); posting your own status
+                   its Ethically gray features page (Edit history, Keep deleted messages, Replay view
+                   once, and commands marked Gray, like /ghost, each with a switch of its own);
+                   view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
                    opens at in unread.go; group invite links (the dialog that joins

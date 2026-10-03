@@ -588,6 +588,9 @@ func mediaIcon(m model.Media) *icon.Icon {
 
 // mediaLabel is the preview text for a message without caption.
 func mediaLabel(m *model.Message) string {
+	if m.Kind == model.KindViewOnce {
+		return viewOnceLabel(m)
+	}
 	if m.Text != "" && m.Media != model.MediaVoice && m.Media != model.MediaAudio {
 		return m.Text
 	}
@@ -701,6 +704,10 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		case last.Kind == model.KindUnsupported:
 			children = append(children, small(icUnsupported, p.TextSecondary, 17, 4))
 			txt, italic = "This message couldn't load", true
+		case last.Kind == model.KindViewOnce:
+			children = append(children, layout.Rigid(func(gtx C) D { return u.viewOnceMark(gtx, 18, p.TextSecondary) }),
+				layout.Rigid(layout.Spacer{Width: 4}.Layout))
+			txt = mediaLabel(last)
 		case last.Media != model.MediaNone:
 			col := p.TextSecondary
 			if last.Media == model.MediaVoice && !last.FromMe && c.Unread > 0 {

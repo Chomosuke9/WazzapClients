@@ -206,13 +206,16 @@ var target = &dropTarget{vtbl: &[7]uintptr{
 
 var subclassProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	dropMu.Lock()
-	old := dropOld[hwnd]
+	old, capture := dropOld[hwnd], captureMsg
 	dropMu.Unlock()
 	switch {
 	case msg == dropMsg && dropMsg != 0:
 		// On the window's own thread at last.
 		procOleInitialize.Call(0)
 		procRegisterDragDrop.Call(hwnd, uintptr(unsafe.Pointer(target)))
+		return 0
+	case msg == capture && capture != 0:
+		setAffinity(hwnd, wParam != 0) // capture_windows.go
 		return 0
 	case msg == wmNCDestroy:
 		procRevokeDragDrop.Call(hwnd)

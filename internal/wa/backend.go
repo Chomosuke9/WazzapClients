@@ -609,6 +609,8 @@ func (b *Backend) handle(evt any) {
 		b.onHistory(e)
 	case *events.Message:
 		b.onMessage(e)
+	case *events.UndecryptableMessage:
+		b.onUndecryptable(e)
 	case *events.Receipt:
 		b.onReceipt(e)
 
@@ -871,6 +873,43 @@ func (b *Backend) onMessage(e *events.Message) {
 	if !ok {
 		return
 	}
+	b.apply(&e.Info, p)
+}
+
+// onUndecryptable stores a view once message: WhatsApp sends those only to
+// the phone, and linked devices get a message with nothing in it. It shows
+// as a view once message that opens on the phone, until a reply to it
+// brings its media along (fillViewOnce).
+func (b *Backend) onUndecryptable(e *events.UndecryptableMessage) {
+	if !e.IsUnavailable || e.UnavailableType != events.UnavailableTypeViewOnce || isStatus(e.Info.Chat) {
+		return
+	}
+	ctx := b.ctx
+	chat := b.canonical(ctx, e.Info.Chat)
+	if _, ok := b.store.message(ctx, chat.String(), e.Info.ID); ok || skipChat(chat) {
+		return // again: it may have its media by now
+	}
+	media := model.MediaNone
+	switch e.Info.MediaType {
+	case "image":
+		media = model.MediaImage
+	case "video":
+		media = model.MediaVideo
+	case "ptt", "audio":
+		media = model.MediaVoice
+	}
+	var p parsed
+	p.msg.Message = &model.Message{ID: e.Info.ID, ChatID: chat.String(), Kind: model.KindViewOnce, Media: media,
+		FromMe: e.Info.IsFromMe, Time: e.Info.Timestamp, Receipt: model.Sent}
+	p.msg.senderJID = e.Info.Sender.ToNonAD().String()
+	p.msg.senderPush = e.Info.PushName
+	b.apply(&e.Info, p)
+}
+
+// apply stores a parsed message, or what it does to another one, and tells
+// the UI.
+func (b *Backend) apply(info *types.MessageInfo, p parsed) {
+	ctx := b.ctx
 	chat := p.msg.ChatID
 	isNew := false
 	switch {
@@ -900,13 +939,13 @@ func (b *Backend) onMessage(e *events.Message) {
 	default:
 		name := ""
 		chatJID, _ := types.ParseJID(chat)
-		if !e.Info.IsGroup && !isChannel(chatJID) {
+		if !info.IsGroup && !isChannel(chatJID) {
 			name = b.chatName(ctx, chatJID)
 		}
 		_, exists := b.store.chat(ctx, chat)
 		// A message can come again (a retry); it counts and notifies once.
 		_, seen := b.store.message(ctx, chat, p.msg.ID)
-		if err := b.store.ensureChat(ctx, b.db, chat, e.Info.IsGroup, name); err != nil {
+		if err := b.store.ensureChat(ctx, b.db, chat, info.IsGroup, name); err != nil {
 			b.log.Errorf("store chat %s: %v", chat, err)
 			return
 		}
@@ -919,16 +958,19 @@ func (b *Backend) onMessage(e *events.Message) {
 		} else if p.msg.Media == model.MediaSticker && len(p.msg.mediaBlob) > 0 {
 			b.recentSticker(p.msg.mediaBlob, p.msg.Time, "", "") // sent from another device
 		}
-		if !exists && e.Info.IsGroup {
+		if !exists && info.IsGroup {
 			go b.fetchGroupName(chatJID)
+		}
+		if q := p.msg.quoteMedia; q != nil && b.store.fillViewOnce(ctx, chat, p.msg.quoteID, q) {
+			b.emitMessage(chat, p.msg.quoteID)
 		}
 		p.target = p.msg.ID
 	}
 	if r, ok := b.store.message(ctx, chat, p.target); ok {
-		m := b.resolve(ctx, r, e.Info.IsGroup)
+		m := b.resolve(ctx, r, info.IsGroup)
 		if isNew {
 			// A group shows "@" while an unread message is for you.
-			_ = b.store.addUnread(ctx, chat, e.Info.IsGroup && m.ForMe(""))
+			_ = b.store.addUnread(ctx, chat, info.IsGroup && m.ForMe(""))
 		}
 		b.emit(model.MessageEvent{Msg: m, New: isNew})
 		b.emitChat(chat)

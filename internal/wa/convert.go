@@ -97,6 +97,43 @@ func unwrapOnce(m *waE2E.Message) *waE2E.Message {
 	return nil
 }
 
+// isViewOnce reports whether a message is view once: in one of the view
+// once envelopes, or a photo, video or voice message flagged so.
+func isViewOnce(m *waE2E.Message) bool {
+	for i := 0; i < 5 && m != nil; i++ {
+		if m.GetViewOnceMessage() != nil || m.GetViewOnceMessageV2() != nil || m.GetViewOnceMessageV2Extension() != nil ||
+			m.GetImageMessage().GetViewOnce() || m.GetVideoMessage().GetViewOnce() || m.GetAudioMessage().GetViewOnce() {
+			return true
+		}
+		m = unwrapOnce(m)
+	}
+	return false
+}
+
+// hasMediaKey reports whether a message carries what downloading its
+// photo, video or audio takes. WhatsApp leaves the key out of view once
+// messages it hands to linked devices.
+func hasMediaKey(m *waE2E.Message) bool {
+	m = unwrap(m)
+	type media interface {
+		GetMediaKey() []byte
+		GetDirectPath() string
+		GetURL() string
+	}
+	var e media
+	switch {
+	case m.GetImageMessage() != nil:
+		e = m.GetImageMessage()
+	case m.GetVideoMessage() != nil:
+		e = m.GetVideoMessage()
+	case m.GetAudioMessage() != nil:
+		e = m.GetAudioMessage()
+	default:
+		return false
+	}
+	return len(e.GetMediaKey()) > 0 && (e.GetDirectPath() != "" || e.GetURL() != "")
+}
+
 // albumOf returns the ID of the album message a photo or video belongs
 // to, or "". The pictures of an album arrive as messages of their own
 // after it, each pointing back to it from its messageContextInfo, which
@@ -315,7 +352,18 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	}
 
 	c := describe(m)
-	if c.text == "" && c.media == model.MediaNone && c.buttons.empty() {
+	viewOnce := isViewOnce(m)
+	if viewOnce {
+		// The pill that opens it, whatever came inside; the media only
+		// when it can be downloaded (see Message.OnPhone).
+		c.kind = model.KindViewOnce
+		if c.media != model.MediaImage && c.media != model.MediaVideo && c.media != model.MediaVoice {
+			c.media = model.MediaNone
+		}
+		if !hasMediaKey(m) {
+			c.blob = nil
+		}
+	} else if c.text == "" && c.media == model.MediaNone && c.buttons.empty() {
 		if !hasContent(m) {
 			return p, false
 		}
@@ -418,4 +466,8 @@ func (b *Backend) parseQuote(ctx context.Context, m *storedMsg, ci *waE2E.Contex
 	}
 	m.quoteID = id
 	m.Quote = quote
+	if id != "" && hasMediaKey(q) {
+		// It may quote a view once message whose media never came here.
+		m.quoteMedia = &qc
+	}
 }

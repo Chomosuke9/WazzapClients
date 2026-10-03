@@ -172,6 +172,8 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
 	// The same for a status update.
 	`ALTER TABLE wz_status ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
+	// 1 once a view once message (model.KindViewOnce) was opened here.
+	`ALTER TABLE wz_messages ADD COLUMN opened INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -328,6 +330,9 @@ type storedMsg struct {
 	mentions   []string
 	mediaBlob  []byte // marshaled waE2E media message
 	buttons    *buttonsInfo
+	// quoteMedia is the quoted photo, video or voice message, when the
+	// quote carries what downloading it takes (see fillViewOnce).
+	quoteMedia *content
 }
 
 func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error {
@@ -366,6 +371,24 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 	}
 	_, err = x.ExecContext(ctx, `UPDATE wz_chats SET last_ts = MAX(last_ts, ?) WHERE jid = ?`, m.Time.Unix(), m.ChatID)
 	return err
+}
+
+// fillViewOnce gives a view once message whose media never came here the
+// media a reply to it quoted. It reports whether it had none.
+func (s *msgStore) fillViewOnce(ctx context.Context, chat, id string, c *content) bool {
+	media := c.media
+	if media != model.MediaImage && media != model.MediaVideo && media != model.MediaVoice {
+		return false
+	}
+	r, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET media = ?, duration = ?, media_blob = ?,
+			thumb = COALESCE(?, thumb), file = ?, text = CASE WHEN text = '' THEN ? ELSE text END
+		WHERE chat = ? AND id = ? AND kind = ? AND media_blob IS NULL`,
+		int(media), c.duration, c.blob, c.thumb, c.file.marshal(), c.text, chat, id, int(model.KindViewOnce))
+	if err != nil {
+		return false
+	}
+	n, _ := r.RowsAffected()
+	return n > 0
 }
 
 func placeholders(n int) string {
@@ -515,7 +538,7 @@ type rawMsg struct {
 
 const msgColumns = `chat, id, sender_jid, sender_push, sender_name, from_me, ts, kind, media, duration, text, receipt,
 	quote_sender, quote_text, quote_media, quote_id, mentions, reaction, starred, pinned, forwarded, thumb, buttons, file,
-	album, edited, link, extra, revoked`
+	album, edited, link, extra, revoked, opened, media_blob IS NOT NULL`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -535,10 +558,12 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		buttons, file, link string
 		extra               string
 		edited, revoked     int64
+		opened, hasBlob     bool
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &r.legacyName, &fromMe, &ts, &kind, &media, &m.Duration,
 		&m.Text, &receipt, &r.quoteJID, &quoteText, &quoteMedia, &r.quoteID, &r.mentions, &reaction,
-		&starred, &pinned, &forwarded, &thumb, &buttons, &file, &m.Album, &edited, &link, &extra, &revoked)
+		&starred, &pinned, &forwarded, &thumb, &buttons, &file, &m.Album, &edited, &link, &extra, &revoked,
+		&opened, &hasBlob)
 	if err != nil {
 		return r, err
 	}
@@ -555,6 +580,10 @@ func scanMessage(sc scanner) (rawMsg, error) {
 	}
 	if revoked != 0 {
 		m.Revoked = time.UnixMilli(revoked)
+	}
+	if m.Kind == model.KindViewOnce {
+		// Your own, still uploading, is on this computer already.
+		m.Opened, m.OnPhone = opened, !hasBlob && !(m.FromMe && m.Receipt <= model.Pending)
 	}
 	m.SenderID = r.senderJID
 	if quoteText != "" || r.quoteJID != "" || quoteMedia != 0 {

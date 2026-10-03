@@ -28,7 +28,7 @@ import (
 // hasAttachment reports whether m's bubble starts with a document card or
 // an audio player.
 func hasAttachment(m *model.Message) bool {
-	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported {
+	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported || m.Kind == model.KindViewOnce {
 		return false
 	}
 	switch m.Media {

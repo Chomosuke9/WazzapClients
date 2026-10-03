@@ -170,7 +170,9 @@ type UI struct {
 	newChat newChatState // the New chat panel over the chat list
 	slash   slashState   // slash commands and their notes (slash.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
-	adminMention, rawPhotos, editHistory, keepDeleted bool
+	adminMention, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
+	// captureBlocked keeps the window out of screenshots (viewonce.go).
+	captureBlocked bool
 	// grayCmds are the gray commands turned on, by name (extras.go).
 	grayCmds map[string]bool
 	// cmdsOpen shows the list of commands on the Extra features page.

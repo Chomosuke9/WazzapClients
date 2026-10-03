@@ -34,6 +34,8 @@ type mediaViewer struct {
 	// items are what it shows when it was opened from the Media panel,
 	// which can be any chat's; nil means the open chat's pictures.
 	items []*model.Message
+	// viewOnce shows a view once message, alone (viewonce.go).
+	viewOnce bool
 }
 
 // viewerItems lists the chat's pictures and videos (KindImage), oldest first.
@@ -125,6 +127,7 @@ func (u *UI) showViewerAt(items []*model.Message, i int) {
 
 func (u *UI) layoutViewer(gtx C) {
 	v := &u.viewer
+	u.blockCapture(v.viewOnce && (v.open || v.anim.v > 0) && !u.viewOnceReplay)
 	if !v.open && v.anim.v == 0 {
 		return
 	}
@@ -178,6 +181,9 @@ func (u *UI) layoutViewer(gtx C) {
 		{"save", icDownload, false, func() { b.SaveMedia(m) }},
 		{"menu", icMenu, false, func() { u.ctx = ctxMenu{kind: ctxViewer, at: u.mouse} }},
 		{"close", icClose, false, func() { u.closeViewer() }},
+	}
+	if v.viewOnce {
+		tools = tools[len(tools)-1:] // nothing to keep it by
 	}
 	for _, t := range tools {
 		if u.btn("vw:"+t.key).Clicked(gtx) && !t.off && v.open {
@@ -270,9 +276,15 @@ func (u *UI) layoutViewer(gtx C) {
 
 	// Thumbnail strip and the divider above it.
 	stripTop := sz.Y - gtx.Dp(105)
-	fillRect(gtx, image.Rect(0, stripTop, sz.X, stripTop+max(1, gtx.Dp(1))), faded(p.ViewerDivider, e))
+	if v.viewOnce {
+		stripTop = sz.Y - gtx.Dp(40)
+	} else {
+		fillRect(gtx, image.Rect(0, stripTop, sz.X, stripTop+max(1, gtx.Dp(1))), faded(p.ViewerDivider, e))
+	}
 	lower := pushFx(gtx, e, moveBy(0, float32(gtx.Dp(12))*(1-e)))
-	u.layoutViewerStrip(gtx, items, idx, stripTop+gtx.Dp(10))
+	if !v.viewOnce {
+		u.layoutViewerStrip(gtx, items, idx, stripTop+gtx.Dp(10))
+	}
 
 	// Caption, then the picture filling what's left.
 	bottom := stripTop - gtx.Dp(16)
@@ -309,8 +321,10 @@ func (u *UI) layoutViewer(gtx C) {
 			return centerIn(gtx, s, iconW(ic, 28, col))
 		})
 	}
-	arrow("vw:prev", icChevronLeft, gtx.Dp(79), idx > 0)
-	arrow("vw:next", icChevronRight, sz.X-gtx.Dp(79), idx < len(items)-1)
+	if !v.viewOnce {
+		arrow("vw:prev", icChevronLeft, gtx.Dp(79), idx > 0)
+		arrow("vw:next", icChevronRight, sz.X-gtx.Dp(79), idx < len(items)-1)
+	}
 }
 
 func starIcon(on bool) *icon.Icon {

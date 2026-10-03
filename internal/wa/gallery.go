@@ -25,7 +25,9 @@ func galleryWhere(k model.GalleryKind) (string, []any) {
 	case model.GalleryStarred:
 		return `starred <> 0 AND kind <> ?`, []any{deleted}
 	}
-	return `media IN (?, ?, ?) AND kind <> ?`, []any{int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF), deleted}
+	// View once media isn't kept in the Media panel, as in WhatsApp.
+	return `media IN (?, ?, ?) AND kind NOT IN (?, ?)`, []any{int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF),
+		deleted, int(model.KindViewOnce)}
 }
 
 // gallery returns a page of q's messages, and whether more follow.

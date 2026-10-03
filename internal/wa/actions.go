@@ -503,6 +503,13 @@ func (b *Backend) Star(m *model.Message, starred bool) {
 	b.sendAppState(appstate.BuildStar(jid, sender, m.ID, m.FromMe, starred))
 }
 
+// OpenedViewOnce implements model.Backend. Only this computer hears of
+// it: the phone keeps its own view once messages.
+func (b *Backend) OpenedViewOnce(m *model.Message) {
+	_ = b.store.setMessageFlag(b.ctx, m.ChatID, m.ID, "opened", true)
+	b.emitMessage(m.ChatID, m.ID)
+}
+
 // pinDuration is how long a pinned message stays pinned (WhatsApp offers
 // 24 hours, 7 days or 30 days; the desktop app defaults to 7 days).
 const pinDuration = 7 * 24 * time.Hour

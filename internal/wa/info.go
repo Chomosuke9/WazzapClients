@@ -49,13 +49,13 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 // newest pictures with previews.
 func (s *msgStore) mediaSummary(ctx context.Context, chat string, n int) (int, []*model.Message) {
 	var count int
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wz_messages WHERE chat = ? AND kind <> ? AND
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wz_messages WHERE chat = ? AND kind NOT IN (?, ?) AND
 		(media IN (?, ?, ?, ?) OR text LIKE '%http://%' OR text LIKE '%https://%' OR text LIKE '%www.%')`,
-		chat, int(model.KindDeleted), int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF),
+		chat, int(model.KindDeleted), int(model.KindViewOnce), int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF),
 		int(model.MediaDocument)).Scan(&count)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+msgColumns+` FROM wz_messages
-		WHERE chat = ? AND media IN (?, ?, ?) AND thumb IS NOT NULL ORDER BY ts DESC LIMIT ?`,
-		chat, int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF), n)
+		WHERE chat = ? AND media IN (?, ?, ?) AND kind <> ? AND thumb IS NOT NULL ORDER BY ts DESC LIMIT ?`,
+		chat, int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF), int(model.KindViewOnce), n)
 	if err != nil {
 		return count, nil
 	}

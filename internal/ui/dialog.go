@@ -118,6 +118,15 @@ func (u *UI) confirmDelete(msgs []*model.Message) {
 }
 
 func (u *UI) openForward(msgs []*model.Message) {
+	var keep []*model.Message
+	for _, m := range msgs {
+		if m.Kind != model.KindViewOnce { // can't be forwarded, as in WhatsApp
+			keep = append(keep, m)
+		}
+	}
+	if msgs = keep; len(msgs) == 0 {
+		return
+	}
 	u.dialog = dialogState{kind: dialogForward, fwd: msgs}
 	u.dialog.search.SingleLine = true
 	u.dialog.list.Axis = layout.Vertical

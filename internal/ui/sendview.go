@@ -582,23 +582,14 @@ func (u *UI) layoutCaption(gtx C, f *attachFile, bottom int, open bool) int {
 // 1, filled green when on.
 func drawViewOnce(gtx C, u *UI, mid image.Point, r int, on bool) {
 	p := u.pal
-	c := pointF(mid)
-	w := float32(max(1, gtx.Dp(1.8)))
-	col := p.IconStrong
-	if on {
-		fillCircle(gtx, mid, r+gtx.Dp(2), p.Green)
-		col = p.OnGreen
-	} else {
-		// A full arc at the top, then dashes round to it.
-		strokeArc(gtx, c, float32(r), -math.Pi*0.9, math.Pi*1.3, w, col)
-		for i := range 3 {
-			a := math.Pi*0.55 + float32(i)*math.Pi*0.22
-			strokeArc(gtx, c, float32(r), a, math.Pi*0.1, w, col)
-		}
+	if !on {
+		viewOnceRing(gtx, u, mid, r, p.IconStrong, 11)
+		return
 	}
+	fillCircle(gtx, mid, r+gtx.Dp(2), p.Green)
 	one := record(gtx, func(gtx C) D {
 		gtx.Constraints.Min = image.Point{}
-		return u.label(11, "1", col, labelOpts{weight: font.Bold}).Layout(gtx)
+		return u.label(11, "1", p.OnGreen, labelOpts{weight: font.Bold}).Layout(gtx)
 	})
 	one.at(gtx, mid.X-one.size.X/2, mid.Y-one.size.Y/2)
 }

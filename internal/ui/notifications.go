@@ -246,13 +246,15 @@ func (n *notifier) notification(id string, c chatInfo, m *model.Message, count i
 // without formatting, or what it holds ("📷 Photo").
 func notificationText(m *model.Message) string {
 	var s string
-	switch m.Media {
-	case model.MediaNone:
+	switch {
+	case m.Kind == model.KindViewOnce:
+		s = viewOnceLabel(m)
+	case m.Media == model.MediaNone:
 		s = m.Text
 		if s == "" {
 			s = "Message"
 		}
-	case model.MediaVoice:
+	case m.Media == model.MediaVoice:
 		s = "🎤 Voice message"
 		if m.Duration > 0 {
 			s += fmt.Sprintf(" (%d:%02d)", m.Duration/60, m.Duration%60)

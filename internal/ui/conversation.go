@@ -992,6 +992,16 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	case m.Kind == model.KindUnsupported:
 		text, textCol, italic = "This message couldn't load. Open the message on your phone to view it.", secondary, true
 		lead = iconW(icUnsupported, 19, secondary)
+	case m.Kind == model.KindViewOnce:
+		text = u.viewOnceText(gtx, m)
+		mark := p.Green
+		if !u.canOpenViewOnce(m) {
+			textCol, mark = secondary, secondary
+		}
+		lead = func(gtx C) D {
+			defer op.Offset(image.Pt(0, gtx.Dp(2))).Push(gtx.Ops).Pop() // level with the text
+			return u.viewOnceMark(gtx, 20, mark)
+		}
 	case hasAttachment(m):
 		text = attachmentCaption(m) // under the document card or player
 	case !isImg && m.Media != model.MediaNone:
@@ -1138,6 +1148,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if u.btn("img:" + m.ID).Clicked(gtx) {
 		u.openViewer(m)
 	}
+	if u.btn("vo:" + m.ID).Clicked(gtx) {
+		u.openViewOnce(m)
+	}
 
 	// Place everything, then paint the bubble behind it.
 	macro := op.Record(gtx.Ops)
@@ -1217,6 +1230,13 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		if lead != nil {
 			t := op.Offset(image.Pt(textInset, y)).Push(gtx.Ops)
 			lead(gtx)
+			t.Pop()
+		}
+		if m.Kind == model.KindViewOnce {
+			t := op.Offset(image.Pt(textInset, y)).Push(gtx.Ops)
+			vg := gtx
+			vg.Constraints = layout.Exact(image.Pt(contentW-2*textInset, body.size.Y))
+			clickable(vg, u.btn("vo:"+m.ID), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 			t.Pop()
 		}
 		y += body.size.Y

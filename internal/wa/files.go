@@ -364,6 +364,9 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 			m.Text = name
 		}
 	}
+	if a.ViewOnce && m.Kind == model.KindImage {
+		m.Kind, m.Album = model.KindViewOnce, ""
+	}
 	sm := storedMsg{Message: m}
 	ci := b.draftContext(chatID, d, &sm)
 	// Keep a copy so your own media shows (and opens) without a download.

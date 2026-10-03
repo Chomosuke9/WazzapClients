@@ -237,7 +237,7 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		add(menuItem{key: "private", ic: icReplyPrivate, label: "Reply privately", run: func() { u.replyPrivately(m) }})
 		add(menuItem{key: "dm", ic: icChats, label: "Message " + shortName(plainText(m.Sender)), run: func() { u.openDirect(m.SenderID, m.Sender) }})
 	}
-	if txt := plainText(m.Text); txt != "" && !deleted {
+	if txt := plainText(m.Text); txt != "" && !deleted && m.Kind != model.KindViewOnce {
 		if sel := u.textSel.selected(m.ID); sel != "" {
 			txt = sel
 		}
@@ -253,7 +253,7 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		add(menuItem{key: "save", ic: icDownload, label: "Save as…", run: func() { b.SaveMedia(m) }})
 	}
 	if !deleted {
-		if m.Kind != model.KindUnsupported {
+		if m.Kind != model.KindUnsupported && m.Kind != model.KindViewOnce {
 			add(menuItem{key: "forward", ic: icForward, label: "Forward", run: func() { u.openForward([]*model.Message{m}) }})
 		}
 		if !isChannelID(c.ID) && !revoked {
@@ -284,6 +284,9 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 }
 
 func canSave(m *model.Message) bool {
+	if m.Kind == model.KindViewOnce {
+		return false
+	}
 	switch m.Media {
 	case model.MediaImage, model.MediaVideo, model.MediaGIF, model.MediaDocument, model.MediaAudio,
 		model.MediaVoice, model.MediaSticker:

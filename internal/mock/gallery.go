@@ -23,6 +23,9 @@ func galleryHas(k model.GalleryKind, m *model.Message) bool {
 	case model.GalleryStarred:
 		return m.Starred
 	}
+	if m.Kind == model.KindViewOnce {
+		return false
+	}
 	// Demo pictures may leave Media out.
 	return m.Kind == model.KindImage && m.Media == model.MediaNone ||
 		m.Media == model.MediaImage || m.Media == model.MediaVideo || m.Media == model.MediaGIF

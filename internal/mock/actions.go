@@ -151,6 +151,10 @@ func (b *Backend) Star(m *model.Message, starred bool) {
 	b.update(m, func(x *model.Message) { x.Starred = starred })
 }
 
+func (b *Backend) OpenedViewOnce(m *model.Message) {
+	b.update(m, func(x *model.Message) { x.Opened = true })
+}
+
 func (b *Backend) PinMessage(m *model.Message, pinned bool) {
 	for _, x := range b.msgs[m.ChatID] {
 		x.Pinned = pinned && x.ID == m.ID
@@ -205,6 +209,9 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		switch a.Media {
 		case model.MediaImage, model.MediaVideo:
 			x.Kind, x.ImageA, x.ImageB, x.Album = model.KindImage, 0x5f6f7f, 0x9fafbf, a.Album
+			if a.ViewOnce {
+				x.Kind, x.Album = model.KindViewOnce, ""
+			}
 		case model.MediaDocument:
 			if x.Text == "" {
 				x.Text = x.FileName

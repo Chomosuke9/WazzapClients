@@ -49,6 +49,7 @@ func (u *UI) loadExtras() {
 	u.rawPhotos = extraOn(b, prefRawPhotos)
 	u.editHistory = extraOn(b, prefEditHistory)
 	u.keepDeleted = extraOn(b, model.PrefKeepDeleted)
+	u.viewOnceReplay = extraOn(b, model.PrefViewOnceReplay)
 	u.grayCmds = map[string]bool{}
 	for _, c := range command.All {
 		if c.Gray && extraOn(b, grayCmdPref(c.Name)) {
@@ -120,7 +121,7 @@ func (u *UI) extrasSettings() []settingsSection {
 				}),
 		}},
 		{rows: []settingRow{{key: "gray", ic: icExtensionGray, title: "Ethically gray features",
-			sub: "Edit history, deleted messages and more", run: func() { u.openSettingsSub("gray") }}},
+			sub: "Edit history, deleted messages, view once and more", run: func() { u.openSettingsSub("gray") }}},
 			note: "Extra features aren't made by WhatsApp. They only use what WhatsApp lets every linked device do."},
 	}
 	if u.slash.on {
@@ -162,6 +163,9 @@ func (u *UI) graySettings() []settingsSection {
 		u.extraToggle(model.PrefKeepDeleted, "Keep deleted messages",
 			"When someone deletes a message for everyone or a status, keep showing it, marked Deleted",
 			&u.keepDeleted, nil),
+		u.extraToggle(model.PrefViewOnceReplay, "Replay view once",
+			"Open view once photos, videos and voice messages as often as you like, and take screenshots of them",
+			&u.viewOnceReplay, nil),
 	}, note: "These let you see or do what the people you talk to wouldn't expect, so use them with care. " +
 		"Messages deleted while Keep deleted messages is off can't be brought back."}}
 	cmds := settingsSection{title: "Commands"}
