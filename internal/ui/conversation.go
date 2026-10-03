@@ -1002,7 +1002,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		lead = iconW(icUnsupported, 19, secondary)
 	case voCard:
 		text, textInset = "", gtx.Dp(6)
-		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, 0, meta.size, quoteBg, secondary) })
+		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, 0, meta.size, bg, secondary) })
 		contentW = max(contentW, voc.size.X)
 	case m.Kind == model.KindViewOnce:
 		text, textCol, italic = u.viewOnceText(gtx, m), secondary, true
@@ -1148,7 +1148,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		}
 	}
 	if voc.size.X > 0 && voc.size.X < contentW {
-		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, contentW, meta.size, quoteBg, secondary) })
+		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, contentW, meta.size, bg, secondary) })
 	}
 	if link.size.X > 0 && link.size.X < contentW {
 		link = record(cgtx, func(gtx C) D { return u.layoutLinkCard(gtx, m, contentW, 7, quoteBg, textCol, secondary) })

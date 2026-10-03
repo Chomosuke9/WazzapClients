@@ -114,14 +114,20 @@ func (u *UI) viewOnceRingIcon(gtx C, size unit.Dp, col color.NRGBA, one bool) D 
 // layoutViewOnceCard draws an unopened view once message as WhatsApp
 // does: a card with the badge and what it holds, which opens it, and
 // room in its lower right for the bubble's meta (metaSize). The card is
-// w wide, or as narrow as it may be when w is 0.
+// w wide, or as narrow as it may be when w is 0, and a shade lighter
+// than the bubble (bg) in the dark theme, darker in the light one.
 func (u *UI) layoutViewOnceCard(gtx C, m *model.Message, w int, metaSize image.Point, bg, secondary color.NRGBA) D {
 	p := u.pal
+	if u.dark {
+		bg = mix(bg, rgb(0xffffff), 0.1)
+	} else {
+		bg = mix(bg, rgb(0x000000), 0.05)
+	}
 	mark := p.Green
 	if !u.canOpenViewOnce(m) {
 		mark = secondary
 	}
-	pad, ring, gap := gtx.Dp(10), gtx.Dp(26), gtx.Dp(6)
+	pad, ring, gap := gtx.Dp(10), gtx.Dp(24), gtx.Dp(7)
 	lgtx := gtx
 	lgtx.Constraints.Min = image.Point{}
 	lgtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-2*pad-ring-gap)
@@ -142,7 +148,7 @@ func (u *UI) layoutViewOnceCard(gtx C, m *model.Message, w int, metaSize image.P
 	})
 	top := gtx.Dp(9)
 	t := op.Offset(image.Pt(pad-gtx.Dp(3), top+(rowH-ring)/2)).Push(gtx.Ops)
-	u.viewOnceRingIcon(gtx, 26, mark, true)
+	u.viewOnceRingIcon(gtx, 24, mark, true)
 	t.Pop()
 	label.at(gtx, pad-gtx.Dp(3)+ring+gap, top+(rowH-label.size.Y)/2)
 	return D{Size: card.Size()}
