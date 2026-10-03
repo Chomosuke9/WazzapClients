@@ -583,7 +583,7 @@ func (u *UI) layoutCaption(gtx C, f *attachFile, bottom int, open bool) int {
 func drawViewOnce(gtx C, u *UI, mid image.Point, r int, on bool) {
 	p := u.pal
 	if !on {
-		viewOnceRing(gtx, u, mid, r, p.IconStrong, 11)
+		viewOnceRing(gtx, mid, r, p.IconStrong, true)
 		return
 	}
 	fillCircle(gtx, mid, r+gtx.Dp(2), p.Green)

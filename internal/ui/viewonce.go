@@ -7,9 +7,10 @@ import (
 	"time"
 
 	"gioui.org/f32"
-	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/desktop"
@@ -103,11 +104,7 @@ func (u *UI) viewOnceMark(gtx C, size unit.Dp, col color.NRGBA) D {
 // unless one is false (an opened message's).
 func (u *UI) viewOnceRingIcon(gtx C, size unit.Dp, col color.NRGBA, one bool) D {
 	s := gtx.Dp(size)
-	sp := unit.Sp(float32(size) * 0.48)
-	if !one {
-		sp = 0
-	}
-	viewOnceRing(gtx, u, image.Pt(s/2, s/2), s*2/5, col, sp)
+	viewOnceRing(gtx, image.Pt(s/2, s/2), s*2/5, col, one)
 	return D{Size: image.Pt(s, s)}
 }
 
@@ -146,7 +143,7 @@ func (u *UI) layoutViewOnceCard(gtx C, m *model.Message, w int, metaSize image.P
 		fillRRect(gtx, card, gtx.Dp(7), mix(bg, p.Text, 0.06*u.hover(gtx, btn)))
 		return D{Size: card.Size()}
 	})
-	top := gtx.Dp(9)
+	top := (h - metaSize.Y/2 - rowH) / 2 // the middle, a little above the meta
 	t := op.Offset(image.Pt(pad-gtx.Dp(3), top+(rowH-ring)/2)).Push(gtx.Ops)
 	u.viewOnceRingIcon(gtx, 24, mark, true)
 	t.Pop()
@@ -155,27 +152,33 @@ func (u *UI) layoutViewOnceCard(gtx C, m *model.Message, w int, metaSize image.P
 }
 
 // viewOnceRing draws WhatsApp's view once badge: a circle, solid round
-// its left and dashed round its right, around a 1 of size sp (none if 0).
-func viewOnceRing(gtx C, u *UI, mid image.Point, r int, col color.NRGBA, sp unit.Sp) {
+// its left and dotted round its right, around a 1 (unless one is false).
+func viewOnceRing(gtx C, mid image.Point, r int, col color.NRGBA, one bool) {
 	c := f32.Pt(float32(mid.X), float32(mid.Y))
-	w := max(1, float32(r)*0.16)
+	rf := float32(r)
+	w := max(1, rf*0.16)
 	// A solid arc from just right of the bottom, round the left, to just
-	// right of the top, then three dashes down the right.
-	const start, sweep, dash = math.Pi * 0.45, math.Pi * 1.1, math.Pi * 0.12
-	strokeArc(gtx, c, float32(r), start, sweep, w, col)
-	gap := float32(2*math.Pi-sweep-3*dash) / 4
-	for i := range 3 {
-		a := start + sweep + gap + float32(i)*(dash+gap)
-		strokeArc(gtx, c, float32(r), a, dash, w, col)
+	// right of the top, then five dots down the right.
+	const start, sweep, dot, dots = math.Pi * 0.42, math.Pi * 1.16, math.Pi * 0.02, 5
+	strokeArc(gtx, c, rf, start, sweep, w, col)
+	gap := float32(2*math.Pi-sweep-dots*dot) / (dots + 1)
+	for i := range dots {
+		a := start + sweep + gap + float32(i)*(dot+gap)
+		strokeArc(gtx, c, rf, a, dot, w, col)
 	}
-	if sp == 0 {
+	if !one {
 		return
 	}
-	one := record(gtx, func(gtx C) D {
-		gtx.Constraints.Min = image.Point{}
-		return u.label(sp, "1", col, labelOpts{weight: font.Bold}).Layout(gtx)
-	})
-	one.at(gtx, mid.X-one.size.X/2, mid.Y-one.size.Y/2)
+	// The 1 as strokes, so it sits in the middle: a stem a little right
+	// of center and a flag down to its left.
+	h := rf * 0.48 // half its height
+	x := c.X + rf*0.1
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(f32.Pt(x-rf*0.32, c.Y-h+rf*0.26))
+	p.LineTo(f32.Pt(x, c.Y-h))
+	p.LineTo(f32.Pt(x, c.Y+h))
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: w * 1.15}.Op())
 }
 
 // blockCapture keeps the window out of screenshots and screen recordings
