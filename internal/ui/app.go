@@ -46,10 +46,12 @@ type UI struct {
 	dark bool
 	// doodles draws the wallpaper's doodles behind conversations.
 	doodles bool
-	now     func() time.Time
-	window  *app.Window // nil when rendering headless
-	host    *host       // nil when rendering headless (see Run)
-	deco    widget.Decorations
+	// zoom scales the whole window (scale.go).
+	zoom   zoomState
+	now    func() time.Time
+	window *app.Window // nil when rendering headless
+	host   *host       // nil when rendering headless (see Run)
+	deco   widget.Decorations
 	// winWidth is the window width in px, for panels sized relative to it.
 	winWidth int
 
@@ -286,10 +288,12 @@ func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: timeNow, backend: b, auto: a, syncPct: -1, fetchLink: linkpreview.Fetch}
 	u.SetDark(true)
 	u.doodles = true
+	u.zoom.pct = 100
 	u.split.anim.snap(true)
 	if b != nil { // nil in some tests
 		u.SetDark(b.Pref(prefTheme) != "light")
 		u.doodles = prefOn(b, prefDoodles)
+		u.loadZoom()
 		u.loadSplit()
 	}
 	u.images = newImageCache(240, 32<<20)
@@ -592,6 +596,14 @@ const (
 // Layout draws one frame: custom title bar, then either the login screen or
 // nav rail | chat list | conversation.
 func (u *UI) Layout(gtx C) D {
+	u.zoomKeys(gtx)
+	d := u.layoutWindow(u.applyZoom(gtx))
+	u.layoutZoomBubble(gtx)
+	return d
+}
+
+// layoutWindow draws the window's contents at the zoom.
+func (u *UI) layoutWindow(gtx C) D {
 	trimShapes()
 	u.applyEvents()
 	if a := u.deco.Update(gtx); a != 0 && u.window != nil {
@@ -1292,7 +1304,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
-// "statusmenu", "statusprivacy", "statustext" and "statussend"; or the New chat panel:
+// "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
+// Font size "zoommenu"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
 // switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
@@ -1426,6 +1439,12 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openContactPicker()
 	case "invite":
 		u.openInvite("DemoInviteReunion")
+	case "zoombubble":
+		u.zoom.changed = time.Now() // cmd/screenshot draws at the real time
+		u.zoom.bubble.snap(true)
+	case "zoommenu":
+		u.ShowPage("general")
+		u.openZoomMenu()
 	case "newchat", "newnumber":
 		u.openNewChat()
 		if name == "newnumber" {

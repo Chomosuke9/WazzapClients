@@ -105,3 +105,81 @@ func TestCtrlEnterSends(t *testing.T) {
 		t.Errorf("Ctrl+Enter didn't send: %d messages, want %d", len(u.msgs), before+1)
 	}
 }
+
+// TestZoom checks the zoom shortcuts and their bubble, that the zoom is
+// kept, that it scales what the UI lays out, and the Font size menu.
+func TestZoom(t *testing.T) {
+	b := mock.New()
+	u := New(b)
+	u.Start(func() {})
+	now := testNow()
+	var ops op.Ops
+	var r input.Router
+	var metric unit.Metric
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: &ops, Now: now, Source: r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1100, 700))}
+		u.Layout(gtx)
+		metric = u.applyZoom(gtx).Metric
+		r.Frame(&ops)
+		now = now.Add(10 * time.Millisecond)
+	}
+	frame()
+	press := func(name key.Name) {
+		r.Queue(key.Event{Name: name, Modifiers: key.ModShortcut, State: key.Press})
+		frame()
+	}
+	press("+")
+	press("+")
+	if u.zoom.pct != 125 || b.Pref(prefZoom) != "125" || metric.PxPerDp != 1.25 {
+		t.Fatalf("after Ctrl+ twice: zoom %d, pref %q, %v px/dp", u.zoom.pct, b.Pref(prefZoom), metric.PxPerDp)
+	}
+	if u.zoom.changed.IsZero() {
+		t.Error("the bubble didn't show")
+	}
+	if New(b).zoom.pct != 125 {
+		t.Error("a new UI doesn't keep the zoom")
+	}
+	press("-")
+	if u.zoom.pct != 110 {
+		t.Errorf("after Ctrl-: zoom %d", u.zoom.pct)
+	}
+	u.btn("zoom:in").Click()
+	frame()
+	if u.zoom.pct != 125 {
+		t.Errorf("the bubble's + left the zoom at %d", u.zoom.pct)
+	}
+	press("0")
+	if u.zoom.pct != 100 || b.Pref(prefZoom) != "" {
+		t.Errorf("after Ctrl+0: zoom %d, pref %q", u.zoom.pct, b.Pref(prefZoom))
+	}
+	for range 20 {
+		press("-")
+	}
+	if u.zoom.pct != zoomLevels[0] {
+		t.Errorf("zoomed out to %d", u.zoom.pct)
+	}
+	// The bubble goes away by itself.
+	now = now.Add(zoomBubbleFor + time.Second)
+	for range 50 {
+		frame()
+	}
+	if !u.zoom.changed.IsZero() {
+		t.Error("the bubble stayed")
+	}
+
+	u.ShowPage("general")
+	settingRowByKey(t, u, "zoom").run()
+	if u.ctx.kind != ctxZoom {
+		t.Fatal("the Font size field didn't open its menu")
+	}
+	for _, it := range u.zoomMenuItems() {
+		if it.key == "zoom150" {
+			it.run()
+		}
+	}
+	if u.zoom.pct != 150 {
+		t.Errorf("picking 150%% left the zoom at %d", u.zoom.pct)
+	}
+}

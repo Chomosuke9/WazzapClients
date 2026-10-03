@@ -124,6 +124,7 @@ const (
 	ctxTimer       // a chat's disappearing message timers
 	ctxGallerySort // the Media panel's sort order
 	ctxScheduled   // a scheduled message's (scheduled.go)
+	ctxZoom        // the Font size choices (scale.go)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -373,6 +374,8 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			items = u.statusAddItems()
 		case ctxStatusMenu:
 			items = u.statusMenuItems()
+		case ctxZoom:
+			items = u.zoomMenuItems()
 		}
 		if items == nil {
 			u.ctx = ctxMenu{} // its chat went away

@@ -253,7 +253,9 @@ func (u *UI) generalSettings(pref func(key, title, sub string) settingRow) []set
 	if len(sec.rows) == 0 {
 		sec.note = "Closing the window quits " + appName + " on this system."
 	}
-	return []settingsSection{sec}
+	return []settingsSection{sec, {title: "Font size",
+		rows: []settingRow{{key: "zoom", kind: setCustom, w: u.zoomField, run: u.openZoomMenu}},
+		note: "Use " + shortcutMod() + " + / - to increase or decrease text size"}}
 }
 
 // profileSettings is the Profile page: your picture, name, about and
@@ -711,6 +713,9 @@ func shortcutSettings(enterSend bool) []settingsSection {
 		{title: "Everywhere", rows: []settingRow{
 			k("Close a menu, dialog, panel or reply", "Esc"),
 			k("Show or hide the chat list", mod, "Shift", "L"),
+			k("Zoom in", mod, "+"),
+			k("Zoom out", mod, "-"),
+			k("Reset zoom", mod, "0"),
 		}},
 	}
 }

@@ -240,7 +240,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    line as fit, in stickerrow.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
-                   settingsdetail.go
+                   settingsdetail.go; the window's zoom (Settings > General > Font size,
+                   Ctrl with +, - and 0, and the bubble that shows it) in scale.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
@@ -407,7 +408,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun (open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, linkpreview, invite,
-# delete, select, edit, edits, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch; the Media panel:
+# delete, select, edit, edits, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch, zoombubble, zoommenu; the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
