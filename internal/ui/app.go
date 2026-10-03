@@ -121,6 +121,10 @@ type UI struct {
 		chats, calls, status, channels, communities, archived, media, profile widget.Clickable
 	}
 
+	// cardPhone is the number of a shared contact whose chat opens once
+	// the backend has looked it up, and cardPhoneName their name.
+	cardPhone, cardPhoneName string
+
 	files  fileState   // documents and audio on disk
 	voice  voiceState  // the audio message playing
 	attach attachState // files picked to send
@@ -157,6 +161,7 @@ type UI struct {
 	focusReq    bool
 
 	anims    animStore                     // keyed fades: hovers, new messages, reactions
+	follows  followerStore                 // keyed glides: a poll's bars
 	wheels   map[*layout.List]*wheelScroll // lists still easing a wheel scroll
 	pageIn   tween                         // the page content fading in after a switch
 	railSel  switcher[*widget.Clickable]   // the active rail button
@@ -613,6 +618,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	defer u.emojiImgs.endFrame()
 	defer u.players.endFrame()
 	defer u.anims.endFrame()
+	defer u.follows.endFrame()
 	defer u.endFrameClicks()
 
 	sz := gtx.Constraints.Max
@@ -1069,6 +1075,7 @@ func (u *UI) applyEvents() {
 		case model.MessageEvent:
 			u.upsertMessage(e.Msg)
 			u.searchChatChanged(e.Msg.ChatID)
+			u.votesChanged(e.Msg)
 		case model.SearchEvent:
 			u.searchResults(e)
 		case model.ReceiptEvent:
@@ -1113,7 +1120,9 @@ func (u *UI) applyEvents() {
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.PhoneEvent:
-			u.phoneEvent(e)
+			if !u.cardPhoneEvent(e) {
+				u.phoneEvent(e)
+			}
 		case model.GroupCreatedEvent:
 			u.groupCreated(e)
 		case model.DeletedEvent:
@@ -1302,7 +1311,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "linkpreview" (a link's preview
-// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
+// first poll's or event's votes), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
 // Font size "zoommenu"; or the New chat panel:
@@ -1405,6 +1415,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		for _, m := range u.msgs {
 			if !m.Edited.IsZero() {
 				u.openEditHistory(m)
+				break
+			}
+		}
+	case "votes":
+		for _, m := range u.msgs {
+			if m.Poll != nil || m.Event != nil {
+				u.openVotes(m)
+				u.msgInfo.anim.snap(true)
 				break
 			}
 		}

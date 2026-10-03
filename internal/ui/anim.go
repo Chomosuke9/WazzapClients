@@ -243,6 +243,65 @@ func (s *switcher[K]) of(k K) float32 {
 	return 0
 }
 
+// followerStore keeps followers and toggles by key, for things with many
+// instances (a poll's bars and picks). One that isn't drawn for a frame is
+// dropped, so it starts at its target, without moving, when it shows
+// again.
+type followerStore struct {
+	m     map[string]*followEntry
+	frame int64
+}
+
+type followEntry struct {
+	follower
+	t    tween
+	tSet bool
+	seen int64 // frame of last use
+}
+
+// step returns key's value for this frame, gliding toward target over dur.
+func (s *followerStore) step(gtx C, key string, target float32, dur time.Duration) float32 {
+	e := s.m[key]
+	if e == nil {
+		if s.m == nil {
+			s.m = make(map[string]*followEntry)
+		}
+		e = new(followEntry)
+		s.m[key] = e
+	}
+	e.seen = s.frame
+	return e.follower.step(gtx, target, dur)
+}
+
+// toggle returns key's linear progress toward on, like a tween, but
+// starts at on when it first shows.
+func (s *followerStore) toggle(gtx C, key string, on bool, dur time.Duration) float32 {
+	e := s.m[key]
+	if e == nil {
+		if s.m == nil {
+			s.m = make(map[string]*followEntry)
+		}
+		e = new(followEntry)
+		s.m[key] = e
+	}
+	e.seen = s.frame
+	if !e.tSet {
+		e.t.snap(on)
+		e.tSet = true
+	}
+	return e.t.step(gtx, on, dur)
+}
+
+// endFrame drops the followers that weren't drawn this frame.
+func (s *followerStore) endFrame() {
+	for k, e := range s.m {
+		if e.seen != s.frame {
+			delete(s.m, k)
+		}
+	}
+	s.frame++
+}
+
 // Keyed fades, for things with many instances (rows, buttons) that each
 // fade on their own. An entry exists only while its fade is on or moving,
 // and is dropped after a frame it isn't drawn in.

@@ -634,6 +634,9 @@ func (b *Backend) SendContacts(chatID string, contactIDs []string) *model.Messag
 	}
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Media: model.MediaContact,
 		Text: cards[0].GetDisplayName(), Time: time.Now(), Receipt: model.Pending}
+	for _, c := range cards {
+		m.Contacts = append(m.Contacts, parseVCard(c.GetVcard(), c.GetDisplayName()))
+	}
 	msg := &waE2E.Message{ContactMessage: cards[0]}
 	if len(cards) > 1 {
 		m.Text = fmt.Sprintf("%s and %d other contact", m.Text, len(cards)-1)
@@ -666,7 +669,10 @@ func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 	}
 	msg := cli.BuildPollCreation(p.Question, p.Options, n)
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Media: model.MediaPoll,
-		Text: p.Question, Time: time.Now(), Receipt: model.Pending}
+		Text: p.Question, Time: time.Now(), Receipt: model.Pending, Poll: &model.PollState{Max: n}}
+	for _, o := range p.Options {
+		m.Poll.Options = append(m.Poll.Options, model.PollOption{Name: o})
+	}
 	return b.storeAndSend(jid, storedMsg{Message: m}, msg, nil)
 }
 

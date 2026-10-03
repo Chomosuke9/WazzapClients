@@ -166,10 +166,11 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_messages ADD COLUMN link TEXT NOT NULL DEFAULT ''`,   // JSON linkInfo
 	`ALTER TABLE wz_chats ADD COLUMN general INTEGER NOT NULL DEFAULT 0`, // 1 for a community's General chat
+	`ALTER TABLE wz_messages ADD COLUMN extra TEXT NOT NULL DEFAULT ''`,  // JSON extraInfo
 }
 
 func (s *msgStore) init(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, schema+stickerSchema); err != nil {
+	if _, err := s.db.ExecContext(ctx, schema+stickerSchema+votesSchema); err != nil {
 		return err
 	}
 	for _, m := range migrations {
@@ -230,7 +231,7 @@ func (s *msgStore) migrateLegacyMedia(ctx context.Context) error {
 func (s *msgStore) wipe(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats; DELETE FROM wz_meta;
 		DELETE FROM wz_status; DELETE FROM wz_channels; DELETE FROM wz_lists; DELETE FROM wz_list_chats; DELETE FROM wz_stickers;
-		DELETE FROM wz_edits;`)
+		DELETE FROM wz_edits; DELETE FROM wz_votes;`)
 	return err
 }
 
@@ -323,8 +324,8 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 	_, err := x.ExecContext(ctx, `
 		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, duration, text,
 			receipt, quote_sender, quote_text, quote_media, quote_id, mentions, forwarded, thumb, media_blob, buttons, file,
-			album, link)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			album, link, extra)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
 			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
 			duration = excluded.duration,
@@ -337,12 +338,14 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 			forwarded = excluded.forwarded, buttons = excluded.buttons, file = excluded.file,
 			album = COALESCE(NULLIF(excluded.album, ''), wz_messages.album),
 			link = COALESCE(NULLIF(excluded.link, ''), wz_messages.link),
+			-- An event's edits (a new date, canceling it) stay.
+			extra = COALESCE(NULLIF(wz_messages.extra, ''), excluded.extra),
 			thumb = COALESCE(excluded.thumb, wz_messages.thumb),
 			media_blob = COALESCE(excluded.media_blob, wz_messages.media_blob)`,
 		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
 		m.Duration, m.Text, int(m.Receipt), m.quoteJID, qt, qm, m.quoteID, strings.Join(m.mentions, ","),
 		boolInt(m.Forwarded), m.Thumb, m.mediaBlob, m.buttons.marshal(), fileOf(m.Message).marshal(), m.Album,
-		marshalLink(m.Link))
+		marshalLink(m.Link), extraOf(m.Message).marshal())
 	if err != nil {
 		return err
 	}
@@ -382,9 +385,11 @@ func (s *msgStore) setReaction(ctx context.Context, chat, id, emoji string) erro
 
 func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?3, media = 0, text = '', thumb = NULL, media_blob = NULL,
-		quote_sender = '', quote_text = '', quote_media = 0, quote_id = '', pinned = 0, buttons = '', file = '', edited = 0
+		quote_sender = '', quote_text = '', quote_media = 0, quote_id = '', pinned = 0, buttons = '', file = '', edited = 0,
+			extra = ''
 		WHERE chat = ?1 AND id = ?2;
-		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2`, chat, id, int(model.KindDeleted))
+		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
+		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2`, chat, id, int(model.KindDeleted))
 	return err
 }
 
@@ -487,7 +492,7 @@ type rawMsg struct {
 
 const msgColumns = `chat, id, sender_jid, sender_push, sender_name, from_me, ts, kind, media, duration, text, receipt,
 	quote_sender, quote_text, quote_media, quote_id, mentions, reaction, starred, pinned, forwarded, thumb, buttons, file,
-	album, edited, link`
+	album, edited, link, extra`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -505,11 +510,12 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		starred, pinned     int
 		forwarded           int
 		buttons, file, link string
+		extra               string
 		edited              int64
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &r.legacyName, &fromMe, &ts, &kind, &media, &m.Duration,
 		&m.Text, &receipt, &r.quoteJID, &quoteText, &quoteMedia, &r.quoteID, &r.mentions, &reaction,
-		&starred, &pinned, &forwarded, &thumb, &buttons, &file, &m.Album, &edited, &link)
+		&starred, &pinned, &forwarded, &thumb, &buttons, &file, &m.Album, &edited, &link, &extra)
 	if err != nil {
 		return r, err
 	}
@@ -530,6 +536,7 @@ func scanMessage(sc scanner) (rawMsg, error) {
 	}
 	parseFile(file).apply(&m)
 	m.Link = parseLink(link)
+	parseExtra(extra).apply(&m)
 	r.buttons = parseButtons(buttons)
 	r.buttons.apply(&m)
 	r.Message = &m

@@ -282,6 +282,7 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 	} else if strings.Contains(m.Text, "@") {
 		m.Text = b.guessMentions(ctx, m.Text)
 	}
+	b.fillVotes(ctx, m)
 	return m
 }
 

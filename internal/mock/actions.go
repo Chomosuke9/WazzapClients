@@ -123,8 +123,7 @@ func (b *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 func (b *Backend) update(m *model.Message, f func(*model.Message)) {
 	if x := b.find(m); x != nil {
 		f(x)
-		cp := *x
-		b.emit(model.MessageEvent{Msg: &cp})
+		b.emit(model.MessageEvent{Msg: deepCopy(x)})
 	}
 }
 
@@ -165,8 +164,7 @@ func (b *Backend) SaveMedia(*model.Message) {
 
 // copyOf returns a copy of the stored message behind m.
 func (b *Backend) copyOf(m *model.Message) *model.Message {
-	cp := *b.find(m)
-	return &cp
+	return deepCopy(b.find(m))
 }
 
 func (b *Backend) OpenMedia(*model.Message) {
@@ -232,13 +230,27 @@ func (b *Backend) SendContacts(chatID string, ids []string) *model.Message {
 		}
 	}
 	m := b.Send(chatID, model.Draft{Text: strings.Join(names, ", ")})
-	b.update(m, func(x *model.Message) { x.Media = model.MediaContact })
+	b.update(m, func(x *model.Message) {
+		x.Media = model.MediaContact
+		for _, n := range names {
+			x.Contacts = append(x.Contacts, model.ContactCard{Name: n,
+				Phones: []model.ContactPhone{{Number: "+62 812-5550-1234", WAID: "6281255501234"}}})
+		}
+	})
 	return b.copyOf(m)
 }
 
 func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 	m := b.Send(chatID, model.Draft{Text: p.Question})
-	b.update(m, func(x *model.Message) { x.Media = model.MediaPoll })
+	b.update(m, func(x *model.Message) {
+		x.Media, x.Poll = model.MediaPoll, &model.PollState{Max: 1}
+		if p.Multiple {
+			x.Poll.Max = 0
+		}
+		for _, o := range p.Options {
+			x.Poll.Options = append(x.Poll.Options, model.PollOption{Name: o})
+		}
+	})
 	return b.copyOf(m)
 }
 

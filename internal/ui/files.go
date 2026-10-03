@@ -35,7 +35,7 @@ func hasAttachment(m *model.Message) bool {
 	case model.MediaDocument, model.MediaVoice, model.MediaAudio:
 		return true
 	}
-	return false
+	return hasCard(m)
 }
 
 // attachmentCaption is the text under a document card. A document without
@@ -184,6 +184,9 @@ type bubbleColors struct {
 // wide. Its last row is metaH high and leaves metaW free at its right end
 // for the timestamp.
 func (u *UI) layoutAttachment(gtx C, c *model.Chat, m *model.Message, maxW, metaW, metaH int, cols bubbleColors) D {
+	if hasCard(m) {
+		return u.layoutCard(gtx, m, maxW, metaW, metaH, cols)
+	}
 	if m.Media == model.MediaDocument {
 		return u.layoutDocument(gtx, m, maxW, metaW, metaH, cols)
 	}

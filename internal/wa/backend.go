@@ -841,6 +841,14 @@ func (b *Backend) onMessage(e *events.Message) {
 		_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
 		b.emitAllMessages(chat)
 		return
+	case p.vote != nil:
+		if err := b.store.putVote(ctx, b.db, chat, p.target, *p.vote); err != nil {
+			b.log.Warnf("vote on %s in %s: %v", p.target, chat, err)
+		}
+	case p.event != nil:
+		if err := b.store.editEvent(ctx, chat, p.target, p.event); err != nil {
+			b.log.Warnf("edit event %s in %s: %v", p.target, chat, err)
+		}
 	case p.target != "":
 		_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
 	default:
@@ -969,6 +977,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		edits   []parsed
 		// receipts are who got your messages and when.
 		receipts []personReceipt
+		// votes are the votes in polls and answers to events.
+		votes []historyVote
 	}
 	var convs []convData
 	var statuses []storedStatus
@@ -1048,6 +1058,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				cd.edits = append(cd.edits, p)
 				continue
 			}
+			if p.msg.Poll != nil || p.msg.Event != nil {
+				for _, v := range b.historyVotes(ctx, raw, hm.GetMessage()) {
+					cd.votes = append(cd.votes, historyVote{id: p.msg.ID, vote: v})
+				}
+			}
 			cd.msgs = append(cd.msgs, p.msg)
 		}
 		convs = append(convs, cd)
@@ -1080,6 +1095,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				b.log.Warnf("history sync: receipt of %s: %v", r.id, err)
 			}
 		}
+		for _, v := range cd.votes {
+			if err := b.store.putVote(ctx, tx, jid, v.id, v.vote); err != nil {
+				b.log.Warnf("history sync: vote on %s: %v", v.id, err)
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		b.log.Errorf("history sync: commit: %v", err)
@@ -1095,6 +1115,10 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime)
 			case p.pin != 0:
 				_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
+			case p.vote != nil:
+				_ = b.store.putVote(ctx, b.db, chat, p.target, *p.vote)
+			case p.event != nil:
+				_ = b.store.editEvent(ctx, chat, p.target, p.event)
 			default:
 				_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
 			}

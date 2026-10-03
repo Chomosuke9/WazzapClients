@@ -35,6 +35,9 @@ type Backend struct {
 	// reference data doesn't); avatars caches them by ID.
 	pics    bool
 	avatars map[string][]byte
+	// votes are the votes in polls and answers to events, by chat and
+	// message ID, newest first.
+	votes map[string][]model.Vote
 	extras
 }
 
@@ -73,6 +76,7 @@ func New() *Backend {
 		return time.Date(y, mo, dd, h, m, 0, 0, now.Location())
 	})
 	b.addChannelPosts()
+	b.demoVotes()
 	sent := b.find(&model.Message{ChatID: "rina", ID: "rina-8"}).Time
 	b.versions = map[string][]model.Version{"rina/rina-8": {
 		{Text: "Let's go there on Saturday", Time: sent},
@@ -235,6 +239,12 @@ func demo(now time.Time) []*demoChat {
 		y, mo, dd := now.AddDate(0, 0, -d).Date()
 		return time.Date(y, mo, dd, h, m, 0, 0, now.Location())
 	}
+	// The coming Sunday, for the family's lunch.
+	toSunday := (7 - int(now.Weekday())) % 7
+	if toSunday == 0 {
+		toSunday = 7
+	}
+	sunday := day(-toSunday, 0, 0)
 	txt := func(fromMe bool, t time.Time, s string) *model.Message {
 		return &model.Message{FromMe: fromMe, Text: s, Time: t, Receipt: model.Read}
 	}
@@ -285,6 +295,11 @@ func demo(now time.Time) []*demoChat {
 			grp("Mom", day(0, 9, 12), "Okay sweetie, drive safe"),
 			{Sender: "Dad", Forwarded: true, Time: day(0, 9, 20),
 				Text: "Reminder: family photo on Saturday at 4pm, wear something bright 📸"},
+			// Answers in demoVotes.
+			{Sender: "Mom", Media: model.MediaEventInvite, Text: "Sunday lunch at home", Time: day(0, 9, 25),
+				Event: &model.EventInfo{Name: "Sunday lunch at home", Start: sunday.Add(12 * time.Hour), End: sunday.Add(15 * time.Hour),
+					Description: "Opor ayam and the cake Sari is bringing. Come hungry!",
+					Place:       &model.Location{Name: "Mom & Dad's house", Address: "Jl. Kenanga 7, Bandung", Lat: -6.9025, Lng: 107.6187}}},
 		},
 	}
 
@@ -344,9 +359,16 @@ func demo(now time.Time) []*demoChat {
 		}},
 		{ID: "landlord", Name: "Mr. Harto (Landlord)", Presence: "last seen 2 days ago", Messages: []*model.Message{
 			txt(false, day(2, 10, 0), "Hi, I've received this month's payment. Thank you"),
+			txt(false, day(2, 10, 3), "If the sink leaks again, call him directly"),
+			{Media: model.MediaContact, Text: "Pak Joko (Plumber)", Time: day(2, 10, 3), Contacts: []model.ContactCard{
+				{Name: "Pak Joko (Plumber)", Phones: []model.ContactPhone{{Number: "+62 812-9876-5432", WAID: "6281298765432"}}}}},
 		}},
 		{ID: "dewi", Name: "Dewi Lestari", Presence: "online", Messages: []*model.Message{
-			{FromMe: true, Text: "See you at the conference!", Time: day(3, 14, 22), Receipt: model.Delivered},
+			{FromMe: true, Text: "See you at the conference!", Time: day(3, 14, 22), Receipt: model.Read},
+			{Media: model.MediaLocation, Text: "Bali Nusa Dua Convention Center", Time: day(3, 14, 40),
+				Location: &model.Location{Name: "Bali Nusa Dua Convention Center", Address: "Kawasan Pariwisata Nusa Dua, Bali",
+					Lat: -8.8008, Lng: 115.2310}},
+			txt(false, day(3, 14, 41), "The registration desk is at the north entrance"),
 		}},
 		{ID: "courier", Name: "+62 812-3456-7890", Presence: "", Messages: []*model.Message{
 			txt(false, day(4, 11, 5), "Your package is at the front door"),
@@ -392,6 +414,10 @@ func demo(now time.Time) []*demoChat {
 			grp("Clara", day(1, 15, 20), "Love the new empty states! Can we try a darker header too?"),
 			txt(true, day(1, 15, 30), "Agree, I'll try both and share a comparison"),
 			grp("Dewi", day(0, 9, 40), "Comparison is in the Figma file 🎨"),
+			// Votes in demoVotes.
+			{Sender: "Dewi", Media: model.MediaPoll, Text: "Which header should we ship?", Time: day(0, 9, 41),
+				Poll: &model.PollState{Max: 1, Options: []model.PollOption{{Name: "Light header"}, {Name: "Dark header"},
+					{Name: "Both, as a setting"}}}},
 		}},
 		{ID: "old-project", Name: "Old Project Group", IsGroup: true, Archived: true, Presence: "Andre, Bima, You", Messages: []*model.Message{
 			grp("Andre", day(40, 11, 0), "Project wrapped up, thanks everyone!"),

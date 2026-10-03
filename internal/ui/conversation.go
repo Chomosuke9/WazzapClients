@@ -886,9 +886,16 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported {
 		footerText, buttons = "", nil
 	}
+	if cb := cardButtons(m); len(cb) > 0 {
+		buttons = append(slices.Clip(buttons), cb...)
+	}
 	for i := range buttons {
 		if u.btn("mbtn:" + m.ID + ":" + itoa(i)).Clicked(gtx) {
-			u.pressButton(m, i)
+			if i < len(m.Buttons) {
+				u.pressButton(m, i)
+			} else {
+				u.pressCardButton(m, buttons[i])
+			}
 		}
 	}
 
@@ -1229,6 +1236,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 				ic = icOpenInNew
 			case model.ButtonCopy:
 				ic = icCopy
+			case model.ButtonReply:
+			default:
+				ic = nil // the card buttons are words alone
 			}
 			if h := u.hover(gtx, u.btn("mbtn:"+m.ID+":"+itoa(i))); h > 0 {
 				rr := clip.RRect{Rect: image.Rect(-padL, top+line, w-padL, top+btnH)}
@@ -1237,12 +1247,18 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 				}
 				paintRRect(gtx, rr, faded(p.BubbleLine, h))
 			}
-			rowW := lb.size.X + gtx.Dp(26)
+			iconW := gtx.Dp(26)
+			if ic == nil {
+				iconW = 0
+			}
+			rowW := lb.size.X + iconW
 			x := -padL + (w-rowW)/2
-			it := op.Offset(image.Pt(x, top+(btnH-gtx.Dp(20))/2)).Push(gtx.Ops)
-			drawIcon(gtx, ic, 20, p.BubbleButton)
-			it.Pop()
-			lb.at(gtx, x+gtx.Dp(26), top+(btnH-lb.size.Y)/2)
+			if ic != nil {
+				it := op.Offset(image.Pt(x, top+(btnH-gtx.Dp(20))/2)).Push(gtx.Ops)
+				drawIcon(gtx, ic, 20, p.BubbleButton)
+				it.Pop()
+			}
+			lb.at(gtx, x+iconW, top+(btnH-lb.size.Y)/2)
 			func() {
 				t := op.Offset(image.Pt(-padL, top)).Push(gtx.Ops)
 				defer t.Pop()

@@ -177,6 +177,12 @@ Gotchas already found in the pinned version (v0.10.x):
 - modernc's SQLite binds every statement of a multi-statement `Exec` from the first
   argument, so positional `?` in a second statement gets the wrong values. Use
   numbered `?1`, `?2` (as `deleteChat` does) or separate `Exec` calls.
+- Poll votes and event answers are encrypted with the poll's or event's message
+  secret, which hypermeow stores as messages arrive. It decrypts votes
+  (`DecryptPollVote`) but not event answers; `decryptEventResponse` (`internal/wa/polls.go`)
+  does those the same way. hypermeow can't send an event answer (it has no stanza
+  type for it), so the app shows answers but doesn't send them. Your own votes are
+  stored under `meVoter`, since they come from your phone number or your LID.
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
@@ -213,7 +219,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    over the composer, in linkpreview.go; drafts (what a chat's composer
                    and send view held when another chat opened, and the list's "Draft:")
                    in draft.go;
-                   document cards and the voice/audio player in files.go; selecting message
+                   document cards and the voice/audio player in files.go; polls (voting by
+                   clicking an option), maps, shared contacts and events as cards in bubbles
+                   in cards.go, and a poll's votes or an event's answers (the Message info
+                   panel's other mode) in votes.go; selecting message
                    text in textsel.go; searching a chat's messages (the panel that takes the info
                    panel's place) and a group's members in chatsearch.go; the composer's
                    formatting toolbar in formatbar.go; the attach
@@ -255,6 +264,8 @@ internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the
                    WebP, and libwebp needs cgo or, translated to Go, adds megabytes
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution;
                    albums (an albumMessage, then each picture pointing back to it) in album.go;
+                   polls, locations, contact cards and events (the extra column) and the
+                   votes and event answers they get (wz_votes) in polls.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
                    a group message's ticks wait for every member) in receipts.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
@@ -408,13 +419,14 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun (open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, linkpreview, invite,
-# delete, select, edit, edits, mention, mentioned, search (WAZZAP_DEMO_SEARCH=<query>), membersearch, zoombubble, zoommenu; the Media panel:
+# delete, select, edit, edits, mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, zoombubble, zoommenu; the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and
-# closing (Esc) below. Also info, message, reorder, typing, and hover (the pointer at -at):
+# closing (Esc) below. Also info, message, reorder, typing, vote (in a poll: -ochat design,
+# moving the vote below), and hover (the pointer at -at):
 go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 40ms -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \

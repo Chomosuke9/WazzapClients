@@ -82,8 +82,19 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 	point := func(x, y int) {
 		router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(x), float32(y)), Time: time.Duration(now.UnixNano())})
 	}
+	// vote votes in the chat's first poll.
+	vote := func(option int) {
+		for _, m := range b.Messages(chat, 100) {
+			if m.Poll != nil {
+				b.VotePoll(m, []int{option})
+				return
+			}
+		}
+	}
 	settle()
 	switch name {
+	case "vote":
+		vote(1)
 	case "hover":
 		point(x, y)
 	case "info":
@@ -110,6 +121,8 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 	if name != "message" && name != "reorder" {
 		settle()
 		switch name {
+		case "vote":
+			vote(0) // the vote moves to another option
 		case "hover":
 			point(w-2, h-2)
 		case "typing":

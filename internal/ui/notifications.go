@@ -271,15 +271,16 @@ func notificationText(m *model.Message) string {
 }
 
 var mediaEmoji = map[model.Media]string{
-	model.MediaImage:    "📷",
-	model.MediaVideo:    "🎥",
-	model.MediaGIF:      "🎥",
-	model.MediaAudio:    "🎵",
-	model.MediaDocument: "📄",
-	model.MediaSticker:  "💟",
-	model.MediaLocation: "📍",
-	model.MediaContact:  "👤",
-	model.MediaPoll:     "📊",
+	model.MediaImage:       "📷",
+	model.MediaVideo:       "🎥",
+	model.MediaGIF:         "🎥",
+	model.MediaAudio:       "🎵",
+	model.MediaDocument:    "📄",
+	model.MediaSticker:     "💟",
+	model.MediaLocation:    "📍",
+	model.MediaContact:     "👤",
+	model.MediaPoll:        "📊",
+	model.MediaEventInvite: "📅",
 }
 
 func (n *notifier) updateTooltip() {

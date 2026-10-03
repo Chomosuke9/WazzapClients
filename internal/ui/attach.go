@@ -22,7 +22,6 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/osclip"
 	"github.com/chomosuke9/wazzapclients/internal/photo"
-	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
 // The composer's attach menu: files picked with the system's dialog,
@@ -106,18 +105,6 @@ func hasExt(path string, exts []string) bool {
 	}
 	return false
 }
-
-// pollIcon is three bars of different lengths, like WhatsApp's.
-var pollIcon = func() *icon.Icon {
-	bar := func(y, w string) string {
-		return "M4 " + y + "h" + w + "q1.5 0 1.5 1.5t-1.5 1.5h-" + w + "q-1.5 0-1.5-1.5t1.5-1.5Z"
-	}
-	ic, err := icon.Parse(bar("4.5", "9")+bar("10.5", "14")+bar("16.5", "6"), 0, 0, 24)
-	if err != nil {
-		panic(err)
-	}
-	return ic
-}()
 
 // Colors of the attach menu's icons, from WhatsApp.
 var (

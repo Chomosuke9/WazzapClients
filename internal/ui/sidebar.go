@@ -578,7 +578,9 @@ func mediaIcon(m model.Media) *icon.Icon {
 	case model.MediaContact:
 		return icContact
 	case model.MediaPoll:
-		return icDocument
+		return pollIcon
+	case model.MediaEventInvite:
+		return calendarIcon
 	}
 	return nil
 }
@@ -613,6 +615,8 @@ func mediaLabel(m *model.Message) string {
 		return "Contact"
 	case model.MediaPoll:
 		return "Poll"
+	case model.MediaEventInvite:
+		return "Event"
 	}
 	return m.Text
 }

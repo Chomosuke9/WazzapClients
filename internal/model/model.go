@@ -3,6 +3,7 @@
 package model
 
 import (
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -67,6 +68,9 @@ const (
 	MediaLocation
 	MediaContact
 	MediaPoll
+	// MediaEventInvite is one of WhatsApp's events: a gathering or call
+	// with a date that people say whether they'll go to (Message.Event).
+	MediaEventInvite
 )
 
 // Quote is the message a reply points to.
@@ -123,6 +127,111 @@ type Message struct {
 	Edited time.Time
 	// Link is the preview of a link in Text, or nil. Its picture is Thumb.
 	Link *LinkPreview
+	// Location is where a location message points (its map is Thumb),
+	// Contacts the cards a contact message shares, Poll a poll with its
+	// votes and Event an event with its answers; each nil (or empty)
+	// otherwise. A poll's question and an event's name are also Text.
+	Location *Location
+	Contacts []ContactCard
+	Poll     *PollState
+	Event    *EventInfo
+}
+
+// Location is a place or position someone shared.
+type Location struct {
+	Lat, Lng      float64
+	Name, Address string
+	URL           string // the place's web page, or ""
+	// Live is a live location, which moves while it is shared.
+	Live bool
+}
+
+// MapURL is a link that shows the location on a map.
+func (l *Location) MapURL() string {
+	return "https://maps.google.com/maps?q=" + strconv.FormatFloat(l.Lat, 'f', -1, 64) + "," +
+		strconv.FormatFloat(l.Lng, 'f', -1, 64)
+}
+
+// ContactCard is one contact a contact message shares.
+type ContactCard struct {
+	Name   string
+	Phones []ContactPhone
+}
+
+// ContactPhone is a phone number on a contact card.
+type ContactPhone struct {
+	Number string // as the card writes it
+	// WAID is the number's digits when the card says it is on WhatsApp.
+	WAID string
+}
+
+// WhatsApp returns the first number of the card that is on WhatsApp, or
+// "".
+func (c *ContactCard) WhatsApp() string {
+	for _, p := range c.Phones {
+		if p.WAID != "" {
+			return p.WAID
+		}
+	}
+	return ""
+}
+
+// PollState is a poll's options and the votes for each so far.
+type PollState struct {
+	Options []PollOption
+	// Max is how many options a voter may pick; 0 means any number.
+	Max int
+	// Voters counts the people who voted for at least one option.
+	Voters int
+}
+
+// Multiple reports whether a voter may pick more than one option.
+func (p *PollState) Multiple() bool { return p.Max != 1 }
+
+// PollOption is one answer of a poll.
+type PollOption struct {
+	Name  string
+	Votes int
+	Mine  bool // you voted for it
+	// Faces are the IDs of up to three people who voted for it, newest
+	// first, for their pictures.
+	Faces []string
+}
+
+// EventInfo is an event: a gathering or call, with whether people will
+// come.
+type EventInfo struct {
+	Name, Description string
+	// Start is when it begins; End is zero when it has no set end.
+	Start, End time.Time
+	Place      *Location // where it is, or nil
+	// JoinLink is the call link of an online event, or "".
+	JoinLink string
+	Canceled bool
+	// Going, Maybe and NotGoing count the answers, and Mine is yours.
+	Going, Maybe, NotGoing int
+	Mine                   RSVP
+}
+
+// RSVP is an answer to an event.
+type RSVP int
+
+const (
+	RSVPNone RSVP = iota
+	RSVPGoing
+	RSVPNotGoing
+	RSVPMaybe
+)
+
+// Vote is one person's vote in a poll, or answer to an event.
+type Vote struct {
+	ID, Name string
+	Me       bool
+	Time     time.Time
+	// Options are the poll options they picked (indexes into
+	// PollState.Options), or RSVP their answer to the event.
+	Options []int
+	RSVP    RSVP
 }
 
 // LinkPreview is the card a text message shows for a link in it: what the
@@ -928,6 +1037,13 @@ type Backend interface {
 	SendContacts(chatID string, contactIDs []string) *Message
 	// SendPoll sends a poll.
 	SendPoll(chatID string, p Poll) *Message
+	// VotePoll votes for options of a poll (indexes into Poll.Options),
+	// in place of your earlier vote; none takes it back. A MessageEvent
+	// with the new count follows.
+	VotePoll(m *Message, options []int)
+	// Votes lists who voted in a poll, or answered an event, newest
+	// first.
+	Votes(m *Message) []Vote
 	// SendNewSticker sends a sticker made on this computer (a 512x512
 	// WebP), as a reply to reply if it isn't nil, and returns it in its
 	// pending state. The upload runs in the background.

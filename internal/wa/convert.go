@@ -21,7 +21,9 @@ type parsed struct {
 	target   string // message ID a reaction/revoke/edit/pin applies to
 	reaction string
 	revoke   bool
-	pin      int // 1 pinned, -1 unpinned
+	pin      int       // 1 pinned, -1 unpinned
+	vote     *vote     // a vote in a poll or an answer to an event
+	event    *eventDef // an edit of an event
 
 	// An edit's new text and mentions, and when it was made.
 	edited       bool
@@ -44,6 +46,7 @@ type content struct {
 	file     fileInfo     // documents and audio
 	link     *model.LinkPreview
 	linkPic  []byte // the link preview's JPEG
+	extra    extraInfo
 }
 
 func marshal(m proto.Message) []byte {
@@ -163,25 +166,36 @@ func describe(m *waE2E.Message) content {
 			blob: marshal(e), ctx: e.GetContextInfo()}
 	case m.GetContactMessage() != nil:
 		e := m.GetContactMessage()
-		return content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo()}
+		return content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo(),
+			extra: extraInfo{Contacts: []model.ContactCard{parseVCard(e.GetVcard(), e.GetDisplayName())}}}
 	case m.GetContactsArrayMessage() != nil:
 		e := m.GetContactsArrayMessage()
-		return content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo()}
+		c := content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo()}
+		for _, cm := range e.GetContacts() {
+			c.extra.Contacts = append(c.extra.Contacts, parseVCard(cm.GetVcard(), cm.GetDisplayName()))
+		}
+		return c
 	case m.GetLocationMessage() != nil:
 		e := m.GetLocationMessage()
-		return content{text: e.GetName(), media: model.MediaLocation, thumb: e.GetJPEGThumbnail(), ctx: e.GetContextInfo()}
+		return content{text: e.GetName(), media: model.MediaLocation, thumb: e.GetJPEGThumbnail(), ctx: e.GetContextInfo(),
+			extra: extraInfo{Loc: locationOf(e)}}
 	case m.GetLiveLocationMessage() != nil:
 		e := m.GetLiveLocationMessage()
-		return content{text: "Live location", media: model.MediaLocation, ctx: e.GetContextInfo()}
+		loc := &model.Location{Lat: e.GetDegreesLatitude(), Lng: e.GetDegreesLongitude(), Name: e.GetCaption(), Live: true}
+		return content{text: "Live location", media: model.MediaLocation, thumb: e.GetJPEGThumbnail(), ctx: e.GetContextInfo(),
+			extra: extraInfo{Loc: loc}}
 	case m.GetPollCreationMessage() != nil:
-		e := m.GetPollCreationMessage()
-		return content{text: e.GetName(), media: model.MediaPoll, ctx: e.GetContextInfo()}
+		return pollContent(m.GetPollCreationMessage())
 	case m.GetPollCreationMessageV2() != nil:
-		e := m.GetPollCreationMessageV2()
-		return content{text: e.GetName(), media: model.MediaPoll, ctx: e.GetContextInfo()}
+		return pollContent(m.GetPollCreationMessageV2())
 	case m.GetPollCreationMessageV3() != nil:
-		e := m.GetPollCreationMessageV3()
-		return content{text: e.GetName(), media: model.MediaPoll, ctx: e.GetContextInfo()}
+		return pollContent(m.GetPollCreationMessageV3())
+	case m.GetPollCreationMessageV5() != nil:
+		return pollContent(m.GetPollCreationMessageV5())
+	case m.GetPollCreationMessageV6() != nil:
+		return pollContent(m.GetPollCreationMessageV6())
+	case m.GetEventMessage() != nil:
+		return eventContent(m.GetEventMessage())
 	// Answers to bot buttons and lists quote the message they answer.
 	case m.GetButtonsResponseMessage() != nil:
 		e := m.GetButtonsResponseMessage()
@@ -238,6 +252,9 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		p.target, p.reaction = r.GetKey().GetID(), r.GetText()
 		return p, p.target != ""
 	}
+	if m.GetPollUpdateMessage() != nil || m.GetEncEventResponseMessage() != nil {
+		return p, b.parseVote(ctx, evt, &p)
+	}
 	if pin := m.GetPinInChatMessage(); pin != nil {
 		p.target, p.pin = pin.GetKey().GetID(), 1
 		if pin.GetType() == waE2E.PinInChatMessage_UNPIN_FOR_ALL {
@@ -264,7 +281,8 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	if sm := m.GetSecretEncryptedMessage(); sm != nil {
 		// Newer WhatsApp versions send edits encrypted with the edited
 		// message's secret.
-		if sm.GetSecretEncType() != waE2E.SecretEncryptedMessage_MESSAGE_EDIT {
+		typ := sm.GetSecretEncType()
+		if typ != waE2E.SecretEncryptedMessage_MESSAGE_EDIT && typ != waE2E.SecretEncryptedMessage_EVENT_EDIT {
 			return p, false
 		}
 		cli := b.client()
@@ -277,6 +295,13 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 			return p, false
 		}
 		dec = unwrap(dec)
+		if typ == waE2E.SecretEncryptedMessage_EVENT_EDIT {
+			p.target = sm.GetTargetMessageKey().GetID()
+			if e := dec.GetEventMessage(); e != nil {
+				p.event = eventContent(e).extra.Event
+			}
+			return p, p.target != "" && p.event != nil
+		}
 		if pm := dec.GetProtocolMessage(); pm.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT {
 			dec = pm.GetEditedMessage()
 		}
@@ -313,6 +338,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		msg.Album = first(albumOf(evt.RawMessage), albumOf(m))
 	}
 	c.file.apply(msg)
+	c.extra.apply(msg)
 	msg.Receipt = model.Sent
 	if evt.SourceWebMsg != nil && msg.FromMe {
 		msg.Receipt = webReceipt(evt.SourceWebMsg)

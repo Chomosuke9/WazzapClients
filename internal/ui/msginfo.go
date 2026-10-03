@@ -16,12 +16,15 @@ import (
 
 // msgInfoState is the "Message info" panel of one of your messages: who
 // got it and who read it, and when. Like the search panel, it takes the
-// info panel's place beside the conversation.
+// info panel's place beside the conversation. With votes set, it is a
+// poll's votes or an event's answers instead (votes.go).
 type msgInfoState struct {
 	open     bool
 	chatID   string
 	msg      *model.Message
 	data     *model.MessageInfo
+	votes    bool
+	voteList []model.Vote
 	list     widget.List
 	closeBtn widget.Clickable
 	anim     tween
@@ -39,7 +42,7 @@ func (u *UI) openMsgInfo(m *model.Message) {
 		u.hideChatSearch()
 		s.anim.snap(true)
 	}
-	s.open, s.chatID, s.msg = true, m.ChatID, m
+	s.open, s.chatID, s.msg, s.votes = true, m.ChatID, m, false
 	s.data = u.backend.MessageInfo(m)
 	s.list.Position = layout.Position{}
 }
@@ -55,6 +58,9 @@ func (u *UI) hideMsgInfo() {
 func (u *UI) msgInfoReceipt(e model.ReceiptEvent) {
 	s := &u.msgInfo
 	if !s.open || s.chatID != e.ChatID {
+		return
+	}
+	if s.votes {
 		return
 	}
 	for _, id := range e.IDs {
@@ -79,7 +85,13 @@ func (u *UI) layoutMsgInfo(gtx C) D {
 		}
 	}
 	dims := fill(gtx, p.Panel)
-	rows := u.msgInfoRows()
+	title := "Message info"
+	var rows []layout.Widget
+	if s.votes {
+		title, rows = u.votesTitle(), u.voteRows()
+	} else {
+		rows = u.msgInfoRows()
+	}
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
@@ -87,7 +99,7 @@ func (u *UI) layoutMsgInfo(gtx C) D {
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &s.closeBtn, icClose, 40, 25, p.IconStrong) }),
 						layout.Rigid(layout.Spacer{Width: 10}.Layout),
-						layout.Flexed(1, u.label(16.5, "Message info", p.Text, labelOpts{maxLines: 1}).Layout),
+						layout.Flexed(1, u.label(16.5, title, p.Text, labelOpts{maxLines: 1}).Layout),
 					)
 				})
 			})
