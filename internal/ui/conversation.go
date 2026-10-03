@@ -167,13 +167,22 @@ func (u *UI) layoutConversation(gtx C) D {
 			cgtx := gtx
 			cgtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: sz}
 			var cd D
-			switch who := u.sendBlocked(c); {
+			who := u.sendBlocked(c)
+			base := func(gtx C) D {
+				if who != "" && !u.conv.selecting && u.conv.selV == 0 {
+					return u.layoutSendBlocked(gtx, who)
+				}
+				return u.layoutComposer(gtx)
+			}
+			// In ghost mode the ghost bar takes the composer's place.
+			ghost := u.ghostMode() && !u.conv.selecting && u.conv.selV == 0
+			switch gv := u.ghostFx.compose.step(gtx, ghost, durGhost); {
 			case isChannelID(c.ID):
 				// Channels are read-only.
-			case who != "" && !u.conv.selecting && u.conv.selV == 0:
-				cd = u.layoutSendBlocked(cgtx, who)
+			case gv > 0:
+				cd = u.layoutGhostSwap(cgtx, gv, ghost, base)
 			default:
-				cd = u.layoutComposer(cgtx)
+				cd = base(cgtx)
 			}
 			composer := m.Stop()
 

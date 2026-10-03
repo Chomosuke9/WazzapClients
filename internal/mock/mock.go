@@ -196,7 +196,12 @@ func (b *Backend) PinnedMessage(chatID string) *model.Message {
 	return nil
 }
 
+// Open marks the chat read, unless ghost mode is on: like the real
+// backend, it then leaves the chat unread for its next opening.
 func (b *Backend) Open(chatID string) {
+	if b.prefs[model.PrefGhost] == "on" {
+		return
+	}
 	for _, c := range b.chats {
 		if c.ID == chatID && c.Unread > 0 {
 			c.Unread = 0

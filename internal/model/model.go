@@ -951,6 +951,12 @@ const HistoryFull = "full"
 // is unset.
 const HistoryDefaultDays = 90
 
+// PrefGhost is the Pref key of ghost mode (/ghost), on when "on": the
+// backend sends no read receipts when chats open or statuses are viewed,
+// and shows you offline. Backends watch SetPref for it, so that turning it
+// on or off takes effect at once.
+const PrefGhost = "ghost"
+
 // Backend is everything the UI needs from a WhatsApp connection.
 //
 // Methods are called from the UI goroutine and must not block for long.

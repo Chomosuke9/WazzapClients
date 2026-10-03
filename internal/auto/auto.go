@@ -4,6 +4,11 @@
 // send, and keeps its state in the backend's prefs: it goes on with the
 // window closed, and after a restart.
 //
+// In ghost mode (model.PrefGhost) it refuses everything you'd send
+// yourself, with a notice: messages, reactions, votes, edits, deleting or
+// pinning for everyone and status updates. What it sends for you still
+// goes, since it sends through the backend it wraps.
+//
 // Like the Backend, it's used from the UI goroutine only; its timer just
 // pokes the backend's notify function, and the work happens in Poll.
 package auto
@@ -65,12 +70,14 @@ type Backend struct {
 	timer  *time.Timer
 	seq    int
 	ver    int // bumped as the jobs change
+	ghost  bool
 }
 
 // Wrap returns b with scheduled messages and AFK, reading the time from
 // now.
 func Wrap(b model.Backend, now func() time.Time) *Backend {
-	a := &Backend{Backend: b, now: now, ours: map[string]bool{}, groups: map[string]bool{}}
+	a := &Backend{Backend: b, now: now, ours: map[string]bool{}, groups: map[string]bool{},
+		ghost: b.Pref(model.PrefGhost) == "on"}
 	if s := b.Pref(prefJobs); s != "" {
 		json.Unmarshal([]byte(s), &a.jobs)
 	}
@@ -440,39 +447,141 @@ func (a *Backend) sent() {
 	}
 }
 
-// The ways you send a message, which end AFK.
+// Ghost reports whether ghost mode is on.
+func (a *Backend) Ghost() bool { return a.ghost }
+
+// SetPref keeps a pref, and notices ghost mode turning on or off.
+func (a *Backend) SetPref(key, value string) {
+	a.Backend.SetPref(key, value)
+	if key == model.PrefGhost {
+		a.ghost = value == "on"
+	}
+}
+
+// GhostText is the notice of something refused in ghost mode.
+const GhostText = "Ghost mode is on. Turn it off to send messages."
+
+// refused reports whether ghost mode refuses what you're sending, and
+// says so.
+func (a *Backend) refused() bool {
+	if !a.ghost {
+		return false
+	}
+	a.out = append(a.out, model.NoticeEvent{Text: GhostText})
+	if a.notify != nil {
+		a.notify() // the notice shows on the next Poll
+	}
+	return true
+}
+
+// The ways you send a message, which end AFK, and which ghost mode
+// refuses.
 
 func (a *Backend) Send(chatID string, d model.Draft) *model.Message {
+	if a.refused() {
+		return nil
+	}
 	a.sent()
 	return a.Backend.Send(chatID, d)
 }
 
 func (a *Backend) SendFile(chatID string, at model.Attachment, d model.Draft) *model.Message {
+	if a.refused() {
+		return nil
+	}
 	a.sent()
 	return a.Backend.SendFile(chatID, at, d)
 }
 
+func (a *Backend) NewAlbum(chatID string, photos, videos int) string {
+	if a.ghost {
+		return "" // each picture is refused
+	}
+	return a.Backend.NewAlbum(chatID, photos, videos)
+}
+
 func (a *Backend) SendSticker(chatID string, sticker, reply *model.Message) {
+	if a.refused() {
+		return
+	}
 	a.sent()
 	a.Backend.SendSticker(chatID, sticker, reply)
 }
 
 func (a *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Message) *model.Message {
+	if a.refused() {
+		return nil
+	}
 	a.sent()
 	return a.Backend.SendNewSticker(chatID, webp, reply)
 }
 
 func (a *Backend) SendContacts(chatID string, contactIDs []string) *model.Message {
+	if a.refused() {
+		return nil
+	}
 	a.sent()
 	return a.Backend.SendContacts(chatID, contactIDs)
 }
 
 func (a *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
+	if a.refused() {
+		return nil
+	}
 	a.sent()
 	return a.Backend.SendPoll(chatID, p)
 }
 
 func (a *Backend) Forward(msgs []*model.Message, chatIDs []string) {
+	if a.refused() {
+		return
+	}
 	a.sent()
 	a.Backend.Forward(msgs, chatIDs)
+}
+
+func (a *Backend) PressButton(m *model.Message, i int) *model.Message {
+	if a.refused() {
+		return nil
+	}
+	return a.Backend.PressButton(m, i)
+}
+
+// What else others would see, which ghost mode refuses too.
+
+func (a *Backend) React(m *model.Message, emoji string) {
+	if !a.refused() {
+		a.Backend.React(m, emoji)
+	}
+}
+
+func (a *Backend) VotePoll(m *model.Message, options []int) {
+	if !a.refused() {
+		a.Backend.VotePoll(m, options)
+	}
+}
+
+func (a *Backend) Edit(m *model.Message, d model.Draft) {
+	if !a.refused() {
+		a.Backend.Edit(m, d)
+	}
+}
+
+// Delete deletes for you in ghost mode too; only for everyone is refused.
+func (a *Backend) Delete(m *model.Message, forEveryone bool) {
+	if !forEveryone || !a.refused() {
+		a.Backend.Delete(m, forEveryone)
+	}
+}
+
+func (a *Backend) PinMessage(m *model.Message, pinned bool) {
+	if !a.refused() {
+		a.Backend.PinMessage(m, pinned)
+	}
+}
+
+func (a *Backend) PostStatus(p model.StatusPost) {
+	if !a.refused() {
+		a.Backend.PostStatus(p)
+	}
 }

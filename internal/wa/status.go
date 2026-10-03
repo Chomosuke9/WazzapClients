@@ -237,12 +237,13 @@ func (b *Backend) statusName(ctx context.Context, j types.JID, push string) stri
 	return first(n.saved, n.business, n.push, push, n.phone, n.redacted, j.User)
 }
 
-// ViewStatus marks a status as seen and tells its poster.
+// ViewStatus marks a status as seen and tells its poster, unless ghost
+// mode is on.
 func (b *Backend) ViewStatus(threadID, statusID string) {
 	_ = b.store.setStatusViewed(b.ctx, []string{statusID})
 	cli := b.client()
 	sender, err := types.ParseJID(threadID)
-	if cli == nil || err != nil || !cli.IsConnected() {
+	if cli == nil || err != nil || !cli.IsConnected() || b.ghost() {
 		return
 	}
 	go func() {

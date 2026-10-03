@@ -128,6 +128,7 @@ var (
 	icBackspace       = icon.Backspace
 	icScheduleSend    = icon.ScheduleSend
 	icBedtime         = icon.Bedtime
+	icVisibilityOff   = icon.VisibilityOff
 
 	// Emoji picker categories.
 	icEmojiPeople  = icon.Mood

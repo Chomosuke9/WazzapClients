@@ -98,6 +98,10 @@ var All = []*Command{
 		Options: []Option{{Name: "reason", Description: "Why you're away, shown in the reply", Kind: Text}},
 		Run:     runAFK,
 	},
+	{
+		Name: "ghost", Description: "Goes invisible: no read receipts, shown offline, no sending, until you turn it off",
+		Run: runGhost,
+	},
 }
 
 // busy shows that the command is working, and returns its note.

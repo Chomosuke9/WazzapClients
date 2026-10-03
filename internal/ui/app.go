@@ -171,6 +171,7 @@ type UI struct {
 	slash   slashState   // slash commands and their notes (slash.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
 	adminMention, rawPhotos, editHistory bool
+	ghostFx                              ghostAnims // ghost mode coming and going (ghost.go)
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
@@ -1320,7 +1321,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
 // switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
 // picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", a mention
-// in /schedule's message "slashschedule", or the notes of commands run "slashrun".
+// in /schedule's message "slashschedule", the notes of commands run "slashrun", or ghost mode
+// turned on with /ghost "ghost".
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1536,10 +1538,11 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.attach.anim.snap(true)
 			u.conv.composer.SetText("Sunday at the beach")
 		}
-	case "slash", "slashkick", "slashcalc", "slashschedule", "slashrun":
+	case "slash", "slashkick", "slashcalc", "slashschedule", "slashrun", "ghost":
 		// Slash commands (open a group with -ochat): the picker of
 		// commands, /kick's options, /calc's answer, a member picked in
-		// /schedule's message, or the notes of commands run.
+		// /schedule's message, the notes of commands run, or ghost mode
+		// turned on with /ghost.
 		u.slash.on = true // an extra feature, off by default
 		ed := &u.conv.composer
 		set := func(s string) {
@@ -1575,6 +1578,9 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 				u.sendComposer()
 			}
 			u.applyEvents()
+		case "ghost":
+			set("/ghost ")
+			u.sendComposer()
 		}
 	case "mention", "mentioned":
 		// The mention picker, or a draft with picked mentions.

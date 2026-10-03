@@ -148,6 +148,8 @@ func TestIdleAtRest(t *testing.T) {
 		{"chats page", func() { u.ShowPage("chats") }},
 		{"chat moves up", func() { b.Forward(b.Messages("rina", 1), []string{"gym"}) }},
 		{"new message", func() { b.Forward(b.Messages("rina", 1), []string{"rina"}) }},
+		{"ghost mode", func() { u.SetGhost(true) }},
+		{"ghost mode off", func() { u.SetGhost(false) }},
 	}
 	for _, s := range steps {
 		s.do()

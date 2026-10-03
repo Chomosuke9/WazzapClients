@@ -462,7 +462,9 @@ func (b *Backend) Open(chatID string) {
 			return
 		}
 		cli := b.client()
-		b.markRead(cli, jid, c)
+		if !b.ghost() {
+			b.markRead(cli, jid, c)
+		}
 		switch {
 		case !cli.IsConnected():
 		case c.IsGroup:
@@ -517,8 +519,26 @@ func (b *Backend) markRead(cli *whatsmeow.Client, jid types.JID, c *model.Chat) 
 	}
 }
 
+// ghost reports whether ghost mode is on (model.PrefGhost): chats open
+// without read receipts, and you show offline.
+func (b *Backend) ghost() bool { return b.Pref(model.PrefGhost) == "on" }
+
+// sendPresence tells WhatsApp you're online, or, in ghost mode, offline.
+// Being "available" is what makes WhatsApp send typing notifications, so
+// ghost mode doesn't get them.
+func (b *Backend) sendPresence(cli *whatsmeow.Client) {
+	p := types.PresenceAvailable
+	if b.ghost() {
+		p = types.PresenceUnavailable
+	}
+	if err := cli.SendPresence(b.ctx, p); err != nil {
+		b.log.Debugf("send presence: %v", err)
+	}
+}
+
 // MarkRead implements model.Backend. The chats are marked one after the
-// other, so their patches don't race.
+// other, so their patches don't race. Unlike opening a chat, it sends read
+// receipts in ghost mode too: it's what "Mark as read" asks for.
 func (b *Backend) MarkRead(chatIDs []string) {
 	go func() {
 		cli := b.client()
@@ -563,10 +583,7 @@ func (b *Backend) handle(evt any) {
 		}
 		b.emit(model.ConnEvent{State: model.StateOnline, Me: cli.Store.PushName, MeID: meID})
 		go func() {
-			// Being "available" is what makes WhatsApp send typing notifications.
-			if err := cli.SendPresence(ctx, types.PresenceAvailable); err != nil {
-				b.log.Debugf("send presence: %v", err)
-			}
+			b.sendPresence(cli)
 			b.refreshGroupNames()
 			b.resyncAppStateOnce()
 			b.refreshChannels()

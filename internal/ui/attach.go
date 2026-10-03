@@ -19,6 +19,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/filepick"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/osclip"
@@ -336,6 +337,11 @@ const maxAttach = 100
 func (u *UI) addFiles(chatID string, files []*attachFile) {
 	a := &u.attach
 	if len(files) == 0 {
+		return
+	}
+	if u.ghostMode() {
+		removeTemps(files)
+		u.toast(auto.GhostText)
 		return
 	}
 	if chatID == statusChatID {

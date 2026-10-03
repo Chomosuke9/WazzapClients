@@ -110,6 +110,8 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 		}
 	case "typing":
 		b.SetTyping(chat, "Clara", true)
+	case "ghost":
+		u.SetGhost(true)
 	default:
 		u.ShowOverlay(name, x, y)
 	}
@@ -130,6 +132,8 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 			// taking the bubble's place.
 			b.SetTyping(chat, "", false)
 			b.Receive(chat, "Clara", "Sure, sending it now")
+		case "ghost":
+			u.SetGhost(false)
 		default:
 			u.Escape()
 		}

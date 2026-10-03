@@ -40,6 +40,9 @@ func (u *UI) loadExtras() {
 	u.adminMention = extraOn(b, prefAdminMention)
 	u.rawPhotos = extraOn(b, prefRawPhotos)
 	u.editHistory = extraOn(b, prefEditHistory)
+	// A window opening in ghost mode shows it at once.
+	u.ghostFx.bar.snap(u.ghostMode())
+	u.ghostFx.compose.snap(u.ghostMode())
 }
 
 // commandIcons are the commands' icons in the picker and in settings.
@@ -58,6 +61,7 @@ var commandIcons = map[string]*icon.Icon{
 	"schedule":    icScheduleSend,
 	"scheduled":   icClock,
 	"afk":         icBedtime,
+	"ghost":       icVisibilityOff,
 }
 
 func commandIcon(name string) *icon.Icon {

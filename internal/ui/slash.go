@@ -504,6 +504,8 @@ func (h slashHost) Sent(m *model.Message) {
 
 func (h slashHost) Draft(text string) model.Draft { return h.u.draftWith(text, h.mentions, h.chat) }
 
+func (h slashHost) SetGhost(on bool) { h.u.setGhost(on) }
+
 // slashTakesMentions reports whether the composer may offer @mentions:
 // unless its text is a command, or while the caret is in a command's
 // text that takes them (Option.Mentions).

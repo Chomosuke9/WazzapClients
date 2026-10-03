@@ -54,6 +54,8 @@ type Host interface {
 	// Draft makes a message of text typed in the composer, turning the
 	// @mentions picked in it into the protocol's.
 	Draft(text string) model.Draft
+	// SetGhost turns ghost mode (model.PrefGhost) on or off.
+	SetGhost(on bool)
 }
 
 // Context is everything a running command may use.
