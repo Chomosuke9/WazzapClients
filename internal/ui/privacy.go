@@ -25,14 +25,18 @@ import (
 // for what is drawn next, which u.label, layoutSpans, drawAvatar and
 // messageImage read.
 
-// Preferences (Backend.Pref keys) of privacy mode, on when "on".
+// Preferences (Backend.Pref keys) of privacy mode, on when "on". The
+// toggle and screen recording blocking are extra features (extras.go),
+// off until turned on.
 const (
-	prefPrivacy   = "privacy_mode"
-	prefNoCapture = "hide_capture" // keep the window out of screen sharing
+	prefPrivacy       = "privacy_mode"
+	prefPrivacyToggle = "privacy_toggle" // the title bar's eye and Ctrl+Shift+P
+	prefNoCapture     = "hide_capture"   // keep the window out of screen recordings
 )
 
 type privacyState struct {
 	on        bool
+	toggle    bool // the extra feature that offers privacy mode
 	noCapture bool
 	fx        tween            // the mode turning on and off
 	v         float32          // fx this frame, eased
@@ -42,7 +46,8 @@ type privacyState struct {
 // loadPrivacy reads privacy mode's preferences.
 func (u *UI) loadPrivacy() {
 	ps := &u.privacy
-	ps.on = extraOn(u.backend, prefPrivacy)
+	ps.toggle = extraOn(u.backend, prefPrivacyToggle)
+	ps.on = ps.toggle && extraOn(u.backend, prefPrivacy)
 	ps.noCapture = extraOn(u.backend, prefNoCapture)
 	ps.fx.snap(ps.on)
 	ps.v = 0
@@ -51,8 +56,13 @@ func (u *UI) loadPrivacy() {
 	}
 }
 
-// SetPrivacy turns privacy mode on or off (used for screenshots).
-func (u *UI) SetPrivacy(on bool) { u.setPrivacyMode(on) }
+// SetPrivacy turns privacy mode on or off, and its toggle on (used for
+// screenshots).
+func (u *UI) SetPrivacy(on bool) {
+	u.privacy.toggle = true
+	setExtra(u.backend, prefPrivacyToggle, true)
+	u.setPrivacyMode(on)
+}
 
 // setPrivacyMode turns privacy mode on or off.
 func (u *UI) setPrivacyMode(on bool) {
@@ -74,7 +84,7 @@ func (u *UI) updatePrivacy(gtx C) {
 		if !ok {
 			break
 		}
-		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+		if e, ok := ev.(key.Event); ok && e.State == key.Press && ps.toggle {
 			u.setPrivacyMode(!ps.on)
 		}
 	}
@@ -184,7 +194,9 @@ func redactBar(gtx C, w, y, em int, col color.NRGBA, hide float32) {
 
 // privacyNotice is what a notification says in privacy mode: nothing of
 // who wrote or what.
-func privacyNotice(b model.Backend) bool { return extraOn(b, prefPrivacy) }
+func privacyNotice(b model.Backend) bool {
+	return extraOn(b, prefPrivacyToggle) && extraOn(b, prefPrivacy)
+}
 
 // layoutPrivacyButton is the title bar's privacy mode button, w×h px: an
 // eye, crossed out and green while the mode is on.
@@ -207,21 +219,21 @@ func (u *UI) layoutPrivacyButton(gtx C, w, h int) {
 	})
 }
 
-// privacySettings is the Privacy mode section of Settings > Privacy.
-func (u *UI) privacyModeSettings() settingsSection {
+// privacyExtras is the Privacy section of the Extra features page.
+func (u *UI) privacyExtras() settingsSection {
 	ps := &u.privacy
-	rows := []settingRow{{key: "privacymode", kind: setToggle, on: ps.on, title: "Privacy mode",
-		sub: "Hide names, messages and pictures until you point at them, for using " + appName +
-			" where others can see your screen.",
-		run: func() { u.setPrivacyMode(!ps.on) }}}
+	rows := []settingRow{u.extraToggle(prefPrivacyToggle, "Privacy mode toggle",
+		"Add an eye to the title bar that hides names, messages and pictures until you point at them, "+
+			"for using "+appName+" where others can see your screen. "+shortcutMod()+"+Shift+P works too.",
+		&ps.toggle, func() {
+			if !ps.toggle && ps.on {
+				u.setPrivacyMode(false) // no way left to turn it off
+			}
+		})}
 	if runtime.GOOS == "windows" {
-		rows = append(rows, settingRow{key: "nocapture", kind: setToggle, on: ps.noCapture, title: "Hide from screen sharing",
-			sub: "The window shows up black in screen sharing, recordings and screenshots, but stays as it is on your screen.",
-			run: func() {
-				ps.noCapture = !ps.noCapture
-				setExtra(u.backend, prefNoCapture, ps.noCapture)
-			}})
+		rows = append(rows, u.extraToggle(prefNoCapture, "Block screen recording",
+			"The window shows up black in screen recordings, screen sharing and screenshots, but stays as it is on your screen.",
+			&ps.noCapture, nil))
 	}
-	return settingsSection{title: "Privacy mode", rows: rows,
-		note: shortcutMod() + "+Shift+P or the eye in the title bar turns privacy mode on or off."}
+	return settingsSection{title: "Privacy", rows: rows}
 }

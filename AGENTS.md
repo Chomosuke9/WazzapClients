@@ -240,7 +240,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    messages as bubbles after a chat's newest (send now, edit, cancel) and
                    the AFK bar above the chat list in scheduled.go; and
                    the Extra features settings page in extras.go (the app's own features,
-                   such as slash commands, @admin and Raw photos: each off until turned on), and
+                   such as slash commands, @admin, the Privacy mode toggle, Block screen
+                   recording and Raw photos: each off until turned on), and
                    its Ethically gray features page (Edit history, Keep deleted messages, Replay view
                    once, and commands marked Gray, like /ghost, each with a switch of its own);
                    view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
@@ -264,8 +265,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    settingsdetail.go; the window's zoom (Settings > General > Font size,
                    Ctrl with +, - and 0, and the bubble that shows it) in scale.go; privacy
                    mode (names and messages drawn as bars, pictures blurred, shown under
-                   the pointer; Ctrl+Shift+P, the title bar's eye and
-                   Settings > Privacy) in privacy.go: `u.hiding` sets `u.secret`, which
+                   the pointer; the title bar's eye and Ctrl+Shift+P, once the Privacy mode
+                   toggle on the Extra features page is on) in privacy.go: `u.hiding` sets `u.secret`, which
                    `u.label`, `layoutSpans`, `drawAvatar` and `messageImage` read
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles

@@ -28,7 +28,7 @@ func (u *UI) layoutTitleBar(gtx C) D {
 
 	btnW := gtx.Dp(46)
 	moveW := w - 3*btnW
-	privacyBtn := u.conn.State.LoggedIn()
+	privacyBtn := u.conn.State.LoggedIn() && u.privacy.toggle
 	if privacyBtn {
 		moveW -= btnW
 	}

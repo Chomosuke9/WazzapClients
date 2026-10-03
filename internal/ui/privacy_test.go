@@ -19,6 +19,7 @@ import (
 // In privacy mode a notification says neither who wrote nor what.
 func TestPrivacyNotification(t *testing.T) {
 	nt := newNotifyTest(t)
+	setExtra(nt.b, prefPrivacyToggle, true)
 	setExtra(nt.b, prefPrivacy, true)
 	nt.receive("ana@lid", "", "the villa is at Jl. Melati 4")
 	got := nt.flush(t)
@@ -79,6 +80,7 @@ func TestPrivacyHidesText(t *testing.T) {
 func TestPrivacyButton(t *testing.T) {
 	u := New(mock.New())
 	u.Start(func() {})
+	u.privacy.toggle = true // the extra feature
 	now := testNow()
 	var ops op.Ops
 	var r input.Router
@@ -101,5 +103,31 @@ func TestPrivacyButton(t *testing.T) {
 		if u.privacy.on != want {
 			t.Fatalf("after a click privacy mode is %v, want %v", u.privacy.on, want)
 		}
+	}
+}
+
+// Privacy mode is an extra feature: until its toggle is on there's no
+// eye and no shortcut, and turning the toggle off turns the mode off.
+func TestPrivacyToggle(t *testing.T) {
+	b := mock.New()
+	setExtra(b, prefPrivacy, true) // left on by an earlier version
+	u := New(b)
+	if u.privacy.on {
+		t.Fatal("privacy mode on without its toggle")
+	}
+	if privacyNotice(b) {
+		t.Error("notifications hide their text without the toggle")
+	}
+	u.privacy.toggle = true
+	u.setPrivacyMode(true)
+	for _, sec := range u.extrasSettings() {
+		for _, r := range sec.rows {
+			if r.key == prefPrivacyToggle {
+				r.run()
+			}
+		}
+	}
+	if u.privacy.toggle || u.privacy.on || extraOn(b, prefPrivacy) {
+		t.Errorf("toggle off: toggle %v, privacy mode %v, pref %q", u.privacy.toggle, u.privacy.on, b.Pref(prefPrivacy))
 	}
 }

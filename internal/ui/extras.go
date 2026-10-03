@@ -112,6 +112,7 @@ func (u *UI) extrasSettings() []settingsSection {
 			u.extraToggle(prefAdminMention, "@admin", "Type @admin in a group to mention all of its admins at once",
 				&u.adminMention, nil),
 		}},
+		u.privacyExtras(),
 		{title: "Photos", rows: []settingRow{
 			u.extraToggle(prefRawPhotos, "Raw quality", "Offer Raw when sending photos: JPEG and PNG files go as they are, not scaled or compressed",
 				&u.rawPhotos, func() {
