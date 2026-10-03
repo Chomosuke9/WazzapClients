@@ -428,6 +428,7 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 	return layout.Inset{Left: 13, Right: 18, Top: 2, Bottom: 2}.Layout(gtx, func(gtx C) D {
 		return clickable(gtx, click, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			defer u.hiding(gtx, "row:"+c.ID, click.Hovered() || o.hovered)()
 			hover := u.hoverOn(gtx, click, click.Hovered() || o.hovered)
 			bg := mix(mix(p.Panel, p.Hover, hover), p.Selected, o.sel)
 			h := gtx.Dp(76.3)
@@ -503,6 +504,7 @@ func (u *UI) layoutRowName(gtx C, c *model.Chat, verified bool) D {
 // layoutRowTime draws when a chat row's last message came, green while
 // the chat is unread.
 func (u *UI) layoutRowTime(gtx C, c *model.Chat) D {
+	defer u.unhidden()()
 	p := u.pal
 	col := p.TextSecondary
 	if c.Unread != 0 {

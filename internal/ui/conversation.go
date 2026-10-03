@@ -272,6 +272,7 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Flexed(1, func(gtx C) D {
 						return clickable(gtx, &u.conv.header, func(gtx C) D {
+							defer u.hiding(gtx, "header", u.conv.header.Hovered())()
 							gtx.Constraints.Min.X = gtx.Constraints.Max.X
 							return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 								layout.Rigid(func(gtx C) D {
@@ -593,6 +594,9 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	}
 	cgtx := gtx
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(w-shift, gtx.Constraints.Max.Y)}
+	// Privacy mode shows the message under the pointer, or being used.
+	reveal := u.hovered[m.ID] || u.btn("chev:"+m.ID).Hovered() || (u.ctx.isOpen() && u.ctx.msg == m) || u.textSel.id == m.ID
+	unhide := u.hiding(gtx, "msg:"+m.ID, reveal)
 	bubble := record(cgtx, func(gtx C) D { return u.layoutMessage(gtx, c, r, maxW) })
 	cardH := u.conv.cardH
 	x := shift
@@ -619,6 +623,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		u.senderButton(gtx, m, image.Point{}, image.Pt(sz, sz))
 		t.Pop()
 	}
+	unhide()
 	if !sel {
 		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
 		hovered := u.hoverArea(gtx, m.ID, bubble.size)
@@ -776,6 +781,7 @@ func (u *UI) nbspWidth(gtx C, size unit.Sp) float32 {
 }
 
 func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color.NRGBA) D {
+	defer u.unhidden()()
 	gtx.Constraints.Min = image.Point{}
 	var children []layout.FlexChild
 	if m.Starred {
@@ -1451,6 +1457,9 @@ func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width
 // the downloaded media, or the embedded thumbnail while that loads.
 func (u *UI) messageImage(m *model.Message, maxPx int) *imgEntry {
 	b := u.backend
+	if u.blurred() {
+		return u.blurredImage(m)
+	}
 	if m.Media == model.MediaImage || m.Media == model.MediaSticker || wideLink(m) {
 		full := u.images.get("m:"+m.ChatID+"/"+m.ID, maxPx, func() []byte { return b.MediaData(m.ChatID, m.ID) })
 		if full.state == imgReady {
@@ -1462,6 +1471,28 @@ func (u *UI) messageImage(m *model.Message, maxPx int) *imgEntry {
 		return u.images.get("t:"+m.ChatID+"/"+m.ID, maxPx, func() []byte { return thumb })
 	}
 	return nil
+}
+
+// blurredImage is messageImage in privacy mode: the thumbnail, or the
+// picture when there is none, blurred. Nil while it loads.
+func (u *UI) blurredImage(m *model.Message) *imgEntry {
+	b := u.backend
+	thumb := m.Thumb
+	full := m.Media == model.MediaImage || m.Media == model.MediaSticker || wideLink(m)
+	if len(thumb) == 0 && !full {
+		return nil
+	}
+	chat, id := m.ChatID, m.ID
+	e := u.images.getBlurred("m:"+chat+"/"+id, func() []byte {
+		if len(thumb) > 0 {
+			return thumb
+		}
+		return b.MediaData(chat, id)
+	})
+	if e.state != imgReady {
+		return nil
+	}
+	return e
 }
 
 // layoutImage draws a picture preview in r: the image, the demo gradient,
@@ -1608,7 +1639,7 @@ func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
 		return
 	}
 	pic, size := img.op, img.size
-	if img.animated {
+	if img.animated && !u.blurred() {
 		b, chat, id := u.backend, m.ChatID, m.ID
 		if f, ok := u.stickerFrame("m:"+chat+"/"+id, sz*2, func() []byte { return b.MediaData(chat, id) }); ok {
 			pic, size = f, f.Size()
@@ -1628,6 +1659,9 @@ func (u *UI) gradientImage(gtx C, r image.Rectangle, a, b uint32) {
 		Stop2: f32.Pt(float32(r.Max.X), float32(r.Max.Y)), Color2: rgb(b),
 	}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
+	if u.blurred() {
+		return // privacy mode: the colors and nothing more
+	}
 	w, h := r.Dx(), r.Dy()
 	fillCircle(gtx, image.Pt(r.Min.X+w*3/4, r.Min.Y+h/4), h/8, argb(0xffffff, 0xb0))
 	var path clip.Path

@@ -129,6 +129,10 @@ func (u *UI) statusRow(gtx C, key string, t *model.StatusThread, title, sub stri
 	return layout.Inset{Left: 8, Right: 18}.Layout(gtx, func(gtx C) D {
 		return clickable(gtx, c, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			if !mine {
+				// Privacy mode hides who posted, not when.
+				defer u.hiding(gtx, key, c.Hovered())()
+			}
 			bg := mix(p.Panel, p.Hover, u.hover(gtx, c))
 			return background(gtx, bg, 10, func(gtx C) D {
 				return vcenter(gtx, gtx.Dp(height), func(gtx C) D {
@@ -140,7 +144,10 @@ func (u *UI) statusRow(gtx C, key string, t *model.StatusThread, title, sub stri
 								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 									layout.Rigid(u.label(17, title, p.Text).Layout),
 									layout.Rigid(layout.Spacer{Height: 1}.Layout),
-									layout.Rigid(u.label(15.2, sub, p.TextSecondary).Layout),
+									layout.Rigid(func(gtx C) D {
+										defer u.unhidden()()
+										return u.label(15.2, sub, p.TextSecondary).Layout(gtx)
+									}),
 								)
 							}),
 						)
@@ -207,7 +214,14 @@ func (u *UI) statusPreview(gtx C, t *model.StatusThread, up *model.StatusUpdate,
 	r := image.Rect(0, 0, px, px)
 	if len(up.Thumb) > 0 {
 		th := up.Thumb
-		if e := u.images.get("st:"+up.ID, px, func() []byte { return th }); e.state == imgReady {
+		load := func() []byte { return th }
+		var e *imgEntry
+		if u.blurred() {
+			e = u.images.getBlurred("st:"+up.ID, load) // privacy mode
+		} else {
+			e = u.images.get("st:"+up.ID, px, load)
+		}
+		if e.state == imgReady {
 			defer clip.Ellipse(r).Push(gtx.Ops).Pop()
 			paintCover(gtx, e.op, e.size, r)
 			return

@@ -99,6 +99,50 @@ func acquireDecode(data []byte) (release func()) {
 // get returns the entry for key, loading it in the background (load may
 // block; it runs on its own goroutine) when it isn't cached yet.
 func (c *imageCache) get(key string, maxSide int, load func() []byte) *imgEntry {
+	return c.getWith(key, load, func(data []byte) (image.Image, bool) { return decodeScaled(data, maxSide) })
+}
+
+// blurSide is how many pixels across a blurred picture keeps. Scaled up
+// to its place, it shows colors and nothing more.
+const blurSide = 12
+
+// getBlurred is get for a picture blurred past recognition (privacy mode):
+// decoded blurSide px across and softened, so scaling it up blurs it
+// further. It costs a few hundred bytes.
+func (c *imageCache) getBlurred(key string, load func() []byte) *imgEntry {
+	return c.getWith("blur:"+key, load, func(data []byte) (image.Image, bool) {
+		img, _ := decodeScaled(data, blurSide)
+		if img == nil {
+			return nil, false
+		}
+		return boxBlur(boxBlur(img)), false
+	})
+}
+
+// boxBlur averages each pixel with its neighbors, the edges repeating.
+func boxBlur(src image.Image) *image.RGBA {
+	b := src.Bounds()
+	dst := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	for y := 0; y < b.Dy(); y++ {
+		for x := 0; x < b.Dx(); x++ {
+			var r, g, bl, a uint32
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					sx := min(max(x+dx, 0), b.Dx()-1)
+					sy := min(max(y+dy, 0), b.Dy()-1)
+					pr, pg, pb, pa := src.At(b.Min.X+sx, b.Min.Y+sy).RGBA()
+					r, g, bl, a = r+pr, g+pg, bl+pb, a+pa
+				}
+			}
+			i := dst.PixOffset(x, y)
+			dst.Pix[i], dst.Pix[i+1], dst.Pix[i+2], dst.Pix[i+3] = uint8(r/9>>8), uint8(g/9>>8), uint8(bl/9>>8), uint8(a/9>>8)
+		}
+	}
+	return dst
+}
+
+// getWith is get with its own way to decode the loaded data.
+func (c *imageCache) getWith(key string, load func() []byte, decode func([]byte) (image.Image, bool)) *imgEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.m[key]; ok {
@@ -113,7 +157,7 @@ func (c *imageCache) get(key string, maxSide int, load func() []byte) *imgEntry 
 	go func() {
 		data := load()
 		release := acquireDecode(data)
-		img, animated := decodeScaled(data, maxSide)
+		img, animated := decode(data)
 		release()
 		c.mu.Lock()
 		e.loadedAt = time.Now()

@@ -25,6 +25,8 @@ import (
 // and "reorder" moves a chat up the list (these two have no closing row),
 // "hover" moves the pointer onto the -at point and then away, and "typing"
 // shows someone typing, then their message replacing the bubble.
+// "privacy" turns privacy mode on and off, and "privacyhover" points at
+// the -at point with privacy mode on, then away.
 func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) (*image.RGBA, error) {
 	const frames = 6
 	b := mock.New()
@@ -97,6 +99,13 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 		vote(1)
 	case "hover":
 		point(x, y)
+	case "privacy":
+		u.SetPrivacy(true)
+	case "privacyhover":
+		// Privacy mode on, then the pointer onto the -at point.
+		u.SetPrivacy(true)
+		settle()
+		point(x, y)
 	case "info":
 		u.ShowInfo(0, 0)
 	case "message":
@@ -125,8 +134,10 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 		switch name {
 		case "vote":
 			vote(0) // the vote moves to another option
-		case "hover":
+		case "hover", "privacyhover":
 			point(w-2, h-2)
+		case "privacy":
+			u.SetPrivacy(false)
 		case "typing":
 			// They stop typing and their message comes right after,
 			// taking the bubble's place.

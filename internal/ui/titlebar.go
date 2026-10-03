@@ -28,6 +28,10 @@ func (u *UI) layoutTitleBar(gtx C) D {
 
 	btnW := gtx.Dp(46)
 	moveW := w - 3*btnW
+	privacyBtn := u.conn.State.LoggedIn()
+	if privacyBtn {
+		moveW -= btnW
+	}
 	gtx.Constraints = layout.Exact(image.Pt(moveW, h))
 	u.deco.LayoutMove(gtx, func(gtx C) D {
 		return vcenter(gtx, h, func(gtx C) D {
@@ -53,8 +57,15 @@ func (u *UI) layoutTitleBar(gtx C) D {
 		{system.ActionMaximize, u.glyphMaximize, false},
 		{system.ActionClose, glyphClose, true},
 	}
+	x := moveW
+	if privacyBtn {
+		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+		u.layoutPrivacyButton(gtx, btnW, h)
+		t.Pop()
+		x += btnW
+	}
 	for i, b := range buttons {
-		t := op.Offset(image.Pt(moveW+i*btnW, 0)).Push(gtx.Ops)
+		t := op.Offset(image.Pt(x+i*btnW, 0)).Push(gtx.Ops)
 		c := u.deco.Clickable(b.action)
 		u.captionButton(gtx, c, btnW, h, b.close, b.glyph)
 		t.Pop()

@@ -182,10 +182,14 @@ func viewOnceRing(gtx C, mid image.Point, r int, col color.NRGBA, one bool) {
 }
 
 // blockCapture keeps the window out of screenshots and screen recordings
-// while on is set (Windows), for a view once message being shown.
+// while on is set (Windows), for a view once message being shown or Hide
+// from screen sharing (privacy.go).
 func (u *UI) blockCapture(on bool) {
 	if on == u.captureBlocked {
 		return
+	}
+	if u.host != nil && u.host.win != nil && u.host.hwnd == 0 {
+		return // not known yet: the next frames try again
 	}
 	u.captureBlocked = on
 	if u.host != nil && u.host.hwnd != 0 {

@@ -499,6 +499,9 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, onSpan func(gtx C, idx int, d D), carets *[]styledtext.Caret) D {
 	st := styledtext.Text(u.th.Shaper, spans...)
 	st.LineHeight, st.LineHeightScale = 22, 1
+	if hide := u.secret; hide > 0 {
+		return u.layoutHiddenSpans(gtx, st, hide, onSpan, carets)
+	}
 	var all spanDeco
 	for _, d := range deco {
 		all |= d
@@ -544,6 +547,31 @@ func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, o
 	}
 	st.Carets = carets
 	return st.Layout(gtx, fn)
+}
+
+// layoutHiddenSpans is layoutSpans in privacy mode: a bar for each span's
+// text on each line, over the text faded by hide (none at 1). Color emoji
+// don't fade, but only show while the text is half shown.
+func (u *UI) layoutHiddenSpans(gtx C, st styledtext.TextStyle, hide float32, onSpan func(gtx C, idx int, d D), carets *[]styledtext.Caret) D {
+	spans := st.Styles
+	if hide >= 0.5 {
+		st.Hidden = true
+	} else {
+		st.Styles = slices.Clone(spans)
+		for i := range st.Styles {
+			st.Styles[i].Color = faded(st.Styles[i].Color, 1-hide)
+		}
+	}
+	st.Carets = carets
+	return st.Layout(gtx, func(gtx C, idx int, d D) {
+		// Spaces hold room (for the time, a leading icon): no bar.
+		if strings.TrimSpace(spans[idx].Content) != "" {
+			redactBar(gtx, d.Size.X, d.Baseline, gtx.Sp(spans[idx].Size), spans[idx].Color, hide)
+		}
+		if onSpan != nil {
+			onSpan(gtx, idx, d)
+		}
+	})
 }
 
 // addLinks adds the text s, its links with addLink.

@@ -93,7 +93,9 @@ func (u *UI) layoutCommunityEntry(gtx C, e communityEntry) D {
 			}, "New community", font.Normal)
 		})
 	case entryHeader:
-		return u.simpleRow(gtx, u.btn("community:"+e.community.ID), func(gtx C) D {
+		click := u.btn("community:" + e.community.ID)
+		defer u.hiding(gtx, "community:"+e.community.ID, click.Hovered())()
+		return u.simpleRow(gtx, click, func(gtx C) D {
 			return u.avatarOf(gtx, e.community.ID, avatarCommunity, 52)
 		}, e.community.Name, font.SemiBold)
 	case entryGroup:

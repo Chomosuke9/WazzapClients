@@ -313,6 +313,7 @@ const (
 	tagShow           // something shown on hover, like a chevron
 	tagAppear         // a new message sliding in
 	tagPop            // a reaction popping in
+	tagReveal         // something privacy mode hides, shown (privacy.go)
 )
 
 type animKey struct {

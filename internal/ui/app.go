@@ -173,6 +173,10 @@ type UI struct {
 	adminMention, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
 	// captureBlocked keeps the window out of screenshots (viewonce.go).
 	captureBlocked bool
+	// privacy is privacy mode (privacy.go), and secret how much of what
+	// is drawn now it hides, 0 to 1.
+	privacy privacyState
+	secret  float32
 	// grayCmds are the gray commands turned on, by name (extras.go).
 	grayCmds map[string]bool
 	// cmdsOpen shows the list of commands on the Extra features page.
@@ -330,6 +334,7 @@ func New(b model.Backend) *UI {
 	u.conv.list.ScrollToEnd = true
 	u.conv.composer.Submit = b == nil || prefOn(b, prefEnterSend)
 	u.loadExtras()
+	u.loadPrivacy()
 	u.conv.mentionList.Axis = layout.Vertical
 	u.hovered = make(map[string]bool)
 	return u
@@ -899,6 +904,7 @@ func (u *UI) update(gtx C) {
 		}
 	}
 	u.splitKeys(gtx)
+	u.updatePrivacy(gtx)
 	if u.conv.header.Clicked(gtx) && u.selected != nil && !isChannelID(u.selected.ID) {
 		if u.info.open {
 			u.info.open = false
@@ -1348,6 +1354,17 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	}
 	switch name {
+	case "privacy", "privacystatus", "privacycommunities":
+		// Privacy mode, on the chats, Status or Communities page.
+		switch name {
+		case "privacystatus":
+			u.setPage(pageStatus)
+		case "privacycommunities":
+			u.setPage(pageCommunities)
+		}
+		u.SetPrivacy(true)
+		u.privacy.fx.snap(true)
+		u.privacy.v = 1
 	case "menu", "accounts", "loginaccounts":
 		// The chat list's ⋮ menu, and its account switcher with a second
 		// demo account; or the switcher on the login screen of an account

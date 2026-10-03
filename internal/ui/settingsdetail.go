@@ -548,6 +548,7 @@ func (u *UI) privacySettings() []settingsSection {
 			note: "Start new chats with disappearing messages set to your timer."},
 		{title: "Groups", rows: []settingRow{link("groups", "Groups", whoLabel(a.Privacy[model.PrivacyGroups]))}},
 		{title: "Blocked contacts", rows: []settingRow{link("blocked", "Blocked contacts", blocked)}},
+		u.privacyModeSettings(),
 		{title: "Advanced", rows: []settingRow{{key: "linkpreviews", kind: setToggle,
 			on:    !prefOn(u.backend, prefLinkPreviews),
 			title: "Disable link previews",
@@ -718,6 +719,7 @@ func shortcutSettings(enterSend bool) []settingsSection {
 		{title: "Everywhere", rows: []settingRow{
 			k("Close a menu, dialog, panel or reply", "Esc"),
 			k("Show or hide the chat list", mod, "Shift", "L"),
+			k("Turn privacy mode on or off", mod, "Shift", "P"),
 			k("Zoom in", mod, "+"),
 			k("Zoom out", mod, "-"),
 			k("Reset zoom", mod, "0"),

@@ -91,6 +91,9 @@ type TextStyle struct {
 	// Carets, if set, receives the position of every cluster boundary,
 	// line by line from the top (left to right text only).
 	Carets *[]Caret
+	// Hidden lays the text out without painting it. spanFn still gets
+	// each span's place (privacy mode draws bars there).
+	Hidden bool
 
 	*text.Shaper
 }
@@ -306,7 +309,9 @@ func (t TextStyle) Layout(gtx layout.Context, spanFn func(gtx layout.Context, id
 				// Align the spans' baselines, not their tops, so a span
 				// in another font (monospace) doesn't sit higher.
 				shape.offset.Y = overallSize.Y + lineAscent - shape.ascent
-				span.Layout(gtx, shape)
+				if !t.Hidden {
+					span.Layout(gtx, shape)
+				}
 
 				if spanFn == nil {
 					continue

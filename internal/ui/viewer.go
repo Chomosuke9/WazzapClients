@@ -127,7 +127,7 @@ func (u *UI) showViewerAt(items []*model.Message, i int) {
 
 func (u *UI) layoutViewer(gtx C) {
 	v := &u.viewer
-	u.blockCapture(v.viewOnce && (v.open || v.anim.v > 0) && !u.viewOnceReplay)
+	u.blockCapture(u.privacy.noCapture || v.viewOnce && (v.open || v.anim.v > 0) && !u.viewOnceReplay)
 	if !v.open && v.anim.v == 0 {
 		return
 	}

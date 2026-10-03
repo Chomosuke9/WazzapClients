@@ -60,12 +60,23 @@ func (u *UI) drawAvatar(gtx C, id, name string, kind avatarKind, size unit.Dp) D
 	}
 	if id != "" {
 		b := u.backend
-		if e := u.images.get("a:"+id, avatarPx, func() []byte { return b.Avatar(id) }); e.state == imgReady {
+		load := func() []byte { return b.Avatar(id) }
+		var e *imgEntry
+		if u.blurred() {
+			e = u.images.getBlurred("a:"+id, load) // privacy mode
+		} else {
+			e = u.images.get("a:"+id, avatarPx, load)
+		}
+		if e.state == imgReady {
 			defer roundShape(px, px, radius).Push(gtx.Ops).Pop()
 			paintCover(gtx, e.op, e.size, r)
 			return dims
 		}
 	}
+	// Placeholders show no more than a color in privacy mode: the initial
+	// fades out instead of becoming a bar.
+	hide := u.secret
+	defer u.unhidden()()
 	mid := image.Pt(px/2, px/2)
 	switch kind {
 	case avatarChannel:
@@ -92,7 +103,9 @@ func (u *UI) drawAvatar(gtx C, id, name string, kind avatarKind, size unit.Dp) D
 	if initial := avatarInitial(name); initial != "" && len(p.AvatarBgs) > 0 {
 		i := avatarTint(id, name, len(p.AvatarBgs))
 		fillCircle(gtx, mid, px/2, p.AvatarBgs[i])
-		centerIn(gtx, px, u.label(unit.Sp(float32(size)*0.48), initial, p.AvatarFgs[i], labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+		if hide < 1 {
+			centerIn(gtx, px, u.label(unit.Sp(float32(size)*0.48), initial, faded(p.AvatarFgs[i], 1-hide), labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+		}
 		return dims
 	}
 	fillCircle(gtx, mid, px/2, p.UserAvatar)

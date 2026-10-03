@@ -193,6 +193,8 @@ Gotchas already found in the pinned version (v0.10.x):
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
+- `widget.Clickable.Layout` reads and drops the clicks nobody has asked about yet.
+  Check `Clicked` before laying the button out (the title bar's privacy button).
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -260,7 +262,11 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
                    settingsdetail.go; the window's zoom (Settings > General > Font size,
-                   Ctrl with +, - and 0, and the bubble that shows it) in scale.go
+                   Ctrl with +, - and 0, and the bubble that shows it) in scale.go; privacy
+                   mode (names and messages drawn as bars, pictures blurred, shown under
+                   the pointer; Ctrl+Shift+P, the title bar's eye and
+                   Settings > Privacy) in privacy.go: `u.hiding` sets `u.secret`, which
+                   `u.label`, `layoutSpans`, `drawAvatar` and `messageImage` read
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
@@ -430,13 +436,15 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, linkpreview, invite,
-# delete, select, edit, edits, mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, zoombubble, zoommenu; the Media panel:
+# delete, select, edit, edits, mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, zoombubble, zoommenu, privacy (also
+# privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and
-# closing (Esc) below. Also info, message, reorder, typing, ghost (on, then off), vote (in a poll: -ochat design,
+# closing (Esc) below. Also info, message, reorder, typing, ghost (on, then off), privacy (on, then off),
+# privacyhover (privacy mode on, the pointer at -at), vote (in a poll: -ochat design,
 # moving the vote below), and hover (the pointer at -at):
 go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 40ms -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):

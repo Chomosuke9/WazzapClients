@@ -230,6 +230,13 @@ func (n *notifier) notification(id string, c chatInfo, m *model.Message, count i
 	if img == nil {
 		img = defaultPicture(c.group)
 	}
+	if privacyNotice(n.b) {
+		// Privacy mode: not who, not what.
+		title, body, footer, img = appName, "New message", "", defaultPicture(false)
+		if count > 1 {
+			body = fmt.Sprintf("%d new messages", count)
+		}
+	}
 	return notify.Notification{
 		ID:     id,
 		Title:  plainText(title),
