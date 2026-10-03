@@ -697,8 +697,22 @@ func (b *Backend) handle(evt any) {
 		}
 		b.onStickerAppState(e)
 
-	case *events.PushName, *events.Contact, *events.BusinessName:
+	case *events.Contact:
 		b.names.clear()
+		if !e.FromFullSync { // a full sync re-titles every chat when it completes
+			b.retitle(e.JID)
+		}
+	case *events.LIDContact:
+		b.names.clear()
+		if !e.FromFullSync {
+			b.retitle(e.JID)
+		}
+	case *events.PushName:
+		b.names.clear()
+		b.retitle(e.JID)
+	case *events.BusinessName:
+		b.names.clear()
+		b.retitle(e.JID)
 	case *events.AppStateSyncError:
 		if errors.Is(e.Error, appstate.ErrMismatchingLTHash) {
 			b.requestAppStateRecovery(e.Name)
@@ -735,12 +749,27 @@ func (b *Backend) handle(evt any) {
 			_ = b.store.setName(ctx, jid, e.Name.Name)
 			b.emitChat(jid)
 		}
+		if e.Link != nil || e.Unlink != nil {
+			b.onCommunityLink(ctx, e)
+		}
 	case *events.JoinedGroup:
 		jid := e.JID.String()
 		_ = b.store.ensureChat(ctx, b.db, jid, true, e.Name)
-		_ = b.store.setField(ctx, jid, "last_ts", time.Now().Unix())
+		// Joining a community joins its parent group and its announcements
+		// too: without their place in it, both would list as plain groups.
+		_ = b.store.setGroupShape(ctx, &e.GroupInfo)
 		_ = b.store.setMembers(ctx, &e.GroupInfo)
+		if e.IsParent {
+			// A community's parent group isn't a chat.
+			b.emitAllChats()
+			b.emit(model.CommunitiesEvent{})
+			return
+		}
+		_ = b.store.setField(ctx, jid, "last_ts", time.Now().Unix())
 		b.emitChat(jid)
+		if !e.LinkedParentJID.IsEmpty() {
+			b.emit(model.CommunitiesEvent{})
+		}
 	}
 }
 
@@ -1211,6 +1240,33 @@ func (b *Backend) refreshChatNames() {
 		_ = b.store.setName(ctx, s, b.chatName(ctx, j))
 	}
 	b.emitAllChats()
+}
+
+// retitle stores a one-to-one chat's title again once j's saved, push or
+// business name changed. Group senders are named as they're shown, but a
+// chat's title is stored, and only a full app state sync redid them all.
+func (b *Backend) retitle(j types.JID) {
+	ctx := b.ctx
+	j = j.ToNonAD()
+	if j.Server != types.DefaultUserServer && j.Server != types.HiddenUserServer {
+		return
+	}
+	ids := []types.JID{j, b.canonical(ctx, j)}
+	if cli := b.client(); cli != nil {
+		if alt, err := cli.Store.GetAltJID(ctx, j); err == nil && !alt.IsEmpty() {
+			ids = append(ids, alt.ToNonAD())
+		}
+	}
+	seen := map[types.JID]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if b.store.rename(ctx, id.String(), b.chatName(ctx, id)) {
+			b.emitChat(id.String())
+		}
+	}
 }
 
 func (b *Backend) refreshGroupNames() {

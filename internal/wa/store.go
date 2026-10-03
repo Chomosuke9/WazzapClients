@@ -272,6 +272,16 @@ func (s *msgStore) setName(ctx context.Context, jid, name string) error {
 	return err
 }
 
+// rename sets a chat's stored name and reports whether it changed.
+func (s *msgStore) rename(ctx context.Context, jid, name string) bool {
+	r, err := s.db.ExecContext(ctx, `UPDATE wz_chats SET name = ? WHERE jid = ? AND name != ?`, name, jid, name)
+	if err != nil {
+		return false
+	}
+	n, _ := r.RowsAffected()
+	return n > 0
+}
+
 // chatMeta is the chat state carried by a history sync conversation.
 type chatMeta struct {
 	pinned, mutedUntil, lastTS int64

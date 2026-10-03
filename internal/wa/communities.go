@@ -6,6 +6,7 @@ import (
 
 	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/polymorfa/hypermeow/types/events"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -23,6 +24,21 @@ func (s *msgStore) setGroupShape(ctx context.Context, g *types.GroupInfo) error 
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_chats SET parent = ?, community = ?, announce_sub = ? WHERE jid = ?`,
 		parent, boolInt(g.IsParent), boolInt(g.IsDefaultSubGroup), jid)
 	return err
+}
+
+// onCommunityLink applies a group joining or leaving a community. The
+// notification comes to the community's parent group and names the group.
+func (b *Backend) onCommunityLink(ctx context.Context, e *events.GroupInfo) {
+	if l := e.Link; l != nil && l.Type == types.GroupLinkChangeTypeSub {
+		_, _ = b.db.ExecContext(ctx, `UPDATE wz_chats SET parent = ?, announce_sub = ? WHERE jid = ?`,
+			e.JID.String(), boolInt(l.Group.IsDefaultSubGroup), l.Group.JID.String())
+	}
+	if l := e.Unlink; l != nil && l.Type == types.GroupLinkChangeTypeSub {
+		_, _ = b.db.ExecContext(ctx, `UPDATE wz_chats SET parent = '', announce_sub = 0 WHERE jid = ? AND parent = ?`,
+			l.Group.JID.String(), e.JID.String())
+	}
+	b.emitAllChats()
+	b.emit(model.CommunitiesEvent{})
 }
 
 func (s *msgStore) isCommunity(ctx context.Context, jid string) bool {
