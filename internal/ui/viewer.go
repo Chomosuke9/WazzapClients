@@ -5,11 +5,12 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/widget"
 
@@ -24,8 +25,9 @@ type mediaViewer struct {
 	zp    zoomPan
 	strip widget.List
 
-	anim   tween       // opening and closing
-	origin image.Point // where it was opened, which the picture zooms out of
+	anim       tween           // opening and closing
+	origin     image.Rectangle // clicked thumbnail in content coordinates
+	originClip image.Rectangle // portion visible inside its scrolling list
 	// What is shown glides to zoom, pan and the current thumbnail.
 	stripX follower // the thumbnail strip sliding to the current one
 
@@ -57,10 +59,49 @@ func (u *UI) openViewer(m *model.Message) {
 		u.forgetViewerImage(u.viewer.msgID) // still fading out
 	}
 	u.stopVideo()
-	u.viewer = mediaViewer{open: true, msgID: m.ID, origin: u.mouse, video: videoView{muted: u.viewer.video.muted}}
+	u.viewer = mediaViewer{open: true, msgID: m.ID, video: videoView{muted: u.viewer.video.muted}}
 	u.viewer.strip.Axis = layout.Horizontal
 	u.closePicker()
 	u.requestFocus(nil) // so arrow keys reach the viewer, not the composer
+}
+
+// viewerOrigin combines the press in content coordinates with the same
+// press in button coordinates. The click can be anywhere within the tile;
+// neither that point nor an assumed bubble width is the animation origin.
+func (u *UI) viewerOrigin(gtx C, cl *widget.Clickable, size image.Point) image.Rectangle {
+	u.updateMouse(gtx) // press and release may have arrived in the same frame
+	presses := cl.History()
+	if len(presses) == 0 {
+		return image.Rectangle{} // keyboard or programmatic opening
+	}
+	p := presses[len(presses)-1]
+	if p.Cancelled || !p.End.Equal(gtx.Now) {
+		return image.Rectangle{}
+	}
+	return image.Rectangle{Max: size}.Add(u.mousePress.Sub(p.Position))
+}
+
+// viewerViewport records the scrolling list's bounds at a pointer press.
+// Its pass-through handler doesn't interfere with the tile's click.
+type viewerViewport struct{ bounds image.Rectangle }
+
+func (vp *viewerViewport) track(gtx C, u *UI) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: vp, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonPrimary) {
+			u.updateMouse(gtx)
+			vp.bounds = image.Rectangle{Max: gtx.Constraints.Max}.Add(u.mousePress.Sub(e.Position.Round()))
+		}
+	}
+	if v := &u.viewer; v.open && v.anim.at.IsZero() && !v.origin.Empty() && !vp.bounds.Empty() {
+		v.originClip = v.origin.Intersect(vp.bounds)
+	}
+	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, vp)
 }
 
 // openViewerOn opens the viewer on m among items, which can be from any
@@ -122,6 +163,8 @@ func (u *UI) showViewerAt(items []*model.Message, i int) {
 	u.forgetViewerImage(u.viewer.msgID)
 	u.stopVideo()
 	u.viewer.msgID = items[i].ID
+	u.viewer.origin = image.Rectangle{} // a different picture has no matching source tile
+	u.viewer.originClip = image.Rectangle{}
 	u.viewer.zp.reset()
 }
 
@@ -205,7 +248,7 @@ func (u *UI) layoutViewer(gtx C) {
 		}
 	}
 	m, idx = u.viewerMsg(items)
-	a := v.anim.step(gtx, v.open, durDialog)
+	a := v.anim.step(gtx, v.open, durSlide)
 	if a == 0 && !v.open {
 		u.forgetViewerImage(v.msgID)
 		return
@@ -298,8 +341,11 @@ func (u *UI) layoutViewer(gtx C) {
 	}
 	lower.Pop()
 	area := image.Rect(gtx.Dp(140), gtx.Dp(74), sz.X-gtx.Dp(140), bottom)
-	if shown := u.layoutViewerImage(gtx, m, area); isVideo(m) && v.open {
-		u.layoutVideoControls(gtx, m, shown)
+	shown := u.layoutViewerImage(gtx, m, area, e)
+	if !shown.Empty() {
+		if isVideo(m) && v.open {
+			withOpacity(gtx, e, func() { u.layoutVideoControls(gtx, m, shown) })
+		}
 	}
 
 	// Previous and next.
@@ -362,7 +408,7 @@ func (u *UI) senderLabel(m *model.Message) (name, id string, group bool) {
 // layoutViewerImage draws the full picture (or the video) fitted into area,
 // zoomed and panned (see zoomPan), and returns where it shows. Clicking a
 // video plays or pauses it.
-func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) image.Rectangle {
+func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle, progress float32) image.Rectangle {
 	v := &u.viewer
 	if area.Dx() <= 0 || area.Dy() <= 0 {
 		return image.Rectangle{}
@@ -410,25 +456,25 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) im
 		w := min(area.Dx(), area.Dy()*3/4)
 		dst = image.Rect(0, 0, w, w*4/3).Add(area.Min.Add(image.Pt((area.Dx()-w)/2, (area.Dy()-w*4/3)/2)))
 	}
-	// Opening grows the picture out of where it was clicked, from about the
-	// size of a bubble's picture; closing shrinks it back.
-	if e := easeOut(v.anim.v); e < 1 && dst.Dx() > 0 {
-		c1 := pointF(dst.Min.Add(dst.Size().Div(2)))
-		c := pointF(v.origin).Add(c1.Sub(pointF(v.origin)).Mul(e))
-		s := lerp(min(1, float32(gtx.Dp(330))/float32(dst.Dx())), 1, e)
-		defer pushFx(gtx, 1, f32.AffineId().Scale(c1, f32.Pt(s, s)).Offset(c.Sub(c1))).Pop()
+	// Grow the actual thumbnail's rectangle into the fitted picture. Cover
+	// the changing box, revealing the thumbnail's crop without stretching.
+	// Keep clips in content coordinates so they don't travel under a scale.
+	if progress < 1 {
+		origin := v.origin
+		if origin.Empty() {
+			inset := dst.Size().Div(8)
+			origin = image.Rectangle{Min: dst.Min.Add(inset), Max: dst.Max.Sub(inset)}
+		}
+		dst = viewerRect(origin, dst, progress)
+		originClip := v.originClip
+		if originClip.Empty() {
+			originClip = origin
+		}
+		area = viewerRect(originClip, area, progress)
 	}
 	defer clip.Rect(area).Push(gtx.Ops).Pop()
 	if ready {
-		func() {
-			defer clip.Rect(dst.Intersect(area)).Push(gtx.Ops).Pop()
-			s := f32.Pt(float32(dst.Dx())/float32(img.size.X), float32(dst.Dy())/float32(img.size.Y))
-			defer op.Affine(f32.AffineId().Scale(f32.Point{}, s).Offset(pointF(dst.Min))).Push(gtx.Ops).Pop()
-			io := img.op
-			io.Filter = paint.FilterLinear
-			io.Add(gtx.Ops)
-			paint.PaintOp{}.Add(gtx.Ops)
-		}()
+		paintCover(gtx, img.op, img.size, dst)
 	} else {
 		pic := *m
 		pic.Media = model.MediaImage // without the bubble's play button; the viewer draws its own
@@ -438,6 +484,14 @@ func (u *UI) layoutViewerImage(gtx C, m *model.Message, area image.Rectangle) im
 		u.layoutVideoCenter(gtx, m, dst.Min.Add(dst.Size().Div(2)))
 	}
 	return dst.Intersect(area)
+}
+
+// viewerRect interpolates edges, including negative offscreen coordinates.
+func viewerRect(from, to image.Rectangle, progress float32) image.Rectangle {
+	return image.Rectangle{
+		Min: pointF(from.Min).Mul(1 - progress).Add(pointF(to.Min).Mul(progress)).Round(),
+		Max: pointF(from.Max).Mul(1 - progress).Add(pointF(to.Max).Mul(progress)).Round(),
+	}
 }
 
 // layoutViewerStrip draws the row of thumbnails, centered on the current one.

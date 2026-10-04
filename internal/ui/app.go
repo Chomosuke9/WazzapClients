@@ -134,16 +134,18 @@ type UI struct {
 	split      splitState // the list column's width, or hidden (split.go)
 
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
-	ctx       ctxMenu
-	dialog    dialogState
-	picker    emojiPicker
-	viewer    mediaViewer
-	toastMsg  toastState
-	mouse     image.Point // last pointer position, in content coordinates
-	mouseTag  struct{}
-	mouseDown bool            // the primary button is down
-	hovered   map[string]bool // see hoverArea
-	lastPress struct {        // for double clicks, see pressArea
+	ctx                     ctxMenu
+	dialog                  dialogState
+	picker                  emojiPicker
+	viewer                  mediaViewer
+	toastMsg                toastState
+	mouse                   image.Point // last pointer position, in content coordinates
+	mousePress              image.Point // primary press, for locating a clicked thumbnail
+	mediaChat, mediaGallery viewerViewport
+	mouseTag                struct{}
+	mouseDown               bool            // the primary button is down
+	hovered                 map[string]bool // see hoverArea
+	lastPress               struct {        // for double clicks, see pressArea
 		key string
 		at  time.Duration
 	}

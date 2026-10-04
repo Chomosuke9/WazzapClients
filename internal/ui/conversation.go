@@ -387,6 +387,7 @@ func growRow(gtx C, from int, e float32, w layout.Widget) D {
 }
 
 func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
+	defer u.mediaChat.track(gtx, u)
 	u.pageMessages(c)
 	rows := u.rows(c)
 	// The typing bubble grows in and shrinks away like a message, instead
@@ -987,10 +988,10 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		textInset = gtx.Dp(6)
 	}
 
-	if u.btn("vo:" + m.ID).Clicked(gtx) { // before the card lays the button out
-		u.openViewOnce(m)
-		voCard = m.Kind == model.KindViewOnce && !m.Opened
-	}
+	// Read the click before the card lays out its button, but open only
+	// after measuring it so the viewer can grow from the clicked bounds.
+	voButton := u.btn("vo:" + m.ID)
+	voClicked := voButton.Clicked(gtx)
 	const textSize = unit.Sp(15.7)
 	text := m.Text
 	italic := false
@@ -1156,14 +1157,26 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if voc.size.X > 0 && voc.size.X < contentW {
 		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, contentW, meta.size, bg, secondary) })
 	}
+	if voClicked {
+		size := voc.size
+		if size == (image.Point{}) {
+			// Replay opens from the compact "Opened" label instead.
+			size = image.Pt(contentW-2*textInset, body.size.Y)
+		}
+		u.openViewOnce(m)
+		if u.viewer.open && u.viewer.viewOnce && u.viewer.msgID == m.ID && u.viewer.anim.at.IsZero() {
+			u.viewer.origin = u.viewerOrigin(gtx, voButton, size)
+		}
+	}
 	if link.size.X > 0 && link.size.X < contentW {
 		link = record(cgtx, func(gtx C) D { return u.layoutLinkCard(gtx, m, contentW, 7, quoteBg, textCol, secondary) })
 	}
 	if u.btn("quote:"+m.ID).Clicked(gtx) && m.Quote != nil && m.Quote.ID != "" {
 		u.jumpTo(m.Quote.ID)
 	}
-	if u.btn("img:" + m.ID).Clicked(gtx) {
+	if cl := u.btn("img:" + m.ID); cl.Clicked(gtx) {
 		u.openViewer(m)
+		u.viewer.origin = u.viewerOrigin(gtx, cl, image.Pt(imgW, imgH))
 	}
 
 	// Place everything, then paint the bubble behind it.

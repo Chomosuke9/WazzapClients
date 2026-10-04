@@ -24,6 +24,13 @@ import (
 // menus can open where the user clicked. It is registered on top of
 // everything and lets events pass through.
 func (u *UI) trackMouse(gtx C) {
+	u.updateMouse(gtx)
+	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, &u.mouseTag)
+}
+
+func (u *UI) updateMouse(gtx C) {
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &u.mouseTag, Kinds: pointer.Move | pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
 		if !ok {
@@ -35,6 +42,9 @@ func (u *UI) trackMouse(gtx C) {
 			}
 			switch e.Kind {
 			case pointer.Press:
+				if e.Buttons.Contain(pointer.ButtonPrimary) {
+					u.mousePress = u.mouse
+				}
 				u.mouseDown = u.mouseDown || e.Buttons.Contain(pointer.ButtonPrimary)
 			case pointer.Release, pointer.Cancel:
 				u.mouseDown = false
@@ -47,9 +57,6 @@ func (u *UI) trackMouse(gtx C) {
 			}
 		}
 	}
-	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-	event.Op(gtx.Ops, &u.mouseTag)
 }
 
 // rightClick reports a secondary-button press on an area of size sz at the

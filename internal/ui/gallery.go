@@ -388,6 +388,7 @@ func (u *UI) galleryHeader(gtx C) D {
 // galleryBody lists the tab's messages: a grid of pictures, or rows of
 // documents or links.
 func (u *UI) galleryBody(gtx C) D {
+	defer u.mediaGallery.track(gtx, u)
 	g := &u.gallery
 	p := u.pal
 	l := &g.list
@@ -461,6 +462,9 @@ func (u *UI) galleryTile(gtx C, m *model.Message) D {
 	c := u.btn("gal:m:" + galleryKey(m))
 	if c.Clicked(gtx) {
 		u.galleryClick(m)
+		if !g.selecting {
+			u.viewer.origin = u.viewerOrigin(gtx, c, sz)
+		}
 	}
 	return clickable(gtx, c, func(gtx C) D {
 		r := image.Rectangle{Max: sz}

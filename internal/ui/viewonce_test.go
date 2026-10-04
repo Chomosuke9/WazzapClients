@@ -1,10 +1,80 @@
 package ui
 
 import (
+	"image"
 	"testing"
+	"time"
+
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
+
+func TestViewOnceAnimationOrigin(t *testing.T) {
+	for _, media := range []model.Media{model.MediaImage, model.MediaVideo} {
+		for _, replay := range []bool{false, true} {
+			st := newSlashTest(t, "rina")
+			m := st.viewOnceMsg()
+			m.Media, m.Opened = media, replay
+			st.u.viewOnceReplay = replay
+			origin := image.Pt(400, 170)
+			var size image.Point
+			frame := func() {
+				st.ops.Reset()
+				gtx := layout.Context{Ops: &st.ops, Now: st.now, Source: st.r.Source(),
+					Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(1100, 700))}
+				off := op.Offset(origin).Push(&st.ops)
+				bg := gtx
+				bg.Constraints = layout.Constraints{Max: image.Pt(400, 700)}
+				size = st.u.layoutBubble(bg, st.u.selected, m, false, 400).Size
+				off.Pop()
+				st.u.mediaChat.track(gtx, st.u)
+				st.u.layoutViewer(gtx)
+				st.u.trackMouse(gtx)
+				st.r.Frame(&st.ops)
+				st.now = st.now.Add(16 * time.Millisecond)
+			}
+			frame()
+			padMin, padMax := image.Pt(3, 3), image.Pt(3, 3)
+			if replay {
+				padMin, padMax = image.Pt(9, 6), image.Pt(8, 8)
+			}
+			want := image.Rectangle{Min: origin.Add(padMin), Max: origin.Add(size).Sub(padMax)}
+			pos := pointF(want.Min.Add(image.Pt(8, 8)))
+			st.r.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Position: pos, Buttons: pointer.ButtonPrimary},
+				pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos})
+			frame()
+			v := &st.u.viewer
+			if !v.open || !v.viewOnce || v.origin != want {
+				t.Fatalf("media %v replay %v: open=%v viewOnce=%v origin=%v, want %v", media, replay, v.open, v.viewOnce, v.origin, want)
+			}
+			frame()
+			if v.anim.v <= 0 || v.anim.v >= 1 || st.u.captureBlocked == replay {
+				t.Fatalf("media %v replay %v: progress=%v capture blocked=%v", media, replay, v.anim.v, st.u.captureBlocked)
+			}
+			for range 20 {
+				frame()
+			}
+			if v.anim.v != 1 {
+				t.Fatal("view once animation did not settle")
+			}
+			st.u.closeViewer()
+			frame()
+			if st.u.captureBlocked == replay {
+				t.Fatal("capture protection changed before the closing animation finished")
+			}
+			for range 20 {
+				frame()
+			}
+			if v.anim.v != 0 || st.u.captureBlocked {
+				t.Fatal("view once did not finish closing")
+			}
+		}
+	}
+}
 
 // viewOnceMsg returns the open chat's view once message.
 func (st *slashTest) viewOnceMsg() *model.Message {

@@ -237,8 +237,9 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(gridW, 1<<20)}
 	tiles := albumTiles(len(ms), gridW, gtx.Dp(3))
 	for i := range tiles {
-		if u.btn("img:" + ms[i].ID).Clicked(gtx) {
+		if cl := u.btn("img:" + ms[i].ID); cl.Clicked(gtx) {
 			u.openViewer(ms[i])
+			u.viewer.origin = u.viewerOrigin(gtx, cl, tiles[i].Size())
 		}
 	}
 	if u.btn("quote:"+m0.ID).Clicked(gtx) && m0.Quote != nil && m0.Quote.ID != "" {

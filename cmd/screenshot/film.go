@@ -27,6 +27,7 @@ import (
 // shows someone typing, then their message replacing the bubble.
 // "privacy" turns privacy mode on and off, and "privacyhover" points at
 // the -at point with privacy mode on, then away.
+// "viewer-click" clicks the thumbnail at -at to include its real origin.
 func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) (*image.RGBA, error) {
 	const frames = 6
 	b := mock.New()
@@ -95,6 +96,11 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 	}
 	settle()
 	switch name {
+	case "viewer-click":
+		point(x, y)
+		pos := f32.Pt(float32(x), float32(y))
+		router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Position: pos, Buttons: pointer.ButtonPrimary},
+			pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos})
 	case "vote":
 		vote(1)
 	case "hover":
