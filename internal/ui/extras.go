@@ -100,6 +100,28 @@ func (u *UI) extraToggle(key, title, sub string, flag *bool, changed func()) set
 	}}
 }
 
+// grayToggle asks for an acknowledgment before enabling a gray feature.
+// Disabling it is immediate, and each new activation asks again.
+func (u *UI) grayToggle(key, title, sub string, flag *bool, changed func()) settingRow {
+	r := u.extraToggle(key, title, sub, flag, changed)
+	toggle, on := r.run, r.on
+	r.run = func() {
+		if on {
+			toggle()
+			return
+		}
+		u.confirm("Enable "+title+"?", sub+"\n\n"+
+			"This is an ethically gray feature. It may go against other people's privacy expectations, "+
+			"and they may feel uncomfortable or offended when you use it. Please respect their choices and decide wisely.",
+			dialogButton{label: "Enable feature", primary: true, run: func() {
+				toggle()
+				u.settings.stale = true // the switch changes after the dialog, not the row's click
+			}})
+		u.dialog.agreement = "I understand this feature is ethically gray and may affect other people's privacy. I agree to use it responsibly."
+	}
+	return r
+}
+
 // extrasSettings is the Extra features page. The ethically gray ones have
 // a page of their own (graySettings).
 func (u *UI) extrasSettings() []settingsSection {
@@ -159,12 +181,12 @@ func (u *UI) extrasSettings() []settingsSection {
 // see or do what the people you talk to wouldn't expect.
 func (u *UI) graySettings() []settingsSection {
 	secs := []settingsSection{{title: "Messages", rows: []settingRow{
-		u.extraToggle(prefEditHistory, "Edit history", "See what an edited message said before: right-click it and pick Edit history",
+		u.grayToggle(prefEditHistory, "Edit history", "See what an edited message said before: right-click it and pick Edit history",
 			&u.editHistory, nil),
-		u.extraToggle(model.PrefKeepDeleted, "Keep deleted messages",
+		u.grayToggle(model.PrefKeepDeleted, "Keep deleted messages",
 			"When someone deletes a message for everyone or a status, keep showing it, marked Deleted",
 			&u.keepDeleted, nil),
-		u.extraToggle(model.PrefViewOnceReplay, "Replay view once",
+		u.grayToggle(model.PrefViewOnceReplay, "Replay view once",
 			"Open view once photos, videos and voice messages as often as you like, and take screenshots of them",
 			&u.viewOnceReplay, nil),
 	}, note: "These let you see or do what the people you talk to wouldn't expect, so use them with care. " +
@@ -175,7 +197,7 @@ func (u *UI) graySettings() []settingsSection {
 			continue
 		}
 		flag := u.grayCmds[c.Name]
-		cmds.rows = append(cmds.rows, u.extraToggle(grayCmdPref(c.Name), "/"+c.Name, c.Description, &flag, func() {
+		cmds.rows = append(cmds.rows, u.grayToggle(grayCmdPref(c.Name), "/"+c.Name, c.Description, &flag, func() {
 			u.grayCmds[c.Name] = flag
 			u.slash.cacheOK = false // the picker offers it, or stops
 			u.conv.richFor = ""

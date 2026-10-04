@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/io/semantic"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -29,11 +30,12 @@ const (
 )
 
 type dialogButton struct {
-	label   string
-	primary bool // filled green
-	danger  bool // filled red
-	flat    bool // green text alone, without the outline
-	run     func()
+	label    string
+	primary  bool // filled green
+	danger   bool // filled red
+	flat     bool // green text alone, without the outline
+	disabled bool
+	run      func()
 }
 
 // dialogState is the open modal: a confirmation or the forward picker.
@@ -46,6 +48,10 @@ type dialogState struct {
 	scrim   widget.Clickable
 	closing bool // fading out
 	anim    tween
+
+	// Optional acknowledgment: primary actions wait until it is checked.
+	agreement string
+	agreed    bool
 
 	// Forward picker, which also picks contacts to share, or the chats to
 	// share one contact with.
@@ -195,8 +201,12 @@ func (u *UI) layoutDialog(gtx C) {
 func (u *UI) confirmPanel(gtx C) D {
 	d := &u.dialog
 	p := u.pal
+	if d.agreement != "" && d.isOpen() && u.btn("dialog:agreement").Clicked(gtx) {
+		d.agreed = !d.agreed
+	}
 	for i, bt := range d.buttons {
-		if u.btn("dialog:" + itoa(i+1)).Clicked(gtx) {
+		blocked := bt.disabled || (d.agreement != "" && bt.primary && !d.agreed)
+		if u.btn("dialog:"+itoa(i+1)).Clicked(gtx) && d.isOpen() && !blocked {
 			u.closeDialog() // and keep drawing it as it fades
 			if bt.run != nil {
 				bt.run()
@@ -227,12 +237,18 @@ func (u *UI) confirmPanel(gtx C) D {
 					return l.Layout(gtx)
 				}))
 		}
+		if d.agreement != "" {
+			children = append(children,
+				layout.Rigid(layout.Spacer{Height: 18}.Layout),
+				layout.Rigid(u.dialogAgreement))
+		}
 		children = append(children, layout.Rigid(layout.Spacer{Height: 26}.Layout))
 		// Buttons: stacked when there are three (delete), in a row otherwise.
 		stack := len(d.buttons) > 2
 		var btns []layout.FlexChild
 		for i, bt := range d.buttons {
 			i, bt := i, bt
+			bt.disabled = bt.disabled || (d.agreement != "" && bt.primary && !d.agreed)
 			if i > 0 {
 				if stack {
 					btns = append(btns, layout.Rigid(layout.Spacer{Height: 10}.Layout))
@@ -265,21 +281,51 @@ func (u *UI) confirmPanel(gtx C) D {
 	})
 }
 
+func (u *UI) dialogAgreement(gtx C) D {
+	d, p := &u.dialog, u.pal
+	return clickable(gtx, u.btn("dialog:agreement"), func(gtx C) D {
+		semantic.CheckBox.Add(gtx.Ops)
+		semantic.SelectedOp(d.agreed).Add(gtx.Ops)
+		semantic.LabelOp(d.agreement).Add(gtx.Ops)
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		box, col := icCheckBoxEmpty, p.TextSecondary
+		if d.agreed {
+			box, col = icCheckBox, p.Green
+		}
+		return layout.Flex{Alignment: layout.Start}.Layout(gtx,
+			layout.Rigid(iconW(box, 24, col)),
+			layout.Rigid(layout.Spacer{Width: 12}.Layout),
+			layout.Flexed(1, func(gtx C) D {
+				l := u.label(14.5, d.agreement, p.Text)
+				l.MaxLines = 0
+				return l.Layout(gtx)
+			}),
+		)
+	})
+}
+
 // dialogButton is a pill button: green or red when it's the action,
 // outlined otherwise.
 func (u *UI) dialogButton(gtx C, key string, bt dialogButton) D {
 	p := u.pal
 	c := u.btn(key)
+	if bt.disabled {
+		gtx = gtx.Disabled()
+	}
 	return clickable(gtx, c, func(gtx C) D {
 		gtx.Constraints.Min = image.Point{}
 		fg, bg, border := p.Green, p.Dialog, p.PopupBorder
 		switch {
+		case bt.disabled:
+			fg, bg, border = p.TextSecondary, p.PopupBorder, p.PopupBorder
 		case bt.danger:
 			fg, bg, border = p.OnGreen, p.Danger, p.Danger
 		case bt.primary:
 			fg, bg, border = p.OnGreen, p.Green, p.Green
 		}
-		bg = mix(bg, p.Text, 0.08*u.hover(gtx, c))
+		if !bt.disabled {
+			bg = mix(bg, p.Text, 0.08*u.hover(gtx, c))
+		}
 		if bt.flat {
 			border = bg
 		}

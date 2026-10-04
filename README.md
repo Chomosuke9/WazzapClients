@@ -139,6 +139,10 @@ meant you to see. Each has its own switch:
 - 👁️ **Replay view once** opens view once messages as often as you like, screenshots allowed.
 - 👻 **`/ghost`** and ✏️ **Edit history**, above.
 
+Turning one on opens a warning about privacy expectations. You must check the acknowledgment
+and choose **Enable feature** before it is activated. Turning it off is immediate; turning it
+back on asks again.
+
 <details>
 <summary><b>All the slash commands</b></summary>
 

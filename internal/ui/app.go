@@ -1350,6 +1350,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", a mention
 // in /schedule's message "slashschedule", the notes of commands run "slashrun", or ghost mode
 // turned on with /ghost "ghost".
+// "graywarning" opens the acknowledgment for Keep deleted messages.
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
 	u.applyEvents()
@@ -1446,6 +1447,15 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "delete":
 		if lastOut != nil {
 			u.confirmDelete([]*model.Message{lastOut})
+		}
+	case "graywarning":
+		u.ShowPage("gray")
+		for _, sec := range u.graySettings() {
+			for _, row := range sec.rows {
+				if row.key == model.PrefKeepDeleted && !row.on {
+					row.run()
+				}
+			}
 		}
 	case "edit":
 		if lastOut != nil {
