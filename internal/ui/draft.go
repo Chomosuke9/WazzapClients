@@ -31,6 +31,7 @@ func (d *chatDraft) empty() bool {
 // stashDraft puts the open chat's composer aside as its draft and leaves
 // the composer empty.
 func (u *UI) stashDraft() {
+	u.stopOutgoingTyping()
 	c := u.selected
 	if c == nil {
 		return

@@ -1013,6 +1013,9 @@ type Backend interface {
 	PinnedMessage(chatID string) *Message
 	// Open is called when the user opens a chat: mark it read, subscribe to presence.
 	Open(chatID string)
+	// ReportTyping reports composer activity. Empty chatID stops it; backends
+	// expire activity after a short idle period and throttle network updates.
+	ReportTyping(chatID string)
 	// MarkRead marks chats read in the background ("Mark all as read").
 	MarkRead(chatIDs []string)
 	// Send queues a text message and returns it in its pending state.

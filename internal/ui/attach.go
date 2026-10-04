@@ -601,6 +601,7 @@ func removeTemps(files []*attachFile) {
 // caption; the first one carries the reply. Two or more photos and videos
 // go as an album.
 func (u *UI) sendAttachments() {
+	u.stopOutgoingTyping()
 	a := &u.attach
 	u.finishTyping()
 	if f := a.current(); f != nil {

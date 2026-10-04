@@ -169,6 +169,7 @@ func (u *UI) sendComposer() {
 		u.submitSlash(sp)
 		return
 	}
+	u.stopOutgoingTyping()
 	if u.conv.edit.msg != nil {
 		u.finishEdit()
 		return

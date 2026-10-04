@@ -422,12 +422,16 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 	u := h.u
 	switch e := e.(type) {
 	case app.DestroyEvent:
+		u.stopOutgoingTyping()
 		return true, e.Err
 	case app.ConfigEvent:
 		u.deco.Maximized = e.Config.Mode == app.Maximized
 		if f := e.Config.Focused && e.Config.Mode != app.Minimized; f != h.focused {
 			h.focused = f
 			u.away = !f
+			if !f {
+				u.stopOutgoingTyping()
+			}
 			if f {
 				h.away.Stop()
 			} else {

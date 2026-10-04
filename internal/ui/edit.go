@@ -45,6 +45,7 @@ func (u *UI) startEdit(m *model.Message) {
 
 // finishEdit saves the edit, if the text changed.
 func (u *UI) finishEdit() {
+	u.stopOutgoingTyping()
 	e := &u.conv.edit
 	txt := trimSpace(u.conv.composer.Text())
 	if txt == "" && e.msg.Media == model.MediaNone {

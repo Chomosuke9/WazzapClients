@@ -39,6 +39,7 @@ func (u *UI) SetGhost(on bool) { u.setGhost(on) }
 func (u *UI) setGhost(on bool) {
 	setExtra(u.backend, model.PrefGhost, on)
 	if on {
+		u.stopOutgoingTyping()
 		u.endSelect()
 		u.closePicker()
 		return

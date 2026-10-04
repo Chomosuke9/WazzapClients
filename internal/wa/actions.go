@@ -855,6 +855,9 @@ func (b *Backend) Pref(key string) string { return b.store.meta(b.ctx, "pref:"+k
 func (b *Backend) SetPref(key, value string) {
 	_ = b.store.setMetaValue(b.ctx, "pref:"+key, value)
 	if key == model.PrefGhost {
+		if value == "on" {
+			b.ReportTyping("")
+		}
 		if cli := b.client(); cli != nil && cli.IsConnected() {
 			go b.sendPresence(cli)
 		}

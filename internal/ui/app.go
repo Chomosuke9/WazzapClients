@@ -274,6 +274,8 @@ type UI struct {
 		reactions    map[string]string // reaction shown per message, to pop new ones
 		expanded     map[string]int    // "Read more" clicks per message
 
+		outgoingTyping string // chat receiving our typing presence
+
 		// The formatting toolbar over a selection in the composer.
 		fmtAnim    tween
 		fmtAt      image.Point // the selection's top center, in the editor
@@ -460,6 +462,7 @@ func (u *UI) ShowContact(id string, first, offset int) {
 }
 
 func (u *UI) setPage(pg page) {
+	u.stopOutgoingTyping()
 	if u.page == pg && (pg != pageStatus || u.status.groupID == "") {
 		return
 	}
@@ -967,16 +970,25 @@ func (u *UI) update(gtx C) {
 	u.slashKeys(gtx)
 	u.mentionKeys(gtx)
 	for {
+		before := u.conv.composer.Text()
 		ev, ok := u.conv.composer.Update(gtx)
 		if !ok {
 			break
 		}
-		if _, ok := ev.(widget.SubmitEvent); ok {
+		switch ev.(type) {
+		case widget.ChangeEvent:
+			if u.conv.composer.Text() != before {
+				u.reportComposerTyping()
+			}
+		case widget.SubmitEvent:
 			u.sendComposer()
 		}
 	}
 	if u.conv.send.Clicked(gtx) {
 		u.sendComposer()
+	}
+	if u.conv.outgoingTyping != "" && !u.canReportTyping() {
+		u.stopOutgoingTyping()
 	}
 }
 

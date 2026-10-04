@@ -44,8 +44,9 @@ type Backend struct {
 	store     msgStore
 	container *sqlstore.Container
 
-	cliMu sync.Mutex
-	cli   *whatsmeow.Client
+	cliMu  sync.Mutex
+	cli    *whatsmeow.Client
+	typing outgoingTyping
 
 	pairMu     sync.Mutex
 	pairCancel context.CancelFunc // stops the running pair's QR loop
@@ -104,6 +105,7 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 		infoFetched: make(map[string]bool),
 	}
 	b.ctx, b.cancel = context.WithCancel(context.Background())
+	b.typing.wake = make(chan struct{}, 1)
 
 	dsn := "file:" + filepath.ToSlash(filepath.Join(dataDir, "wazzap.db")) +
 		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)"
@@ -167,6 +169,7 @@ func (b *Backend) Start(notify func()) {
 	b.mu.Unlock()
 	b.dropPendingStatuses(b.ctx)
 	go b.run()
+	go b.typing.run(b.ctx, b.sendTyping)
 	// WhatsApp rate-limits profile picture queries, so space them out.
 	go b.avatars.run(b.ctx, 250*time.Millisecond)
 	go b.downloads.run(b.ctx, 50*time.Millisecond)
