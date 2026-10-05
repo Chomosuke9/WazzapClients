@@ -379,10 +379,11 @@ func (b *Backend) snippetMention(chat string, reply *model.Message, vars map[str
 		j := b.senderOf(reply)
 		return "@" + j.User, j.String(), ""
 	}
-	user, _, _ := strings.Cut(chat, "@")
+	// The text names the whole JID, as @admin does: "@123@g.us". With only
+	// the user part, WhatsApp shows the number instead of the subject.
 	subject = vars["chat"]
 	if subject == "" {
-		subject = user
+		subject, _, _ = strings.Cut(chat, "@")
 	}
-	return "@" + user, "", subject
+	return "@" + chat, "", subject
 }

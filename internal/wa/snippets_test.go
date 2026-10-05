@@ -273,7 +273,7 @@ func TestSnippetMention(t *testing.T) {
 			t.Fatal(err)
 		}
 		r, _ = b.store.message(b.ctx, "123@g.us", m.ID)
-		if !strings.HasPrefix(r.Text, "Hi @123") || r.mentions != groupMention("123@g.us", "Work") {
+		if !strings.HasPrefix(r.Text, "Hi @123@g.us") || r.mentions != groupMention("123@g.us", "Work") {
 			t.Fatalf("no reply: %q %v", r.Text, r.mentions)
 		}
 		if got := b.replaceMentions(b.ctx, "123@g.us", "@123@g.us", r.mentions); strings.ContainsRune(got, rune(model.MentionAdmins)) {
