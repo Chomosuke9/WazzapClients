@@ -64,7 +64,7 @@ func New() *Backend {
 		}
 		c := model.Chat{
 			ID: d.ID, Name: d.Name, IsGroup: d.IsGroup, Pinned: d.Pinned, Favorite: d.Favorite,
-			Muted: d.Muted, Archived: d.Archived, Self: d.Self, Unread: d.Unread, Mentioned: d.Mentioned, Presence: d.Presence, Typing: d.Typing,
+			Muted: d.Muted, Archived: d.Archived, Self: d.Self, Unread: d.Unread, Mentioned: d.Mentioned, Presence: d.Presence, Typing: demoTypists(d.Typing),
 		}
 		if n := len(d.Messages); n > 0 {
 			c.Last = d.Messages[n-1]
@@ -116,9 +116,21 @@ func (b *Backend) Start(notify func()) {
 func (b *Backend) ReportTyping(chatID string) {}
 
 // SetTyping shows who as typing in chat, or stops it (for filming the
-// typing bubble).
+// typing bubble). An empty who stops everyone.
 func (b *Backend) SetTyping(chat, who string, on bool) {
-	b.emit(model.TypingEvent{ChatID: chat, Who: who, WhoID: who, Typing: on})
+	b.emit(model.TypingEvent{ChatID: chat, Who: who, WhoID: strings.ToLower(who), Typing: on})
+}
+
+// demoTypists is who a demo chat shows typing: names separated by ", ",
+// each with the ID its messages use (the name in lower case).
+func demoTypists(names string) []model.Typist {
+	var ts []model.Typist
+	for n := range strings.SplitSeq(names, ", ") {
+		if n != "" {
+			ts = append(ts, model.Typist{Name: n, ID: strings.ToLower(n)})
+		}
+	}
+	return ts
 }
 
 func (b *Backend) emit(e model.Event) {

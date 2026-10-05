@@ -25,6 +25,8 @@ import (
 // and "reorder" moves a chat up the list (these two have no closing row),
 // "hover" moves the pointer onto the -at point and then away, and "typing"
 // shows someone typing, then their message replacing the bubble.
+// "typists" shows a second person typing in a group (-ochat work), then
+// the first stopping.
 // "privacy" turns privacy mode on and off, and "privacyhover" points at
 // the -at point with privacy mode on, then away.
 // "viewer-click" clicks the thumbnail at -at to include its real origin.
@@ -125,6 +127,11 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 		}
 	case "typing":
 		b.SetTyping(chat, "Clara", true)
+	case "typists":
+		// In a group, Bima starts typing too.
+		b.SetTyping(chat, "Clara", true)
+		settle()
+		b.SetTyping(chat, "Bima", true)
 	case "ghost":
 		u.SetGhost(true)
 	default:
@@ -149,6 +156,9 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 			// taking the bubble's place.
 			b.SetTyping(chat, "", false)
 			b.Receive(chat, "Clara", "Sure, sending it now")
+		case "typists":
+			// Clara stops, and Bima's avatar slides over into her place.
+			b.SetTyping(chat, "Clara", false)
 		case "ghost":
 			u.SetGhost(false)
 		default:

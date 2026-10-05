@@ -224,11 +224,8 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 				if cm != nil {
 					sub = "Announcements"
 				}
-				if c.Typing != "" {
-					sub = "typing…"
-					if c.IsGroup {
-						sub = shortName(c.Typing) + " is typing…"
-					}
+				if t := typingText(c); t != "" {
+					sub = t
 				}
 				if sub == "" {
 					sub = "click here for contact info"
@@ -392,13 +389,14 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	rows := u.rows(c)
 	// The typing bubble grows in and shrinks away like a message, instead
 	// of popping in and out. Opening a chat shows it as it is.
-	typing := c.Typing != "" && !u.conv.newerMore
+	typing := len(c.Typing) > 0 && !u.conv.newerMore
 	if u.conv.typingFor != c.ID {
 		u.conv.typingFor = c.ID
 		u.conv.typingAnim.snap(typing)
+		u.conv.typists = u.conv.typists[:0]
 	}
 	if typing {
-		u.conv.typingWho = [2]string{c.Typing, c.TypingID}
+		u.syncTypists(c.Typing, u.conv.typingAnim.v == 0)
 	}
 	// WhatsApp often says they stopped typing just before their message
 	// arrives. Keep the bubble a moment, so the message can take its place
@@ -532,12 +530,18 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 }
 
 // layoutTyping draws the bubble with three bouncing dots that shows
-// someone is typing, with their avatar in groups. v is how far it has
-// grown in: the bubble pops up from its bottom corner as it does.
+// someone is typing, with the avatars of everyone typing in groups. v is
+// how far it has grown in: the bubble pops up from its bottom corner as it
+// does.
 func (u *UI) layoutTyping(gtx C, group bool, margin int, v float32) D {
 	p := u.pal
 	w, h := gtx.Dp(58), gtx.Dp(34)
 	defer pushFx(gtx, 1, scaleAt(image.Pt(0, h), lerp(0.6, 1, easeOutBack(v)))).Pop()
+	bx := 0
+	if group {
+		bx = u.layoutTypists(gtx, -min(gtx.Dp(40), margin))
+	}
+	defer op.Offset(image.Pt(bx, 0)).Push(gtx.Ops).Pop()
 	u.paintBubble(gtx, w, h, p.BubbleIn, false, true)
 	// Each dot rises and falls in turn, then all rest: a wave.
 	const period, step, rise = 1300 * time.Millisecond, 160 * time.Millisecond, 520 * time.Millisecond
@@ -558,11 +562,6 @@ func (u *UI) layoutTyping(gtx C, group bool, margin int, v float32) D {
 			y = int(amp * float32(math.Sin(math.Pi*float64(ph)/float64(rise))))
 		}
 		fillCircle(gtx, image.Pt(x0+r+i*(2*r+gap), h/2-y), r, p.MetaIn)
-	}
-	if group {
-		t := op.Offset(image.Pt(-min(gtx.Dp(40), margin), 0)).Push(gtx.Ops)
-		u.avatar(gtx, u.conv.typingWho[1], u.conv.typingWho[0], false, 29)
-		t.Pop()
 	}
 	return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
 }

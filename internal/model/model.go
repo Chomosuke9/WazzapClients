@@ -3,6 +3,7 @@
 package model
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -318,9 +319,36 @@ type Chat struct {
 	Mentioned bool
 	Time      time.Time // last activity, used for ordering
 	Last      *Message
-	Typing    string // who is typing; empty when nobody is
-	TypingID  string // in groups, the ID of who is typing
-	Presence  string // header subtitle, e.g. "online"
+	Typing    []Typist // who is typing, first to start first; empty when nobody is
+	Presence  string   // header subtitle, e.g. "online"
+}
+
+// Typist is someone typing in a chat.
+type Typist struct {
+	Name string
+	ID   string // in groups, their ID
+}
+
+// SetTyping adds who to the chat's typists, or takes them off. Stopping
+// with no name or ID stops everyone.
+func (c *Chat) SetTyping(who Typist, on bool) {
+	if !on && who == (Typist{}) {
+		c.Typing = nil
+		return
+	}
+	i := slices.IndexFunc(c.Typing, func(t Typist) bool { return t.ID == who.ID && (who.ID != "" || t.Name == who.Name) })
+	switch {
+	case on && i < 0:
+		c.Typing = append(slices.Clip(c.Typing), who)
+	case on:
+		c.Typing = slices.Clone(c.Typing)
+		c.Typing[i] = who // their name may have resolved since
+	case i >= 0:
+		c.Typing = slices.Delete(slices.Clone(c.Typing), i, i+1)
+	}
+	if len(c.Typing) == 0 {
+		c.Typing = nil
+	}
 }
 
 // Message text shows a resolved @mention as "\u2068@Name\u2069" (Unicode

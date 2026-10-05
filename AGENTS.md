@@ -449,7 +449,8 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and
-# closing (Esc) below. Also info, message, reorder, typing, ghost (on, then off), privacy (on, then off),
+# closing (Esc) below. Also info, message, reorder, typing, typists (a second person
+# typing in a group, then the first stopping: -ochat work), ghost (on, then off), privacy (on, then off),
 # privacyhover (privacy mode on, the pointer at -at), vote (in a poll: -ochat design,
 # moving the vote below), and hover (the pointer at -at):
 go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 40ms -out /tmp/shots

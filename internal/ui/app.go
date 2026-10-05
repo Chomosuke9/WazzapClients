@@ -268,7 +268,7 @@ type UI struct {
 		link         composerLink      // the preview of a link being typed
 		typingAnim   tween             // the typing bubble growing in and out
 		typingFor    string            // chat typingAnim belongs to
-		typingWho    [2]string         // who is typing (name, ID), kept while it fades out
+		typists      []typistAnim      // whose avatars the bubble shows, kept while it fades out
 		typingSeen   time.Time         // last frame someone was typing, for typingGrace
 		typingH      int               // the typing row's height last frame, 0 if not drawn
 		takeover     string            // new message growing from the typing bubble's room
@@ -1116,10 +1116,7 @@ func (u *UI) applyEvents() {
 			u.msgInfoReceipt(e)
 		case model.TypingEvent:
 			if c := u.chatByID(e.ChatID); c != nil {
-				c.Typing, c.TypingID = "", ""
-				if e.Typing {
-					c.Typing, c.TypingID = e.Who, e.WhoID
-				}
+				c.SetTyping(model.Typist{Name: e.Who, ID: e.WhoID}, e.Typing)
 			}
 		case model.PresenceEvent:
 			if c := u.chatByID(e.ChatID); c != nil {
@@ -1206,8 +1203,8 @@ func (u *UI) chatByID(id string) *model.Chat {
 
 // keepLive copies UI-only live fields (typing, presence) from the old copy.
 func keepLive(dst, src *model.Chat) {
-	if dst.Typing == "" {
-		dst.Typing, dst.TypingID = src.Typing, src.TypingID
+	if dst.Typing == nil {
+		dst.Typing = src.Typing
 	}
 	if dst.Presence == "" {
 		dst.Presence = src.Presence
@@ -1272,7 +1269,12 @@ func (u *UI) upsertMessage(m *model.Message) {
 			c.Time = m.Time
 		}
 		if !m.FromMe {
-			c.Typing, c.TypingID = "", ""
+			// They stopped typing to send it; others in a group go on.
+			who := model.Typist{}
+			if c.IsGroup && m.SenderID != "" {
+				who.ID = m.SenderID
+			}
+			c.SetTyping(who, false)
 		}
 		u.sortChats()
 		u.sidebar.order.pending = true
