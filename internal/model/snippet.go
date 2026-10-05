@@ -38,7 +38,7 @@ type SnippetBackend interface {
 var SnippetVars = []struct{ Name, Description string }{
 	{"name", "who you're writing to: the contact, or in a group the author of the message you reply to (else the group)"},
 	{"first", "the first word of {name}"},
-	{"mention", "@mentions the author of the message you reply to; without a reply, the chat by its name, notifying no one"},
+	{"mention", "@mentions the author of the message you reply to; without a reply, the contact, or a group by its name, notifying no one"},
 	{"chat", "the chat's name"},
 	{"me", "your name"},
 	{"quote", "the text of the message you reply to"},

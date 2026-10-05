@@ -372,11 +372,17 @@ func (b *Backend) SendSnippet(chat string, id int64, reply *model.Message, vars 
 }
 
 // snippetMention is what a snippet's {mention} writes, and whom it
-// mentions: the author of reply (jid), or without a reply the chat
-// itself, by its name (subject), like @admin but notifying no one.
+// mentions: the author of reply (jid), or without a reply the other
+// person in a one-to-one chat (jid), or a group itself, by its name
+// (subject), like @admin but notifying no one.
 func (b *Backend) snippetMention(chat string, reply *model.Message, vars map[string]string) (text, jid, subject string) {
 	if reply != nil {
 		j := b.senderOf(reply)
+		return "@" + j.User, j.String(), ""
+	}
+	if j, err := types.ParseJID(chat); err == nil && j.Server != types.GroupServer {
+		// A one-to-one chat mentions the person, by the user part only: a
+		// group mention there shows "@123@lid" on other devices.
 		return "@" + j.User, j.String(), ""
 	}
 	// The text names the whole JID, as @admin does: "@123@g.us". With only

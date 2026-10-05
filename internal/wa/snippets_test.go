@@ -291,3 +291,13 @@ func TestSnippetMention(t *testing.T) {
 		}
 	}
 }
+
+// In a one-to-one chat {mention} mentions the person by the user part:
+// "@789@lid" as a group mention shows the whole JID on other devices.
+func TestSnippetMentionDirect(t *testing.T) {
+	b := testBackend(t)
+	text, jid, subject := b.snippetMention("789@lid", nil, map[string]string{"chat": "Ann"})
+	if text != "@789" || jid != "789@lid" || subject != "" {
+		t.Fatalf("got %q %q %q", text, jid, subject)
+	}
+}
