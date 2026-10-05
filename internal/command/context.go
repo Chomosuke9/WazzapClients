@@ -56,6 +56,15 @@ type Host interface {
 	Draft(text string) model.Draft
 	// SetGhost turns ghost mode (model.PrefGhost) on or off.
 	SetGhost(on bool)
+	// SnippetVars are the values of a snippet's {variables} sent in chat
+	// as a reply to reply (nil for none).
+	SnippetVars(chatID string, reply *model.Message) map[string]string
+	// SnippetsChanged drops what the UI knows of the saved snippets.
+	SnippetsChanged()
+	// EditSnippet opens a snippet in Settings > Snippets.
+	EditSnippet(id int64)
+	// ShowPayload shows a message's payload (/catch).
+	ShowPayload(chatID, messageID string)
 }
 
 // Context is everything a running command may use.

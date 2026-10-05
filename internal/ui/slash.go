@@ -18,6 +18,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/command"
 	"github.com/chomosuke9/wazzapclients/internal/filepick"
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
 // Slash commands, like Discord's: typing "/" at the start of a message
@@ -37,6 +38,12 @@ type slashState struct {
 	cacheKey slashKey
 	cacheOK  bool
 	contacts []*model.Contact // for Contact options, read when first needed
+	// snippets are the saved snippets /snippet offers, loaded when first
+	// needed (snippetsOK) and dropped when they change (snippetsChanged).
+	snippets     []model.Snippet
+	snippetsOK   bool
+	snippetsLoad *bool // the load on its way, if any
+	snippetsVer  int
 
 	sel       int    // the highlighted row, or -1
 	selFor    string // the query sel belongs to; a new one resets it
@@ -76,6 +83,7 @@ type slashKey struct {
 	chat     string
 	info     *model.ChatInfo
 	contacts int
+	snippets int
 }
 
 // slashPick is what the picker shows for the composer's text.
@@ -92,9 +100,10 @@ type slashPick struct {
 
 // slashValue is a value the picker offers for an option: a member or
 // contact (id is set) or a choice. Picking it types name; its row shows
-// title (or name) over sub.
+// title (or name) over sub, after the person's picture or ic.
 type slashValue struct {
 	id, name, title, sub string
+	ic                   *icon.Icon
 }
 
 // rows is how many rows the picker offers to pick from.
@@ -123,7 +132,7 @@ func (u *UI) slashQuery() *slashPick {
 	if c.IsGroup {
 		info = u.chatMembers(c.ID)
 	}
-	k := slashKey{txt, caret, len(u.conv.mentions), c.ID, info, len(s.contacts)}
+	k := slashKey{txt, caret, len(u.conv.mentions), c.ID, info, len(s.contacts), s.snippetsVer}
 	if s.cacheOK && s.cacheKey == k {
 		return s.cache
 	}
@@ -219,6 +228,10 @@ func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInf
 				add(slashValue{id: ct.ID, name: ct.Name, sub: ct.Phone}, personScore(q, ct.Phone, ct.Name))
 			}
 		}
+	case command.Snippet:
+		if in.Text("action") == "send" {
+			sp.vals = u.snippetValues(in.Word)
+		}
 	case command.Choice, command.When:
 		for _, ch := range o.Choices {
 			if strings.HasPrefix(ch, strings.ToLower(q)) {
@@ -251,6 +264,10 @@ func (u *UI) slashEnterPicks(sp *slashPick) bool {
 	in := &sp.in
 	if in.Naming || u.slash.navigated {
 		return true
+	}
+	if sp.opt != nil && sp.opt.Kind == command.Snippet {
+		// Unless a snippet's whole name is typed.
+		return !u.snippetTyped(in.Text(sp.opt.Name))
 	}
 	if in.Word != "" {
 		// Unless the value is complete already.
@@ -510,6 +527,13 @@ func (h slashHost) Draft(text string) model.Draft { return h.u.draftWith(text, h
 
 func (h slashHost) SetGhost(on bool) { h.u.setGhost(on) }
 
+func (h slashHost) SnippetVars(chat string, reply *model.Message) map[string]string {
+	return h.u.snippetVars(chat, reply)
+}
+func (h slashHost) SnippetsChanged()            { h.u.snippetsChanged() }
+func (h slashHost) EditSnippet(id int64)        { h.u.openSnippetSettings(id) }
+func (h slashHost) ShowPayload(chat, id string) { h.u.openPayload(chat, id) }
+
 // slashTakesMentions reports whether the composer may offer @mentions:
 // unless its text is a command, or while the caret is in a command's
 // text that takes them (Option.Mentions).
@@ -690,7 +714,7 @@ func (u *UI) layoutSlashValue(gtx C, v slashValue, h int) D {
 	return vcenter(gtx, h, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
-			if v.id == "" {
+			if v.id == "" && v.ic == nil {
 				return u.label(16, v.name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
 			}
 			title := v.title
@@ -698,7 +722,13 @@ func (u *UI) layoutSlashValue(gtx C, v slashValue, h int) D {
 				title = v.name
 			}
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx C) D { return u.avatar(gtx, v.id, v.name, false, 36) }),
+				layout.Rigid(func(gtx C) D {
+					if v.ic != nil {
+						gtx.Constraints.Min = image.Pt(gtx.Dp(36), gtx.Dp(36))
+						return layout.Center.Layout(gtx, iconW(v.ic, 24, p.Icon))
+					}
+					return u.avatar(gtx, v.id, v.name, false, 36)
+				}),
 				layout.Rigid(layout.Spacer{Width: 14}.Layout),
 				layout.Flexed(1, func(gtx C) D {
 					if v.sub == "" {

@@ -99,7 +99,7 @@ func (b *Backend) Edit(m *model.Message, d model.Draft) {
 		return
 	}
 	now := time.Now()
-	if err := b.store.editText(ctx, m.ChatID, m.ID, d.Text, sm.mentions, now); err != nil {
+	if err := b.store.editText(ctx, m.ChatID, m.ID, d.Text, sm.mentions, now, marshal(content)); err != nil {
 		b.log.Errorf("store edit of %s: %v", m.ID, err)
 	}
 	b.emitMessage(m.ChatID, m.ID)

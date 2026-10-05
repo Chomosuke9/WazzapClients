@@ -13,10 +13,11 @@ import (
 )
 
 type settingsState struct {
-	search widget.Editor
-	list   widget.List
-	items  [len(settingsItems)]widget.Clickable
-	photo  widget.Clickable // your picture, which opens Profile
+	snippets *snippetSettings
+	search   widget.Editor
+	list     widget.List
+	items    [len(settingsItems)]widget.Clickable
+	photo    widget.Clickable // your picture, which opens Profile
 
 	// detail is the open category (an index of settingsItems) plus one,
 	// or 0 while the list shows. sub is a page inside it ("" for the
@@ -53,6 +54,7 @@ var settingsItems = [...]listItem{
 	{ic: icBell, title: "Notifications", sub: "Messages, groups, sounds"},
 	{ic: icKeyboard, title: "Keyboard shortcuts", sub: "Quick actions"},
 	{ic: icExtension, title: "Extra features", sub: "Slash commands and more, not in WhatsApp"},
+	{ic: icDocument, title: "Snippets", sub: "Saved messages and payloads"},
 	{ic: icHelp, title: "Help and feedback", sub: "Help centre, contact us, privacy policy"},
 	{ic: icLogout, title: "Log out", danger: true},
 }
@@ -66,6 +68,7 @@ const (
 	settingNotifications
 	settingShortcuts
 	settingExtras // this app's own features (extras.go)
+	settingSnippets
 	settingHelp
 	settingLogout
 )

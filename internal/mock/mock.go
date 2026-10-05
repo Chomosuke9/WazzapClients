@@ -14,17 +14,20 @@ import (
 
 // Backend serves demo data. It never touches the network.
 type Backend struct {
-	mu     sync.Mutex
-	chats  []*model.Chat
-	msgs   map[string][]*model.Message
-	events []model.Event
-	notify func()
-	now    func() time.Time
-	meName string
-	prefs  map[string]string
-	lists  []*model.ChatList
-	favs   map[string]bool // favourite stickers, by message
-	acc    *model.Account  // see demoAccount
+	snippets   map[int64]model.Snippet
+	snippetSeq int64
+	snippetSrc map[int64]*model.Message // see snippets.go
+	mu         sync.Mutex
+	chats      []*model.Chat
+	msgs       map[string][]*model.Message
+	events     []model.Event
+	notify     func()
+	now        func() time.Time
+	meName     string
+	prefs      map[string]string
+	lists      []*model.ChatList
+	favs       map[string]bool // favourite stickers, by message
+	acc        *model.Account  // see demoAccount
 	// media holds the pictures of stickers sent with SendNewSticker, by
 	// chat and message ID.
 	media      map[string][]byte

@@ -177,10 +177,11 @@ var migrations = []string{
 	`ALTER TABLE wz_status ADD COLUMN group_jid TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_status ADD COLUMN duration INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_status ADD COLUMN file_type TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wz_messages ADD COLUMN raw_payload BLOB`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, schema+stickerSchema+votesSchema); err != nil {
+	if _, err := s.db.ExecContext(ctx, schema+stickerSchema+votesSchema+snippetSchema); err != nil {
 		return err
 	}
 	for _, m := range migrations {
@@ -241,7 +242,7 @@ func (s *msgStore) migrateLegacyMedia(ctx context.Context) error {
 func (s *msgStore) wipe(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats; DELETE FROM wz_meta;
 		DELETE FROM wz_status; DELETE FROM wz_channels; DELETE FROM wz_lists; DELETE FROM wz_list_chats; DELETE FROM wz_stickers;
-		DELETE FROM wz_edits; DELETE FROM wz_votes;`)
+		DELETE FROM wz_edits; DELETE FROM wz_votes; DELETE FROM wz_snippets;`)
 	return err
 }
 
@@ -332,6 +333,7 @@ type storedMsg struct {
 	quoteID    string
 	mentions   []string
 	mediaBlob  []byte // marshaled waE2E media message
+	rawPayload []byte // complete waE2E message, loaded only for catch/snippets
 	buttons    *buttonsInfo
 	// quoteMedia is the quoted photo, video or voice message, when the
 	// quote carries what downloading it takes (see fillViewOnce).
@@ -347,8 +349,8 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 	_, err := x.ExecContext(ctx, `
 		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, duration, text,
 			receipt, quote_sender, quote_text, quote_media, quote_id, mentions, forwarded, thumb, media_blob, buttons, file,
-			album, link, extra)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		album, link, extra, raw_payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
 			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
 			duration = excluded.duration,
@@ -364,11 +366,13 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 			-- An event's edits (a new date, canceling it) stay.
 			extra = COALESCE(NULLIF(wz_messages.extra, ''), excluded.extra),
 			thumb = COALESCE(excluded.thumb, wz_messages.thumb),
-			media_blob = COALESCE(excluded.media_blob, wz_messages.media_blob)`,
+			media_blob = COALESCE(excluded.media_blob, wz_messages.media_blob),
+			raw_payload = CASE WHEN wz_messages.kind = ? OR wz_messages.edited != 0 THEN wz_messages.raw_payload
+				ELSE COALESCE(wz_messages.raw_payload, excluded.raw_payload) END`,
 		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
 		m.Duration, m.Text, int(m.Receipt), m.quoteJID, qt, qm, m.quoteID, strings.Join(m.mentions, ","),
 		boolInt(m.Forwarded), m.Thumb, m.mediaBlob, m.buttons.marshal(), fileOf(m.Message).marshal(), m.Album,
-		marshalLink(m.Link), extraOf(m.Message).marshal())
+		marshalLink(m.Link), extraOf(m.Message).marshal(), m.rawPayload, int(model.KindDeleted))
 	if err != nil {
 		return err
 	}
@@ -427,7 +431,7 @@ func (s *msgStore) setReaction(ctx context.Context, chat, id, emoji string) erro
 func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?3, media = 0, text = '', thumb = NULL, media_blob = NULL,
 		quote_sender = '', quote_text = '', quote_media = 0, quote_id = '', pinned = 0, buttons = '', file = '', edited = 0,
-			extra = '', revoked = 0
+			extra = '', revoked = 0, raw_payload = NULL
 		WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2`, chat, id, int(model.KindDeleted))
@@ -445,7 +449,7 @@ func (s *msgStore) markRevoked(ctx context.Context, chat, id string, at time.Tim
 // editText replaces a message's text and mentions with an edit made at
 // at, and keeps the text it had among its versions. An edit older than
 // the last one (history arriving late) only joins the versions.
-func (s *msgStore) editText(ctx context.Context, chat, id, text string, mentions []string, at time.Time) error {
+func (s *msgStore) editText(ctx context.Context, chat, id, text string, mentions []string, at time.Time, payload ...[]byte) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -479,8 +483,12 @@ func (s *msgStore) editText(ctx context.Context, chat, id, text string, mentions
 		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO wz_edits (chat, id, ts, text, mentions) VALUES (?, ?, ?, ?, ?)`,
 			chat, id, since, curText, curMentions)
 		if err == nil {
-			_, err = tx.ExecContext(ctx, `UPDATE wz_messages SET text = ?, mentions = ?, edited = ? WHERE chat = ? AND id = ?`,
-				text, ment, ms, chat, id)
+			var raw []byte
+			if len(payload) > 0 {
+				raw = payload[0]
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE wz_messages SET text = ?, mentions = ?, edited = ?, raw_payload = ? WHERE chat = ? AND id = ?`,
+				text, ment, ms, raw, chat, id)
 		}
 	}
 	if err != nil {

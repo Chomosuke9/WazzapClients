@@ -356,6 +356,10 @@ type Draft struct {
 	// MentionAdmins means Text contains "@<group JID>", shown as "@admin";
 	// Mentions then lists the group's admins.
 	MentionAdmins bool
+	// MentionChat, when set, means Text contains "@<chat JID>", shown as
+	// "@" + MentionChat (a snippet's {mention} without a reply). It
+	// notifies no one.
+	MentionChat string
 	// Link is the preview of a link in Text to send with it, or nil, and
 	// LinkThumb its picture (a small JPEG).
 	Link      *LinkPreview
@@ -994,6 +998,7 @@ const PrefViewOnceReplay = "view_once_replay"
 // Backends queue events and call the notify function passed to Start; the UI
 // then drains them with Poll on its next frame.
 type Backend interface {
+	SnippetBackend
 	Start(notify func())
 	Poll() []Event
 	Chats() []*Chat

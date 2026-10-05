@@ -468,6 +468,10 @@ func (u *UI) setPage(pg page) {
 	if u.page == pg && (pg != pageStatus || u.status.groupID == "") {
 		return
 	}
+	if u.page == pageSettings && pg != pageSettings {
+		u.settings.snippets = nil
+		u.settings.page = nil
+	}
 	// Leaving a page counts as having seen it, as does opening it.
 	for _, p := range []page{u.page, pg} {
 		switch p {
@@ -1338,7 +1342,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "linkpreview" (a link's preview
+// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
 // first poll's or event's votes), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
@@ -1370,6 +1374,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	}
 	switch name {
+	case "snippet", "snippets", "snippetedit", "catch":
+		u.showSnippetPreview(name)
 	case "privacy", "privacystatus", "privacycommunities":
 		// Privacy mode, on the chats, Status or Communities page.
 		switch name {
@@ -1437,6 +1443,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "reply":
 		if lastIn != nil {
 			u.startReply(lastIn)
+		}
+	case "replyphoto":
+		// A reply to the newest photo someone sent: its thumbnail.
+		for i := len(u.msgs) - 1; i >= 0; i-- {
+			if m := u.msgs[i]; !m.FromMe && m.Kind == model.KindImage {
+				u.startReply(m)
+				break
+			}
 		}
 	case "linkpreview":
 		const link = "https://villakayu.example/ubud"

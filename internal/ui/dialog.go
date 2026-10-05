@@ -24,9 +24,10 @@ const (
 	dialogConfirm
 	dialogForward
 	dialogPoll
-	dialogInvite // a group's invite link (invite.go)
-	dialogTheme  // a chat's theme (chatmenu.go); title is the chat's ID
-	dialogEdits  // an edited message's earlier texts (edit.go)
+	dialogInvite  // a group's invite link (invite.go)
+	dialogTheme   // a chat's theme (chatmenu.go); title is the chat's ID
+	dialogEdits   // an edited message's earlier texts (edit.go)
+	dialogPayload // a message's payload (/catch, snippets.go)
 )
 
 type dialogButton struct {
@@ -43,7 +44,8 @@ type dialogState struct {
 	kind    dialogKind
 	title   string
 	body    string
-	bodyFn  func() string // a body that can change while it's open, instead of body
+	snippet *snippetDialog // dialogPayload's
+	bodyFn  func() string  // a body that can change while it's open, instead of body
 	buttons []dialogButton
 	scrim   widget.Clickable
 	closing bool // fading out
@@ -180,6 +182,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.themePanel)
 	case dialogEdits:
 		panel = record(gtx, u.editsPanel)
+	case dialogPayload:
+		panel = record(gtx, u.snippetPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

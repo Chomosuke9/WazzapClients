@@ -96,6 +96,7 @@ var settingsViews = map[string]struct {
 	"notifications": {settingNotifications, ""},
 	"shortcuts":     {settingShortcuts, ""},
 	"extras":        {settingExtras, ""},
+	"snippets":      {settingSnippets, ""},
 	"gray":          {settingExtras, "gray"},
 	"help":          {settingHelp, ""},
 }
@@ -109,6 +110,10 @@ func (u *UI) openSettings(k int) {
 	s.account = u.backend.Account()
 	s.detailList.Position = layout.Position{}
 	s.stale = true
+	s.snippets = nil
+	if k == settingSnippets {
+		u.loadSnippetSettings()
+	}
 }
 
 // openSettingsSub opens a page inside the open category.
@@ -133,6 +138,10 @@ func (u *UI) settingsRows() []settingsSection {
 // category to the list. Editing a profile field is cancelled first.
 func (u *UI) settingsBack() {
 	s := &u.settings
+	if s.detail == settingSnippets+1 && s.snippets != nil && s.snippets.editing {
+		u.loadSnippetSettings()
+		return
+	}
 	s.stale = true
 	switch {
 	case s.editing != 0:
@@ -140,6 +149,10 @@ func (u *UI) settingsBack() {
 	case s.sub != "":
 		u.openSettingsSub("")
 	default:
+		if s.detail == settingSnippets+1 {
+			s.snippets = nil
+			s.page = nil
+		}
 		s.detail = 0
 	}
 }
@@ -228,6 +241,8 @@ func (u *UI) settingsPage() []settingsSection {
 		return shortcutSettings(prefOn(b, prefEnterSend))
 	case settingExtras:
 		return u.extrasSettings()
+	case settingSnippets:
+		return u.snippetSettingsRows()
 	case settingHelp:
 		return u.helpSettings()
 	}
@@ -755,6 +770,17 @@ func (u *UI) helpSettings() []settingsSection {
 func (u *UI) layoutSettingsDetail(gtx C) D {
 	p := u.pal
 	s := &u.settings
+	if s.detail == settingSnippets+1 && s.snippets != nil && !s.snippets.editing {
+		for {
+			if _, ok := s.snippets.search.Update(gtx); !ok {
+				break
+			}
+		}
+		if q := s.snippets.search.Text(); q != s.snippets.query {
+			s.snippets.query = q
+			s.stale = true
+		}
+	}
 	if s.back.Clicked(gtx) {
 		u.settingsBack()
 		if s.detail == 0 {

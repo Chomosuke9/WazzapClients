@@ -238,7 +238,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    menu, file tray and poll dialog in attach.go; slash commands (their
                    picker over the composer and the notes only you see) in slash.go; scheduled
                    messages as bubbles after a chat's newest (send now, edit, cancel) and
-                   the AFK bar above the chat list in scheduled.go; and
+                   the AFK bar above the chat list in scheduled.go; saved messages (Settings >
+                   Snippets, the snippets /snippet send offers in the slash picker, their {variables}
+                   and /catch's payload dialog) in snippets.go; and
                    the Extra features settings page in extras.go (the app's own features,
                    such as slash commands, @admin, the Privacy mode toggle, Block screen
                    recording and Raw photos: each off until turned on), and
@@ -285,7 +287,10 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    polls, locations, contact cards and events (the extra column) and the
                    votes and event answers they get (wz_votes) in polls.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
-                   a group message's ticks wait for every member) in receipts.go
+                   a group message's ticks wait for every member) in receipts.go;
+                   snippets (wz_snippets, their media copied to snippet-media/) and each
+                   message's raw protobuf (raw_payload, for /catch) in snippets.go and
+                   snippetmedia.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
@@ -436,7 +441,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
-# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, linkpreview, invite,
+# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, replyphoto, linkpreview, invite,
 # delete, select, edit, edits, mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,

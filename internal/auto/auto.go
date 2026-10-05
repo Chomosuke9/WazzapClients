@@ -15,6 +15,7 @@ package auto
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -483,6 +484,17 @@ func (a *Backend) Send(chatID string, d model.Draft) *model.Message {
 	}
 	a.sent()
 	return a.Backend.Send(chatID, d)
+}
+
+func (a *Backend) SendSnippet(chatID string, id int64, reply *model.Message, vars map[string]string) (*model.Message, error) {
+	if a.refused() {
+		return nil, errors.New(GhostText)
+	}
+	m, err := a.Backend.SendSnippet(chatID, id, reply, vars)
+	if err == nil && m != nil {
+		a.sent()
+	}
+	return m, err
 }
 
 func (a *Backend) SendFile(chatID string, at model.Attachment, d model.Draft) *model.Message {

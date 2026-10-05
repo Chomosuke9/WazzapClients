@@ -339,6 +339,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 			p.target = sm.GetTargetMessageKey().GetID()
 			if e := dec.GetEventMessage(); e != nil {
 				p.event = eventContent(e).extra.Event
+				p.msg.rawPayload = marshal(dec)
 			}
 			return p, p.target != "" && p.event != nil
 		}
@@ -397,6 +398,11 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	p.msg.senderJID = evt.Info.Sender.ToNonAD().String()
 	p.msg.senderPush = evt.Info.PushName
 	p.msg.mediaBlob = c.blob
+	raw := evt.RawMessage
+	if raw == nil {
+		raw = evt.Message
+	}
+	p.msg.rawPayload = marshal(raw)
 	if !c.buttons.empty() {
 		p.msg.buttons = c.buttons
 		c.buttons.apply(msg)
@@ -427,6 +433,7 @@ func (p *parsed) setEdit(target string, m *waE2E.Message, at time.Time) bool {
 		return false
 	}
 	p.target, p.edited, p.edit, p.editMentions, p.editTime = target, true, c.text, mentionsOf(c.ctx), at
+	p.msg.rawPayload = marshal(m) // decrypted edit content, not the edit instruction
 	return true
 }
 

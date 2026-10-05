@@ -554,9 +554,13 @@ func (b *Backend) VotePoll(m *model.Message, options []int) {
 }
 
 // editEvent applies an edit of an event (a new date, or canceling it).
-func (s *msgStore) editEvent(ctx context.Context, chat, id string, e *eventDef) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET extra = ?, text = ? WHERE chat = ? AND id = ? AND media = ?`,
-		extraInfo{Event: e}.marshal(), e.Name, chat, id, int(model.MediaEventInvite))
+func (s *msgStore) editEvent(ctx context.Context, chat, id string, e *eventDef, payload ...[]byte) error {
+	var raw []byte
+	if len(payload) > 0 {
+		raw = payload[0]
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET extra = ?, text = ?, raw_payload = ? WHERE chat = ? AND id = ? AND media = ?`,
+		extraInfo{Event: e}.marshal(), e.Name, raw, chat, id, int(model.MediaEventInvite))
 	return err
 }
 

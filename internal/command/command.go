@@ -34,6 +34,9 @@ const (
 	// When is a time, as ParseWhen reads it: one word ("21:00", "2h")
 	// or a day and a time ("tomorrow 08:00"). Choices are suggestions.
 	When
+	// Snippet is a saved message, by name: the rest of the line, like
+	// Text. The UI offers the saved snippets as it's typed, after send.
+	Snippet
 )
 
 // Option is a value a command takes. Options are typed in order.
@@ -317,7 +320,7 @@ func (in *Input) assign(rs []rune, toks []token, mentions []Mention, members []m
 			continue
 		}
 		switch o.Kind {
-		case Text:
+		case Text, Snippet:
 			// The value runs to the end, or to the option's separator,
 			// though its text has no spaces around it.
 			stop := len(rs)

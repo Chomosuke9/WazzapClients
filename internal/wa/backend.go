@@ -34,11 +34,15 @@ import (
 
 // Backend implements model.Backend on top of a hypermeow client.
 type Backend struct {
-	dataDir string
-	ctx     context.Context
-	cancel  context.CancelFunc
-	log     waLog.Logger
-	logf    *os.File
+	snippetMu    sync.Mutex // snippet saves/cleanup, never held by the UI
+	snippetUseMu sync.Mutex // short reservation of media while a send is queued
+	snippetRefs  map[string]int
+	clock        func() time.Time
+	dataDir      string
+	ctx          context.Context
+	cancel       context.CancelFunc
+	log          waLog.Logger
+	logf         *os.File
 
 	db        *sql.DB
 	store     msgStore
@@ -78,6 +82,13 @@ type Backend struct {
 
 	accountMu      sync.Mutex  // guards the cached account details
 	accountFetched atomic.Bool // account details refreshed this session
+}
+
+func (b *Backend) now() time.Time {
+	if b.clock != nil {
+		return b.clock()
+	}
+	return time.Now()
 }
 
 var _ model.Backend = (*Backend)(nil)
@@ -352,9 +363,12 @@ func (b *Backend) Close() {
 func (b *Backend) resetSession() {
 	b.client().Disconnect()
 	history := b.Pref(model.PrefHistorySync) // the login screen still shows it
+	b.snippetMu.Lock()
 	if err := b.store.wipe(b.ctx); err != nil {
 		b.log.Errorf("wipe message store: %v", err)
 	}
+	b.cleanSnippetMedia()
+	b.snippetMu.Unlock()
 	b.SetPref(model.PrefHistorySync, history)
 	b.names.clear()
 	b.emit(model.ChatsEvent{})
@@ -919,7 +933,7 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 	case p.revoke:
 		b.revoke(ctx, chat, p)
 	case p.edited:
-		if err := b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime); err != nil {
+		if err := b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime, p.msg.rawPayload); err != nil {
 			b.log.Warnf("edit %s in %s: %v", p.target, chat, err)
 		}
 	case p.pin != 0:
@@ -934,7 +948,7 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 			b.log.Warnf("vote on %s in %s: %v", p.target, chat, err)
 		}
 	case p.event != nil:
-		if err := b.store.editEvent(ctx, chat, p.target, p.event); err != nil {
+		if err := b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload); err != nil {
 			b.log.Warnf("edit event %s in %s: %v", p.target, chat, err)
 		}
 	case p.target != "":
@@ -1240,13 +1254,13 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			case p.revoke:
 				b.revoke(ctx, chat, p)
 			case p.edited:
-				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime)
+				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime, p.msg.rawPayload)
 			case p.pin != 0:
 				_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
 			case p.vote != nil:
 				_ = b.store.putVote(ctx, b.db, chat, p.target, *p.vote)
 			case p.event != nil:
-				_ = b.store.editEvent(ctx, chat, p.target, p.event)
+				_ = b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload)
 			default:
 				_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
 			}

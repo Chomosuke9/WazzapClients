@@ -78,6 +78,8 @@ var commandIcons = map[string]*icon.Icon{
 	"scheduled":   icClock,
 	"afk":         icBedtime,
 	"ghost":       icVisibilityOff,
+	"snippet":     icDocument,
+	"catch":       icTerminal,
 }
 
 func commandIcon(name string) *icon.Icon {
@@ -256,6 +258,9 @@ func (u *UI) commandUsage(gtx C, c *command.Command, cur int, values [][]command
 			}
 			if filled && i != cur {
 				col = p.TextSecondary
+			}
+			if i == cur {
+				col = p.Text // readable on the green of the option being typed
 			}
 			m := record(gtx, func(gtx C) D {
 				return layout.Inset{Left: 7, Right: 7, Top: 1, Bottom: 2}.Layout(gtx,

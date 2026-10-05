@@ -102,6 +102,20 @@ var All = []*Command{
 		Name: "ghost", Description: "Goes invisible: no read receipts, shown offline, no sending, until you turn it off",
 		Gray: true, Run: runGhost,
 	},
+	{
+		Name: "snippet", Description: "Sends a saved message, or saves the message you reply to",
+		Options: []Option{
+			{Name: "action", Description: "send a saved message, or save the message you reply to",
+				Kind: Choice, Choices: []string{"send", "save"}, Required: true},
+			{Name: "snippet", Description: "the snippet to send, or the name to save it under (made up when empty)",
+				Kind: Snippet},
+		},
+		Run: runSnippet,
+	},
+	{
+		Name: "catch", Description: "Shows the original payload of the message you reply to",
+		Run: runCatch,
+	},
 }
 
 // busy shows that the command is working, and returns its note.

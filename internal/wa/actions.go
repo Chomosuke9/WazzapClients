@@ -178,7 +178,7 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			}
 		}
 		msg = &waE2E.Message{ExtendedTextMessage: e}
-		if d.MentionAdmins {
+		if d.MentionAdmins || d.MentionChat != "" {
 			msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 		}
 		return b.storeAndSendAfter(jid, sm, msg, nil, prep)
@@ -216,6 +216,7 @@ func (b *Backend) storeAndSend(jid types.JID, sm storedMsg, msg, fallback *waE2E
 // storeAndSendAfter is storeAndSend that first runs prep, if not nil, on
 // the sending goroutine: an upload that fills in msg.
 func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg, fallback *waE2E.Message, prep func(context.Context)) *model.Message {
+	sm.rawPayload = marshal(msg)
 	ctx, chatID, m := b.ctx, sm.ChatID, sm.Message
 	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
 		b.log.Errorf("store chat %s: %v", chatID, err)
@@ -250,10 +251,19 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fa
 		if prep != nil {
 			prep(b.ctx)
 		}
+		if err := b.store.setRawPayload(b.ctx, chatID, id, msg); err != nil {
+			b.sendFailed(chatID, id, "Couldn't store the message payload.")
+			return
+		}
 		_, err := cli.SendMessage(b.ctx, jid, msg, whatsmeow.SendRequestExtra{ID: id})
+		// SendMessage can add a message secret and other protocol metadata.
+		_ = b.store.setRawPayload(b.ctx, chatID, id, msg)
 		if err != nil && fallback != nil {
 			b.log.Warnf("send to %s: %v; sending the fallback", chatID, err)
 			_, err = cli.SendMessage(b.ctx, jid, fallback, whatsmeow.SendRequestExtra{ID: id})
+			if err == nil {
+				_ = b.store.setRawPayload(b.ctx, chatID, id, fallback)
+			}
 		}
 		if err != nil {
 			b.log.Errorf("send to %s: %v", chatID, err)

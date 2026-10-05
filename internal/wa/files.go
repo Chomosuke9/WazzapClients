@@ -287,7 +287,7 @@ func (b *Backend) downloadFile(m *model.Message, path string) bool {
 // mentions, and returns nil when there is nothing to add.
 func (b *Backend) draftContext(chatID string, d model.Draft, sm *storedMsg) *waE2E.ContextInfo {
 	sm.mentions = append([]string(nil), d.Mentions...)
-	if d.Reply == nil && len(d.Mentions) == 0 && !d.MentionAll && !d.MentionAdmins {
+	if d.Reply == nil && len(d.Mentions) == 0 && !d.MentionAll && !d.MentionAdmins && d.MentionChat == "" {
 		return nil
 	}
 	m := sm.Message
@@ -302,6 +302,11 @@ func (b *Backend) draftContext(chatID string, d model.Draft, sm *storedMsg) *waE
 		// the given subject; the admins are the mentioned JIDs.
 		ci.GroupMentions = []*waE2E.GroupMention{{GroupJID: proto.String(chatID), GroupSubject: proto.String("admin")}}
 		sm.mentions = append(sm.mentions, groupMention(chatID, "admin"))
+	}
+	if d.MentionChat != "" {
+		// Like @admin, but no one is in MentionedJID: it notifies no one.
+		ci.GroupMentions = append(ci.GroupMentions, &waE2E.GroupMention{GroupJID: proto.String(chatID), GroupSubject: proto.String(d.MentionChat)})
+		sm.mentions = append(sm.mentions, groupMention(chatID, d.MentionChat))
 	}
 	if r := d.Reply; r != nil {
 		m.Quote = b.quote(chatID, r, ci)

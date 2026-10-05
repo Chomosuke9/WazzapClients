@@ -237,6 +237,14 @@ func groupMention(jid, subject string) string {
 
 // replaceMentions turns "@123456" into "@Name" for every mentioned JID.
 func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions string) string {
+	// A group mentioning itself with no one mentioned is a snippet's
+	// {mention} (see Draft.MentionChat), not @admin.
+	people := false
+	for _, s := range strings.Split(mentions, ",") {
+		if s != "" && s != mentionAll && !strings.HasPrefix(s, groupMentionPrefix) {
+			people = true
+		}
+	}
 	for _, s := range strings.Split(mentions, ",") {
 		switch {
 		case s == mentionAll:
@@ -245,7 +253,7 @@ func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions st
 		case strings.HasPrefix(s, groupMentionPrefix):
 			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
 			m := mention(subject)
-			if jid == chatID {
+			if jid == chatID && (people || strings.EqualFold(subject, "admin")) {
 				// A group mentioning itself is "@admin" (see Send).
 				m = markedMention(model.MentionAdmins, subject)
 			}

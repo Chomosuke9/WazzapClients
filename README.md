@@ -162,6 +162,26 @@ back on asks again.
 | `/scheduled` | Lists the chat's scheduled messages, to send now or cancel |
 | `/afk <reason>` | Auto-replies while you're away, until you send something |
 | `/ghost` | Goes invisible: no read receipts, shown offline, no sending (an ethically gray feature) |
+| `/snippet send <name>` | Sends a saved message; the picker over the composer offers them as you type |
+| `/snippet save [name]` | Saves the whole message you reply to (a poll, document or photo too), under that name or a generated one |
+| `/catch` | Opens the stored payload of the message you reply to, with Copy JSON and Export JSON |
+
+Manage saved messages in **Settings > Snippets**: search, add text or message JSON,
+edit, rename, and delete. Snippets belong to the current account. Their text (and a
+payload's text and captions) can use variables, filled in when you send: `{name}` (the
+contact, or in a group the author of the message you reply to), `{first}`, `{mention}`
+(@mentions the author of the message you reply to; without a reply, the chat by its name,
+like `@admin` but notifying no one), `{chat}`,
+`{me}`, `{quote}`, `{greeting}`, `{date}`, `{time}` and `{day}`. Unknown `{...}` stays as
+it is, and `\{name}` sends `{name}` literally. Saving a media snippet downloads a separate
+copy for reuse; sending it uploads that copy again. A snippet sent while you reply goes as a reply.
+
+`/catch` shows a local result; it does not send the payload to the chat. Raw payloads
+are stored in the existing message database for newly received, synced, and outgoing
+messages. Older messages may not have one. JSON includes fields understood by the
+pinned protocol schema; unknown protobuf fields remain in the database. An edited
+message exposes its latest available edit content. Deleted payloads follow the
+existing deletion preferences, and view once export requires Replay view once.
 
 Group commands work in groups where you're an admin. You'll also find **`@admin`**, which
 mentions every admin of a group at once, and **Raw quality**, which sends JPEG and PNG

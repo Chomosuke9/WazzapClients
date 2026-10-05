@@ -140,7 +140,7 @@ func TestMatching(t *testing.T) {
 	for _, c := range Matching("", false) {
 		outside = append(outside, c.Name)
 	}
-	if strings.Join(outside, " ") != "sticker purge calc schedule scheduled afk ghost" {
+	if strings.Join(outside, " ") != "sticker purge calc schedule scheduled afk ghost snippet catch" {
 		t.Errorf("outside groups: %v", outside)
 	}
 	if got := Matching("d", true); len(got) != 2 {
@@ -220,5 +220,19 @@ func TestRaffleLines(t *testing.T) {
 	}
 	if len(seen) != 100 {
 		t.Errorf("%d raffle lines, want 100", len(seen))
+	}
+}
+
+func TestSnippetOptions(t *testing.T) {
+	in, ok := Parse("/snippet send Office hours", 26, nil, nil)
+	if !ok || in.Problem() != "" || in.Text("action") != "send" || in.Text("snippet") != "Office hours" {
+		t.Fatalf("send: %+v", in)
+	}
+	in, _ = Parse("/snippet save", 13, nil, nil)
+	if in.Problem() != "" || in.Text("snippet") != "" {
+		t.Fatalf("save: %q", in.Problem())
+	}
+	if in, _ = Parse("/snippet Greeting", 17, nil, nil); in.Problem() == "" {
+		t.Fatal("a name without send or save ran")
 	}
 }
