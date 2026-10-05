@@ -338,7 +338,7 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		FromMe:   true,
 		Media:    a.Media,
 		Text:     d.Text,
-		Time:     time.Now(),
+		Time:     b.sendTime(),
 		Receipt:  model.Pending,
 		FileName: name,
 		FileSize: st.Size(),
@@ -642,7 +642,7 @@ func (b *Backend) SendContacts(chatID string, contactIDs []string) *model.Messag
 		return nil
 	}
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Media: model.MediaContact,
-		Text: cards[0].GetDisplayName(), Time: time.Now(), Receipt: model.Pending}
+		Text: cards[0].GetDisplayName(), Time: b.sendTime(), Receipt: model.Pending}
 	for _, c := range cards {
 		m.Contacts = append(m.Contacts, parseVCard(c.GetVcard(), c.GetDisplayName()))
 	}
@@ -690,7 +690,7 @@ func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 		msg.PollCreationMessage, msg.PollCreationMessageV6 = nil, pc
 	}
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Media: model.MediaPoll,
-		Text: p.Question, Time: time.Now(), Receipt: model.Pending, Poll: &model.PollState{Max: n}}
+		Text: p.Question, Time: b.sendTime(), Receipt: model.Pending, Poll: &model.PollState{Max: n}}
 	for _, o := range p.Options {
 		m.Poll.Options = append(m.Poll.Options, model.PollOption{Name: o})
 	}

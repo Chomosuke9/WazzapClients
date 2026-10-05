@@ -3,7 +3,6 @@ package wa
 import (
 	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
@@ -318,7 +317,7 @@ func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
 		ChatID:  m.ChatID,
 		FromMe:  true,
 		Text:    bt.Label,
-		Time:    time.Now(),
+		Time:    b.sendTime(),
 		Receipt: model.Pending,
 		Quote:   &model.Quote{ID: m.ID, SenderID: sender.String(), Text: raw.Text, Media: raw.Media},
 	}

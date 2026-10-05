@@ -138,7 +138,7 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		ChatID:  chatID,
 		FromMe:  true,
 		Text:    d.Text,
-		Time:    time.Now(),
+		Time:    b.sendTime(),
 		Receipt: model.Pending,
 	}
 	sm := storedMsg{Message: m}
@@ -255,12 +255,12 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fa
 			b.sendFailed(chatID, id, "Couldn't store the message payload.")
 			return
 		}
-		_, err := cli.SendMessage(b.ctx, jid, msg, whatsmeow.SendRequestExtra{ID: id})
+		resp, err := cli.SendMessage(b.ctx, jid, msg, whatsmeow.SendRequestExtra{ID: id})
 		// SendMessage can add a message secret and other protocol metadata.
 		_ = b.store.setRawPayload(b.ctx, chatID, id, msg)
 		if err != nil && fallback != nil {
 			b.log.Warnf("send to %s: %v; sending the fallback", chatID, err)
-			_, err = cli.SendMessage(b.ctx, jid, fallback, whatsmeow.SendRequestExtra{ID: id})
+			resp, err = cli.SendMessage(b.ctx, jid, fallback, whatsmeow.SendRequestExtra{ID: id})
 			if err == nil {
 				_ = b.store.setRawPayload(b.ctx, chatID, id, fallback)
 			}
@@ -272,7 +272,26 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fa
 		}
 		_ = b.store.setReceipt(b.ctx, chatID, []string{id}, model.Sent)
 		b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{id}, Receipt: model.Sent})
+		b.serverTime(chatID, id, resp.Timestamp)
 	}()
+}
+
+// serverTime gives a sent message the time the server took it at, which
+// is what the others see and what their messages carry, so it sorts among
+// theirs. Our own clock can be seconds off, and within a second ours had
+// milliseconds theirs lack. The skew is kept for the next sends.
+func (b *Backend) serverTime(chatID, id string, at time.Time) {
+	if at.IsZero() {
+		return
+	}
+	b.serverSkew.Store(at.Unix() - b.now().Unix())
+	changed, err := b.store.setTime(b.ctx, chatID, id, at)
+	if err != nil {
+		b.log.Warnf("set the server time of %s: %v", id, err)
+	}
+	if changed {
+		b.emitMessage(chatID, id)
+	}
 }
 
 // sendFailed marks a pending message failed, so it stops showing a clock,
@@ -336,7 +355,7 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 		msg = &waE2E.Message{ExtendedTextMessage: e}
 	}
 	m := &model.Message{
-		ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Time: time.Now(), Receipt: model.Pending,
+		ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Time: b.sendTime(), Receipt: model.Pending,
 		Kind: raw.Kind, Media: raw.Media, Duration: raw.Duration, Text: raw.Text, Thumb: raw.Thumb, Forwarded: forwarded,
 		Quote: q, Link: raw.Link, Location: raw.Location, Contacts: raw.Contacts,
 	}

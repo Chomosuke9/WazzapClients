@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1282,14 +1283,28 @@ func (u *UI) upsertMessage(m *model.Message) {
 	if m.Pinned || u.conv.pinned != nil && u.conv.pinned.ID == m.ID {
 		u.conv.pinned = u.backend.PinnedMessage(m.ChatID)
 	}
+	moved := false
 	for i, old := range u.msgs {
 		if old.ID == m.ID {
-			u.msgs[i] = m
-			u.msgsVer++
-			return
+			if old.Time.Unix() == m.Time.Unix() {
+				u.msgs[i] = m
+				u.msgsVer++
+				return
+			}
+			// The server gave a sent message its own time: move it there.
+			u.msgs = slices.Delete(u.msgs, i, i+1)
+			moved = true
+			break
 		}
 	}
-	i := sort.Search(len(u.msgs), func(i int) bool { return u.msgs[i].Time.After(m.Time) })
+	// The store orders messages by whole seconds, then by arrival: a message
+	// goes after those of its second. Others' times have no milliseconds.
+	i := sort.Search(len(u.msgs), func(i int) bool { return u.msgs[i].Time.Unix() > m.Time.Unix() })
+	if moved {
+		u.msgsVer++
+		u.msgs = slices.Insert(u.msgs, i, m)
+		return
+	}
 	switch {
 	case i == len(u.msgs) && u.conv.newerMore && m.FromMe:
 		// What you send shows with the newest messages.

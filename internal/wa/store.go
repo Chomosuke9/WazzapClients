@@ -402,6 +402,18 @@ func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
+// setTime moves a message to another time, in whole seconds as stored. It
+// reports whether the stored time changed.
+func (s *msgStore) setTime(ctx context.Context, chat, id string, at time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET ts = ? WHERE chat = ? AND id = ? AND ts != ?`,
+		at.Unix(), chat, id, at.Unix())
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func (s *msgStore) setReceipt(ctx context.Context, chat string, ids []string, r model.Receipt) error {
 	if len(ids) == 0 {
 		return nil

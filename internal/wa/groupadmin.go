@@ -216,7 +216,7 @@ func (b *Backend) sendGroupInvite(ctx context.Context, group types.JID, r model.
 	}
 	chat := b.canonical(ctx, to)
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chat.String(), FromMe: true,
-		Text: "Group invite: " + name, Time: time.Now(), Receipt: model.Pending}
+		Text: "Group invite: " + name, Time: b.sendTime(), Receipt: model.Pending}
 	if sent := b.storeAndSend(chat, storedMsg{Message: m}, msg, nil); sent != nil {
 		b.emit(model.MessageEvent{Msg: sent})
 	}
@@ -231,7 +231,7 @@ func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Messag
 		return nil
 	}
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Kind: model.KindSticker,
-		Media: model.MediaSticker, Time: time.Now(), Receipt: model.Pending}
+		Media: model.MediaSticker, Time: b.sendTime(), Receipt: model.Pending}
 	sm := storedMsg{Message: m}
 	ci := b.draftContext(chatID, model.Draft{Reply: reply}, &sm)
 	// Keep the picture, so it shows at once and without a download.

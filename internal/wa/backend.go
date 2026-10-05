@@ -82,6 +82,10 @@ type Backend struct {
 
 	accountMu      sync.Mutex  // guards the cached account details
 	accountFetched atomic.Bool // account details refreshed this session
+
+	// serverSkew is how many seconds the server's clock is ahead of ours,
+	// learned from send acks (sendAsyncPrep).
+	serverSkew atomic.Int64
 }
 
 func (b *Backend) now() time.Time {
@@ -89,6 +93,12 @@ func (b *Backend) now() time.Time {
 		return b.clock()
 	}
 	return time.Now()
+}
+
+// sendTime is the time to give a message you send: the server's clock, as
+// far as known, so it sorts among the messages others send at the same time.
+func (b *Backend) sendTime() time.Time {
+	return b.now().Add(time.Duration(b.serverSkew.Load()) * time.Second)
 }
 
 var _ model.Backend = (*Backend)(nil)
