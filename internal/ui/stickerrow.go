@@ -47,7 +47,16 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		shift = int(float32(max(0, gtx.Dp(44)-margin)) * selV)
 	}
 	cell, gap := gtx.Dp(150), gtx.Dp(stickerGap)
-	lines := stickerLines(len(ms), w-shift, cell, gap)
+	// In a group, the run's first line is headed by the sender's name and
+	// moves over under it, as a lone sticker does.
+	var head part
+	hx, y := 0, 0
+	hasHead := c.IsGroup && r.first && !out && ms[0].Sender != ""
+	if hasHead {
+		head = u.stickerHeader(gtx, ms[0], cell, maxW)
+		hx, y = stickerUnderHeader(gtx, head, cell)
+	}
+	lines := stickerLines(len(ms), w-shift-hx, cell, gap)
 
 	if sel {
 		for _, l := range lines {
@@ -74,8 +83,19 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		}
 	}
 
-	y, lineGap := 0, gtx.Dp(8)
-	for li, l := range lines {
+	if hasHead {
+		head.at(gtx, shift, 0)
+	}
+	if c.IsGroup && r.first && !out {
+		// The sender's avatar sits in the left margin, level with the top.
+		sz := gtx.Dp(29)
+		t := op.Offset(image.Pt(shift-min(gtx.Dp(40), margin), 0)).Push(gtx.Ops)
+		u.avatar(gtx, ms[0].SenderID, ms[0].Sender, false, dp(gtx, sz))
+		u.senderButton(gtx, ms[0], image.Point{}, image.Pt(sz, sz))
+		t.Pop()
+	}
+	lineGap := gtx.Dp(8)
+	for _, l := range lines {
 		line := ms[l[0]:l[1]]
 		parts := make([]part, len(line))
 		lh := 0
@@ -87,7 +107,7 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			})
 			lh = max(lh, parts[i].size.Y)
 		}
-		x0 := shift
+		x0 := shift + hx
 		if out {
 			x0 = w - len(line)*cell - (len(line)-1)*gap
 		}
@@ -112,15 +132,6 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		for i, m := range line {
 			x := x0 + i*(cell+gap)
 			u.stickerCell(gtx, c, m, parts[i], image.Pt(x, 0), sel, selV)
-		}
-		if li == 0 && c.IsGroup && r.first && !out {
-			// The sender's avatar sits in the left margin, level with the
-			// first line.
-			sz := gtx.Dp(29)
-			t := op.Offset(image.Pt(x0-min(gtx.Dp(40), margin), 0)).Push(gtx.Ops)
-			u.avatar(gtx, ms[0].SenderID, ms[0].Sender, false, dp(gtx, sz))
-			u.senderButton(gtx, ms[0], image.Point{}, image.Pt(sz, sz))
-			t.Pop()
 		}
 		if selV > 0 {
 			box, col := icCheckBoxEmpty, p.TextSecondary

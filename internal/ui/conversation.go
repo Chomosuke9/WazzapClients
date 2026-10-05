@@ -1565,7 +1565,16 @@ func (u *UI) quotedMessage(q *model.Quote) *model.Message {
 // WhatsApp.
 func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail bool, maxW int) D {
 	if m.Quote == nil {
-		return u.layoutSticker(gtx, m)
+		if !(c.IsGroup && !m.FromMe && tail && m.Sender != "") {
+			return u.layoutSticker(gtx, m)
+		}
+		// The first of a sender's run in a group is headed by their name.
+		head := u.stickerHeader(gtx, m, gtx.Dp(150), maxW)
+		st := record(gtx, func(gtx C) D { return u.layoutSticker(gtx, m) })
+		head.at(gtx, 0, 0)
+		x, y := stickerUnderHeader(gtx, head, st.size.X)
+		st.at(gtx, x, y)
+		return D{Size: image.Pt(max(head.size.X, x+st.size.X), y+st.size.Y)}
 	}
 	p := u.pal
 	out := m.FromMe
@@ -1620,6 +1629,32 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 	call.Add(gtx.Ops)
 	t.Pop()
 	return D{Size: image.Pt(bw, bh)}
+}
+
+// stickerHeader records the bubble over a group sticker that starts its
+// sender's run: their name, in a bubble with the tail, as wide as the
+// sticker (sz) and a margin, like WhatsApp.
+func (u *UI) stickerHeader(gtx C, m *model.Message, sz, maxW int) part {
+	p := u.pal
+	padX, padY := gtx.Dp(9), gtx.Dp(8)
+	ngtx := gtx
+	ngtx.Constraints = layout.Constraints{Max: image.Pt(max(0, maxW-2*padX), 1<<20)}
+	col := p.Senders[hashIndex(m.SenderID+m.Sender, len(p.Senders))]
+	name := record(ngtx, u.label(13, m.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+	w := min(maxW, max(name.size.X+2*padX, sz+gtx.Dp(24)))
+	h := name.size.Y + 2*padY
+	return record(gtx, func(gtx C) D {
+		u.paintBubble(gtx, w, h, p.BubbleIn, false, true)
+		name.at(gtx, padX, padY)
+		u.senderButton(gtx, m, image.Pt(padX, padY), name.size)
+		return D{Size: image.Pt(w, h)}
+	})
+}
+
+// stickerUnderHeader is where a sticker sw wide goes under its header:
+// a little below it, its right edge just inside the header's.
+func stickerUnderHeader(gtx C, head part, sw int) (x, y int) {
+	return max(0, head.size.X-sw-gtx.Dp(4)), head.size.Y + gtx.Dp(8)
 }
 
 // layoutSticker draws a sticker without a bubble, with the time on a chip
