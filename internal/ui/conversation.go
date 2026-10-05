@@ -93,9 +93,9 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		if newDay {
 			rows = append(rows, convRow{kind: rowDate, date: dateChip(m.Time, now)})
 		}
-		// Announcements each have a card of their own.
-		first := ann || newDay || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID ||
-			m.Time.Sub(prev.Time) > 10*time.Minute
+		// Announcements each have a card of their own. A run goes on, however
+		// long the sender waited, until someone else writes or the day changes.
+		first := ann || newDay || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID
 		if u.unreadRow(c, m) {
 			rows = append(rows, convRow{kind: rowUnread})
 			first = true
@@ -110,7 +110,7 @@ func (u *UI) rows(c *model.Chat) []convRow {
 			continue
 		}
 		// A sticker joins the stickers its sender sent just before.
-		if last := &rows[len(rows)-1]; !first && last.kind == rowMessage && groupsSticker(m) && groupsSticker(last.msg) && !ann {
+		if last := &rows[len(rows)-1]; !first && m.Time.Sub(prev.Time) <= 10*time.Minute && last.kind == rowMessage && groupsSticker(m) && groupsSticker(last.msg) && !ann {
 			if last.group == nil {
 				last.group = []*model.Message{last.msg}
 			}
