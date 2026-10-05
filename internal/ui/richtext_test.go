@@ -26,6 +26,10 @@ func TestParseFormatting(t *testing.T) {
 		{"x ```a *b*``` y", []run{{"x ", 0}, {"a *b*", styleMono}, {" y", 0}}},
 		{"*SUCCESS*", []run{{"SUCCESS", styleBold}}},
 		{"**Quiz**", []run{{"*Quiz*", styleBold}}},
+		// Markers in a mentioned name format nothing, and don't close one outside.
+		{"Hai ⁨@~Adiyat~⁩.", []run{{"Hai ⁨@~Adiyat~⁩.", 0}}},
+		{"~a ⁨@b~⁩ c~", []run{{"a ⁨@b~⁩ c", styleStrike}}},
+		{"*⁨@Vivy⁩*", []run{{"⁨@Vivy⁩", styleBold}}},
 	}
 	for _, tt := range tests {
 		if got := parseFormatting(tt.in); !reflect.DeepEqual(got, tt.want) {

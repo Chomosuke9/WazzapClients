@@ -72,6 +72,10 @@ func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) 
 func parseInline(out []run, s string, style textStyle) []run {
 	start := 0
 	for i := 0; i < len(s); i++ {
+		if e := mentionSkip(s, i); e > i {
+			i = e - 1
+			continue
+		}
 		st, ok := markerStyle[s[i]]
 		if !ok || style&st != 0 {
 			continue
@@ -105,14 +109,32 @@ func parseInline(out []run, s string, style textStyle) []run {
 	return out
 }
 
+// mentionSkip returns where the mention starting at s[i] ends, or i if none
+// starts there. A name is shown as it is, so markers in it ("~Adiyat~", a
+// push name ending in "~" after the "~" unsaved names get) format nothing.
+func mentionSkip(s string, i int) int {
+	if !strings.HasPrefix(s[i:], string(mentionStart)) {
+		return i
+	}
+	n := len(string(mentionStart))
+	if j := strings.IndexRune(s[i+n:], mentionEnd); j >= 0 {
+		return i + n + j + len(string(mentionEnd))
+	}
+	return i
+}
+
 // closingMarker finds the marker closing the one at s[open] on the same line.
 func closingMarker(s string, open int) int {
 	m := s[open]
-	for j := open + 2; j < len(s); j++ {
+	for j := open + 1; j < len(s); j++ {
 		if s[j] == '\n' {
 			return -1
 		}
-		if s[j] != m || s[j-1] == ' ' {
+		if e := mentionSkip(s, j); e > j {
+			j = e - 1
+			continue
+		}
+		if j == open+1 || s[j] != m || s[j-1] == ' ' {
 			continue
 		}
 		// "**bold**" closes at the last marker of a run, so it shows as
