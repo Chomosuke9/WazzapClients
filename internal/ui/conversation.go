@@ -1667,6 +1667,8 @@ func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
 
 // gradientImage stands in for photos in demo data.
 func (u *UI) gradientImage(gtx C, r image.Rectangle, a, b uint32) {
+	// PaintOp fills the whole clip: a quote's thumbnail would cover the quote.
+	defer clip.Rect(r).Push(gtx.Ops).Pop()
 	paint.LinearGradientOp{
 		Stop1: f32.Pt(float32(r.Min.X), float32(r.Min.Y)), Color1: rgb(a),
 		Stop2: f32.Pt(float32(r.Max.X), float32(r.Max.Y)), Color2: rgb(b),
