@@ -138,10 +138,13 @@ meant you to see. Each has its own switch:
 - 🗑️ **Keep deleted messages** keeps messages and statuses deleted for everyone, marked Deleted.
 - 👁️ **Replay view once** opens view once messages as often as you like, screenshots allowed.
 - 👻 **`/ghost`** and ✏️ **Edit history**, above.
+- **`/whisper @member @member <text>`** submits group text to the selected members' devices only (experimental).
 
 Turning one on opens a warning about privacy expectations. You must check the acknowledgment
 and choose **Enable feature** before it is activated. Turning it off is immediate; turning it
-back on asks again.
+back on asks again. `/whisper` requires a second confirmation with a separate
+acknowledgment and the warning **"Fitur ini mudah terkena banned."** The switch
+stays off until both confirmations are completed; canceling either leaves it off.
 
 <details>
 <summary><b>All the slash commands</b></summary>
@@ -162,9 +165,24 @@ back on asks again.
 | `/scheduled` | Lists the chat's scheduled messages, to send now or cancel |
 | `/afk <reason>` | Auto-replies while you're away, until you send something |
 | `/ghost` | Goes invisible: no read receipts, shown offline, no sending (an ethically gray feature) |
+| `/whisper @member @member <text>` | Sends text to selected group members using individual device envelopes (an ethically gray feature) |
 | `/snippet send <name>` | Sends a saved message; the picker over the composer offers them as you type |
 | `/snippet save [name]` | Saves the whole message you reply to (a poll, document or photo too), under that name or a generated one |
 | `/catch` | Opens the stored payload of the message you reply to, with Copy JSON and Export JSON |
+
+To use `/whisper`, enable **Slash commands** and its own switch under **Extra features >
+Ethically gray features**, acknowledge the warning, then pick one or more members and
+type the message, for example `/whisper @Budi @Siti Meet at 8`. The first non-mention
+starts the message body. It supports text only and respects admin-only groups and
+ghost mode. Recipients may still copy, quote, or forward what they receive.
+
+Whisper uses hypermeow's internal, retry-shaped individual envelopes, not a supported
+WhatsApp selective-group feature. Its local note reports submission, not confirmed
+delivery. It creates no ordinary outgoing message, syncs nothing to your other devices,
+and does not retry automatically or fall back to a group broadcast. A partial failure
+may leave some devices with the message; manually resending can duplicate it. The note
+is temporary and disappears with the window. Live recipient interoperability has not
+been verified; local tests exercise routing, validation, and failure handling.
 
 Manage saved messages in **Settings > Snippets**: search, add text or message JSON,
 edit, rename, and delete. Snippets belong to the current account. Their text (and a

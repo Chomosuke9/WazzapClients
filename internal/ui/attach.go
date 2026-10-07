@@ -601,11 +601,20 @@ func removeTemps(files []*attachFile) {
 // caption; the first one carries the reply. Two or more photos and videos
 // go as an album.
 func (u *UI) sendAttachments() {
+	if u.blockWhisperFallback() {
+		return
+	}
 	u.stopOutgoingTyping()
 	a := &u.attach
 	u.finishTyping()
 	if f := a.current(); f != nil {
 		f.caption = u.conv.composer.Text()
+	}
+	for _, f := range a.files {
+		if whisperText(f.caption) {
+			u.toast("Use /whisper as a new text command, without attachments.")
+			return
+		}
 	}
 	status := isStatusDestination(a.chatID)
 	if !status {

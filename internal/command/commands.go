@@ -103,6 +103,15 @@ var All = []*Command{
 		Gray: true, Run: runGhost,
 	},
 	{
+		Name: "whisper", Description: "Sends group text only to selected members; experimental, delivery is unconfirmed",
+		Group: true, Gray: true,
+		Options: []Option{
+			{Name: "members", Description: "Who to send to; pick one or more @mentions", Kind: Member, Required: true, Multiple: true},
+			{Name: "text", Description: "The text to send to those members", Kind: Text, Required: true},
+		},
+		Run: runWhisper,
+	},
+	{
 		Name: "snippet", Description: "Sends a saved message, or saves the message you reply to",
 		Options: []Option{
 			{Name: "action", Description: "send a saved message, or save the message you reply to",

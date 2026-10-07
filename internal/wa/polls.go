@@ -505,7 +505,7 @@ func (b *Backend) VotePoll(m *model.Message, options []int) {
 	}
 	b.emitMessage(m.ChatID, m.ID)
 	go func() {
-		if _, err := cli.SendMessage(b.ctx, jid, msg); err != nil {
+		if _, err := b.sendMessage(b.ctx, cli, jid, msg); err != nil {
 			b.log.Warnf("send vote in %s: %v", m.ChatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't send your vote."})
 		}

@@ -158,7 +158,7 @@ func (b *Backend) sendStatus(cli *whatsmeow.Client, id string, msg *waE2E.Messag
 		msg, extra = groupStatusMessage(msg)
 		extra.ID = id
 	}
-	if _, err := cli.SendMessage(b.ctx, to, msg, extra); err != nil {
+	if _, err := b.sendMessage(b.ctx, cli, to, msg, extra); err != nil {
 		b.statusFailed(id, err)
 		return
 	}

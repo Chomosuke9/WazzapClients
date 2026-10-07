@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"gioui.org/io/key"
@@ -54,6 +55,21 @@ func TestGrayFeatureConsent(t *testing.T) {
 			assertOff() // unchecking must block activation again
 			click("dialog:agreement")
 			click("dialog:1")
+			if pref == grayCmdPref("whisper") {
+				assertOff()
+				if !st.u.dialog.isOpen() || st.u.dialog.agreed || !strings.Contains(st.u.dialog.body, "mudah terkena banned") {
+					t.Fatal("whisper did not open a fresh ban-risk confirmation")
+				}
+				click("dialog:1")
+				assertOff()
+				click("dialog:agreement")
+				assertOff()
+				click("dialog:agreement")
+				click("dialog:1")
+				assertOff()
+				click("dialog:agreement")
+				click("dialog:1")
+			}
 			if !extraOn(st.b, pref) || !settingRowByKey(t, st.u, pref).on || st.u.dialog.isOpen() {
 				t.Fatal("consent did not enable and save the feature or refresh its switch")
 			}

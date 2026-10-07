@@ -299,12 +299,12 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fa
 			b.sendFailed(chatID, id, "Couldn't store the message payload.")
 			return
 		}
-		resp, err := cli.SendMessage(b.ctx, jid, msg, whatsmeow.SendRequestExtra{ID: id})
+		resp, err := b.sendMessage(b.ctx, cli, jid, msg, whatsmeow.SendRequestExtra{ID: id})
 		// SendMessage can add a message secret and other protocol metadata.
 		_ = b.store.setRawPayload(b.ctx, chatID, id, msg)
 		if err != nil && fallback != nil {
 			b.log.Warnf("send to %s: %v; sending the fallback", chatID, err)
-			resp, err = cli.SendMessage(b.ctx, jid, fallback, whatsmeow.SendRequestExtra{ID: id})
+			resp, err = b.sendMessage(b.ctx, cli, jid, fallback, whatsmeow.SendRequestExtra{ID: id})
 			if err == nil {
 				_ = b.store.setRawPayload(b.ctx, chatID, id, fallback)
 			}
@@ -462,7 +462,7 @@ func (b *Backend) React(m *model.Message, emoji string) {
 	b.emitMessage(m.ChatID, m.ID)
 	msg := cli.BuildReaction(jid, b.senderOf(m), m.ID, emoji)
 	go func() {
-		if _, err := cli.SendMessage(b.ctx, jid, msg); err != nil {
+		if _, err := b.sendMessage(b.ctx, cli, jid, msg); err != nil {
 			b.log.Warnf("react in %s: %v", m.ChatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't send the reaction."})
 		}
@@ -500,7 +500,7 @@ func (b *Backend) Delete(m *model.Message, forEveryone bool) {
 		b.emitMessage(m.ChatID, m.ID)
 		b.emitChat(m.ChatID)
 		go func() {
-			if _, err := cli.SendMessage(ctx, jid, cli.BuildRevoke(jid, sender, m.ID)); err != nil {
+			if _, err := b.sendMessage(ctx, cli, jid, cli.BuildRevoke(jid, sender, m.ID)); err != nil {
 				b.log.Warnf("revoke in %s: %v", m.ChatID, err)
 				b.emit(model.NoticeEvent{Text: "Couldn't delete the message for everyone."})
 			}
@@ -608,7 +608,7 @@ func (b *Backend) PinMessage(m *model.Message, pinned bool) {
 	_ = b.store.setMessageFlag(ctx, m.ChatID, m.ID, "pinned", pinned)
 	b.emitAllMessages(m.ChatID)
 	go func() {
-		if _, err := cli.SendMessage(ctx, jid, msg); err != nil {
+		if _, err := b.sendMessage(ctx, cli, jid, msg); err != nil {
 			b.log.Warnf("pin in %s: %v", m.ChatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't pin the message."})
 		}

@@ -78,6 +78,7 @@ var commandIcons = map[string]*icon.Icon{
 	"scheduled":   icClock,
 	"afk":         icBedtime,
 	"ghost":       icVisibilityOff,
+	"whisper":     icVisibilityOff,
 	"snippet":     icDocument,
 	"catch":       icTerminal,
 }
@@ -112,13 +113,20 @@ func (u *UI) grayToggle(key, title, sub string, flag *bool, changed func()) sett
 			toggle()
 			return
 		}
-		u.confirm("Enable "+title+"?", sub+"\n\n"+
+		enable := func() {
+			toggle()
+			u.settings.stale = true // the switch changes after the dialog, not the row's click
+		}
+		heading, action := "Enable "+title+"?", "Enable feature"
+		if key == grayCmdPref("whisper") {
+			heading, action = heading+" (1/2)", "Continue"
+			activate := enable
+			enable = func() { u.confirmWhisperRisk(activate) }
+		}
+		u.confirm(heading, sub+"\n\n"+
 			"This is an ethically gray feature. It may go against other people's privacy expectations, "+
 			"and they may feel uncomfortable or offended when you use it. Please respect their choices and decide wisely.",
-			dialogButton{label: "Enable feature", primary: true, run: func() {
-				toggle()
-				u.settings.stale = true // the switch changes after the dialog, not the row's click
-			}})
+			dialogButton{label: action, primary: true, run: enable})
 		u.dialog.agreement = "I understand this feature is ethically gray and may affect other people's privacy. I agree to use it responsibly."
 	}
 	return r

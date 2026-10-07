@@ -34,6 +34,7 @@ import (
 
 // Backend implements model.Backend on top of a hypermeow client.
 type Backend struct {
+	sendMu       sync.Mutex // serialize outgoing Signal encryption, including whispers
 	snippetMu    sync.Mutex // snippet saves/cleanup, never held by the UI
 	snippetUseMu sync.Mutex // short reservation of media while a send is queued
 	snippetRefs  map[string]int

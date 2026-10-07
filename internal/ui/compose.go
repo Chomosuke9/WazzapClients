@@ -153,6 +153,9 @@ func (u *UI) jumpTo(id string) {
 
 // sendComposer sends the composer text with its reply and mentions.
 func (u *UI) sendComposer() {
+	if u.blockWhisperFallback() {
+		return
+	}
 	if u.postingStatus() {
 		u.sendAttachments()
 		return

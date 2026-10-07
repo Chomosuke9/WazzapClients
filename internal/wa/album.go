@@ -42,7 +42,7 @@ func (b *Backend) NewAlbum(chatID string, photos, videos int) string {
 		// Once it's out, pictures needn't wait: forget it.
 		defer b.albums.Delete(id)
 		defer close(sent)
-		if _, err := cli.SendMessage(b.ctx, jid, msg, whatsmeow.SendRequestExtra{ID: id}); err != nil {
+		if _, err := b.sendMessage(b.ctx, cli, jid, msg, whatsmeow.SendRequestExtra{ID: id}); err != nil {
 			b.log.Errorf("send album to %s: %v", chatID, err)
 		}
 	}()

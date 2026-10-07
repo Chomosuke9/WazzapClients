@@ -105,7 +105,7 @@ func (b *Backend) Edit(m *model.Message, d model.Draft) {
 	b.emitChat(m.ChatID)
 	msg := cli.BuildEdit(jid, m.ID, content)
 	go func() {
-		if _, err := cli.SendMessage(ctx, jid, msg); err != nil {
+		if _, err := b.sendMessage(ctx, cli, jid, msg); err != nil {
 			b.log.Warnf("edit %s in %s: %v", m.ID, m.ChatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't edit the message."})
 		}
