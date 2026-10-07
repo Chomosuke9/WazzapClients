@@ -678,10 +678,21 @@ func (b *Backend) handle(evt any) {
 	case *events.Archive:
 		b.updateChat(e.JID, "archived", boolInt(e.Action.GetArchived()), e.FromFullSync)
 	case *events.MarkChatAsRead:
+		// A full sync holds the last of these for every chat ever read or
+		// marked as unread, however long ago: a chat's unread count from
+		// its history (or from receipts since) is newer.
+		if e.FromFullSync {
+			return
+		}
+		chat := b.canonical(ctx, e.JID).String()
 		if e.Action.GetRead() {
-			b.updateChat(e.JID, "unread", 0, e.FromFullSync)
-		} else if c, ok := b.store.chat(ctx, b.canonical(ctx, e.JID).String()); ok && c.Unread == 0 {
-			b.updateChat(e.JID, "unread", -1, e.FromFullSync)
+			upTo := e.Action.GetMessageRange().GetLastMessageTimestamp()
+			if err := b.store.readAfter(ctx, chat, upTo, true); err != nil {
+				b.log.Warnf("mark %s read: %v", chat, err)
+			}
+			b.emitChat(chat)
+		} else if c, ok := b.store.chat(ctx, chat); ok && c.Unread == 0 {
+			b.updateChat(e.JID, "unread", -1, false)
 		}
 	case *events.Star:
 		chat := b.canonical(ctx, e.ChatJID).String()
@@ -804,13 +815,19 @@ func (b *Backend) handle(evt any) {
 
 // updateChat stores one chat setting. During a full app state sync there are
 // thousands of these, so they're applied quietly and the chat list is
-// refreshed once when the sync completes.
+// refreshed once when the sync completes. The chat may not be stored yet (a
+// new link syncs app state before history); it's created, and stays out of
+// the list until it has messages.
 func (b *Backend) updateChat(j types.JID, field string, v any, quiet bool) {
-	jid := b.canonical(b.ctx, j).String()
+	cj := b.canonical(b.ctx, j)
+	if skipChat(cj) {
+		return
+	}
+	jid := cj.String()
 	if err := b.store.setField(b.ctx, jid, field, v); err != nil {
 		b.log.Warnf("update %s of %s: %v", field, jid, err)
 	}
-	if !quiet {
+	if !quiet && (isChannel(cj) || b.store.listed(b.ctx, jid)) {
 		b.emitChat(jid)
 	}
 }
@@ -832,8 +849,9 @@ func clearedUpTo(r *waSyncAction.SyncActionMessageRange, at time.Time) (int64, b
 
 // appStateResyncKey marks resyncAppStateOnce as done, in wz_meta. v2 also
 // picks up lists and favourites, which older versions ignored; v3 favourite
-// stickers; v4 again, for the ones v3 dropped.
-const appStateResyncKey = "appstate_resynced_v4"
+// stickers; v4 again, for the ones v3 dropped; v5 the pins, mutes and
+// archives of chats whose history came after them, which were dropped.
+const appStateResyncKey = "appstate_resynced_v5"
 
 // recoveryGap is how long to wait before asking the phone again to repair
 // the same app state collection.
@@ -855,6 +873,14 @@ func (b *Backend) requestAppStateRecovery(name appstate.WAPatchName) {
 	}
 	_ = b.store.setMetaValue(b.ctx, key, time.Now().Format(time.RFC3339))
 	go func() {
+		// hypermeow ignores the phone's copy unless it's newer than the
+		// version this device has, but the hash can break at the phone's
+		// version too (after a refused send it did, and the collection
+		// stayed broken). Forget the broken state first; a sync before the
+		// copy comes starts over from a snapshot.
+		if err := cli.Store.AppState.DeleteAppStateVersion(b.ctx, string(name)); err != nil {
+			b.log.Warnf("reset app state %s: %v", name, err)
+		}
 		if _, err := cli.SendPeerMessage(b.ctx, whatsmeow.BuildAppStateRecoveryRequest(name)); err != nil {
 			b.log.Warnf("ask phone to repair app state %s: %v", name, err)
 			return
@@ -1023,6 +1049,14 @@ func (b *Backend) revoke(ctx context.Context, chat string, p parsed) {
 	_ = b.store.markDeleted(ctx, chat, p.target)
 }
 
+// readElsewhere marks a chat read up to messages read on another device.
+func (b *Backend) readElsewhere(chat string, ids []types.MessageID) {
+	if err := b.store.readUpTo(b.ctx, chat, ids); err != nil {
+		b.log.Warnf("mark %s read: %v", chat, err)
+	}
+	b.emitChat(chat)
+}
+
 func (b *Backend) onReceipt(e *events.Receipt) {
 	ctx := b.ctx
 	chat := b.canonical(ctx, e.Chat).String()
@@ -1057,7 +1091,7 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 				}
 			}
 		}
-		b.updateChat(e.Chat, "unread", 0, false)
+		b.readElsewhere(chat, e.MessageIDs)
 		return
 	case types.ReceiptTypeDelivered:
 		r = model.Delivered
@@ -1067,7 +1101,12 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 		return
 	}
 	if e.IsFromMe {
-		return // our own other device reading/receiving someone else's message
+		// Your other device got or read someone else's messages. With read
+		// receipts off, reading them comes as ReadSelf instead.
+		if r == model.Read {
+			b.readElsewhere(chat, e.MessageIDs)
+		}
+		return
 	}
 	ids := make([]string, len(e.MessageIDs))
 	for i, id := range e.MessageIDs {
@@ -1169,11 +1208,15 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		} else if mute > 1e11 {
 			mute /= 1000 // milliseconds
 		}
+		unread := int(conv.GetUnreadCount())
+		if unread == 0 && conv.GetMarkedAsUnread() {
+			unread = -1
+		}
 		cd.meta = chatMeta{
 			pinned:     int64(conv.GetPinned()),
 			mutedUntil: mute,
 			archived:   conv.GetArchived(),
-			unread:     int(conv.GetUnreadCount()),
+			unread:     unread,
 			mentioned:  conv.GetUnreadMentionCount() > 0,
 			lastTS:     int64(max(conv.GetConversationTimestamp(), conv.GetLastMsgTimestamp())),
 		}

@@ -161,6 +161,9 @@ var migrations = []string{
 	`ALTER TABLE wz_status ADD COLUMN group_jid TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_status ADD COLUMN duration INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_status ADD COLUMN file_type TEXT NOT NULL DEFAULT ''`,
+	// The settings (settledBits) app state or this device has set, which a
+	// history sync's copy, taken when the device linked, mustn't undo.
+	`ALTER TABLE wz_chats ADD COLUMN settled INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -291,16 +294,83 @@ type chatMeta struct {
 
 func (s *msgStore) setMeta(ctx context.Context, x execer, jid string, m chatMeta) error {
 	_, err := x.ExecContext(ctx, `
-		UPDATE wz_chats SET pinned = ?, muted_until = ?, archived = ?, unread = ?, mentioned = ?,
-			last_ts = MAX(last_ts, ?)
-		WHERE jid = ?`,
-		m.pinned, m.mutedUntil, boolInt(m.archived), m.unread, boolInt(m.mentioned), m.lastTS, jid)
+		UPDATE wz_chats SET
+			pinned = CASE WHEN settled & ?1 THEN pinned ELSE ?2 END,
+			muted_until = CASE WHEN settled & ?3 THEN muted_until ELSE ?4 END,
+			archived = CASE WHEN settled & ?5 THEN archived ELSE ?6 END,
+			mentioned = CASE WHEN settled & ?7 THEN mentioned ELSE ?8 END,
+			unread = CASE WHEN settled & ?7 THEN unread ELSE ?9 END,
+			last_ts = MAX(last_ts, ?10)
+		WHERE jid = ?11`,
+		settledBits["pinned"], m.pinned, settledBits["muted_until"], m.mutedUntil,
+		settledBits["archived"], boolInt(m.archived), settledBits["unread"], boolInt(m.mentioned),
+		m.unread, m.lastTS, jid)
 	return err
 }
 
+// settledBits are the chat settings app state syncs, each with its bit in
+// wz_chats.settled. Their latest value comes from app state, a read
+// receipt or this device; a history sync's copy is older.
+var settledBits = map[string]int{"pinned": 1, "muted_until": 2, "archived": 4, "unread": 8}
+
 func (s *msgStore) setField(ctx context.Context, jid, field string, v any) error {
 	// field is always a constant from this package.
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_chats SET `+field+` = ? WHERE jid = ?`, v, jid)
+	bit, ok := settledBits[field]
+	if !ok {
+		_, err := s.db.ExecContext(ctx, `UPDATE wz_chats SET `+field+` = ? WHERE jid = ?`, v, jid)
+		return err
+	}
+	// App state can set a chat's settings before its history comes (on a
+	// new link, it always does), so the chat is created if needed. It isn't
+	// listed until it has a message (see chats).
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO wz_chats (jid, is_group, `+field+`, settled) VALUES (?1, ?2, ?3, ?4)
+		ON CONFLICT (jid) DO UPDATE SET `+field+` = ?3, settled = settled | ?4`,
+		jid, boolInt(strings.HasSuffix(jid, "@g.us")), v, bit)
+	return err
+}
+
+// listed reports whether a chat shows in the chat list (see chats).
+func (s *msgStore) listed(ctx context.Context, jid string) bool {
+	var ok bool
+	_ = s.db.QueryRowContext(ctx, `SELECT last_ts > 0 OR EXISTS (SELECT 1 FROM wz_messages WHERE chat = ?1)
+		FROM wz_chats WHERE jid = ?1`, jid).Scan(&ok)
+	return ok
+}
+
+// readUpTo marks a chat read up to the newest of ids, which were read on
+// another device: it keeps only the unread messages after them. A chat
+// marked as unread stays so.
+func (s *msgStore) readUpTo(ctx context.Context, jid string, ids []string) error {
+	var ts sql.NullInt64
+	if len(ids) > 0 {
+		args := []any{jid}
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		_ = s.db.QueryRowContext(ctx, `SELECT MAX(ts) FROM wz_messages WHERE chat = ? AND id IN (`+
+			placeholders(len(ids))+`)`, args...).Scan(&ts)
+	}
+	return s.readAfter(ctx, jid, ts.Int64, false)
+}
+
+// readAfter keeps a chat's unread count to its incoming messages after ts
+// (unix seconds; 0 reads them all). unmark reads a chat marked as unread
+// too.
+func (s *msgStore) readAfter(ctx context.Context, jid string, ts int64, unmark bool) error {
+	var after int
+	if ts > 0 {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wz_messages
+			WHERE chat = ? AND from_me = 0 AND ts > ?`, jid, ts).Scan(&after); err != nil {
+			return err
+		}
+	}
+	unread := "unread"
+	if unmark {
+		unread = "MAX(unread, 0)"
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_chats SET unread = MIN(`+unread+`, ?1),
+		settled = settled | ?2 WHERE jid = ?3`, after, settledBits["unread"], jid)
 	return err
 }
 

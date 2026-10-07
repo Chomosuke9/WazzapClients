@@ -204,6 +204,11 @@ Gotchas already found in the pinned version (v0.10.x):
   that show the change were drawn. `updateMouse` asks for one more frame after every
   press and release, or those parts waited for the pointer to move;
   `TestClickRedraws` clicks all over the demo window to check.
+- A new link's app state sync (pins, mutes, archives) comes before the chats'
+  history. `setField` creates a chat it doesn't have yet (unlisted until it has
+  messages) and marks the setting in `wz_chats.settled`, so the history's older
+  copy (`setMeta`) doesn't undo it. Reading on the phone with read receipts on comes
+  as a plain read receipt from your own device, not `read-self`.
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
