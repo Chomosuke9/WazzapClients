@@ -17,11 +17,11 @@ import (
 func TestStatusQuoteAndExpiry(t *testing.T) {
 	b := testBackend(t)
 	now := time.Now()
-	video, _ := proto.Marshal(&waE2E.VideoMessage{Seconds: proto.Uint32(12), Caption: proto.String("hi")})
+	video := &waE2E.VideoMessage{Seconds: proto.Uint32(12), Caption: proto.String("hi")}
 	for _, st := range []storedStatus{
-		{id: "vid", sender: "1@lid", ts: now, c: content{media: model.MediaVideo, text: "hi", blob: video}},
+		{id: "vid", sender: "1@lid", ts: now, c: content{media: model.MediaVideo, text: "hi", inner: video}},
 		{id: "txt", sender: "1@lid", ts: now, c: content{text: "hello", bg: 0xff112233}},
-		{id: "old", sender: "1@lid", ts: now.Add(-3 * statusTTL), c: content{media: model.MediaVideo, blob: video}},
+		{id: "old", sender: "1@lid", ts: now.Add(-3 * statusTTL), c: content{media: model.MediaVideo, inner: video}},
 	} {
 		if err := b.store.putStatus(b.ctx, b.db, st); err != nil {
 			t.Fatal(err)

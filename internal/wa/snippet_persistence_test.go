@@ -42,25 +42,6 @@ func TestSnippetPersistenceAndAccountSeparation(t *testing.T) {
 	}
 }
 
-func TestSnippetMigrationKeepsExistingMessages(t *testing.T) {
-	b := testBackend(t)
-	_, err := b.db.Exec(`ALTER TABLE wz_messages DROP COLUMN raw_payload; DROP TABLE wz_snippets; INSERT INTO wz_chats(jid) VALUES('old'); INSERT INTO wz_messages(chat,id,text,ts) VALUES('old','1','keep me',1700000000)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = b.store.init(b.ctx); err != nil {
-		t.Fatal(err)
-	}
-	var text string
-	var raw []byte
-	if err = b.db.QueryRow(`SELECT text,raw_payload FROM wz_messages WHERE chat='old' AND id='1'`).Scan(&text, &raw); err != nil || text != "keep me" || raw != nil {
-		t.Fatal(text, raw, err)
-	}
-	if _, err = b.SaveSnippet(model.Snippet{Body: "new"}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestSnippetSendQueuesAndRecordsFailureWithoutNetwork(t *testing.T) {
 	b := testBackend(t)
 	// An unlinked client fails before attempting any network operation.

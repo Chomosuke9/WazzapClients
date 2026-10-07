@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -43,51 +42,32 @@ CREATE TABLE IF NOT EXISTS wz_votes (
 // phone number or your LID, and must replace each other.
 const meVoter = "me"
 
-// extraInfo is the extra column.
+// extraInfo is what a card in a bubble shows: a poll, a location, contact
+// cards or an event.
 type extraInfo struct {
-	Poll     *pollDef            `json:"poll,omitempty"`
-	Loc      *model.Location     `json:"loc,omitempty"`
-	Contacts []model.ContactCard `json:"contacts,omitempty"`
-	Event    *eventDef           `json:"event,omitempty"`
+	Poll     *pollDef
+	Loc      *model.Location
+	Contacts []model.ContactCard
+	Event    *eventDef
 }
 
 // pollDef is a poll's options. Max is how many a voter may pick, 0 for
 // any number.
 type pollDef struct {
-	Options []string `json:"o"`
-	Max     int      `json:"max,omitempty"`
+	Options []string
+	Max     int
 }
 
 // eventDef is an event as created (or last edited); Start and End are
 // unix seconds.
 type eventDef struct {
-	Name     string          `json:"name,omitempty"`
-	Desc     string          `json:"desc,omitempty"`
-	Start    int64           `json:"start,omitempty"`
-	End      int64           `json:"end,omitempty"`
-	Place    *model.Location `json:"place,omitempty"`
-	Join     string          `json:"join,omitempty"`
-	Canceled bool            `json:"canceled,omitempty"`
-}
-
-func (x extraInfo) empty() bool {
-	return x.Poll == nil && x.Loc == nil && len(x.Contacts) == 0 && x.Event == nil
-}
-
-func (x extraInfo) marshal() string {
-	if x.empty() {
-		return ""
-	}
-	b, _ := json.Marshal(x)
-	return string(b)
-}
-
-func parseExtra(s string) extraInfo {
-	var x extraInfo
-	if s != "" {
-		_ = json.Unmarshal([]byte(s), &x)
-	}
-	return x
+	Name     string
+	Desc     string
+	Start    int64
+	End      int64
+	Place    *model.Location
+	Join     string
+	Canceled bool
 }
 
 // apply puts what x describes on m; a poll's and an event's counts come
@@ -111,27 +91,6 @@ func unixTime(sec int64) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(sec, 0)
-}
-
-// extraOf is what a message keeps in the extra column.
-func extraOf(m *model.Message) extraInfo {
-	x := extraInfo{Loc: m.Location, Contacts: m.Contacts}
-	if p := m.Poll; p != nil {
-		x.Poll = &pollDef{Max: p.Max}
-		for _, o := range p.Options {
-			x.Poll.Options = append(x.Poll.Options, o.Name)
-		}
-	}
-	if e := m.Event; e != nil {
-		x.Event = &eventDef{Name: e.Name, Desc: e.Description, Place: e.Place, Join: e.JoinLink, Canceled: e.Canceled}
-		if !e.Start.IsZero() {
-			x.Event.Start = e.Start.Unix()
-		}
-		if !e.End.IsZero() {
-			x.Event.End = e.End.Unix()
-		}
-	}
-	return x
 }
 
 // pollContent describes a poll.
@@ -491,7 +450,7 @@ func (b *Backend) Votes(m *model.Message) []model.Vote {
 		if mv.Me {
 			mv.ID, mv.Name = b.ownJID(m.ChatID).String(), "You"
 		} else {
-			mv.Name = b.senderNameStr(ctx, v.who, "", "")
+			mv.Name = b.senderNameStr(ctx, v.who, "")
 		}
 		switch {
 		case raw.Poll != nil:
@@ -554,13 +513,10 @@ func (b *Backend) VotePoll(m *model.Message, options []int) {
 }
 
 // editEvent applies an edit of an event (a new date, or canceling it).
-func (s *msgStore) editEvent(ctx context.Context, chat, id string, e *eventDef, payload ...[]byte) error {
-	var raw []byte
-	if len(payload) > 0 {
-		raw = payload[0]
-	}
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET extra = ?, text = ?, raw_payload = ? WHERE chat = ? AND id = ? AND media = ?`,
-		extraInfo{Event: e}.marshal(), e.Name, raw, chat, id, int(model.MediaEventInvite))
+func (s *msgStore) editEvent(ctx context.Context, chat, id string, e *eventDef, payload []byte) error {
+	// The event is read from the edit's payload (see rawMsg.fill).
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET text = ?, edit_payload = ? WHERE chat = ? AND id = ? AND media = ?`,
+		e.Name, payload, chat, id, int(model.MediaEventInvite))
 	return err
 }
 

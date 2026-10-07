@@ -646,7 +646,7 @@ func (b *Backend) handle(evt any) {
 		// Who must not be empty: the UI reads an empty Typing as nobody.
 		who, whoID := b.chatName(ctx, chat), ""
 		if e.IsGroup {
-			who = b.senderName(ctx, e.Sender, "", "")
+			who = b.senderName(ctx, e.Sender, "")
 			whoID = b.canonical(ctx, e.Sender.ToNonAD()).String()
 		}
 		b.emit(model.TypingEvent{ChatID: chat.String(), Who: who, WhoID: whoID, Typing: e.State == types.ChatPresenceComposing})
@@ -943,7 +943,7 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 	case p.revoke:
 		b.revoke(ctx, chat, p)
 	case p.edited:
-		if err := b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime, p.msg.rawPayload); err != nil {
+		if err := b.store.editText(ctx, chat, p.target, p.edit, p.editTime, p.msg.rawPayload); err != nil {
 			b.log.Warnf("edit %s in %s: %v", p.target, chat, err)
 		}
 	case p.pin != 0:
@@ -982,14 +982,16 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		}
 		if !p.msg.FromMe {
 			isNew = !seen // counted once resolved, below
-		} else if p.msg.Media == model.MediaSticker && len(p.msg.mediaBlob) > 0 {
-			b.recentSticker(p.msg.mediaBlob, p.msg.Time, "", "") // sent from another device
+		} else if p.msg.Media == model.MediaSticker {
+			if _, blob := rawMedia(p.msg.rawPayload); blob != nil {
+				b.recentSticker(blob, p.msg.Time, "", "") // sent from another device
+			}
 		}
 		if !exists && info.IsGroup {
 			go b.fetchGroupName(chatJID)
 		}
-		if q := p.msg.quoteMedia; q != nil && b.store.fillViewOnce(ctx, chat, p.msg.quoteID, q) {
-			b.emitMessage(chat, p.msg.quoteID)
+		if q := p.msg.quotedMedia; q != nil && b.store.fillViewOnce(ctx, chat, p.msg.quotedID, q) {
+			b.emitMessage(chat, p.msg.quotedID)
 		}
 		p.target = p.msg.ID
 	}
@@ -1264,7 +1266,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			case p.revoke:
 				b.revoke(ctx, chat, p)
 			case p.edited:
-				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editMentions, p.editTime, p.msg.rawPayload)
+				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editTime, p.msg.rawPayload)
 			case p.pin != 0:
 				_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
 			case p.vote != nil:

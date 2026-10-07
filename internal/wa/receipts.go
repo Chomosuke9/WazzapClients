@@ -14,6 +14,19 @@ import (
 // read it and played it, kept in wz_receipts. In a group, the message's
 // own receipt (its ticks) only moves on once every member has.
 
+// receiptsSchema has no rowid: the table is only ever looked up by its
+// primary key, and one with a rowid keeps every key a second time, in the
+// index that enforces it.
+const receiptsSchema = `CREATE TABLE IF NOT EXISTS wz_receipts (
+	chat      TEXT NOT NULL,
+	id        TEXT NOT NULL,              -- one of your messages
+	who       TEXT NOT NULL,              -- who it went to, usually a LID
+	delivered INTEGER NOT NULL DEFAULT 0, -- unix seconds, 0 = not yet
+	read      INTEGER NOT NULL DEFAULT 0,
+	played    INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (chat, id, who)
+) WITHOUT ROWID;`
+
 // personReceipt is one row of wz_receipts, in unix seconds.
 type personReceipt struct {
 	chat, id, who           string

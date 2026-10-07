@@ -174,6 +174,11 @@ Gotchas already found in the pinned version (v0.10.x):
   sync (`ParseWebMessage`) hands an edit out as the new content under the original's
   ID with `IsEdit` set. `parse` turns all three into an edit; `putMessage` never lets
   the original coming again overwrite an edited text.
+- SQLite uses a partial index only when the query's WHERE repeats its condition: it
+  can't tell that `media IN (?, ?)` or `media = ?` means `media != 0`, and read every
+  message for the Media panel until `galleryWhere` said so. A sort also reads every
+  column it returns of every row it sorts, so the gallery sorts rowids alone and reads
+  the page's rows after (each one's payload is decoded).
 - modernc's SQLite binds every statement of a multi-statement `Exec` from the first
   argument, so positional `?` in a second statement gets the wrong values. Use
   numbered `?1`, `?2` (as `deleteChat` does) or separate `Exec` calls.
@@ -283,14 +288,15 @@ internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the
                    font (OFL), and its own lossless WebP (VP8L) encoder: x/image only decodes
                    WebP, and libwebp needs cgo or, translated to Go, adds megabytes
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution;
+                   what a stored message shows, read from its payload (raw_payload, which
+                   /catch shows, and edit_payload), in payload.go;
                    albums (an albumMessage, then each picture pointing back to it) in album.go;
-                   polls, locations, contact cards and events (the extra column) and the
+                   polls, locations, contact cards and events (cards in bubbles) and the
                    votes and event answers they get (wz_votes) in polls.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
                    a group message's ticks wait for every member) in receipts.go;
-                   snippets (wz_snippets, their media copied to snippet-media/) and each
-                   message's raw protobuf (raw_payload, for /catch) in snippets.go and
-                   snippetmedia.go
+                   snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
+                   and snippetmedia.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
@@ -354,6 +360,16 @@ while the window is minimized and Gio draws no frames.
   the window goroutine, so UI state never needs locks.
 - hypermeow stores keys and sessions, not messages. `internal/wa/store.go` keeps chats and
   messages in `wz_*` tables of the same SQLite file (`%AppData%\WazzapClients\wazzap.db`).
+- A message is stored as its payload, the waE2E protobuf it came or went as
+  (`raw_payload`), plus its latest edit's (`edit_payload`). Everything it shows (media,
+  thumbnail, file, link preview, quote, mentions, cards, buttons...) is read from them by
+  `rawMsg.fill` (`internal/wa/payload.go`), the way `parse` reads a message that arrives;
+  don't add a column for something the payload holds. The columns are only the envelope
+  (sender, time), what happens to a message later (receipt, reaction, star, pin, edit,
+  revoke, opened) and `kind`, `media` and `text`, copies kept for queries. Your own
+  messages get a payload before they go (a file's, before its upload) and
+  `setRawPayload` replaces it as they're sent. `dropOldMessages` drops the messages of a
+  database from older versions, which kept them in columns of their own, once.
 - Never call into hypermeow's device store inside a `wz_*` write transaction. It writes
   to the same SQLite file and would block until the busy timeout (see `onHistory`).
 - Don't drop messages the app can't show: `parse` stores them as `KindUnsupported` ("This

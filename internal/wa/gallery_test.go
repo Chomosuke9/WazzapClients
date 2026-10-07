@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/polymorfa/hypermeow/proto/waE2E"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -25,6 +28,8 @@ func TestGallery(t *testing.T) {
 		t.Fatal(err)
 	}
 	img, vid, doc := int(model.MediaImage), int(model.MediaVideo), int(model.MediaDocument)
+	resume := marshal(&waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{FileName: proto.String("Résumé.pdf"),
+		Caption: proto.String("For the job")}})
 	for _, m := range []struct {
 		chat, id string
 		ts       int
@@ -32,18 +37,18 @@ func TestGallery(t *testing.T) {
 		media    int
 		text     string
 		starred  int
-		file     string
+		payload  []byte
 	}{
-		{"a@g.us", "1", 1, model.KindImage, img, "Beach", 0, ""},
-		{"b@s.whatsapp.net", "2", 2, model.KindImage, vid, "", 1, ""},
-		{"a@g.us", "3", 3, model.KindDeleted, img, "", 0, ""},
-		{"x@newsletter", "4", 4, model.KindImage, img, "", 0, ""},
-		{"a@g.us", "5", 5, model.KindText, doc, "", 0, `{"n":"Résumé.pdf"}`},
-		{"b@s.whatsapp.net", "6", 6, model.KindText, 0, "see https://example.com", 1, ""},
-		{"a@g.us", "7", 7, model.KindImage, img, "", 0, ""},
+		{"a@g.us", "1", 1, model.KindImage, img, "Beach", 0, nil},
+		{"b@s.whatsapp.net", "2", 2, model.KindImage, vid, "", 1, nil},
+		{"a@g.us", "3", 3, model.KindDeleted, img, "", 0, nil},
+		{"x@newsletter", "4", 4, model.KindImage, img, "", 0, nil},
+		{"a@g.us", "5", 5, model.KindText, doc, "For the job", 0, resume},
+		{"b@s.whatsapp.net", "6", 6, model.KindText, 0, "see https://example.com", 1, nil},
+		{"a@g.us", "7", 7, model.KindImage, img, "", 0, nil},
 	} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO wz_messages (chat, id, ts, kind, media, text, starred, file)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, m.chat, m.id, m.ts, int(m.kind), m.media, m.text, m.starred, m.file); err != nil {
+		if _, err := db.ExecContext(ctx, `INSERT INTO wz_messages (chat, id, ts, kind, media, text, starred, raw_payload)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, m.chat, m.id, m.ts, int(m.kind), m.media, m.text, m.starred, m.payload); err != nil {
 			t.Fatal(err)
 		}
 	}

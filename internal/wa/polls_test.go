@@ -18,14 +18,15 @@ import (
 func TestPollVotes(t *testing.T) {
 	b := testBackend(t)
 	ctx := b.ctx
-	c := pollContent(&waE2E.PollCreationMessage{Name: proto.String("Lunch?"), SelectableOptionsCount: proto.Uint32(1),
-		Options: []*waE2E.PollCreationMessage_Option{{OptionName: proto.String("Pizza")}, {OptionName: proto.String("Sushi")}}})
+	pc := &waE2E.PollCreationMessage{Name: proto.String("Lunch?"), SelectableOptionsCount: proto.Uint32(1),
+		Options: []*waE2E.PollCreationMessage_Option{{OptionName: proto.String("Pizza")}, {OptionName: proto.String("Sushi")}}}
+	c := pollContent(pc)
 	m := &model.Message{ID: "p", ChatID: "g@g.us", Text: c.text, Media: c.media, Time: time.Unix(100, 0)}
 	c.extra.apply(m)
 	if err := b.store.ensureChat(ctx, b.db, m.ChatID, true, "G"); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m}); err != nil {
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, rawPayload: marshal(&waE2E.Message{PollCreationMessage: pc})}); err != nil {
 		t.Fatal(err)
 	}
 	pick := func(names ...string) string {
@@ -69,12 +70,14 @@ func TestPollVotes(t *testing.T) {
 func TestEventAnswers(t *testing.T) {
 	b := testBackend(t)
 	ctx := b.ctx
-	c := eventContent(&waE2E.EventMessage{Name: proto.String("Picnic"), StartTime: proto.Int64(5000),
-		Location: &waE2E.LocationMessage{Name: proto.String("Park")}})
+	ev := &waE2E.EventMessage{Name: proto.String("Picnic"), StartTime: proto.Int64(5000),
+		Location: &waE2E.LocationMessage{Name: proto.String("Park")}}
+	c := eventContent(ev)
+	raw := marshal(&waE2E.Message{EventMessage: ev})
 	m := &model.Message{ID: "e", ChatID: "g@g.us", Text: c.text, Media: c.media, Time: time.Unix(100, 0)}
 	c.extra.apply(m)
 	_ = b.store.ensureChat(ctx, b.db, m.ChatID, true, "G")
-	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m}); err != nil {
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, rawPayload: raw}); err != nil {
 		t.Fatal(err)
 	}
 	for _, v := range []vote{
@@ -84,11 +87,12 @@ func TestEventAnswers(t *testing.T) {
 	} {
 		_ = b.store.putVote(ctx, b.db, m.ChatID, m.ID, v)
 	}
-	if err := b.store.editEvent(ctx, m.ChatID, m.ID, &eventDef{Name: "Picnic!", Start: 6000, Canceled: true}); err != nil {
+	if err := b.store.editEvent(ctx, m.ChatID, m.ID, &eventDef{Name: "Picnic!"},
+		marshal(&waE2E.Message{EventMessage: &waE2E.EventMessage{Name: proto.String("Picnic!"), StartTime: proto.Int64(6000), IsCanceled: proto.Bool(true)}})); err != nil {
 		t.Fatal(err)
 	}
 	// The event coming again (history) keeps the edit.
-	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m}); err != nil {
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, rawPayload: raw}); err != nil {
 		t.Fatal(err)
 	}
 	e := b.Messages(m.ChatID, 10)[0].Event

@@ -74,7 +74,55 @@ func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.M
 			return m
 		}
 	}
+	switch r.Media {
+	case model.MediaLocation, model.MediaContact, model.MediaPoll, model.MediaEventInvite:
+		// Quoted as what it is, so the quote shows a poll as a poll.
+		if pm, err := b.rawMessage(chatID, id); err == nil {
+			if q := cardOf(pm); q != nil {
+				return q
+			}
+		}
+	}
 	return &waE2E.Message{Conversation: proto.String(r.Text)}
+}
+
+// cardOf returns the place, contact cards, poll or event in m, without
+// what they reply to or mention, as a message of its own; or nil.
+func cardOf(m *waE2E.Message) *waE2E.Message {
+	m = unwrap(m)
+	c := &waE2E.Message{
+		LocationMessage: m.GetLocationMessage(), LiveLocationMessage: m.GetLiveLocationMessage(),
+		ContactMessage: m.GetContactMessage(), ContactsArrayMessage: m.GetContactsArrayMessage(),
+		PollCreationMessage: m.GetPollCreationMessage(), PollCreationMessageV2: m.GetPollCreationMessageV2(),
+		PollCreationMessageV3: m.GetPollCreationMessageV3(), PollCreationMessageV5: m.GetPollCreationMessageV5(),
+		PollCreationMessageV6: m.GetPollCreationMessageV6(), EventMessage: m.GetEventMessage(),
+	}
+	if proto.Size(c) == 0 {
+		return nil
+	}
+	c = proto.Clone(c).(*waE2E.Message)
+	for _, p := range []*waE2E.PollCreationMessage{c.PollCreationMessage, c.PollCreationMessageV2,
+		c.PollCreationMessageV3, c.PollCreationMessageV5, c.PollCreationMessageV6} {
+		if p != nil {
+			p.ContextInfo = nil
+		}
+	}
+	if c.LocationMessage != nil {
+		c.LocationMessage.ContextInfo = nil
+	}
+	if c.LiveLocationMessage != nil {
+		c.LiveLocationMessage.ContextInfo = nil
+	}
+	if c.ContactMessage != nil {
+		c.ContactMessage.ContextInfo = nil
+	}
+	if c.ContactsArrayMessage != nil {
+		c.ContactsArrayMessage.ContextInfo = nil
+	}
+	if c.EventMessage != nil {
+		c.EventMessage.ContextInfo = nil
+	}
+	return c
 }
 
 // mediaMessage turns a stored media blob back into a sendable message.
@@ -158,7 +206,7 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			}
 		}
 	}
-	if ci := b.draftContext(chatID, d, &sm); ci != nil || link {
+	if ci := b.draftContext(chatID, d, m); ci != nil || link {
 		e := &waE2E.ExtendedTextMessage{
 			Text:                  proto.String(d.Text),
 			ContextInfo:           ci,
@@ -167,14 +215,10 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		var prep func(context.Context)
 		if link {
 			addLink(e, d.Link, d.LinkThumb)
-			if len(d.LinkImage.Data) > 0 {
-				img := d.LinkImage
-				prep = func(ctx context.Context) {
-					b.uploadLinkImage(ctx, cli, e, img)
-					if blob := linkImageOf(e); blob != nil {
-						b.setMediaBlob(chatID, m.ID, blob)
-					}
-				}
+			if img := d.LinkImage; len(img.Data) > 0 {
+				// Its size makes the card wide at once (see describe).
+				e.ThumbnailWidth, e.ThumbnailHeight = proto.Uint32(uint32(img.W)), proto.Uint32(uint32(img.H))
+				prep = func(ctx context.Context) { b.uploadLinkImage(ctx, cli, e, img) }
 			}
 		}
 		msg = &waE2E.Message{ExtendedTextMessage: e}
@@ -187,7 +231,7 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 }
 
 // quote makes a message sent to chatID a reply to r: it fills in ci and
-// returns the quote to store with the message.
+// returns the quote the message shows.
 func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) *model.Quote {
 	sender := b.senderOf(r)
 	ci.StanzaID = proto.String(r.ID)
@@ -329,12 +373,11 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	if forwarded {
 		ci = &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(1)}
 	}
-	var q *model.Quote
 	if reply != nil {
 		if ci == nil {
 			ci = &waE2E.ContextInfo{}
 		}
-		q = b.quote(chatID, reply, ci)
+		b.quote(chatID, reply, ci)
 	}
 	if msg == nil && raw.Kind != model.KindDeleted {
 		msg = cardMessage(raw.Message)
@@ -356,13 +399,9 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	}
 	m := &model.Message{
 		ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Time: b.sendTime(), Receipt: model.Pending,
-		Kind: raw.Kind, Media: raw.Media, Duration: raw.Duration, Text: raw.Text, Thumb: raw.Thumb, Forwarded: forwarded,
-		Quote: q, Link: raw.Link, Location: raw.Location, Contacts: raw.Contacts,
+		Kind: raw.Kind, Media: raw.Media, Text: raw.Text,
 	}
-	sm := storedMsg{Message: m, mediaBlob: blob}
-	if q != nil {
-		sm.quoteJID, sm.quoteID = q.SenderID, q.ID
-	}
+	sm := storedMsg{Message: m, rawPayload: marshal(msg)}
 	if err := b.store.putMessage(ctx, b.db, sm); err != nil {
 		b.log.Errorf("store forwarded message: %v", err)
 	}

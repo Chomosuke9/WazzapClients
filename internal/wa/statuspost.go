@@ -108,11 +108,13 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 		}
 		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
 		defer cancel()
-		msg, inner, err := uploadMedia(ctx, cli, m, up, p.Text, nil, false)
+		msg, inner := fileMessage(m, up, p.Text, nil, false)
+		res, err := up.push(ctx, cli, m.Media)
 		if err != nil {
 			b.statusFailed(st.id, err)
 			return
 		}
+		uploaded(inner, res)
 		// Kept so a reply to it can quote it.
 		if _, err := b.db.ExecContext(b.ctx, `UPDATE wz_status SET media_blob = ? WHERE id = ?`, marshal(inner), st.id); err != nil {
 			b.log.Warnf("store status media %s: %v", st.id, err)

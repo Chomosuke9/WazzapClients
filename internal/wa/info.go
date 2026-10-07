@@ -54,19 +54,21 @@ func (s *msgStore) mediaSummary(ctx context.Context, chat string, n int) (int, [
 		chat, int(model.KindDeleted), int(model.KindViewOnce), int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF),
 		int(model.MediaDocument)).Scan(&count)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+msgColumns+` FROM wz_messages
-		WHERE chat = ? AND media IN (?, ?, ?) AND kind <> ? AND thumb IS NOT NULL ORDER BY ts DESC LIMIT ?`,
-		chat, int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF), int(model.KindViewOnce), n)
+		WHERE chat = ? AND media IN (?, ?, ?) AND kind <> ? ORDER BY ts DESC`,
+		chat, int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF), int(model.KindViewOnce))
 	if err != nil {
 		return count, nil
 	}
 	defer rows.Close()
 	var out []*model.Message
-	for rows.Next() {
+	for len(out) < n && rows.Next() {
 		r, err := scanMessage(rows)
 		if err != nil {
 			break
 		}
-		out = append(out, r.Message)
+		if len(r.Thumb) > 0 { // a preview to show
+			out = append(out, r.Message)
+		}
 	}
 	return count, out
 }

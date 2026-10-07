@@ -222,14 +222,13 @@ func (b *Backend) fetchChannelPosts(ctx context.Context, cli *whatsmeow.Client, 
 			id = strconv.Itoa(int(nm.MessageServerID))
 		}
 		m := storedMsg{Message: &model.Message{
-			ID: id, ChatID: chat, Kind: c.kind, Media: c.media, Duration: c.duration,
-			Text: c.text, Time: nm.Timestamp, Thumb: c.thumb, Receipt: model.Read,
-		}, senderJID: chat, mediaBlob: c.blob}
+			ID: id, ChatID: chat, Kind: c.kind, Media: c.media, Text: c.text, Time: nm.Timestamp, Receipt: model.Read,
+		}, senderJID: chat, rawPayload: marshal(nm.Message)}
 		if err := b.store.putMessage(ctx, b.db, m); err != nil {
 			b.log.Debugf("store channel post: %v", err)
 			continue
 		}
-		b.emit(model.MessageEvent{Msg: m.Message})
+		b.emitMessage(chat, id)
 	}
 }
 

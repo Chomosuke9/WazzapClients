@@ -112,16 +112,22 @@ func (s *msgStore) stickerHashByEnc(ctx context.Context, enc []byte) []byte {
 	if len(enc) == 0 {
 		return nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT media_blob FROM wz_messages WHERE media = ? AND media_blob IS NOT NULL
-		UNION ALL SELECT blob FROM wz_stickers`, int(model.MediaSticker))
+	rows, err := s.db.QueryContext(ctx, `SELECT raw_payload, NULL FROM wz_messages WHERE media = ? AND raw_payload IS NOT NULL
+		UNION ALL SELECT NULL, blob FROM wz_stickers`, int(model.MediaSticker))
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var blob []byte
+		var raw, blob []byte
+		if rows.Scan(&raw, &blob) != nil {
+			continue
+		}
+		if raw != nil {
+			_, blob = rawMedia(raw)
+		}
 		var m waE2E.StickerMessage
-		if rows.Scan(&blob) == nil && proto.Unmarshal(blob, &m) == nil &&
+		if len(blob) > 0 && proto.Unmarshal(blob, &m) == nil &&
 			string(m.GetFileEncSHA256()) == string(enc) && len(m.GetFileSHA256()) == 32 {
 			return m.GetFileSHA256()
 		}
@@ -158,8 +164,8 @@ func (b *Backend) Stickers(set model.StickerSet) []*model.Message {
 
 // receivedStickers lists recently received stickers, one per file.
 func (b *Backend) receivedStickers() []*model.Message {
-	rows, err := b.db.QueryContext(b.ctx, `SELECT chat, id, media_blob FROM wz_messages
-		WHERE media = ? AND from_me = 0 AND media_blob IS NOT NULL ORDER BY ts DESC LIMIT 400`, int(model.MediaSticker))
+	rows, err := b.db.QueryContext(b.ctx, `SELECT chat, id, raw_payload FROM wz_messages
+		WHERE media = ? AND from_me = 0 AND raw_payload IS NOT NULL ORDER BY ts DESC LIMIT 400`, int(model.MediaSticker))
 	if err != nil {
 		return nil
 	}
@@ -168,12 +174,13 @@ func (b *Backend) receivedStickers() []*model.Message {
 	var out []*model.Message
 	for rows.Next() && len(out) < stickerListMax {
 		var chat, id string
-		var blob []byte
-		if rows.Scan(&chat, &id, &blob) != nil {
+		var raw []byte
+		if rows.Scan(&chat, &id, &raw) != nil {
 			continue
 		}
+		_, blob := rawMedia(raw)
 		var s waE2E.StickerMessage
-		if proto.Unmarshal(blob, &s) != nil || s.GetIsAnimated() {
+		if len(blob) == 0 || proto.Unmarshal(blob, &s) != nil || s.GetIsAnimated() {
 			continue // animated stickers only show their first frame
 		}
 		key := string(s.GetFileSHA256())
@@ -416,17 +423,20 @@ func (b *Backend) stickerFromChats(ctx context.Context, cli *whatsmeow.Client, h
 		chat, id string
 		m        *waE2E.StickerMessage
 	}
-	rows, err := b.db.QueryContext(ctx, `SELECT chat, id, media_blob FROM wz_messages
-		WHERE media = ? AND media_blob IS NOT NULL ORDER BY ts DESC`, int(model.MediaSticker))
+	rows, err := b.db.QueryContext(ctx, `SELECT chat, id, raw_payload FROM wz_messages
+		WHERE media = ? AND raw_payload IS NOT NULL ORDER BY ts DESC`, int(model.MediaSticker))
 	if err != nil {
 		return false
 	}
 	var copies []chatCopy
 	for rows.Next() {
 		var c chatCopy
-		var blob []byte
+		var raw []byte
 		m := &waE2E.StickerMessage{}
-		if rows.Scan(&c.chat, &c.id, &blob) == nil && proto.Unmarshal(blob, m) == nil &&
+		if rows.Scan(&c.chat, &c.id, &raw) != nil {
+			continue
+		}
+		if _, blob := rawMedia(raw); len(blob) > 0 && proto.Unmarshal(blob, m) == nil &&
 			string(m.GetFileSHA256()) == string(sha) {
 			c.m = m
 			copies = append(copies, c)

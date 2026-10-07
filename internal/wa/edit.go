@@ -39,7 +39,7 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 			if err != nil || j.User == "" || !strings.Contains(text, "@"+j.User) {
 				continue
 			}
-			name := b.senderName(ctx, j, "", "")
+			name := b.senderName(ctx, j, "")
 			text = strings.ReplaceAll(text, "@"+j.User, "@"+name)
 			refs = append(refs, model.MentionRef{Name: name, ID: j.ToNonAD().String()})
 		}
@@ -63,8 +63,7 @@ func (b *Backend) Edit(m *model.Message, d model.Draft) {
 	}
 	ctx := b.ctx
 	d.Reply = nil
-	sm := storedMsg{Message: &model.Message{ChatID: m.ChatID}}
-	ci := b.draftContext(m.ChatID, d, &sm)
+	ci := b.draftContext(m.ChatID, d, &model.Message{ChatID: m.ChatID})
 	var content *waE2E.Message
 	switch m.Media {
 	case model.MediaNone:
@@ -99,7 +98,7 @@ func (b *Backend) Edit(m *model.Message, d model.Draft) {
 		return
 	}
 	now := time.Now()
-	if err := b.store.editText(ctx, m.ChatID, m.ID, d.Text, sm.mentions, now, marshal(content)); err != nil {
+	if err := b.store.editText(ctx, m.ChatID, m.ID, d.Text, now, marshal(content)); err != nil {
 		b.log.Errorf("store edit of %s: %v", m.ID, err)
 	}
 	b.emitMessage(m.ChatID, m.ID)

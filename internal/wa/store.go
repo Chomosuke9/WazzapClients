@@ -8,12 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/polymorfa/hypermeow/proto/waE2E"
+
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // hypermeow (like whatsmeow) only stores keys and session state, not
 // messages. msgStore keeps chats and messages in the same SQLite file so the
-// app can show history after a restart.
+// app can show history after a restart. A message is kept as its payload
+// (see payload.go).
 //
 // Display names are not stored with messages: contact and push names often
 // arrive after the messages themselves (history sync stores them in the
@@ -40,20 +43,42 @@ CREATE TABLE IF NOT EXISTS wz_chats (
 CREATE TABLE IF NOT EXISTS wz_messages (
 	chat         TEXT NOT NULL,
 	id           TEXT NOT NULL,
+	-- The envelope, which the payload doesn't hold.
 	sender_jid   TEXT NOT NULL DEFAULT '',
-	sender_name  TEXT NOT NULL DEFAULT '',
+	sender_push  TEXT NOT NULL DEFAULT '',
 	from_me      INTEGER NOT NULL DEFAULT 0,
 	ts           INTEGER NOT NULL,
+	-- What the payload is, for queries: model.Kind and model.Media as
+	-- parse decided, and the text as last edited.
 	kind         INTEGER NOT NULL DEFAULT 0,
+	media        INTEGER NOT NULL DEFAULT 0,
 	text         TEXT NOT NULL DEFAULT '',
-	receipt      INTEGER NOT NULL DEFAULT 0,
-	quote_sender TEXT NOT NULL DEFAULT '',
-	quote_text   TEXT NOT NULL DEFAULT '',
-	reaction     TEXT NOT NULL DEFAULT '',
-	thumb        BLOB,
+	-- What happened to it since.
+	receipt      INTEGER NOT NULL DEFAULT 0, -- model.Receipt
+	reaction     TEXT NOT NULL DEFAULT '',   -- the latest
+	starred      INTEGER NOT NULL DEFAULT 0,
+	pinned       INTEGER NOT NULL DEFAULT 0, -- when, 0 = not pinned
+	edited       INTEGER NOT NULL DEFAULT 0, -- unix ms of the last edit, 0 = never
+	-- Unix ms its sender deleted it for everyone, for a message kept with
+	-- model.PrefKeepDeleted; 0 otherwise.
+	revoked      INTEGER NOT NULL DEFAULT 0,
+	opened       INTEGER NOT NULL DEFAULT 0, -- 1 once a view once message was opened here
+	-- The message itself, last so that reading the columns above skips it:
+	-- the waE2E message it came or went as (none for a view once message
+	-- whose media never came), and the content of its latest edit.
+	raw_payload  BLOB,
+	edit_payload BLOB,
 	PRIMARY KEY (chat, id)
 );
 CREATE INDEX IF NOT EXISTS wz_messages_chat_ts ON wz_messages (chat, ts);
+CREATE INDEX IF NOT EXISTS wz_messages_pinned ON wz_messages (chat, pinned) WHERE pinned != 0;
+-- For lastPush.
+CREATE INDEX IF NOT EXISTS wz_messages_sender ON wz_messages (sender_jid, ts) WHERE sender_push != '';
+-- For the Media panel across all chats.
+CREATE INDEX IF NOT EXISTS wz_messages_media ON wz_messages (media, ts) WHERE media != 0;
+CREATE INDEX IF NOT EXISTS wz_messages_starred ON wz_messages (ts) WHERE starred != 0;
+-- For failStale.
+CREATE INDEX IF NOT EXISTS wz_messages_pending ON wz_messages (chat) WHERE from_me = 1 AND receipt = 0;
 CREATE TABLE IF NOT EXISTS wz_meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -108,21 +133,11 @@ CREATE TABLE IF NOT EXISTS wz_member_changes (
 );
 CREATE INDEX IF NOT EXISTS wz_member_changes_chat ON wz_member_changes (chat, ts);
 CREATE TABLE IF NOT EXISTS wz_edits (
-	chat     TEXT NOT NULL,
-	id       TEXT NOT NULL,
-	ts       INTEGER NOT NULL,          -- unix milliseconds the text was sent or edited to
-	text     TEXT NOT NULL DEFAULT '',  -- an earlier text of an edited message
-	mentions TEXT NOT NULL DEFAULT '',
+	chat    TEXT NOT NULL,
+	id      TEXT NOT NULL,
+	ts      INTEGER NOT NULL, -- unix milliseconds it was edited to this
+	payload BLOB NOT NULL,    -- an earlier edit of the message
 	PRIMARY KEY (chat, id, ts)
-);
-CREATE TABLE IF NOT EXISTS wz_receipts (
-	chat      TEXT NOT NULL,
-	id        TEXT NOT NULL,              -- one of your messages
-	who       TEXT NOT NULL,              -- who it went to, usually a LID
-	delivered INTEGER NOT NULL DEFAULT 0, -- unix seconds, 0 = not yet
-	read      INTEGER NOT NULL DEFAULT 0,
-	played    INTEGER NOT NULL DEFAULT 0,
-	PRIMARY KEY (chat, id, who)
 );
 CREATE TABLE IF NOT EXISTS wz_list_chats (
 	list TEXT NOT NULL,
@@ -131,57 +146,29 @@ CREATE TABLE IF NOT EXISTS wz_list_chats (
 );
 `
 
-// migrations add columns (and indexes on them) to databases created by
-// older versions.
+// migrations add columns to databases created by older versions.
 var migrations = []string{
-	`ALTER TABLE wz_messages ADD COLUMN sender_push TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE wz_messages ADD COLUMN media INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE wz_messages ADD COLUMN media_blob BLOB`,
-	`ALTER TABLE wz_messages ADD COLUMN duration INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE wz_messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE wz_messages ADD COLUMN quote_media INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_chats ADD COLUMN parent TEXT NOT NULL DEFAULT ''`,         // community a group belongs to
 	`ALTER TABLE wz_chats ADD COLUMN community INTEGER NOT NULL DEFAULT 0`,    // 1 for a community's parent group
 	`ALTER TABLE wz_chats ADD COLUMN announce_sub INTEGER NOT NULL DEFAULT 0`, // 1 for a community's announcements
 	`ALTER TABLE wz_chats ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE wz_messages ADD COLUMN quote_id TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE wz_messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE wz_messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE wz_messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE wz_messages ADD COLUMN buttons TEXT NOT NULL DEFAULT ''`, // JSON buttonsInfo
-	`ALTER TABLE wz_messages ADD COLUMN file TEXT NOT NULL DEFAULT ''`,    // JSON fileInfo
 	// 1 when an unread message of a group is for you; see addUnread.
 	`ALTER TABLE wz_chats ADD COLUMN mentioned INTEGER NOT NULL DEFAULT 0`,
-	// For pinnedMessage; after the pinned column exists.
-	`CREATE INDEX IF NOT EXISTS wz_messages_pinned ON wz_messages (chat, pinned) WHERE pinned != 0`,
-	// For lastPush.
-	`CREATE INDEX IF NOT EXISTS wz_messages_sender ON wz_messages (sender_jid, ts) WHERE sender_push != ''`,
-	// For Gallery across all chats.
-	`CREATE INDEX IF NOT EXISTS wz_messages_media ON wz_messages (media, ts) WHERE media != 0`,
-	`CREATE INDEX IF NOT EXISTS wz_messages_starred ON wz_messages (ts) WHERE starred != 0`,
-	`ALTER TABLE wz_messages ADD COLUMN album TEXT NOT NULL DEFAULT ''`, // ID of the album message
-	// For failStale.
-	`CREATE INDEX IF NOT EXISTS wz_messages_pending ON wz_messages (chat) WHERE from_me = 1 AND receipt = 0`,
-	// Unix milliseconds of the last edit, 0 = never edited.
-	`ALTER TABLE wz_messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE wz_messages ADD COLUMN link TEXT NOT NULL DEFAULT ''`,   // JSON linkInfo
 	`ALTER TABLE wz_chats ADD COLUMN general INTEGER NOT NULL DEFAULT 0`, // 1 for a community's General chat
-	`ALTER TABLE wz_messages ADD COLUMN extra TEXT NOT NULL DEFAULT ''`,  // JSON extraInfo
-	// Unix milliseconds its sender deleted it for everyone, for a message
-	// kept with model.PrefKeepDeleted; 0 otherwise.
-	`ALTER TABLE wz_messages ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
-	// The same for a status update.
+	// Unix milliseconds its sender deleted a status update, for one kept
+	// with model.PrefKeepDeleted; 0 otherwise.
 	`ALTER TABLE wz_status ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
-	// 1 once a view once message (model.KindViewOnce) was opened here.
-	`ALTER TABLE wz_messages ADD COLUMN opened INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_status ADD COLUMN group_jid TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_status ADD COLUMN duration INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE wz_status ADD COLUMN file_type TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE wz_messages ADD COLUMN raw_payload BLOB`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, schema+stickerSchema+votesSchema+snippetSchema); err != nil {
+	dropped, err := s.dropOldMessages(ctx)
+	if err != nil {
+		return fmt.Errorf("drop old messages: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, schema+receiptsSchema+stickerSchema+votesSchema+snippetSchema); err != nil {
 		return err
 	}
 	for _, m := range migrations {
@@ -189,13 +176,51 @@ func (s *msgStore) init(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := s.migrateLegacyMedia(ctx); err != nil {
-		return err
-	}
-	if err := s.migrateFileInfo(ctx); err != nil {
-		return err
+	if dropped {
+		s.vacuum(ctx)
 	}
 	return s.failStale(ctx)
+}
+
+// dropOldMessages drops the messages of a database made by a version that
+// kept what they show in columns of its own, beside a payload most of them
+// lacked: message storage starts over, once. Their edits, votes and
+// receipts go with them; chats, settings, snippets and the rest stay. It
+// reports whether it dropped anything.
+func (s *msgStore) dropOldMessages(ctx context.Context) (bool, error) {
+	var old bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pragma_table_info('wz_messages'))
+		AND NOT EXISTS (SELECT 1 FROM pragma_table_info('wz_messages') WHERE name = 'edit_payload')`).Scan(&old)
+	if err != nil || !old {
+		return false, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DROP TABLE wz_messages`,
+		`DROP TABLE IF EXISTS wz_edits`,
+		`DROP TABLE IF EXISTS wz_votes`,
+		`DROP TABLE IF EXISTS wz_receipts`,
+		`UPDATE wz_chats SET unread = 0`,
+		`DELETE FROM wz_meta WHERE key IN ('legacy_media_migrated', 'file_info_migrated')`,
+	} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
+}
+
+// vacuum gives the space dropped messages took back to the system: SQLite
+// otherwise keeps free pages in the file for later writes. The copy goes
+// through the write-ahead log, which is emptied after.
+func (s *msgStore) vacuum(ctx context.Context) {
+	if _, err := s.db.ExecContext(ctx, `VACUUM`); err == nil {
+		_, _ = s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+	}
 }
 
 // failStale marks the messages still pending from an earlier run failed:
@@ -204,39 +229,6 @@ func (s *msgStore) failStale(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET receipt = ? WHERE from_me = 1 AND receipt = ?`,
 		int(model.Failed), int(model.Pending))
 	return err
-}
-
-// migrateLegacyMedia converts media rows written by the first version,
-// which stored attachments as emoji-prefixed text ("📄 file.pdf"), into
-// typed media so they render with proper icons.
-func (s *msgStore) migrateLegacyMedia(ctx context.Context) error {
-	const key = "legacy_media_migrated"
-	if s.meta(ctx, key) != "" {
-		return nil
-	}
-	m := func(media model.Media) int { return int(media) }
-	stmts := []struct {
-		q    string
-		args []any
-	}{
-		{`UPDATE wz_messages SET media = ?, text = '' WHERE media = 0 AND kind = 0 AND text = 'Sticker'`, []any{m(model.MediaSticker)}},
-		{`UPDATE wz_messages SET media = ?, text = substr(text, 3) WHERE media = 0 AND text LIKE '📄 %'`, []any{m(model.MediaDocument)}},
-		{`UPDATE wz_messages SET media = ?, text = '' WHERE media = 0 AND text LIKE '🎤 Voice message%'`, []any{m(model.MediaVoice)}},
-		{`UPDATE wz_messages SET media = ?, text = '' WHERE media = 0 AND text = '🎵 Audio'`, []any{m(model.MediaAudio)}},
-		{`UPDATE wz_messages SET media = ?, text = CASE WHEN text = '🎥 Video' THEN '' ELSE substr(text, 3) END
-			WHERE media = 0 AND text LIKE '🎥 %'`, []any{m(model.MediaVideo)}},
-		{`UPDATE wz_messages SET media = ?, text = CASE WHEN text = '📍 Location' THEN '' ELSE substr(text, 3) END
-			WHERE media = 0 AND text LIKE '📍 %'`, []any{m(model.MediaLocation)}},
-		{`UPDATE wz_messages SET media = ?, text = substr(text, 3) WHERE media = 0 AND text LIKE '👤 %'`, []any{m(model.MediaContact)}},
-		{`UPDATE wz_messages SET media = ?, text = substr(text, 3) WHERE media = 0 AND text LIKE '📊 %'`, []any{m(model.MediaPoll)}},
-		{`UPDATE wz_messages SET media = ? WHERE media = 0 AND kind = ?`, []any{m(model.MediaImage), int(model.KindImage)}},
-	}
-	for _, st := range stmts {
-		if _, err := s.db.ExecContext(ctx, st.q, st.args...); err != nil {
-			return fmt.Errorf("migrate legacy media: %w", err)
-		}
-	}
-	return s.setMetaValue(ctx, key, time.Now().Format(time.RFC3339))
 }
 
 func (s *msgStore) wipe(ctx context.Context) error {
@@ -323,56 +315,37 @@ func (s *msgStore) addUnread(ctx context.Context, jid string, forMe bool) error 
 	return err
 }
 
-// storedMsg is a message plus the raw data names are resolved from at load
-// time, and what's needed to download its media later.
+// storedMsg is a message to store: its payload, with what parse read of
+// it and the envelope it came in.
 type storedMsg struct {
 	*model.Message
 	senderJID  string
 	senderPush string
-	quoteJID   string // author of the quoted message
-	quoteID    string
-	mentions   []string
-	mediaBlob  []byte // marshaled waE2E media message
-	rawPayload []byte // complete waE2E message, loaded only for catch/snippets
-	buttons    *buttonsInfo
-	// quoteMedia is the quoted photo, video or voice message, when the
-	// quote carries what downloading it takes (see fillViewOnce).
-	quoteMedia *content
+	rawPayload []byte // the marshaled waE2E message
+	// quotedMedia is the photo, video or voice message the message
+	// quotes (quotedID), when the quote carries what downloading it takes
+	// (see fillViewOnce).
+	quotedMedia *waE2E.Message
+	quotedID    string
 }
 
+// putMessage stores a message, or what came of one again: the payload it
+// came with first stays (setRawPayload replaces your own as it goes out),
+// so do its latest edit and its text as edited, and a deleted one stays
+// deleted.
 func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error {
-	var qt string
-	var qm int
-	if m.Quote != nil {
-		qt, qm = m.Quote.Text, int(m.Quote.Media)
-	}
 	_, err := x.ExecContext(ctx, `
-		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, duration, text,
-			receipt, quote_sender, quote_text, quote_media, quote_id, mentions, forwarded, thumb, media_blob, buttons, file,
-		album, link, extra, raw_payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, raw_payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
 			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
-			duration = excluded.duration,
-			-- The message again (a retry, or history after an edit) keeps its edit.
-			text = CASE WHEN wz_messages.edited != 0 THEN wz_messages.text ELSE excluded.text END,
-			mentions = CASE WHEN wz_messages.edited != 0 THEN wz_messages.mentions ELSE excluded.mentions END,
+			text = CASE WHEN wz_messages.edited != 0 OR wz_messages.edit_payload IS NOT NULL
+				THEN wz_messages.text ELSE excluded.text END,
 			receipt = MAX(wz_messages.receipt, excluded.receipt),
-			quote_sender = excluded.quote_sender, quote_text = excluded.quote_text,
-			quote_media = excluded.quote_media, quote_id = excluded.quote_id,
-			forwarded = excluded.forwarded, buttons = excluded.buttons, file = excluded.file,
-			album = COALESCE(NULLIF(excluded.album, ''), wz_messages.album),
-			link = COALESCE(NULLIF(excluded.link, ''), wz_messages.link),
-			-- An event's edits (a new date, canceling it) stay.
-			extra = COALESCE(NULLIF(wz_messages.extra, ''), excluded.extra),
-			thumb = COALESCE(excluded.thumb, wz_messages.thumb),
-			media_blob = COALESCE(excluded.media_blob, wz_messages.media_blob),
-			raw_payload = CASE WHEN wz_messages.kind = ? OR wz_messages.edited != 0 THEN wz_messages.raw_payload
-				ELSE COALESCE(wz_messages.raw_payload, excluded.raw_payload) END`,
+			raw_payload = COALESCE(wz_messages.raw_payload, excluded.raw_payload)
+		WHERE wz_messages.kind != ?`,
 		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
-		m.Duration, m.Text, int(m.Receipt), m.quoteJID, qt, qm, m.quoteID, strings.Join(m.mentions, ","),
-		boolInt(m.Forwarded), m.Thumb, m.mediaBlob, m.buttons.marshal(), fileOf(m.Message).marshal(), m.Album,
-		marshalLink(m.Link), extraOf(m.Message).marshal(), m.rawPayload, int(model.KindDeleted))
+		m.Text, int(m.Receipt), m.rawPayload, int(model.KindDeleted))
 	if err != nil {
 		return err
 	}
@@ -381,16 +354,25 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 }
 
 // fillViewOnce gives a view once message whose media never came here the
-// media a reply to it quoted. It reports whether it had none.
-func (s *msgStore) fillViewOnce(ctx context.Context, chat, id string, c *content) bool {
-	media := c.media
-	if media != model.MediaImage && media != model.MediaVideo && media != model.MediaVoice {
+// message a reply to it quoted, q, as its payload. It reports whether it
+// had none.
+func (s *msgStore) fillViewOnce(ctx context.Context, chat, id string, q *waE2E.Message) bool {
+	c := describe(q)
+	if c.media != model.MediaImage && c.media != model.MediaVideo && c.media != model.MediaVoice {
 		return false
 	}
-	r, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET media = ?, duration = ?, media_blob = ?,
-			thumb = COALESCE(?, thumb), file = ?, text = CASE WHEN text = '' THEN ? ELSE text END
-		WHERE chat = ? AND id = ? AND kind = ? AND media_blob IS NULL`,
-		int(media), c.duration, c.blob, c.thumb, c.file.marshal(), c.text, chat, id, int(model.KindViewOnce))
+	var old []byte
+	if s.db.QueryRowContext(ctx, `SELECT raw_payload FROM wz_messages WHERE chat = ? AND id = ? AND kind = ?`,
+		chat, id, int(model.KindViewOnce)).Scan(&old) != nil {
+		return false
+	}
+	if _, blob := rawMedia(old); blob != nil {
+		return false // its media came after all
+	}
+	r, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET raw_payload = ?, media = ?,
+			text = CASE WHEN text = '' THEN ? ELSE text END
+		WHERE chat = ? AND id = ? AND kind = ? AND raw_payload IS ?`,
+		marshal(q), int(c.media), c.text, chat, id, int(model.KindViewOnce), old)
 	if err != nil {
 		return false
 	}
@@ -441,9 +423,8 @@ func (s *msgStore) setReaction(ctx context.Context, chat, id, emoji string) erro
 }
 
 func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?3, media = 0, text = '', thumb = NULL, media_blob = NULL,
-		quote_sender = '', quote_text = '', quote_media = 0, quote_id = '', pinned = 0, buttons = '', file = '', edited = 0,
-			extra = '', revoked = 0, raw_payload = NULL
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?3, media = 0, text = '', pinned = 0, edited = 0,
+			revoked = 0, raw_payload = NULL, edit_payload = NULL
 		WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2`, chat, id, int(model.KindDeleted))
@@ -458,49 +439,51 @@ func (s *msgStore) markRevoked(ctx context.Context, chat, id string, at time.Tim
 	return err
 }
 
-// editText replaces a message's text and mentions with an edit made at
-// at, and keeps the text it had among its versions. An edit older than
-// the last one (history arriving late) only joins the versions.
-func (s *msgStore) editText(ctx context.Context, chat, id, text string, mentions []string, at time.Time, payload ...[]byte) error {
+// editText gives a message the text of an edit made at at, whose content
+// is payload. The edit it replaces joins its earlier versions, which
+// begin with its raw payload. An edit older than the last one (history
+// arriving late) only joins them.
+func (s *msgStore) editText(ctx context.Context, chat, id, text string, at time.Time, payload []byte) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var curText, curMentions string
+	var curText string
 	var ts, edited int64
-	err = tx.QueryRowContext(ctx, `SELECT text, mentions, ts, edited FROM wz_messages WHERE chat = ? AND id = ? AND kind != ?`,
-		chat, id, int(model.KindDeleted)).Scan(&curText, &curMentions, &ts, &edited)
+	var raw, curEdit []byte
+	err = tx.QueryRowContext(ctx, `SELECT text, ts, edited, raw_payload, edit_payload FROM wz_messages
+		WHERE chat = ? AND id = ? AND kind != ?`, chat, id, int(model.KindDeleted)).Scan(&curText, &ts, &edited, &raw, &curEdit)
 	if err == sql.ErrNoRows {
 		return nil // not a message we have
 	}
 	if err != nil {
 		return err
 	}
-	ms, ment := at.UnixMilli(), strings.Join(mentions, ",")
+	cur := curEdit
+	if cur == nil {
+		cur = raw
+	}
+	_, curMentions := rawText(cur)
+	_, mentions := rawText(payload)
+	ms := at.UnixMilli()
 	switch {
-	case ms == edited || text == curText && ment == curMentions:
+	case ms == edited || text == curText && mentions == curMentions:
 		return nil // seen already
 	case ms < edited:
 		if ms <= ts*1000 {
 			return nil
 		}
-		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO wz_edits (chat, id, ts, text, mentions) VALUES (?, ?, ?, ?, ?)`,
-			chat, id, ms, text, ment)
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO wz_edits (chat, id, ts, payload) VALUES (?, ?, ?, ?)`,
+			chat, id, ms, payload)
 	default:
-		since := edited
-		if since == 0 {
-			since = ts * 1000
+		if curEdit != nil {
+			_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO wz_edits (chat, id, ts, payload) VALUES (?, ?, ?, ?)`,
+				chat, id, edited, curEdit)
 		}
-		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO wz_edits (chat, id, ts, text, mentions) VALUES (?, ?, ?, ?, ?)`,
-			chat, id, since, curText, curMentions)
 		if err == nil {
-			var raw []byte
-			if len(payload) > 0 {
-				raw = payload[0]
-			}
-			_, err = tx.ExecContext(ctx, `UPDATE wz_messages SET text = ?, mentions = ?, edited = ?, raw_payload = ? WHERE chat = ? AND id = ?`,
-				text, ment, ms, raw, chat, id)
+			_, err = tx.ExecContext(ctx, `UPDATE wz_messages SET text = ?, edited = ?, edit_payload = ? WHERE chat = ? AND id = ?`,
+				text, ms, payload, chat, id)
 		}
 	}
 	if err != nil {
@@ -509,21 +492,36 @@ func (s *msgStore) editText(ctx context.Context, chat, id, text string, mentions
 	return tx.Commit()
 }
 
-// versions returns a message's earlier texts, oldest first, with their
-// mentions.
+// versions returns an edited message's earlier texts, oldest first, with
+// their mentions: its raw payload's, then each edit's but the last.
 func (s *msgStore) versions(ctx context.Context, chat, id string) (texts, mentions []string, times []time.Time, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT text, mentions, ts FROM wz_edits WHERE chat = ? AND id = ? ORDER BY ts`, chat, id)
+	var raw []byte
+	var ts, edited int64
+	err = s.db.QueryRowContext(ctx, `SELECT raw_payload, ts, edited FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
+		Scan(&raw, &ts, &edited)
+	if err == sql.ErrNoRows || err == nil && edited == 0 {
+		return nil, nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	add := func(payload []byte, ms int64) {
+		t, m := rawText(payload)
+		texts, mentions, times = append(texts, t), append(mentions, m), append(times, time.UnixMilli(ms))
+	}
+	add(raw, ts*1000)
+	rows, err := s.db.QueryContext(ctx, `SELECT payload, ts FROM wz_edits WHERE chat = ? AND id = ? ORDER BY ts`, chat, id)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var t, m string
+		var p []byte
 		var ms int64
-		if err := rows.Scan(&t, &m, &ms); err != nil {
+		if err := rows.Scan(&p, &ms); err != nil {
 			return nil, nil, nil, err
 		}
-		texts, mentions, times = append(texts, t), append(mentions, m), append(times, time.UnixMilli(ms))
+		add(p, ms)
 	}
 	return texts, mentions, times, rows.Err()
 }
@@ -546,78 +544,63 @@ func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.
 		blob, err = s.stickerBlob(ctx, id)
 		return model.MediaSticker, blob, err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT media, media_blob FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
-		Scan(&media, &blob)
+	var raw []byte
+	err = s.db.QueryRowContext(ctx, `SELECT media, raw_payload FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
+		Scan(&media, &raw)
+	_, blob = rawMedia(raw)
 	return
 }
 
-// rawMsg is a loaded message before names are resolved. legacyName is the
-// sender name stored by versions that resolved names at insert time.
+// rawMsg is a loaded message before names are resolved.
 type rawMsg struct {
 	*model.Message
-	senderJID, senderPush, legacyName, quoteJID, quoteID, mentions string
-	buttons                                                        *buttonsInfo
+	senderJID, senderPush string
+	mentions              string // as mentionsOf joins them
+	buttons               *buttonsInfo
+	quote                 *rawQuote // made Quote by resolve
+	hasBlob               bool      // its payload holds what downloading its media takes
 }
 
-const msgColumns = `chat, id, sender_jid, sender_push, sender_name, from_me, ts, kind, media, duration, text, receipt,
-	quote_sender, quote_text, quote_media, quote_id, mentions, reaction, starred, pinned, forwarded, thumb, buttons, file,
-	album, edited, link, extra, revoked, opened, media_blob IS NOT NULL`
+// msgColumns are what scanMessage reads.
+const msgColumns = `chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, reaction, starred, pinned,
+	edited, revoked, opened, raw_payload, edit_payload`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanMessage(sc scanner) (rawMsg, error) {
 	var (
-		m                   model.Message
-		r                   rawMsg
-		fromMe, kind, media int
-		receipt             int
-		ts                  int64
-		quoteText           string
-		quoteMedia          int
-		thumb               []byte
-		reaction            string
-		starred, pinned     int
-		forwarded           int
-		buttons, file, link string
-		extra               string
-		edited, revoked     int64
-		opened, hasBlob     bool
+		m                       model.Message
+		r                       rawMsg
+		kind, media, receipt    int
+		ts, pinned              int64
+		edited, revoked         int64
+		fromMe, starred, opened bool
+		raw, edit               []byte
 	)
-	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &r.legacyName, &fromMe, &ts, &kind, &media, &m.Duration,
-		&m.Text, &receipt, &r.quoteJID, &quoteText, &quoteMedia, &r.quoteID, &r.mentions, &reaction,
-		&starred, &pinned, &forwarded, &thumb, &buttons, &file, &m.Album, &edited, &link, &extra, &revoked,
-		&opened, &hasBlob)
+	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &fromMe, &ts, &kind, &media, &m.Text, &receipt,
+		&m.Reaction, &starred, &pinned, &edited, &revoked, &opened, &raw, &edit)
 	if err != nil {
 		return r, err
 	}
-	m.FromMe = fromMe != 0
+	m.FromMe = fromMe
 	m.Time = time.Unix(ts, 0)
 	m.Kind = model.Kind(kind)
 	m.Media = model.Media(media)
 	m.Receipt = model.Receipt(receipt)
-	m.Reaction = reaction
-	m.Starred, m.Pinned, m.Forwarded = starred != 0, pinned != 0, forwarded != 0
-	m.Thumb = thumb
+	m.Starred, m.Pinned = starred, pinned != 0
 	if edited != 0 {
 		m.Edited = time.UnixMilli(edited)
 	}
 	if revoked != 0 {
 		m.Revoked = time.UnixMilli(revoked)
 	}
+	m.SenderID = r.senderJID
+	r.Message = &m
+	r.fill(raw, edit)
 	if m.Kind == model.KindViewOnce {
 		// Your own, still uploading, is on this computer already.
-		m.Opened, m.OnPhone = opened, !hasBlob && !(m.FromMe && m.Receipt <= model.Pending)
+		m.Opened, m.OnPhone = opened, !r.hasBlob && !(m.FromMe && m.Receipt <= model.Pending)
 	}
-	m.SenderID = r.senderJID
-	if quoteText != "" || r.quoteJID != "" || quoteMedia != 0 {
-		m.Quote = &model.Quote{ID: r.quoteID, SenderID: r.quoteJID, Text: quoteText, Media: model.Media(quoteMedia)}
-	}
-	parseFile(file).apply(&m)
-	m.Link = parseLink(link)
-	parseExtra(extra).apply(&m)
-	r.buttons = parseButtons(buttons)
-	r.buttons.apply(&m)
-	r.Message = &m
 	return r, nil
 }
 
@@ -729,27 +712,32 @@ type rawChat struct {
 	last *rawMsg
 }
 
-const chatQuery = `
+// chatQuery reads chats with their last message. The message's payloads
+// are read only for what the list shows of them: how long a recording
+// lasts, and whom a text mentions.
+var chatQuery = fmt.Sprintf(`
 	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts, c.favorite,
-		c.mentioned, c.general, m.id, m.sender_jid, m.sender_push, m.sender_name, m.from_me, m.ts, m.kind, m.media, m.duration, m.text, m.receipt, m.mentions
+		c.mentioned, c.general, m.id, m.sender_jid, m.sender_push, m.from_me, m.ts, m.kind, m.media, m.text, m.receipt,
+		CASE WHEN m.media IN (%d, %d, %d, %d) OR instr(m.text, '@') > 0 THEN m.raw_payload END,
+		CASE WHEN instr(m.text, '@') > 0 THEN m.edit_payload END
 	FROM wz_chats c
 	LEFT JOIN wz_messages m ON m.rowid = (
 		SELECT rowid FROM wz_messages WHERE chat = c.jid ORDER BY ts DESC, rowid DESC LIMIT 1
-	)`
+	)`, model.MediaVideo, model.MediaGIF, model.MediaVoice, model.MediaAudio)
 
 func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	var (
-		c                                 model.Chat
-		isGroup, archived, unread, fav    int
-		mentioned, general                int
-		pinned, mutedUntil, lastTS        int64
-		mID, mSender, mPush, mText, mMent sql.NullString
-		mLegacy                           sql.NullString
-		mFromMe, mTS, mKind, mMedia, mDur sql.NullInt64
-		mReceipt                          sql.NullInt64
+		c                              model.Chat
+		isGroup, archived, unread, fav int
+		mentioned, general             int
+		pinned, mutedUntil, lastTS     int64
+		mID, mSender, mPush, mText     sql.NullString
+		mFromMe, mTS, mKind, mMedia    sql.NullInt64
+		mReceipt                       sql.NullInt64
+		mRaw, mEdit                    []byte
 	)
 	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS, &fav,
-		&mentioned, &general, &mID, &mSender, &mPush, &mLegacy, &mFromMe, &mTS, &mKind, &mMedia, &mDur, &mText, &mReceipt, &mMent)
+		&mentioned, &general, &mID, &mSender, &mPush, &mFromMe, &mTS, &mKind, &mMedia, &mText, &mReceipt, &mRaw, &mEdit)
 	if err != nil {
 		return rawChat{}, err
 	}
@@ -770,11 +758,13 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		m := &model.Message{
 			ID: mID.String, ChatID: c.ID, SenderID: mSender.String, FromMe: mFromMe.Int64 != 0,
 			Time: time.Unix(mTS.Int64, 0), Kind: model.Kind(mKind.Int64), Media: model.Media(mMedia.Int64),
-			Duration: int(mDur.Int64), Text: mText.String, Receipt: model.Receipt(mReceipt.Int64),
+			Text: mText.String, Receipt: model.Receipt(mReceipt.Int64),
 		}
+		last := rawMsg{Message: m, senderJID: mSender.String, senderPush: mPush.String}
+		last.fill(mRaw, mEdit)
+		last.quote = nil // not shown in the list
 		c.Last = m
-		rc.last = &rawMsg{Message: m, senderJID: mSender.String, senderPush: mPush.String,
-			legacyName: mLegacy.String, mentions: mMent.String}
+		rc.last = &last
 		if m.Time.After(c.Time) {
 			c.Time = m.Time
 		}

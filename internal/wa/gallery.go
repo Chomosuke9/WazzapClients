@@ -14,11 +14,13 @@ import (
 )
 
 // galleryWhere is the condition that picks a GalleryKind's messages.
+// "media != 0" lets SQLite use wz_messages_media: it can't tell that a
+// bound media type isn't 0, and otherwise reads every message.
 func galleryWhere(k model.GalleryKind) (string, []any) {
 	deleted := int(model.KindDeleted)
 	switch k {
 	case model.GalleryDocs:
-		return `media = ? AND kind <> ?`, []any{int(model.MediaDocument), deleted}
+		return `media = ? AND media != 0 AND kind <> ?`, []any{int(model.MediaDocument), deleted}
 	case model.GalleryLinks:
 		return `kind NOT IN (?, ?) AND (text LIKE '%http://%' OR text LIKE '%https://%' OR text LIKE '%www.%')`,
 			[]any{deleted, int(model.KindUnsupported)}
@@ -26,7 +28,7 @@ func galleryWhere(k model.GalleryKind) (string, []any) {
 		return `starred <> 0 AND kind <> ?`, []any{deleted}
 	}
 	// View once media isn't kept in the Media panel, as in WhatsApp.
-	return `media IN (?, ?, ?) AND kind NOT IN (?, ?)`, []any{int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF),
+	return `media IN (?, ?, ?) AND media != 0 AND kind NOT IN (?, ?)`, []any{int(model.MediaImage), int(model.MediaVideo), int(model.MediaGIF),
 		deleted, int(model.KindViewOnce)}
 }
 
@@ -45,8 +47,11 @@ func (s *msgStore) gallery(ctx context.Context, q model.GalleryQuery) ([]rawMsg,
 	}
 	key := model.SearchKey(q.Text)
 	if key == "" {
-		out, err := s.queryMessages(ctx, `SELECT `+msgColumns+` FROM wz_messages WHERE `+where+
-			` ORDER BY `+order+` LIMIT ? OFFSET ?`, append(args, q.Limit+1, q.Offset)...)
+		// Only the page's rows are read: a sort reads every column it
+		// returns of every row it sorts, thumbnails included (msgThumb).
+		out, err := s.queryMessages(ctx, `SELECT `+msgColumns+` FROM wz_messages WHERE rowid IN (
+			SELECT rowid FROM wz_messages WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?
+		) ORDER BY `+order, append(args, q.Limit+1, q.Offset)...)
 		more := len(out) > q.Limit
 		if more {
 			out = out[:q.Limit]
@@ -54,8 +59,9 @@ func (s *msgStore) gallery(ctx context.Context, q model.GalleryQuery) ([]rawMsg,
 		return out, more, err
 	}
 	// Match the text in Go, like searchMessages: SearchKey folds accents
-	// and case, which LIKE can't.
-	rows, err := s.db.QueryContext(ctx, `SELECT rowid, text, file FROM wz_messages WHERE `+where+` ORDER BY `+order, args...)
+	// and case, which LIKE can't. A document matches its file name too.
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, text, CASE WHEN media = ? THEN raw_payload END FROM wz_messages
+		WHERE `+where+` ORDER BY `+order, append([]any{int(model.MediaDocument)}, args...)...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -63,12 +69,17 @@ func (s *msgStore) gallery(ctx context.Context, q model.GalleryQuery) ([]rawMsg,
 	skip, more := q.Offset, false
 	for rows.Next() {
 		var id int64
-		var text, file string
-		if err := rows.Scan(&id, &text, &file); err != nil {
+		var text string
+		var doc []byte
+		if err := rows.Scan(&id, &text, &doc); err != nil {
 			rows.Close()
 			return nil, false, err
 		}
-		if !strings.Contains(model.SearchKey(text+" "+parseFile(file).Name), key) {
+		if doc != nil {
+			c, _ := describeRaw(doc)
+			text += " " + c.file.Name
+		}
+		if !strings.Contains(model.SearchKey(text), key) {
 			continue
 		}
 		if skip > 0 {

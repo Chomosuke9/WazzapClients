@@ -6,7 +6,6 @@ import (
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waWeb"
-	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
 	"google.golang.org/protobuf/proto"
 
@@ -25,11 +24,11 @@ type parsed struct {
 	vote     *vote     // a vote in a poll or an answer to an event
 	event    *eventDef // an edit of an event
 
-	// An edit's new text and mentions, and when it was made.
-	edited       bool
-	edit         string
-	editMentions []string
-	editTime     time.Time
+	// An edit's new text, and when it was made; its content is msg's
+	// payload.
+	edited   bool
+	edit     string
+	editTime time.Time
 }
 
 // content summarizes what a message shows.
@@ -39,14 +38,39 @@ type content struct {
 	media    model.Media
 	duration int
 	thumb    []byte
-	blob     []byte // marshaled media message, for downloads
-	bg       uint32 // ARGB background of a text status
+	inner    proto.Message // the media message, which downloading the media takes
+	bg       uint32        // ARGB background of a text status
 	ctx      *waE2E.ContextInfo
 	buttons  *buttonsInfo // footer and buttons of business messages
 	file     fileInfo     // documents and audio
 	link     *model.LinkPreview
 	linkPic  []byte // the link preview's JPEG
 	extra    extraInfo
+}
+
+// keptThumb is the thumbnail a message with content c shows: a link
+// preview's picture is its thumbnail.
+func (c content) keptThumb() []byte {
+	if c.link != nil {
+		return c.linkPic
+	}
+	return c.thumb
+}
+
+// keepsBlob reports whether m, whose content c is, has a media blob: what
+// downloading its media takes. A view once message that came without it
+// has none (see Message.OnPhone).
+func (c content) keepsBlob(m *waE2E.Message) bool {
+	return c.inner != nil && !(isViewOnce(m) && !hasMediaKey(m))
+}
+
+// keptBlob returns the media blob of m, whose content c is, or nil. It is
+// marshaled anew, so only what downloads asks for it.
+func (c content) keptBlob(m *waE2E.Message) []byte {
+	if !c.keepsBlob(m) {
+		return nil
+	}
+	return marshal(c.inner)
 }
 
 func marshal(m proto.Message) []byte {
@@ -165,7 +189,10 @@ func describe(m *waE2E.Message) content {
 			c.link = &model.LinkPreview{URL: e.GetMatchedText(), Title: e.GetTitle(),
 				Description: e.GetDescription()}
 			c.linkPic = e.GetJPEGThumbnail()
-			if c.blob = linkImageOf(e); c.blob != nil {
+			// The big picture's size makes the card wide: when it can be
+			// downloaded, or before your own is uploaded (it shows from
+			// disk meanwhile).
+			if c.inner = linkImageOf(e); c.inner != nil || e.GetThumbnailDirectPath() == "" {
 				c.link.W, c.link.H = int(e.GetThumbnailWidth()), int(e.GetThumbnailHeight())
 			}
 		}
@@ -173,7 +200,7 @@ func describe(m *waE2E.Message) content {
 	case m.GetImageMessage() != nil:
 		e := m.GetImageMessage()
 		return content{text: e.GetCaption(), kind: model.KindImage, media: model.MediaImage,
-			thumb: e.GetJPEGThumbnail(), blob: marshal(e), ctx: e.GetContextInfo()}
+			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo()}
 	case m.GetVideoMessage() != nil:
 		e := m.GetVideoMessage()
 		media := model.MediaVideo
@@ -181,28 +208,28 @@ func describe(m *waE2E.Message) content {
 			media = model.MediaGIF
 		}
 		return content{text: e.GetCaption(), kind: model.KindImage, media: media, duration: int(e.GetSeconds()),
-			thumb: e.GetJPEGThumbnail(), blob: marshal(e), ctx: e.GetContextInfo()}
+			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo()}
 	case m.GetPtvMessage() != nil:
 		e := m.GetPtvMessage()
 		return content{kind: model.KindImage, media: model.MediaVideo, duration: int(e.GetSeconds()),
-			thumb: e.GetJPEGThumbnail(), blob: marshal(e), ctx: e.GetContextInfo()}
+			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo()}
 	case m.GetAudioMessage() != nil:
 		e := m.GetAudioMessage()
 		media := model.MediaAudio
 		if e.GetPTT() {
 			media = model.MediaVoice
 		}
-		return content{media: media, duration: int(e.GetSeconds()), blob: marshal(e), ctx: e.GetContextInfo(),
+		return content{media: media, duration: int(e.GetSeconds()), inner: e, ctx: e.GetContextInfo(),
 			file: audioInfo(e)}
 	case m.GetDocumentMessage() != nil:
 		e := m.GetDocumentMessage()
 		f := documentInfo(e)
-		return content{text: first(e.GetCaption(), f.Name), media: model.MediaDocument, blob: marshal(e),
+		return content{text: first(e.GetCaption(), f.Name), media: model.MediaDocument, inner: e,
 			ctx: e.GetContextInfo(), file: f}
 	case m.GetStickerMessage() != nil:
 		e := m.GetStickerMessage()
 		return content{kind: model.KindSticker, media: model.MediaSticker, thumb: e.GetPngThumbnail(),
-			blob: marshal(e), ctx: e.GetContextInfo()}
+			inner: e, ctx: e.GetContextInfo()}
 	case m.GetContactMessage() != nil:
 		e := m.GetContactMessage()
 		return content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo(),
@@ -363,9 +390,6 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		if c.media != model.MediaImage && c.media != model.MediaVideo && c.media != model.MediaVoice {
 			c.media = model.MediaNone
 		}
-		if !hasMediaKey(m) {
-			c.blob = nil
-		}
 	} else if c.text == "" && c.media == model.MediaNone && c.buttons.empty() {
 		if !hasContent(m) {
 			return p, false
@@ -382,34 +406,30 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	msg.FromMe = evt.Info.IsFromMe
 	msg.Text = c.text
 	msg.Time = evt.Info.Timestamp
-	msg.Thumb = c.thumb
-	if c.link != nil {
-		msg.Link, msg.Thumb = c.link, c.linkPic
-	}
+	msg.Link = c.link
+	msg.Thumb = c.keptThumb()
 	if c.kind == model.KindImage {
 		msg.Album = first(albumOf(evt.RawMessage), albumOf(m))
 	}
 	c.file.apply(msg)
 	c.extra.apply(msg)
+	c.buttons.apply(msg)
+	msg.Forwarded = c.ctx.GetIsForwarded()
 	msg.Receipt = model.Sent
 	if evt.SourceWebMsg != nil && msg.FromMe {
 		msg.Receipt = webReceipt(evt.SourceWebMsg)
 	}
 	p.msg.senderJID = evt.Info.Sender.ToNonAD().String()
 	p.msg.senderPush = evt.Info.PushName
-	p.msg.mediaBlob = c.blob
 	raw := evt.RawMessage
 	if raw == nil {
 		raw = evt.Message
 	}
 	p.msg.rawPayload = marshal(raw)
-	if !c.buttons.empty() {
-		p.msg.buttons = c.buttons
-		c.buttons.apply(msg)
+	if id, q := c.ctx.GetStanzaID(), c.ctx.GetQuotedMessage(); id != "" && hasMediaKey(q) {
+		// It may quote a view once message whose media never came here.
+		p.msg.quotedMedia, p.msg.quotedID = q, id
 	}
-	p.msg.mentions = mentionsOf(c.ctx)
-	msg.Forwarded = c.ctx.GetIsForwarded()
-	b.parseQuote(ctx, &p.msg, c.ctx)
 	return p, true
 }
 
@@ -432,51 +452,7 @@ func (p *parsed) setEdit(target string, m *waE2E.Message, at time.Time) bool {
 	if target == "" || c.text == "" && c.media == model.MediaNone {
 		return false
 	}
-	p.target, p.edited, p.edit, p.editMentions, p.editTime = target, true, c.text, mentionsOf(c.ctx), at
+	p.target, p.edited, p.edit, p.editTime = target, true, c.text, at
 	p.msg.rawPayload = marshal(m) // decrypted edit content, not the edit instruction
 	return true
-}
-
-// parseQuote fills in the message a reply points to. The quoted content
-// normally travels with the reply; when it is missing (or of a type that
-// isn't rendered) the original is looked up by its ID.
-func (b *Backend) parseQuote(ctx context.Context, m *storedMsg, ci *waE2E.ContextInfo) {
-	id := ci.GetStanzaID()
-	q := ci.GetQuotedMessage()
-	if id == "" && q == nil {
-		return
-	}
-	qc := describe(q)
-	quote := &model.Quote{ID: id, Text: qc.text, Media: qc.media}
-	m.quoteJID = ci.GetParticipant()
-	if qc.text == "" && qc.media == model.MediaNone && id != "" {
-		orig, ok := b.store.message(ctx, m.ChatID, id)
-		switch {
-		case ok:
-			quote.Text, quote.Media = orig.Text, orig.Media
-			switch orig.Kind {
-			case model.KindDeleted:
-				quote.Text = "This message was deleted"
-			case model.KindUnsupported:
-				quote.Text = "This message couldn't load"
-			}
-			if m.quoteJID == "" {
-				m.quoteJID = orig.senderJID
-				if orig.FromMe {
-					m.quoteJID = b.ownJID(m.ChatID).String()
-				}
-			}
-		case q == nil:
-			return // only an ID, of a message we don't have
-		}
-	}
-	if j, err := types.ParseJID(m.quoteJID); err == nil && !j.IsEmpty() {
-		m.quoteJID = b.canonical(ctx, j).String()
-	}
-	m.quoteID = id
-	m.Quote = quote
-	if id != "" && hasMediaKey(q) {
-		// It may quote a view once message whose media never came here.
-		m.quoteMedia = &qc
-	}
 }

@@ -48,8 +48,8 @@ func TestAlbumOf(t *testing.T) {
 	}
 }
 
-// TestAlbumStored checks a picture's album survives the store, and that
-// storing it again without one (as an edit or a resend does) keeps it.
+// TestAlbumStored checks a picture's album is read from its payload, and
+// that the picture coming again without one (as a resend does) keeps it.
 func TestAlbumStored(t *testing.T) {
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "t.db"))
@@ -61,14 +61,15 @@ func TestAlbumStored(t *testing.T) {
 	if err := s.init(ctx); err != nil {
 		t.Fatal(err)
 	}
+	pic := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{}}
+	inAlbum(pic, types.NewJID("c", types.DefaultUserServer), "ALBUM")
 	m := &model.Message{ID: "p1", ChatID: "c@s.whatsapp.net", Kind: model.KindImage, Media: model.MediaImage,
-		Time: time.Unix(1000, 0), Album: "ALBUM"}
-	if err := s.putMessage(ctx, db, storedMsg{Message: m}); err != nil {
+		Time: time.Unix(1000, 0)}
+	if err := s.putMessage(ctx, db, storedMsg{Message: m, rawPayload: marshal(pic)}); err != nil {
 		t.Fatal(err)
 	}
-	cp := *m
-	cp.Album = ""
-	if err := s.putMessage(ctx, db, storedMsg{Message: &cp}); err != nil {
+	again := marshal(&waE2E.Message{ImageMessage: &waE2E.ImageMessage{}})
+	if err := s.putMessage(ctx, db, storedMsg{Message: m, rawPayload: again}); err != nil {
 		t.Fatal(err)
 	}
 	r, ok := s.message(ctx, m.ChatID, m.ID)

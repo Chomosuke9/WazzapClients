@@ -232,8 +232,12 @@ func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Messag
 	}
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Kind: model.KindSticker,
 		Media: model.MediaSticker, Time: b.sendTime(), Receipt: model.Pending}
-	sm := storedMsg{Message: m}
-	ci := b.draftContext(chatID, model.Draft{Reply: reply}, &sm)
+	ci := b.draftContext(chatID, model.Draft{Reply: reply}, m)
+	// The upload fills in where it is.
+	e := &waE2E.StickerMessage{Mimetype: proto.String("image/webp"), Width: proto.Uint32(512), Height: proto.Uint32(512),
+		FileLength: proto.Uint64(uint64(len(webp))), ContextInfo: ci}
+	msg := &waE2E.Message{StickerMessage: e}
+	sm := storedMsg{Message: m, rawPayload: marshal(msg)}
 	// Keep the picture, so it shows at once and without a download.
 	up := upload{data: webp, w: 512, h: 512}
 	up.keep(b.mediaPath(chatID, m.ID))
@@ -254,18 +258,12 @@ func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Messag
 			b.sendFailed(chatID, m.ID, "Couldn't send the sticker.")
 			return
 		}
-		e := &waE2E.StickerMessage{
-			URL: proto.String(res.URL), DirectPath: proto.String(res.DirectPath), MediaKey: res.MediaKey,
-			FileEncSHA256: res.FileEncSHA256, FileSHA256: res.FileSHA256, FileLength: proto.Uint64(res.FileLength),
-			Mimetype: proto.String("image/webp"), Width: proto.Uint32(512), Height: proto.Uint32(512),
-			MediaKeyTimestamp: proto.Int64(time.Now().Unix()), ContextInfo: ci,
-		}
-		sm.mediaBlob = marshal(e)
-		if err := b.store.putMessage(b.ctx, b.db, sm); err != nil {
-			b.log.Errorf("store sent sticker: %v", err)
-		}
-		b.sendAsync(chatID, jid, m.ID, &waE2E.Message{StickerMessage: e})
-		b.recentSticker(sm.mediaBlob, time.Now(), chatID, m.ID)
+		e.URL, e.DirectPath, e.MediaKey = proto.String(res.URL), proto.String(res.DirectPath), res.MediaKey
+		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, proto.Uint64(res.FileLength)
+		e.MediaKeyTimestamp = proto.Int64(time.Now().Unix())
+		blob := marshal(e) // before sending, which may add to it
+		b.sendAsync(chatID, jid, m.ID, msg)
+		b.recentSticker(blob, time.Now(), chatID, m.ID)
 	}()
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		return b.resolve(ctx, r, jid.Server == types.GroupServer)

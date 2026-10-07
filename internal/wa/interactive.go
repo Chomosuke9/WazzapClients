@@ -22,16 +22,17 @@ const (
 	srcNative   = "native"   // native flow button (InteractiveMessage)
 )
 
-// buttonsInfo is stored as JSON in wz_messages.buttons.
+// buttonsInfo is a message's footer and the buttons the app supports.
 type buttonsInfo struct {
-	Footer  string         `json:"footer,omitempty"`
-	Buttons []storedButton `json:"buttons,omitempty"`
+	Footer  string
+	Buttons []storedButton
 }
 
+// storedButton is a button and where it came from, to answer it.
 type storedButton struct {
 	model.Button
-	Source string `json:"source"`
-	Index  int    `json:"index"`
+	Source string
+	Index  int
 }
 
 func (bi *buttonsInfo) empty() bool { return bi == nil || (bi.Footer == "" && len(bi.Buttons) == 0) }
@@ -44,25 +45,6 @@ func (bi *buttonsInfo) add(src string, i int, b model.Button) {
 		return
 	}
 	bi.Buttons = append(bi.Buttons, storedButton{Button: b, Source: src, Index: i})
-}
-
-func (bi *buttonsInfo) marshal() string {
-	if bi.empty() {
-		return ""
-	}
-	b, _ := json.Marshal(bi)
-	return string(b)
-}
-
-func parseButtons(s string) *buttonsInfo {
-	if s == "" {
-		return nil
-	}
-	bi := new(buttonsInfo)
-	if json.Unmarshal([]byte(s), bi) != nil {
-		return nil
-	}
-	return bi
 }
 
 // apply copies the footer and buttons into a model message.
@@ -328,5 +310,5 @@ func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
 		Text:        proto.String(bt.Label),
 		ContextInfo: ci,
 	}}
-	return b.storeAndSend(jid, storedMsg{Message: out, quoteJID: sender.String(), quoteID: m.ID}, msg, fallback)
+	return b.storeAndSend(jid, storedMsg{Message: out}, msg, fallback)
 }

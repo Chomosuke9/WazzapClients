@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,13 +22,13 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/photo"
 )
 
-// fileInfo is what the file column keeps about a document or audio file.
+// fileInfo is what a document or audio message says about its file.
 type fileInfo struct {
-	Name  string `json:"n,omitempty"`
-	Size  int64  `json:"s,omitempty"`
-	Type  string `json:"t,omitempty"`
-	Pages int    `json:"p,omitempty"`
-	Wave  []byte `json:"w,omitempty"`
+	Name  string
+	Size  int64
+	Type  string
+	Pages int
+	Wave  []byte
 }
 
 func documentInfo(e *waE2E.DocumentMessage) fileInfo {
@@ -41,95 +40,8 @@ func audioInfo(e *waE2E.AudioMessage) fileInfo {
 	return fileInfo{Size: int64(e.GetFileLength()), Type: e.GetMimetype(), Wave: e.GetWaveform()}
 }
 
-func fileOf(m *model.Message) fileInfo {
-	return fileInfo{Name: m.FileName, Size: m.FileSize, Type: m.FileType, Pages: m.Pages, Wave: m.Waveform}
-}
-
 func (f fileInfo) apply(m *model.Message) {
 	m.FileName, m.FileSize, m.FileType, m.Pages, m.Waveform = f.Name, f.Size, f.Type, f.Pages, f.Wave
-}
-
-func (f fileInfo) marshal() string {
-	if f.Name == "" && f.Size == 0 && f.Type == "" && f.Pages == 0 && len(f.Wave) == 0 {
-		return ""
-	}
-	b, _ := json.Marshal(f)
-	return string(b)
-}
-
-func parseFile(s string) fileInfo {
-	var f fileInfo
-	if s != "" {
-		_ = json.Unmarshal([]byte(s), &f)
-	}
-	return f
-}
-
-// migrateFileInfo fills the file column of documents and audio stored
-// before it existed, from their media blobs. A document with a caption
-// gets the caption as its text instead of its file name.
-func (s *msgStore) migrateFileInfo(ctx context.Context) error {
-	const key = "file_info_migrated"
-	if s.meta(ctx, key) != "" {
-		return nil
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT chat, id, media, media_blob FROM wz_messages
-		WHERE media IN (?, ?, ?) AND file = '' AND media_blob IS NOT NULL`,
-		int(model.MediaDocument), int(model.MediaVoice), int(model.MediaAudio))
-	if err != nil {
-		return err
-	}
-	type update struct {
-		chat, id, file, caption string
-	}
-	var ups []update
-	for rows.Next() {
-		var (
-			u     update
-			media model.Media
-			blob  []byte
-		)
-		if err := rows.Scan(&u.chat, &u.id, &media, &blob); err != nil {
-			rows.Close()
-			return err
-		}
-		var f fileInfo
-		if media == model.MediaDocument {
-			var d waE2E.DocumentMessage
-			if proto.Unmarshal(blob, &d) != nil {
-				continue
-			}
-			f, u.caption = documentInfo(&d), d.GetCaption()
-		} else {
-			var a waE2E.AudioMessage
-			if proto.Unmarshal(blob, &a) != nil {
-				continue
-			}
-			f = audioInfo(&a)
-		}
-		u.file = f.marshal()
-		ups = append(ups, u)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, u := range ups {
-		if _, err := tx.ExecContext(ctx, `UPDATE wz_messages SET file = ?,
-			text = CASE WHEN ? != '' THEN ? ELSE text END WHERE chat = ? AND id = ?`,
-			u.file, u.caption, u.caption, u.chat, u.id); err != nil {
-			return fmt.Errorf("migrate file info: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return s.setMetaValue(ctx, key, time.Now().Format(time.RFC3339))
 }
 
 // mediaExt is the extension a downloaded file is kept with, so the system
@@ -282,35 +194,29 @@ func (b *Backend) downloadFile(m *model.Message, path string) bool {
 	return true
 }
 
-// draftContext builds the context of an outgoing message from a draft:
-// its mentions and the message it replies to. It fills in sm's quote and
-// mentions, and returns nil when there is nothing to add.
-func (b *Backend) draftContext(chatID string, d model.Draft, sm *storedMsg) *waE2E.ContextInfo {
-	sm.mentions = append([]string(nil), d.Mentions...)
+// draftContext builds the context of an outgoing message m from a draft:
+// its mentions and the message it replies to, which it gives m. It
+// returns nil when there is nothing to add.
+func (b *Backend) draftContext(chatID string, d model.Draft, m *model.Message) *waE2E.ContextInfo {
 	if d.Reply == nil && len(d.Mentions) == 0 && !d.MentionAll && !d.MentionAdmins && d.MentionChat == "" {
 		return nil
 	}
-	m := sm.Message
 	ci := &waE2E.ContextInfo{MentionedJID: d.Mentions}
 	if d.MentionAll {
 		// "@all" is rendered by WhatsApp when nonJIDMentions is set.
 		ci.NonJIDMentions = proto.Uint32(1)
-		sm.mentions = append(sm.mentions, mentionAll)
 	}
 	if d.MentionAdmins {
 		// The text mentions the group itself, which WhatsApp shows under
 		// the given subject; the admins are the mentioned JIDs.
 		ci.GroupMentions = []*waE2E.GroupMention{{GroupJID: proto.String(chatID), GroupSubject: proto.String("admin")}}
-		sm.mentions = append(sm.mentions, groupMention(chatID, "admin"))
 	}
 	if d.MentionChat != "" {
 		// Like @admin, but no one is in MentionedJID: it notifies no one.
 		ci.GroupMentions = append(ci.GroupMentions, &waE2E.GroupMention{GroupJID: proto.String(chatID), GroupSubject: proto.String(d.MentionChat)})
-		sm.mentions = append(sm.mentions, groupMention(chatID, d.MentionChat))
 	}
 	if r := d.Reply; r != nil {
 		m.Quote = b.quote(chatID, r, ci)
-		sm.quoteJID, sm.quoteID = m.Quote.SenderID, r.ID
 	}
 	return ci
 }
@@ -372,23 +278,26 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 	if a.ViewOnce && m.Kind == model.KindImage {
 		m.Kind, m.Album = model.KindViewOnce, ""
 	}
-	sm := storedMsg{Message: m}
-	ci := b.draftContext(chatID, d, &sm)
+	ci := b.draftContext(chatID, d, m)
+	msg, inner := fileMessage(m, up, d.Text, ci, a.ViewOnce)
+	if m.Album != "" {
+		inAlbum(msg, jid, m.Album)
+	}
 	// Keep a copy so your own media shows (and opens) without a download.
 	if up.data != nil {
 		up.keep(b.mediaPath(chatID, m.ID))
 	} else if st.Size() <= maxLocalCopy {
-		up.copyTo(b.mediaFilePath(m))
+		up.copyTo(b.mediaFilePath(payloadView(m, msg)))
 	}
 	ctx := b.ctx
 	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
 		b.log.Errorf("store chat %s: %v", chatID, err)
 	}
-	if err := b.store.putMessage(ctx, b.db, sm); err != nil {
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, rawPayload: marshal(msg)}); err != nil {
 		b.log.Errorf("store outgoing file: %v", err)
 	}
 	b.emitChat(chatID)
-	go b.uploadAndSend(jid, sm, up, d.Text, ci, a.ViewOnce)
+	go b.uploadAndSend(jid, m, up, msg, inner)
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		return b.resolve(ctx, r, jid.Server == types.GroupServer)
 	}
@@ -481,9 +390,9 @@ var mediaTypes = map[model.Media]whatsmeow.MediaType{
 	model.MediaDocument: whatsmeow.MediaDocument,
 }
 
-// uploadAndSend uploads a stored pending file, then sends it.
-func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption string, ci *waE2E.ContextInfo, viewOnce bool) {
-	m := sm.Message
+// uploadAndSend uploads the file of a stored pending message, msg, then
+// sends it.
+func (b *Backend) uploadAndSend(jid types.JID, m *model.Message, up upload, msg *waE2E.Message, inner proto.Message) {
 	fail := func(err error) {
 		b.log.Errorf("send file %s to %s: %v", m.FileName, m.ChatID, err)
 		b.sendFailed(m.ChatID, m.ID, "Couldn't send "+m.FileName+".")
@@ -495,51 +404,40 @@ func (b *Backend) uploadAndSend(jid types.JID, sm storedMsg, up upload, caption 
 	}
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
 	defer cancel()
-	msg, inner, err := uploadMedia(ctx, cli, m, up, caption, ci, viewOnce)
+	res, err := up.push(ctx, cli, m.Media)
 	if err != nil {
 		fail(err)
 		return
 	}
-	// Keep the uploaded message, so it can be forwarded, quoted and
-	// downloaded again on another device.
-	sm.mediaBlob = marshal(inner)
-	if err := b.store.putMessage(b.ctx, b.db, sm); err != nil {
-		b.log.Errorf("store sent file: %v", err)
-	}
+	uploaded(inner, res)
 	if m.Album != "" {
-		inAlbum(msg, jid, m.Album)
 		b.waitAlbum(ctx, m.Album)
 	}
-	b.sendAsync(m.ChatID, jid, m.ID, msg)
+	b.sendAsync(m.ChatID, jid, m.ID, msg) // stores it as it goes
 }
 
-// uploadMedia uploads the file of a pending message and returns the message
-// to send, and the media message inside it to keep for downloads.
-func uploadMedia(ctx context.Context, cli *whatsmeow.Client, m *model.Message, up upload, caption string, ci *waE2E.ContextInfo, viewOnce bool) (*waE2E.Message, proto.Message, error) {
-	var (
-		res whatsmeow.UploadResponse
-		err error
-	)
+// push uploads the file, sent as media, to WhatsApp's servers.
+func (up *upload) push(ctx context.Context, cli *whatsmeow.Client, media model.Media) (whatsmeow.UploadResponse, error) {
 	if up.data != nil {
-		res, err = cli.Upload(ctx, up.data, mediaTypes[m.Media])
-	} else {
-		res, err = uploadFile(ctx, cli, up.path, mediaTypes[m.Media])
+		return cli.Upload(ctx, up.data, mediaTypes[media])
 	}
-	if err != nil {
-		return nil, nil, err
-	}
+	return uploadFile(ctx, cli, up.path, mediaTypes[media])
+}
+
+// fileMessage returns the message that sends the file of a pending
+// message, and the media message inside it, which uploaded points at
+// where the file went.
+func fileMessage(m *model.Message, up upload, caption string, ci *waE2E.ContextInfo, viewOnce bool) (*waE2E.Message, proto.Message) {
 	var (
 		msg   *waE2E.Message
 		inner proto.Message
 	)
-	ts := proto.Int64(time.Now().Unix())
+	size := proto.Uint64(uint64(m.FileSize))
 	switch m.Media {
 	case model.MediaImage:
 		e := &waE2E.ImageMessage{
-			URL: proto.String(res.URL), DirectPath: proto.String(res.DirectPath), MediaKey: res.MediaKey,
-			FileEncSHA256: res.FileEncSHA256, FileSHA256: res.FileSHA256, FileLength: proto.Uint64(res.FileLength),
-			Mimetype: proto.String(m.FileType), Width: proto.Uint32(uint32(up.w)), Height: proto.Uint32(uint32(up.h)),
-			JPEGThumbnail: m.Thumb, MediaKeyTimestamp: ts, ContextInfo: ci,
+			FileLength: size, Mimetype: proto.String(m.FileType), Width: proto.Uint32(uint32(up.w)), Height: proto.Uint32(uint32(up.h)),
+			JPEGThumbnail: m.Thumb, ContextInfo: ci,
 		}
 		if caption != "" {
 			e.Caption = proto.String(caption)
@@ -550,10 +448,7 @@ func uploadMedia(ctx context.Context, cli *whatsmeow.Client, m *model.Message, u
 		msg, inner = &waE2E.Message{ImageMessage: e}, e
 	case model.MediaVideo:
 		e := &waE2E.VideoMessage{
-			URL: proto.String(res.URL), DirectPath: proto.String(res.DirectPath), MediaKey: res.MediaKey,
-			FileEncSHA256: res.FileEncSHA256, FileSHA256: res.FileSHA256, FileLength: proto.Uint64(res.FileLength),
-			Mimetype: proto.String(m.FileType), Seconds: proto.Uint32(uint32(m.Duration)),
-			MediaKeyTimestamp: ts, ContextInfo: ci,
+			FileLength: size, Mimetype: proto.String(m.FileType), Seconds: proto.Uint32(uint32(m.Duration)), ContextInfo: ci,
 		}
 		if caption != "" {
 			e.Caption = proto.String(caption)
@@ -564,19 +459,14 @@ func uploadMedia(ctx context.Context, cli *whatsmeow.Client, m *model.Message, u
 		msg, inner = &waE2E.Message{VideoMessage: e}, e
 	case model.MediaAudio, model.MediaVoice:
 		e := &waE2E.AudioMessage{
-			PTT: proto.Bool(m.Media == model.MediaVoice),
-			URL: proto.String(res.URL), DirectPath: proto.String(res.DirectPath), MediaKey: res.MediaKey,
-			FileEncSHA256: res.FileEncSHA256, FileSHA256: res.FileSHA256, FileLength: proto.Uint64(res.FileLength),
-			Mimetype: proto.String(m.FileType), Seconds: proto.Uint32(uint32(m.Duration)),
-			MediaKeyTimestamp: ts, ContextInfo: ci,
+			PTT: proto.Bool(m.Media == model.MediaVoice), FileLength: size, Mimetype: proto.String(m.FileType),
+			Seconds: proto.Uint32(uint32(m.Duration)), ContextInfo: ci,
 		}
 		msg, inner = &waE2E.Message{AudioMessage: e}, e
 	default:
 		e := &waE2E.DocumentMessage{
-			URL: proto.String(res.URL), DirectPath: proto.String(res.DirectPath), MediaKey: res.MediaKey,
-			FileEncSHA256: res.FileEncSHA256, FileSHA256: res.FileSHA256, FileLength: proto.Uint64(res.FileLength),
-			Mimetype: proto.String(m.FileType), FileName: proto.String(m.FileName), Title: proto.String(m.FileName),
-			MediaKeyTimestamp: ts, ContextInfo: ci,
+			FileLength: size, Mimetype: proto.String(m.FileType), FileName: proto.String(m.FileName),
+			Title: proto.String(m.FileName), ContextInfo: ci,
 		}
 		msg, inner = &waE2E.Message{DocumentMessage: e}, e
 		if caption != "" {
@@ -590,7 +480,27 @@ func uploadMedia(ctx context.Context, cli *whatsmeow.Client, m *model.Message, u
 	if ci != nil && len(ci.GroupMentions) > 0 {
 		msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 	}
-	return msg, inner, nil
+	return msg, inner
+}
+
+// uploaded points a media message at where an upload put its file.
+func uploaded(inner proto.Message, res whatsmeow.UploadResponse) {
+	url, path, size := proto.String(res.URL), proto.String(res.DirectPath), proto.Uint64(res.FileLength)
+	ts := proto.Int64(time.Now().Unix())
+	switch e := inner.(type) {
+	case *waE2E.ImageMessage:
+		e.URL, e.DirectPath, e.MediaKey, e.MediaKeyTimestamp = url, path, res.MediaKey, ts
+		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, size
+	case *waE2E.VideoMessage:
+		e.URL, e.DirectPath, e.MediaKey, e.MediaKeyTimestamp = url, path, res.MediaKey, ts
+		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, size
+	case *waE2E.AudioMessage:
+		e.URL, e.DirectPath, e.MediaKey, e.MediaKeyTimestamp = url, path, res.MediaKey, ts
+		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, size
+	case *waE2E.DocumentMessage:
+		e.URL, e.DirectPath, e.MediaKey, e.MediaKeyTimestamp = url, path, res.MediaKey, ts
+		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, size
+	}
 }
 
 // uploadFile uploads a file from disk, encrypting it through a temporary

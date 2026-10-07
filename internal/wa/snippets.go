@@ -29,16 +29,20 @@ const snippetSchema = `CREATE TABLE IF NOT EXISTS wz_snippets (
 
 var errNoPayload = errors.New("The original payload isn't stored for this message. Newly received or synced messages will have one.")
 
+// setRawPayload stores what one of your messages goes out as: before it
+// is sent, then with what sending adds, or the fallback sent instead.
 func (s *msgStore) setRawPayload(ctx context.Context, chat, id string, msg *waE2E.Message) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET raw_payload = ? WHERE chat = ? AND id = ? AND kind != ? AND edited = 0`,
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET raw_payload = ? WHERE chat = ? AND id = ? AND kind != ?`,
 		marshal(msg), chat, id, int(model.KindDeleted))
 	return err
 }
 
+// rawMessage returns a message as it came, or as last edited.
 func (b *Backend) rawMessage(chat, id string) (*waE2E.Message, error) {
 	var data []byte
 	var kind int
-	err := b.db.QueryRowContext(b.ctx, `SELECT raw_payload, kind FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).Scan(&data, &kind)
+	err := b.db.QueryRowContext(b.ctx, `SELECT COALESCE(edit_payload, raw_payload), kind FROM wz_messages
+		WHERE chat = ? AND id = ?`, chat, id).Scan(&data, &kind)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
@@ -336,7 +340,6 @@ func (b *Backend) SendSnippet(chat string, id int64, reply *model.Message, vars 
 		var ci *waE2E.ContextInfo
 		msg, ci = snippetContext(msg)
 		p.msg.Quote = b.quote(chat, reply, ci)
-		p.msg.quoteID, p.msg.quoteJID = reply.ID, p.msg.Quote.SenderID
 	}
 	out := func() *waE2E.Message {
 		if wrap {
@@ -359,14 +362,7 @@ func (b *Backend) SendSnippet(chat string, id int64, reply *model.Message, vars 
 			b.sendFailed(chat, mid, "Couldn't upload snippet media: "+err.Error())
 			return
 		}
-		c := describe(msg)
-		p.msg.mediaBlob = c.blob
-		p.msg.rawPayload = marshal(out())
-		if err := b.store.putMessage(b.ctx, b.db, p.msg); err != nil {
-			b.sendFailed(chat, mid, "Couldn't store the snippet.")
-			return
-		}
-		b.sendAsync(chat, jid, mid, out())
+		b.sendAsync(chat, jid, mid, out()) // stores it as it goes
 	}()
 	return p.msg.Message, nil
 }

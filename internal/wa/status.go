@@ -82,13 +82,17 @@ func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) err
 		_, err := x.ExecContext(ctx, `DELETE FROM wz_status WHERE id = ?`, st.revoke)
 		return err
 	}
+	var blob []byte
+	if st.c.inner != nil {
+		blob = marshal(st.c.inner)
+	}
 	_, err := x.ExecContext(ctx, `
 		INSERT INTO wz_status (id, sender, push, from_me, ts, media, text, bg, thumb, media_blob, viewed, group_jid, duration, file_type)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET viewed = MAX(wz_status.viewed, excluded.viewed),
 			thumb = COALESCE(excluded.thumb, wz_status.thumb)`,
 		st.id, st.sender, st.push, boolInt(st.fromMe), st.ts.Unix(), int(st.c.media), st.c.text, int64(st.c.bg),
-		st.c.thumb, st.c.blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type)
+		st.c.thumb, blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type)
 	return err
 }
 

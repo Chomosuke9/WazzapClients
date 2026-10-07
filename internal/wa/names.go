@@ -185,14 +185,13 @@ func (b *Backend) chatName(ctx context.Context, j types.JID) string {
 }
 
 // senderName labels a message author in a group. WhatsApp shows people you
-// haven't saved by their push name, prefixed with "~". legacy is a name
-// stored by an older version, used before falling back to numbers.
-func (b *Backend) senderName(ctx context.Context, j types.JID, push, legacy string) string {
+// haven't saved by their push name, prefixed with "~".
+func (b *Backend) senderName(ctx context.Context, j types.JID, push string) string {
 	j = j.ToNonAD()
 	if b.isMe(j) {
 		return "You"
 	}
-	k := "sender:" + j.String() + "|" + push + "|" + legacy
+	k := "sender:" + j.String() + "|" + push
 	if v, ok := b.names.get(k); ok {
 		return v
 	}
@@ -206,20 +205,17 @@ func (b *Backend) senderName(ctx context.Context, j types.JID, push, legacy stri
 		// someone whose messages came from history, for one).
 		n.push = b.storedPush(ctx, j)
 	}
-	if allDigits(legacy) || strings.HasPrefix(legacy, "+") {
-		legacy = ""
-	}
-	name := first(n.saved, n.business, tilde(n.push), legacy, n.phone, n.redacted, j.User)
+	name := first(n.saved, n.business, tilde(n.push), n.phone, n.redacted, j.User)
 	b.names.put(k, name)
 	return name
 }
 
-func (b *Backend) senderNameStr(ctx context.Context, jid, push, legacy string) string {
+func (b *Backend) senderNameStr(ctx context.Context, jid, push string) string {
 	j, err := types.ParseJID(jid)
 	if err != nil || j.IsEmpty() {
-		return first(tilde(push), legacy)
+		return tilde(push)
 	}
-	return b.senderName(ctx, j, push, legacy)
+	return b.senderName(ctx, j, push)
 }
 
 // Besides JIDs, a message's stored mention list can hold these tokens.
@@ -264,7 +260,7 @@ func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions st
 		if err != nil || j.User == "" {
 			continue
 		}
-		m := mention(b.senderName(ctx, j, "", ""))
+		m := mention(b.senderName(ctx, j, ""))
 		if b.isMe(j.ToNonAD()) {
 			m = markedMention(model.MentionNotifies, b.myName())
 		}
@@ -273,14 +269,17 @@ func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions st
 	return text
 }
 
-// resolve fills in display names of a loaded message.
+// resolve fills in a loaded message's quote and display names.
 func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Message {
 	m := r.Message
 	if isGroup && !m.FromMe && r.senderJID != "" {
-		m.Sender = b.senderNameStr(ctx, r.senderJID, r.senderPush, r.legacyName)
+		m.Sender = b.senderNameStr(ctx, r.senderJID, r.senderPush)
 	}
-	if m.Quote != nil && r.quoteJID != "" {
-		m.Quote.Sender = b.senderNameStr(ctx, r.quoteJID, "", "")
+	if r.quote != nil {
+		m.Quote = b.resolveQuote(ctx, m.ChatID, r.quote)
+	}
+	if m.Quote != nil && m.Quote.SenderID != "" {
+		m.Quote.Sender = b.senderNameStr(ctx, m.Quote.SenderID, "")
 	}
 	if r.mentions != "" {
 		m.Text = b.replaceMentions(ctx, m.ChatID, m.Text, r.mentions)

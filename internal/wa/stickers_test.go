@@ -132,9 +132,8 @@ func TestStickerFromChats(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh := &waE2E.StickerMessage{FileSHA256: sum[:], DirectPath: path("6B000000")}
-	blob, _ := proto.Marshal(fresh)
 	m := &model.Message{ID: "m1", ChatID: "c@s.whatsapp.net", Kind: model.KindSticker, Media: model.MediaSticker}
-	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, mediaBlob: blob}); err != nil {
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, rawPayload: marshal(&waE2E.Message{StickerMessage: fresh})}); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.MkdirAll(filepath.Dir(b.mediaPath(m.ChatID, m.ID)), 0o700)
@@ -169,9 +168,8 @@ func TestStickerFromChats(t *testing.T) {
 func TestFavoriteSticker(t *testing.T) {
 	b := testBackend(t)
 	sum := sha256.Sum256([]byte("sticker"))
-	blob, _ := proto.Marshal(&waE2E.StickerMessage{FileSHA256: sum[:]})
 	m := &model.Message{ID: "m1", ChatID: "c@s.whatsapp.net", Kind: model.KindSticker, Media: model.MediaSticker}
-	if err := b.store.putMessage(b.ctx, b.db, storedMsg{Message: m, mediaBlob: blob}); err != nil {
+	if err := b.store.putMessage(b.ctx, b.db, storedMsg{Message: m, rawPayload: marshal(&waE2E.Message{StickerMessage: &waE2E.StickerMessage{FileSHA256: sum[:]}})}); err != nil {
 		t.Fatal(err)
 	}
 	if b.FavoriteSticker(m) {

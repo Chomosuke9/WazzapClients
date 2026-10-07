@@ -1,15 +1,10 @@
 package wa
 
 import (
-	"context"
-	"database/sql"
 	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/polymorfa/hypermeow/proto/waE2E"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -67,19 +62,6 @@ func TestMP3Seconds(t *testing.T) {
 	}
 }
 
-func TestFileInfo(t *testing.T) {
-	m := &model.Message{FileName: "a.pdf", FileSize: 1234, FileType: "application/pdf", Pages: 3, Waveform: []byte{1, 2}}
-	s := fileOf(m).marshal()
-	var back model.Message
-	parseFile(s).apply(&back)
-	if back.FileName != "a.pdf" || back.FileSize != 1234 || back.Pages != 3 || len(back.Waveform) != 2 {
-		t.Errorf("round trip lost data: %q -> %+v", s, back)
-	}
-	if fileOf(&model.Message{}).marshal() != "" {
-		t.Error("empty file info should marshal to an empty string")
-	}
-}
-
 func TestMediaExt(t *testing.T) {
 	for _, c := range []struct {
 		m    model.Message
@@ -94,38 +76,5 @@ func TestMediaExt(t *testing.T) {
 		if got := mediaExt(&c.m); got != c.want {
 			t.Errorf("mediaExt(%+v) = %q, want %q", c.m, got, c.want)
 		}
-	}
-}
-
-func TestMigrateFileInfo(t *testing.T) {
-	ctx := context.Background()
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	s := &msgStore{db: db}
-	if err := s.init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	// A document stored before the file column existed: its name as text.
-	doc := &waE2E.DocumentMessage{FileName: proto.String("a.pdf"), Caption: proto.String("see this"),
-		FileLength: proto.Uint64(2048), PageCount: proto.Uint32(4)}
-	if _, err := db.ExecContext(ctx, `INSERT INTO wz_messages (chat, id, ts, media, text, media_blob) VALUES (?, ?, 1, ?, ?, ?)`,
-		"c", "m1", int(model.MediaDocument), "a.pdf", marshal(doc)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM wz_meta`); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.migrateFileInfo(ctx); err != nil {
-		t.Fatal(err)
-	}
-	r, ok := s.message(ctx, "c", "m1")
-	if !ok {
-		t.Fatal("message gone")
-	}
-	if r.Text != "see this" || r.FileName != "a.pdf" || r.FileSize != 2048 || r.Pages != 4 {
-		t.Errorf("after migration: text %q, file %q, size %d, pages %d", r.Text, r.FileName, r.FileSize, r.Pages)
 	}
 }
