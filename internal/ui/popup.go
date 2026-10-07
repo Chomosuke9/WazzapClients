@@ -40,6 +40,13 @@ func (u *UI) updateMouse(gtx C) {
 			if e.Kind != pointer.Cancel {
 				u.mouse = e.Position.Round()
 			}
+			if e.Kind == pointer.Press || e.Kind == pointer.Release {
+				// Many buttons act on their click while they're laid out,
+				// after parts of the window that show the change were
+				// drawn. Without another frame those waited for the
+				// pointer to move.
+				gtx.Execute(op.InvalidateCmd{})
+			}
 			switch e.Kind {
 			case pointer.Press:
 				if e.Buttons.Contain(pointer.ButtonPrimary) {

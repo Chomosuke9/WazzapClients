@@ -200,6 +200,10 @@ Gotchas already found in the pinned version (v0.10.x):
   the registration posted to it; the callbacks run on that thread and only queue.
 - `widget.Clickable.Layout` reads and drops the clicks nobody has asked about yet.
   Check `Clicked` before laying the button out (the title bar's privacy button).
+- Many buttons act on their click while they're laid out, after parts of the window
+  that show the change were drawn. `updateMouse` asks for one more frame after every
+  press and release, or those parts waited for the pointer to move;
+  `TestClickRedraws` clicks all over the demo window to check.
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
