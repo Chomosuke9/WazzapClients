@@ -11,21 +11,36 @@ import (
 
 type whisperTestHost struct {
 	Host
-	note *Note
+	note      *Note
+	dismissed bool
 }
 
 func (h *whisperTestHost) Note(n *Note)          { h.note = n }
+func (h *whisperTestHost) Dismiss(n *Note)       { h.dismissed = h.note == n }
 func (h *whisperTestHost) Do(work func() func()) { work()() }
+
+// Draft rewrites a member's "@Name" to "@<user>" and collects the JID, as the
+// UI's draftWith does, so the test exercises mentions in the body.
+func (h *whisperTestHost) Draft(text string) model.Draft {
+	d := model.Draft{Text: text}
+	for _, m := range testMembers {
+		if at := "@" + m.Name; strings.Contains(d.Text, at) {
+			d.Text = strings.ReplaceAll(d.Text, at, "@"+m.ID[:strings.IndexByte(m.ID, '@')])
+			d.Mentions = append(d.Mentions, m.ID)
+		}
+	}
+	return d
+}
 
 type whisperTestBackend struct {
 	model.Backend
-	chat, text string
-	targets    []string
-	err        error
+	chat, text        string
+	targets, mentions []string
+	err               error
 }
 
-func (b *whisperTestBackend) SendWhisper(chat string, targets []string, text string) <-chan error {
-	b.chat, b.targets, b.text = chat, targets, text
+func (b *whisperTestBackend) SendWhisper(chat string, targets []string, text string, mentions []string) <-chan error {
+	b.chat, b.targets, b.text, b.mentions = chat, targets, text, mentions
 	done := make(chan error, 1)
 	done <- b.err
 	close(done)
@@ -42,14 +57,19 @@ func TestWhisperCommand(t *testing.T) {
 		b, h := &whisperTestBackend{err: sendErr}, &whisperTestHost{}
 		Execute(&Context{Cmd: in.Cmd, Input: text, Values: in.Values, Chat: &model.Chat{ID: "group", IsGroup: true},
 			Info: &model.ChatInfo{Members: testMembers}, Backend: b, Host: h})
-		if b.chat != "group" || !slices.Equal(b.targets, []string{"budi@lid", "siti@lid"}) || b.text != "Halo 👋\nbaris kedua @Sigit" {
+		if b.chat != "group" || !slices.Equal(b.targets, []string{"budi@lid", "siti@lid"}) || b.text != "Halo 👋\nbaris kedua @sigit" {
 			t.Fatalf("wrong recipients/body: %+v", b)
 		}
-		if h.note == nil || h.note.Busy || h.note.Failed != (sendErr != nil) {
-			t.Fatalf("note: %+v", h.note)
+		if !slices.Equal(b.mentions, []string{"sigit@lid"}) {
+			t.Fatalf("body mentions not forwarded: %+v", b.mentions)
 		}
-		if sendErr == nil && !strings.Contains(h.note.Text, "Delivery is unconfirmed") {
-			t.Fatal("submission claimed delivery")
+		if sendErr == nil {
+			// The chat's whisper message is the confirmation; no note lingers.
+			if !h.dismissed || h.note.Failed {
+				t.Fatalf("success should dismiss the note: %+v (dismissed %v)", h.note, h.dismissed)
+			}
+		} else if h.dismissed || h.note == nil || !h.note.Failed || h.note.Text != sendErr.Error() {
+			t.Fatalf("failure note: %+v (dismissed %v)", h.note, h.dismissed)
 		}
 	}
 }

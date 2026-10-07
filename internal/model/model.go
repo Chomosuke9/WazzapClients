@@ -147,6 +147,11 @@ type Message struct {
 	// it: WhatsApp sends view once media only to the phone, so it shows
 	// once someone replies to it, which carries it along.
 	Opened, OnPhone bool
+	// Whisper is the display names of the members a /whisper went to. It is
+	// set only on the local-only record a whisper leaves in the chat (see
+	// Backend.SendWhisper): the message is drawn as yours but marked as seen
+	// by those members alone. Empty on every ordinary message.
+	Whisper []string
 }
 
 // Location is a place or position someone shared.
@@ -1053,11 +1058,12 @@ type Backend interface {
 	MarkRead(chatIDs []string)
 	// Send queues a text message and returns it in its pending state.
 	Send(chatID string, d Draft) *Message
-	// SendWhisper sends text only to selected group members. It returns
-	// immediately; the buffered channel yields one error (nil on submission)
-	// and closes. Submission does not confirm delivery. No ordinary outgoing
-	// message is stored, broadcast, synced to self, or automatically retried.
-	SendWhisper(chatID string, targets []string, text string) <-chan error
+	// SendWhisper sends text only to selected group members. mentions are the
+	// JIDs @mentioned in text, as in a Draft. It returns immediately; the
+	// buffered channel yields one error (nil on submission) and closes.
+	// Submission does not confirm delivery. No ordinary outgoing message is
+	// stored, broadcast, synced to self, or automatically retried.
+	SendWhisper(chatID string, targets []string, text string, mentions []string) <-chan error
 	// PressButton answers a message's quick-reply button (Buttons[i]) and
 	// returns the answer in its pending state, or nil.
 	PressButton(m *Message, i int) *Message

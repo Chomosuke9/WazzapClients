@@ -143,7 +143,7 @@ meant you to see. Each has its own switch:
 Turning one on opens a warning about privacy expectations. You must check the acknowledgment
 and choose **Enable feature** before it is activated. Turning it off is immediate; turning it
 back on asks again. `/whisper` requires a second confirmation with a separate
-acknowledgment and the warning **"Fitur ini mudah terkena banned."** The switch
+acknowledgment and the warning **"This feature can easily get your account banned."** The switch
 stays off until both confirmations are completed; canceling either leaves it off.
 
 <details>
@@ -173,16 +173,21 @@ stays off until both confirmations are completed; canceling either leaves it off
 To use `/whisper`, enable **Slash commands** and its own switch under **Extra features >
 Ethically gray features**, acknowledge the warning, then pick one or more members and
 type the message, for example `/whisper @Budi @Siti Meet at 8`. The first non-mention
-starts the message body. It supports text only and respects admin-only groups and
-ghost mode. Recipients may still copy, quote, or forward what they receive.
+starts the message body, where `@mentions` work as in any message. It supports text
+only and respects admin-only groups and ghost mode. Recipients may still copy, quote,
+or forward what they receive.
+
+A sent whisper leaves a record in the chat, drawn as yours but tinted apart from an
+ordinary message and headed **"Only you can see this"** with the members it went to.
+That record is local to this device only: it is stored here, never broadcast to the
+group and never synced to your other devices.
 
 Whisper uses hypermeow's internal, retry-shaped individual envelopes, not a supported
-WhatsApp selective-group feature. Its local note reports submission, not confirmed
-delivery. It creates no ordinary outgoing message, syncs nothing to your other devices,
-and does not retry automatically or fall back to a group broadcast. A partial failure
-may leave some devices with the message; manually resending can duplicate it. The note
-is temporary and disappears with the window. Live recipient interoperability has not
-been verified; local tests exercise routing, validation, and failure handling.
+WhatsApp selective-group feature. The record reports submission, not confirmed delivery.
+It is not sent as an ordinary group message and does not retry automatically or fall
+back to a group broadcast. A partial failure may leave some devices with the message;
+manually resending can duplicate it. Live recipient interoperability has not been
+verified; local tests exercise routing, validation, and failure handling.
 
 Manage saved messages in **Settings > Snippets**: search, add text or message JSON,
 edit, rename, and delete. Snippets belong to the current account. Their text (and a

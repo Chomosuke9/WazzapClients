@@ -11,13 +11,13 @@ import (
 
 type whisperUIBackend struct {
 	model.Backend
-	chat, text string
-	targets    []string
-	done       chan error
+	chat, text        string
+	targets, mentions []string
+	done              chan error
 }
 
-func (b *whisperUIBackend) SendWhisper(chat string, targets []string, text string) <-chan error {
-	b.chat, b.targets, b.text = chat, targets, text
+func (b *whisperUIBackend) SendWhisper(chat string, targets []string, text string, mentions []string) <-chan error {
+	b.chat, b.targets, b.text, b.mentions = chat, targets, text, mentions
 	return b.done
 }
 
@@ -37,10 +37,28 @@ func TestSlashWhisper(t *testing.T) {
 		st.u.pickSlash(sp, 0)
 		st.frame()
 	}
-	st.typeText(st.text() + "hello 👋")
+	// The body also takes @mentions, picked like any message's.
+	ed := &st.u.conv.composer
+	ed.Insert("hello 👋 @")
+	st.frame()
+	ms := st.u.mentionQuery()
+	if ms == nil {
+		t.Fatal("no mention picker in the body")
+	}
+	pick := 0
+	for ms.members[pick].Me || strings.HasPrefix(ms.members[pick].ID, "@") { // skip you, @all, @admin
+		pick++
+	}
+	name, jid := st.u.mentionName(ms.members[pick]), ms.members[pick].ID
+	st.u.pickMention(pick)
+	st.frame()
 	st.press(key.NameReturn)
-	if b.chat != "work" || b.text != "hello 👋" || len(b.targets) != 2 || b.targets[0] == b.targets[1] {
-		t.Fatalf("wrong send: %+v", b)
+	user, _, _ := strings.Cut(jid, "@")
+	if b.chat != "work" || b.text != "hello 👋 @"+user || len(b.targets) != 2 || b.targets[0] == b.targets[1] {
+		t.Fatalf("wrong send: %+v (mentioned %q)", b, name)
+	}
+	if len(b.mentions) != 1 || b.mentions[0] != jid {
+		t.Fatalf("body mention not forwarded: %+v", b.mentions)
 	}
 	if !st.lastNote("work").Busy {
 		t.Fatal("submission didn't wait for backend")
@@ -54,8 +72,9 @@ func TestSlashWhisper(t *testing.T) {
 		t.Fatal("submission didn't complete")
 	}
 	st.frame()
-	if n := st.lastNote("work"); n.Busy || n.Failed || !strings.Contains(n.Text, "Delivery is unconfirmed") {
-		t.Fatalf("note %+v", n)
+	// On success the note is dismissed; the chat's whisper message stands in.
+	if ns := st.u.slash.notes["work"]; len(ns) != 0 {
+		t.Fatalf("success left a note: %+v", ns)
 	}
 	if len(st.b.Messages("work", 1000)) != before {
 		t.Fatal("whisper became a group broadcast")

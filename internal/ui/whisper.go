@@ -1,15 +1,44 @@
 package ui
 
-import "strings"
+import (
+	"image/color"
+	"strings"
+
+	"gioui.org/font"
+	"gioui.org/layout"
+)
+
+// whisperTint colours a whisper bubble so it reads apart from a plain
+// message. It is pre-mixed opaque; Gio blends in linear space (see AGENTS).
+var whisperTint = rgb(0x8a74d8)
+
+// whisperHeader is the "only you can see this" banner and recipient line a
+// whisper bubble carries, above its text. names are the members it went to.
+func (u *UI) whisperHeader(gtx C, names []string, col color.NRGBA, maxW int) D {
+	gtx.Constraints.Max.X = maxW
+	line := func(w layout.Widget) layout.FlexChild { return layout.Rigid(w) }
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		line(func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(iconW(icVisibilityOff, 15, col)),
+				layout.Rigid(layout.Spacer{Width: 4}.Layout),
+				layout.Rigid(u.label(13, "Only you can see this", col, labelOpts{italic: true, maxLines: 1}).Layout),
+			)
+		}),
+		line(layout.Spacer{Height: 1}.Layout),
+		line(u.label(12.5, "Whispered to "+strings.Join(names, ", "), col,
+			labelOpts{weight: font.Medium, maxLines: 2}).Layout),
+	)
+}
 
 // Whispers require a second, fresh acknowledgment before saving the toggle.
 func (u *UI) confirmWhisperRisk(enable func()) {
-	u.confirm("Aktifkan /whisper? (2/2)",
-		"Fitur ini mudah terkena banned.\n\n"+
-			"Penggunaan /whisper dapat membuat akun WhatsApp dibatasi atau diblokir. "+
-			"Lanjutkan hanya jika kamu memahami dan menerima risiko ini.",
-		dialogButton{label: "Tetap aktifkan", primary: true, danger: true, run: enable})
-	u.dialog.agreement = "Saya memahami risiko akun terkena banned dan tetap ingin mengaktifkan /whisper."
+	u.confirm("Enable /whisper? (2/2)",
+		"This feature can easily get your account banned.\n\n"+
+			"Using /whisper may get your WhatsApp account restricted or banned. "+
+			"Continue only if you understand and accept this risk.",
+		dialogButton{label: "Enable anyway", primary: true, danger: true, run: enable})
+	u.dialog.agreement = "I understand my account may be banned and still want to enable /whisper."
 }
 
 func whisperText(text string) bool {

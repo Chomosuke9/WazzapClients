@@ -350,6 +350,8 @@ func demo(now time.Time) []*demoChat {
 				Receipt: model.Read, FileName: "smoke-tests.xlsx", FileSize: 48_200,
 				FileType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
 			{FromMe: true, Media: model.MediaVoice, Duration: 7, Time: day(0, 9, 53), Receipt: model.Delivered},
+			{FromMe: true, Text: "⁨@Andre⁩ ⁨@Dewi⁩ let's sync on the hotfix before standup", Time: day(0, 9, 55),
+				Receipt: model.Sent, Whisper: []string{"Andre", "Dewi"}},
 		},
 	}
 

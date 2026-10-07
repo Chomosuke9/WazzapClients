@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS wz_messages (
 	-- model.PrefKeepDeleted; 0 otherwise.
 	revoked      INTEGER NOT NULL DEFAULT 0,
 	opened       INTEGER NOT NULL DEFAULT 0, -- 1 once a view once message was opened here
+	-- The JIDs a /whisper went to, newline-joined; '' on every other
+	-- message. It marks the local-only record a whisper leaves behind.
+	whisper      TEXT NOT NULL DEFAULT '',
 	-- The message itself, last so that reading the columns above skips it:
 	-- the waE2E message it came or went as (none for a view once message
 	-- whose media never came), and the content of its latest edit.
@@ -164,6 +167,8 @@ var migrations = []string{
 	// The settings (settledBits) app state or this device has set, which a
 	// history sync's copy, taken when the device linked, mustn't undo.
 	`ALTER TABLE wz_chats ADD COLUMN settled INTEGER NOT NULL DEFAULT 0`,
+	// The /whisper recipients a local whisper record was sent to.
+	`ALTER TABLE wz_messages ADD COLUMN whisper TEXT NOT NULL DEFAULT ''`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -391,6 +396,7 @@ type storedMsg struct {
 	*model.Message
 	senderJID  string
 	senderPush string
+	whisper    string // /whisper recipient JIDs, newline-joined
 	rawPayload []byte // the marshaled waE2E message
 	// quotedMedia is the photo, video or voice message the message
 	// quotes (quotedID), when the quote carries what downloading it takes
@@ -405,8 +411,8 @@ type storedMsg struct {
 // deleted.
 func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error {
 	_, err := x.ExecContext(ctx, `
-		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, raw_payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, whisper, raw_payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
 			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
 			text = CASE WHEN wz_messages.edited != 0 OR wz_messages.edit_payload IS NOT NULL
@@ -415,7 +421,7 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 			raw_payload = COALESCE(wz_messages.raw_payload, excluded.raw_payload)
 		WHERE wz_messages.kind != ?`,
 		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
-		m.Text, int(m.Receipt), m.rawPayload, int(model.KindDeleted))
+		m.Text, int(m.Receipt), m.whisper, m.rawPayload, int(model.KindDeleted))
 	if err != nil {
 		return err
 	}
@@ -626,6 +632,7 @@ type rawMsg struct {
 	*model.Message
 	senderJID, senderPush string
 	mentions              string // as mentionsOf joins them
+	whisper               string // /whisper recipient JIDs, newline-joined; resolve makes them Whisper
 	buttons               *buttonsInfo
 	quote                 *rawQuote // made Quote by resolve
 	hasBlob               bool      // its payload holds what downloading its media takes
@@ -633,7 +640,7 @@ type rawMsg struct {
 
 // msgColumns are what scanMessage reads.
 const msgColumns = `chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, reaction, starred, pinned,
-	edited, revoked, opened, raw_payload, edit_payload`
+	edited, revoked, opened, whisper, raw_payload, edit_payload`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -648,7 +655,7 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		raw, edit               []byte
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &fromMe, &ts, &kind, &media, &m.Text, &receipt,
-		&m.Reaction, &starred, &pinned, &edited, &revoked, &opened, &raw, &edit)
+		&m.Reaction, &starred, &pinned, &edited, &revoked, &opened, &r.whisper, &raw, &edit)
 	if err != nil {
 		return r, err
 	}

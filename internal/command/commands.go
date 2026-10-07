@@ -107,7 +107,7 @@ var All = []*Command{
 		Group: true, Gray: true,
 		Options: []Option{
 			{Name: "members", Description: "Who to send to; pick one or more @mentions", Kind: Member, Required: true, Multiple: true},
-			{Name: "text", Description: "The text to send to those members", Kind: Text, Required: true},
+			{Name: "text", Description: "The text to send to those members; @mentions work as in any message", Kind: Text, Required: true, Mentions: true},
 		},
 		Run: runWhisper,
 	},

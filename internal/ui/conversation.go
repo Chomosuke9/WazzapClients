@@ -904,6 +904,13 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if out {
 		bg, quoteBg, textCol, metaCol, secondary = p.BubbleOut, p.QuoteOut, p.TextOut, p.MetaOut, p.SecondaryOut
 	}
+	// A whisper's local record is drawn as yours, tinted apart from a plain
+	// message and headed by who it went to.
+	whisper := len(m.Whisper) > 0 && m.Kind != model.KindDeleted
+	if whisper {
+		bg = mix(bg, whisperTint, 0.18)
+		quoteBg = mix(quoteBg, whisperTint, 0.18)
+	}
 	isImg := m.Kind == model.KindImage
 	// An unopened view once message is a card, framed like a picture.
 	voCard := m.Kind == model.KindViewOnce && !m.Opened
@@ -1121,6 +1128,12 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		contentW = max(contentW, min(inner, gtx.Dp(240)))
 	}
 
+	var whis part
+	if whisper {
+		whis = record(cgtx, func(gtx C) D { return u.whisperHeader(gtx, m.Whisper, secondary, inner-2*textInset) })
+		contentW = max(contentW, whis.size.X+2*textInset)
+	}
+
 	var fwd part
 	if m.Forwarded && m.Kind != model.KindDeleted {
 		fwd = record(cgtx, func(gtx C) D {
@@ -1201,6 +1214,14 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		if framed {
 			y += gtx.Dp(3)
 		}
+	}
+	if whisper {
+		wx := 0
+		if framed {
+			wx = textInset
+		}
+		whis.at(gtx, wx, y)
+		y += whis.size.Y + gtx.Dp(4)
 	}
 	if m.Forwarded && m.Kind != model.KindDeleted {
 		fx := 0

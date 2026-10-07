@@ -18,19 +18,20 @@ import (
 
 // SendWhisper deliberately bypasses storeAndSend and SendMessage: their
 // normal group fanout/retry paths must never broadcast a selective message.
-func (b *Backend) SendWhisper(chatID string, targets []string, text string) <-chan error {
+func (b *Backend) SendWhisper(chatID string, targets []string, text string, mentions []string) <-chan error {
 	done := make(chan error, 1)
 	targets = slices.Clone(targets)
+	mentions = slices.Clone(mentions)
 	go func() {
 		defer close(done)
 		ctx, cancel := context.WithTimeout(b.ctx, 45*time.Second)
 		defer cancel()
-		done <- b.sendWhisper(ctx, chatID, targets, text)
+		done <- b.sendWhisper(ctx, chatID, targets, text, mentions)
 	}()
 	return done
 }
 
-func (b *Backend) sendWhisper(ctx context.Context, chatID string, targets []string, text string) error {
+func (b *Backend) sendWhisper(ctx context.Context, chatID string, targets []string, text string, mentions []string) error {
 	if b.Pref("cmd_whisper") != "on" {
 		return errors.New("Enable /whisper in Ethically gray features first.")
 	}
@@ -67,9 +68,18 @@ func (b *Backend) sendWhisper(ctx context.Context, chatID string, targets []stri
 	if err != nil {
 		return err
 	}
-	// Marshal only the body, without the command or recipient mentions.
-	// EncryptMessageForDevice pads this plaintext itself.
-	plaintext, err := proto.Marshal(&waE2E.Message{Conversation: proto.String(text)})
+	// Marshal only the body (and any @mentions in it), without the command or
+	// the recipient picks. EncryptMessageForDevice pads this plaintext itself.
+	msg := &waE2E.Message{Conversation: proto.String(text)}
+	if len(mentions) > 0 {
+		// A ContextInfo turns Conversation into an ExtendedTextMessage, the
+		// same shape an ordinary mentioning message uses.
+		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:        proto.String(text),
+			ContextInfo: &waE2E.ContextInfo{MentionedJID: mentions},
+		}}
+	}
+	plaintext, err := proto.Marshal(msg)
 	if err != nil {
 		return err
 	}
@@ -91,19 +101,54 @@ func (b *Backend) sendWhisper(ctx context.Context, chatID string, targets []stri
 				identity = lid
 			}
 		}
-		enc, includeIdentity, err := di.EncryptMessageForDevice(ctx, plaintext, identity, nil, nil, nil)
+		// The server routes a group message addressed to a single device only
+		// when the enc carries a retry count, exactly as hypermeow's retry.go
+		// stamps encrypted.Attrs["count"] and Baileys sends participant.count.
+		// Without it the stanza reaches the socket but the recipient drops it,
+		// which is why a whisper "submitted" but never appeared.
+		encAttrs := waBinary.Attrs{"count": "1"}
+		enc, includeIdentity, err := di.EncryptMessageForDevice(ctx, plaintext, identity, nil, encAttrs, nil)
 		if errors.Is(err, whatsmeow.ErrNoSession) {
 			// Fetch by wire identity, as the fork's normal multi-device sender does.
 			bundles := di.FetchPreKeysNoError(ctx, []types.JID{dev})
 			if bundles[dev] == nil {
 				return nil, false, errors.New("No encryption keys available for a recipient device.")
 			}
-			enc, includeIdentity, err = di.EncryptMessageForDevice(ctx, plaintext, identity, bundles[dev], nil, nil)
+			enc, includeIdentity, err = di.EncryptMessageForDevice(ctx, plaintext, identity, bundles[dev], encAttrs, nil)
 		}
 		return enc, includeIdentity, err
 	}
-	return dispatchWhisper(ctx, group, devices, cli.GenerateMessageID(), encrypt,
-		di.MakeDeviceIdentityNode, di.SendNode)
+	id := cli.GenerateMessageID()
+	if err := dispatchWhisper(ctx, group, devices, id, encrypt,
+		di.MakeDeviceIdentityNode, di.SendNode); err != nil {
+		return err
+	}
+	// Leave a local-only record in the chat so the whisper reads as a sent
+	// message, marked with its recipients. It is never broadcast, synced, or
+	// retried: it only lives in this device's store (see putMessage).
+	b.storeWhisper(ctx, chatID, id, text, targets, msg)
+	return nil
+}
+
+// storeWhisper saves and shows the local record of a sent whisper.
+func (b *Backend) storeWhisper(ctx context.Context, chatID, id, text string, targets []string, msg *waE2E.Message) {
+	sm := storedMsg{
+		Message: &model.Message{
+			ID: id, ChatID: chatID, FromMe: true, Kind: model.KindText,
+			Text: text, Time: b.sendTime(), Receipt: model.Sent,
+		},
+		whisper:    strings.Join(targets, "\n"),
+		rawPayload: marshal(msg),
+	}
+	if err := b.store.ensureChat(ctx, b.db, chatID, true, ""); err != nil {
+		b.log.Errorf("whisper store chat %s: %v", chatID, err)
+	}
+	if err := b.store.putMessage(ctx, b.db, sm); err != nil {
+		b.log.Errorf("store whisper record: %v", err)
+		return
+	}
+	b.emitMessage(chatID, id)
+	b.emitChat(chatID)
 }
 
 // whisperTargets checks fresh membership, excludes every own device via its

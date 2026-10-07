@@ -57,7 +57,7 @@ func TestGrayFeatureConsent(t *testing.T) {
 			click("dialog:1")
 			if pref == grayCmdPref("whisper") {
 				assertOff()
-				if !st.u.dialog.isOpen() || st.u.dialog.agreed || !strings.Contains(st.u.dialog.body, "mudah terkena banned") {
+				if !st.u.dialog.isOpen() || st.u.dialog.agreed || !strings.Contains(st.u.dialog.body, "easily get your account banned") {
 					t.Fatal("whisper did not open a fresh ban-risk confirmation")
 				}
 				click("dialog:1")

@@ -294,6 +294,15 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 	if m.Quote != nil && strings.Contains(m.Quote.Text, "@") {
 		m.Quote.Text = b.guessMentions(ctx, m.Quote.Text)
 	}
+	if r.whisper != "" {
+		for _, s := range strings.Split(r.whisper, "\n") {
+			jid, err := types.ParseJID(s)
+			if err != nil {
+				continue
+			}
+			m.Whisper = append(m.Whisper, b.memberName(ctx, jid, types.EmptyJID))
+		}
+	}
 	b.fillVotes(ctx, m)
 	return m
 }

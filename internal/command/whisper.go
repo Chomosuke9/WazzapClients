@@ -9,7 +9,7 @@ func runWhisper(c *Context) error {
 	if c.Info == nil {
 		return errors.New("The group's members haven't loaded yet. Try again in a moment.")
 	}
-	var ids, recipients []string
+	var ids []string
 	seen := map[string]bool{}
 	for _, v := range c.Get("members") {
 		valid := false
@@ -19,7 +19,6 @@ func runWhisper(c *Context) error {
 				if !seen[m.ID] {
 					seen[m.ID] = true
 					ids = append(ids, m.ID)
-					recipients = append(recipients, m.Name)
 				}
 				break
 			}
@@ -28,13 +27,15 @@ func runWhisper(c *Context) error {
 			return errors.New("Pick current group members with @mentions; you can't whisper to yourself.")
 		}
 	}
-	text := strings.TrimSpace(c.Text("text"))
-	if len(ids) == 0 || text == "" {
+	// Draft rewrites the body's @mentions (e.g. "@Budi" to "@<user>") and
+	// collects their JIDs, exactly as an ordinary message does.
+	d := c.Draft(strings.TrimSpace(c.Text("text")))
+	if len(ids) == 0 || d.Text == "" {
 		return errors.New("Use /whisper @member @member text.")
 	}
 	n := busy(c, "Submitting whisper…")
 	// Start on the UI goroutine, where the auto backend owns ghost/AFK state.
-	done := c.Backend.SendWhisper(c.Chat.ID, ids, text)
+	done := c.Backend.SendWhisper(c.Chat.ID, ids, d.Text, d.Mentions)
 	c.Do(func() func() {
 		err := <-done
 		return func() {
@@ -42,9 +43,9 @@ func runWhisper(c *Context) error {
 				fail(n, err.Error())
 				return
 			}
-			n.Busy = false
-			n.Text = "Whisper submitted for " + names(recipients) + ". Delivery is unconfirmed. " +
-				"This is a local note; the whisper isn't synced to your other devices."
+			// The whisper's own message in the chat is the confirmation;
+			// drop the note so nothing lingers over the composer.
+			c.Dismiss(n)
 		}
 	})
 	return nil

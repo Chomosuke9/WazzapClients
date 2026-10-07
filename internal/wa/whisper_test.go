@@ -6,10 +6,13 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	waBinary "github.com/polymorfa/hypermeow/binary"
+	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
+	"google.golang.org/protobuf/proto"
 )
 
 func whisperJID(user, server string) types.JID { return types.NewJID(user, server) }
@@ -165,7 +168,7 @@ func TestWhisperBackendGates(t *testing.T) {
 	} {
 		b.SetPref("cmd_whisper", map[bool]string{true: "on", false: "off"}[tc.enabled])
 		b.SetPref(model.PrefGhost, map[bool]string{true: "on", false: "off"}[tc.ghost])
-		done := b.SendWhisper(tc.chat, []string{"2@lid"}, tc.text)
+		done := b.SendWhisper(tc.chat, []string{"2@lid"}, tc.text, nil)
 		if err := <-done; err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%+v: %v", tc, err)
 		}
@@ -175,5 +178,45 @@ func TestWhisperBackendGates(t *testing.T) {
 	}
 	if len(b.Messages("1@g.us", 100)) != 0 {
 		t.Fatal("whisper stored as ordinary outgoing message")
+	}
+}
+
+// TestWhisperRecordRoundTrips checks the local whisper record survives a store
+// round trip: its recipients come back through the whisper column, and it is
+// never treated as an ordinary outgoing message.
+func TestWhisperRecordRoundTrips(t *testing.T) {
+	b := testBackend(t)
+	ctx := b.ctx
+	sm := storedMsg{
+		Message: &model.Message{ID: "W1", ChatID: "g@g.us", FromMe: true, Kind: model.KindText,
+			Text: "psst", Time: time.Unix(1700000000, 0), Receipt: model.Sent},
+		whisper:    "budi@lid\nsiti@lid",
+		rawPayload: marshal(&waE2E.Message{Conversation: proto.String("psst")}),
+	}
+	if err := b.store.ensureChat(ctx, b.db, "g@g.us", true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.store.putMessage(ctx, b.db, sm); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := b.store.message(ctx, "g@g.us", "W1")
+	if !ok {
+		t.Fatal("whisper record not stored")
+	}
+	if r.whisper != "budi@lid\nsiti@lid" {
+		t.Fatalf("recipients lost: %q", r.whisper)
+	}
+	m := b.resolve(ctx, r, true)
+	if len(m.Whisper) != 2 {
+		t.Fatalf("Whisper = %v, want two recipients", m.Whisper)
+	}
+	// An ordinary message leaves the column empty.
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: &model.Message{
+		ID: "N1", ChatID: "g@g.us", FromMe: true, Text: "hi", Time: time.Unix(1700000100, 0)}}); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := b.store.message(ctx, "g@g.us", "N1")
+	if n.whisper != "" || len(b.resolve(ctx, n, true).Whisper) != 0 {
+		t.Fatalf("plain message marked as whisper: %q", n.whisper)
 	}
 }
