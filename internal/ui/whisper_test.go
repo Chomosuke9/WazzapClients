@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gioui.org/io/key"
+	"github.com/chomosuke9/wazzapclients/internal/command"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -167,5 +168,47 @@ func TestWhisperConsentCancel(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A note dropped once it has shown shrinks away instead of vanishing, and
+// one dropped before it was ever drawn just goes.
+func TestDismissedNoteShrinksAway(t *testing.T) {
+	st := newSlashTest(t, "work")
+	host := slashHost{u: st.u, chat: "work"}
+	inRows := func(n *command.Note) bool {
+		for _, r := range st.u.rows(st.u.selected) {
+			if r.kind == rowNote && r.note.note == n {
+				return true
+			}
+		}
+		return false
+	}
+	quick := &command.Note{Text: "Submitting whisper…", Busy: true}
+	host.Note(quick)
+	host.Dismiss(quick)
+	st.frame()
+	if inRows(quick) || len(st.u.slash.leaving["work"]) != 0 {
+		t.Fatal("a note never drawn lingered")
+	}
+
+	n := &command.Note{Text: "Submitting whisper…", Busy: true}
+	host.Note(n)
+	for range 30 {
+		st.frame()
+	}
+	host.Dismiss(n)
+	if len(st.u.slash.notes["work"]) != 0 {
+		t.Fatal("dismissed note still listed")
+	}
+	st.frame()
+	if !inRows(n) {
+		t.Fatal("the note vanished instead of shrinking away")
+	}
+	for range 30 {
+		st.frame()
+	}
+	if inRows(n) || len(st.u.slash.leaving["work"]) != 0 {
+		t.Fatal("the note never went")
 	}
 }

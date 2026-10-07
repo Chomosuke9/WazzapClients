@@ -60,6 +60,7 @@ type slashState struct {
 	replacing string
 
 	notes   map[string][]*localNote           // per chat, oldest first
+	leaving map[string][]*localNote           // dismissed notes shrinking away, per chat
 	waiting map[string]func(model.GroupEvent) // group requests, by Ref
 	seq     int
 	done    chan func() // what Host.Do finished, to run on this goroutine
@@ -70,6 +71,10 @@ type localNote struct {
 	id   string
 	at   time.Time
 	note *command.Note
+	// A dismissed note shrinks away (leave), while it's drawn (drawn).
+	gone  bool
+	leave tween
+	drawn bool
 }
 
 // maxNotes is how many notes a chat keeps; older ones go.
@@ -449,7 +454,92 @@ func (u *UI) dismissNote(chat string, n *command.Note) {
 		if ln.note == n {
 			s.notes[chat] = append(ns[:i:i], ns[i+1:]...)
 			u.msgsVer++
+			u.noteLeaves(chat, ln)
 			return
+		}
+	}
+}
+
+// noteLeaves lets a dismissed note in the open chat shrink away, the way
+// it grew in, from as far as it had grown, instead of vanishing. A busy
+// note a command drops at once (/whisper's, when its message stands in)
+// would otherwise blink.
+func (u *UI) noteLeaves(chat string, ln *localNote) {
+	if u.selected == nil || u.selected.ID != chat {
+		return
+	}
+	k := animKey{id: ln.id, tag: tagAppear}
+	ln.leave.snap(true)
+	if e := u.anims.m[k]; e != nil {
+		ln.leave.v = e.v
+	}
+	u.anims.stop(k)
+	if ln.leave.v == 0 {
+		return // never shown
+	}
+	ln.gone, ln.drawn = true, true
+	s := &u.slash
+	if s.leaving == nil {
+		s.leaving = map[string][]*localNote{}
+	}
+	s.leaving[chat] = append(s.leaving[chat], ln)
+}
+
+// chatNotes are a chat's notes, with those still shrinking away, by time.
+func (s *slashState) chatNotes(chat string) []*localNote {
+	ns, gone := s.notes[chat], s.leaving[chat]
+	if len(gone) == 0 {
+		return ns
+	}
+	all := append(slices.Clone(ns), gone...)
+	slices.SortStableFunc(all, func(a, b *localNote) int { return a.at.Compare(b.at) })
+	return all
+}
+
+// leavingNote draws a dismissed note shrinking away, and drops it once
+// it's gone.
+func (u *UI) leavingNote(gtx C, ln *localNote, row layout.Widget) D {
+	ln.drawn = true
+	v := ln.leave.step(gtx, false, durAppear)
+	if v == 0 {
+		u.dropLeaving(ln)
+		gtx.Execute(op.InvalidateCmd{}) // for the rows without it
+	}
+	fgtx, pop := fadeOut(gtx)
+	defer pop()
+	return growRow(fgtx, 0, easeOut(v), row)
+}
+
+func (u *UI) dropLeaving(ln *localNote) {
+	s := &u.slash
+	for chat, ns := range s.leaving {
+		if i := slices.Index(ns, ln); i >= 0 {
+			s.leaving[chat] = slices.Delete(ns, i, i+1)
+			u.msgsVer++
+		}
+	}
+}
+
+// pruneLeaving drops the leaving notes that weren't drawn since the last
+// call (scrolled off, or another chat's), which would never finish.
+func (u *UI) pruneLeaving(chat string) {
+	s := &u.slash
+	for id, ns := range s.leaving {
+		keep := ns[:0]
+		for _, ln := range ns {
+			if id == chat && ln.drawn {
+				ln.drawn = false
+				keep = append(keep, ln)
+			}
+		}
+		if len(keep) != len(ns) {
+			clear(ns[len(keep):])
+			u.msgsVer++
+		}
+		if len(keep) == 0 {
+			delete(s.leaving, id)
+		} else {
+			s.leaving[id] = keep
 		}
 	}
 }

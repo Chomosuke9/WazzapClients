@@ -81,7 +81,7 @@ func (u *UI) rows(c *model.Chat) []convRow {
 	// Notes go between the messages by time, after any that came earlier.
 	// Ones older than the loaded messages wait for their page, unless the
 	// chat's start is loaded (messages can be dated ahead of this clock).
-	notes := u.slash.notes[c.ID]
+	notes := u.slash.chatNotes(c.ID)
 	for _, m := range u.msgs {
 		for len(notes) > 0 && notes[0].at.Before(m.Time) {
 			if prev != nil || !u.conv.olderMore {
@@ -456,6 +456,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		if u.conv.scrollTo != nil {
 			gtx.Execute(op.InvalidateCmd{}) // requested while laying out
 		}
+		u.pruneLeaving(c.ID)
 	}()
 	return u.scrollList(gtx, &u.conv.list, len(rows), func(gtx C, i int) D {
 		r := rows[i]
@@ -505,6 +506,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		}
 		var dims D
 		switch {
+		case r.kind == rowNote && r.note.gone:
+			dims = u.leavingNote(gtx, r.note, row)
 		case r.kind == rowNote && u.anims.running(animKey{id: r.note.id, tag: tagAppear}):
 			dims = u.appearing(gtx, r.note.id, row, func(C, float32) {})
 		case r.kind == rowMessage && u.anims.running(animKey{id: r.msg.ID, tag: tagAppear}):
