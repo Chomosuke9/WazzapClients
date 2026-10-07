@@ -30,11 +30,14 @@ type infoState struct {
 	name         string // shown until the details load
 	back         []infoPage
 	data         *model.ChatInfo
-	list         widget.List
-	closeBtn     widget.Clickable
-	allMembers   bool  // the member list is expanded
-	allHours     bool  // a business's opening hours are expanded
-	anim         tween // sliding in and out
+	// media is what the "Media, links and docs" row shows. Counting it
+	// reads the whole chat, so it comes later, from Backend.MediaSummary.
+	media      model.MediaSummaryEvent
+	list       widget.List
+	closeBtn   widget.Clickable
+	allMembers bool  // the member list is expanded
+	allHours   bool  // a business's opening hours are expanded
+	anim       tween // sliding in and out
 	// memberSearch filters a group's member list by memberQuery.
 	memberSearch bool
 	memberQuery  widget.Editor
@@ -119,6 +122,10 @@ func (u *UI) showInfo(chatID, name string) {
 	u.info.chatID = chatID
 	u.info.name = name
 	u.info.data = u.backend.Info(chatID)
+	if u.info.media.ChatID != chatID {
+		u.info.media = model.MediaSummaryEvent{ChatID: chatID}
+	}
+	u.backend.MediaSummary(chatID)
 }
 
 // Geometry of the panel's list rows, in dp from the panel's left edge.
@@ -556,6 +563,7 @@ func (u *UI) infoAbout(gtx C, info *model.ChatInfo) D {
 // infoMedia is the "Media, links and docs" row with the newest pictures.
 func (u *UI) infoMedia(gtx C, info *model.ChatInfo) D {
 	p := u.pal
+	media := &u.info.media
 	if u.btn("info:media").Clicked(gtx) {
 		u.openGallery(info.ID, info.Name)
 	}
@@ -563,21 +571,21 @@ func (u *UI) infoMedia(gtx C, info *model.ChatInfo) D {
 		layout.Rigid(func(gtx C) D {
 			return u.layoutListItem(gtx, u.btn("info:media"), listItem{ic: icPermMedia, title: "Media, links and docs",
 				trailing: func(gtx C) D {
-					if info.MediaCount == 0 {
+					if media.Count == 0 {
 						return D{}
 					}
-					return layout.Inset{Right: 22.5}.Layout(gtx, u.label(16.8, itoa(info.MediaCount), p.TextSecondary).Layout)
+					return layout.Inset{Right: 22.5}.Layout(gtx, u.label(16.8, itoa(media.Count), p.TextSecondary).Layout)
 				}}, infoGeom)
 		}),
 		layout.Rigid(func(gtx C) D {
-			if len(info.Media) == 0 {
+			if len(media.Media) == 0 {
 				return D{}
 			}
 			return layout.Inset{Left: 29.5, Right: 37, Top: 10.5, Bottom: 19.7}.Layout(gtx, func(gtx C) D {
 				gap := gtx.Dp(8.3)
 				w := (gtx.Constraints.Max.X - 3*gap) / 4
 				h := gtx.Dp(90.3)
-				for i, m := range info.Media {
+				for i, m := range media.Media {
 					if i == 4 {
 						break
 					}

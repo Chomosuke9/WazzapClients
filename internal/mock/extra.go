@@ -22,7 +22,8 @@ type extras struct {
 	suggested   []*model.Channel
 	communities []*model.Community
 	infos       map[string]*model.ChatInfo
-	posted      int // status updates posted, for their IDs
+	summaries   map[string]model.MediaSummaryEvent // canned info panel media
+	posted      int                                // status updates posted, for their IDs
 }
 
 func (b *Backend) Statuses() []*model.StatusThread { return b.statuses }
@@ -138,13 +139,23 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 			info.Members = append(info.Members, mem)
 		}
 	}
+	return info
+}
+
+// MediaSummary returns canned media, or counts the chat's pictures.
+func (b *Backend) MediaSummary(chatID string) {
+	if ev, ok := b.summaries[chatID]; ok {
+		b.emit(ev)
+		return
+	}
+	ev := model.MediaSummaryEvent{ChatID: chatID}
 	for _, m := range b.msgs[chatID] {
 		if m.Kind == model.KindImage {
-			info.MediaCount++
-			info.Media = append(info.Media, m)
+			ev.Count++
+			ev.Media = append(ev.Media, m)
 		}
 	}
-	return info
+	b.emit(ev)
 }
 
 // commonGroups lists the groups where id has sent a message.
@@ -239,6 +250,13 @@ func demoExtras(at func(daysAgo, h, m int) time.Time) extras {
 			{ID: "alumni-hub@g.us", Name: "CS Alumni Hub", Announcements: "alumni-ann", Groups: []string{"uni", "jobs"}},
 			{ID: "product-hub@g.us", Name: "Product HQ", Announcements: "work-ann", Groups: []string{"work", "design"}},
 		},
+		summaries: map[string]model.MediaSummaryEvent{
+			"shop": {ChatID: "shop", Count: 3, Media: []*model.Message{
+				{ID: "s1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x8d6e63, ImageB: 0xd7ccc8},
+				{ID: "s2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x5d4037, ImageB: 0xbcaaa4},
+				{ID: "s3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xefebe9, ImageB: 0xa1887f},
+			}},
+		},
 		infos: map[string]*model.ChatInfo{
 			// Only admins post announcements: Fajar runs the alumni hub, you run Product HQ.
 			"alumni-ann": {
@@ -271,12 +289,6 @@ func demoExtras(at func(daysAgo, h, m int) time.Time) extras {
 						{Day: time.Friday, Mode: "specific_hours", Open: 7 * 60, Close: 22 * 60},
 						{Day: time.Saturday, Mode: "specific_hours", Open: 8 * 60, Close: 22 * 60},
 					},
-				},
-				MediaCount: 3,
-				Media: []*model.Message{
-					{ID: "s1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x8d6e63, ImageB: 0xd7ccc8},
-					{ID: "s2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x5d4037, ImageB: 0xbcaaa4},
-					{ID: "s3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xefebe9, ImageB: 0xa1887f},
 				},
 			},
 		},
@@ -326,6 +338,20 @@ func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 			{ID: "zytro-c@g.us", Name: "ZYTRO API - UPDATE", Announcements: "zytro-ann@g.us",
 				Groups: []string{"zytro@g.us"}},
 		},
+		summaries: map[string]model.MediaSummaryEvent{
+			"test@g.us": {ChatID: "test@g.us", Count: 276, Media: []*model.Message{
+				{ID: "m1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xd8d4cf, ImageB: 0x2b2b2b},
+				{ID: "m2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xdadde3},
+				{ID: "m3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x1b2330, ImageB: 0x2d3a4d},
+				{ID: "m4", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xdadde3},
+			}},
+			"vivy@lid": {ChatID: "vivy@lid", Count: 133, Media: []*model.Message{
+				{ID: "v1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x1b2330, ImageB: 0x2d3a4d},
+				{ID: "v2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4e4dc, ImageB: 0x8a3a3a},
+				{ID: "v3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4e4dc, ImageB: 0x3a6a8a},
+				{ID: "v4", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xd88a9a},
+			}},
+		},
 		infos: map[string]*model.ChatInfo{
 			// Only admins post announcements: you run WazzapAgents, not the forum.
 			"fpam-ann@g.us": {
@@ -351,13 +377,6 @@ func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 					{ID: "vivy@lid", Name: "Vivy", Admin: true},
 				},
 				Created: time.Date(2024, 8, 2, 8, 28, 0, 0, time.Local), CreatedBy: "you",
-				MediaCount: 276,
-				Media: []*model.Message{
-					{ID: "m1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xd8d4cf, ImageB: 0x2b2b2b},
-					{ID: "m2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xdadde3},
-					{ID: "m3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x1b2330, ImageB: 0x2d3a4d},
-					{ID: "m4", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xdadde3},
-				},
 			},
 			"vivy@lid": {
 				ID: "vivy@lid", Name: "Vivy", Phone: "+62 881-0261-81996",
@@ -372,13 +391,6 @@ func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 						{Day: time.Thursday, Mode: "open_24h"}, {Day: time.Friday, Mode: "open_24h"},
 						{Day: time.Saturday, Mode: "open_24h"},
 					},
-				},
-				MediaCount: 133,
-				Media: []*model.Message{
-					{ID: "v1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x1b2330, ImageB: 0x2d3a4d},
-					{ID: "v2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4e4dc, ImageB: 0x8a3a3a},
-					{ID: "v3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4e4dc, ImageB: 0x3a6a8a},
-					{ID: "v4", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xd88a9a},
 				},
 				Common: []model.CommonGroup{
 					{ID: "puja@g.us", Name: "Puja Qiqi Ajaib", Members: "Agus, Andrian, inilidya°~~, Mei, Radofa, Satria, Vivy, You"},

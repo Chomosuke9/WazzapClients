@@ -1168,6 +1168,10 @@ func (u *UI) applyEvents() {
 			}
 		case model.GalleryEvent:
 			u.galleryLoaded(e)
+		case model.MediaSummaryEvent:
+			if u.info.media.ChatID == e.ChatID {
+				u.info.media = e
+			}
 		case model.InviteEvent:
 			u.inviteLooked(e)
 		case model.JoinedEvent:
