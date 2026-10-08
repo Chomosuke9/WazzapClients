@@ -53,6 +53,7 @@ const (
 	cmdPause
 	cmdSeek
 	cmdMute
+	cmdVolume
 )
 
 type command struct {
@@ -60,6 +61,7 @@ type command struct {
 	pos   time.Duration
 	exact bool
 	on    bool
+	vol   float64
 }
 
 // Open starts playing path. notify is called from other goroutines when
@@ -99,6 +101,11 @@ func (p *Player) Seek(pos time.Duration, exact bool) {
 }
 
 func (p *Player) SetMuted(on bool) { p.send(command{kind: cmdMute, on: on}) }
+
+// SetVolume sets the sound's volume, from 0 (silent) to 1 (the file's own).
+func (p *Player) SetVolume(v float64) {
+	p.send(command{kind: cmdVolume, vol: min(1, max(0, v))})
+}
 
 // Close stops playback and frees the player.
 func (p *Player) Close() { p.once.Do(func() { close(p.done) }) }

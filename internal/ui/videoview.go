@@ -30,6 +30,7 @@ type videoView struct {
 	frame    paint.ImageOp
 	size     image.Point
 	muted    bool // kept from video to video
+	vol      volSlider
 	lastMove time.Time
 	overBar  bool // the pointer is on the controls
 	ctrl     tween
@@ -80,6 +81,7 @@ func (u *UI) loadVideo(vv *videoView, m *model.Message) {
 		return
 	}
 	p.SetMuted(vv.muted)
+	p.SetVolume(float64(u.volume))
 	vv.player = p
 }
 
@@ -248,13 +250,12 @@ func (u *UI) layoutVideoControls(gtx C, m *model.Message, r image.Rectangle) {
 		st = vv.player.Status()
 	}
 	if u.btn("vw:mute").Clicked(gtx) {
-		vv.muted = !vv.muted
-		vv.player.SetMuted(vv.muted)
+		u.toggleMute(vv)
 	}
 
 	playing := !st.Paused && !st.Ended
-	show := !playing || vv.seek.dragging || vv.overBar || gtx.Now.Sub(vv.lastMove) < controlsLinger
-	if playing && show && !vv.overBar && !vv.seek.dragging {
+	show := !playing || vv.seek.dragging || vv.vol.dragging || vv.overBar || gtx.Now.Sub(vv.lastMove) < controlsLinger
+	if playing && show && !vv.overBar && !vv.seek.dragging && !vv.vol.dragging {
 		gtx.Execute(op.InvalidateCmd{At: vv.lastMove.Add(controlsLinger)}) // to hide them
 	}
 	a := easeOut(vv.ctrl.step(gtx, show, durPopIn))
@@ -316,10 +317,20 @@ func (u *UI) layoutVideoControls(gtx C, m *model.Message, r image.Rectangle) {
 		}
 		btn("vw:vplay", r.Min.X+pad, func() D { return drawIcon(gtx, playIc, 26, white) })
 		muteIc := icVolumeFill
-		if vv.muted {
+		if !u.soundOn(vv.muted) {
 			muteIc = icVolumeOffFill
 		}
 		btn("vw:mute", r.Max.X-pad-gtx.Dp(36), func() D { return drawIcon(gtx, muteIc, 24, white) })
+
+		// The volume, left of the mute button.
+		volW := gtx.Dp(72)
+		volX := r.Max.X - pad - gtx.Dp(36) - gtx.Dp(8) - volW
+		func() {
+			defer op.Offset(image.Pt(volX, cy)).Push(gtx.Ops).Pop()
+			if u.layoutVolume(gtx, vv, volW) {
+				vv.lastMove = gtx.Now
+			}
+		}()
 
 		lg := gtx
 		lg.Constraints = layout.Constraints{Max: r.Size()}
@@ -327,7 +338,7 @@ func (u *UI) layoutVideoControls(gtx C, m *model.Message, r image.Rectangle) {
 		total := record(lg, u.label(13, fmtClock(dur), white, labelOpts{maxLines: 1}).Layout)
 		x0 := r.Min.X + pad + gtx.Dp(36) + gtx.Dp(6)
 		cur.at(gtx, x0, cy-cur.size.Y/2)
-		x1 := r.Max.X - pad - gtx.Dp(36) - gtx.Dp(6) - total.size.X
+		x1 := volX - gtx.Dp(14) - total.size.X
 		total.at(gtx, x1, cy-total.size.Y/2)
 
 		// The track, with a tall hit area so it's easy to grab.

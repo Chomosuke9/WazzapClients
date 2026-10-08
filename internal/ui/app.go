@@ -48,7 +48,9 @@ type UI struct {
 	// doodles draws the wallpaper's doodles behind conversations.
 	doodles bool
 	// zoom scales the whole window (scale.go).
-	zoom   zoomState
+	zoom zoomState
+	// volume is the sound's volume, 0 to 1 (volume.go).
+	volume float32
 	now    func() time.Time
 	window *app.Window // nil when rendering headless
 	host   *host       // nil when rendering headless (see Run)
@@ -310,11 +312,13 @@ func New(b model.Backend) *UI {
 	u.SetDark(true)
 	u.doodles = true
 	u.zoom.pct = 100
+	u.volume = 1
 	u.split.anim.snap(true)
 	if b != nil { // nil in some tests
 		u.SetDark(b.Pref(prefTheme) != "light")
 		u.doodles = prefOn(b, prefDoodles)
 		u.loadZoom()
+		u.loadVolume()
 		u.loadSplit()
 	}
 	u.images = newImageCache(240, 32<<20)

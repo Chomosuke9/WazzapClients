@@ -333,6 +333,7 @@ func (u *UI) loadVoice() {
 		u.backend.OpenMedia(m)
 		return
 	}
+	p.SetVolume(float64(u.volume))
 	v.player = p
 }
 

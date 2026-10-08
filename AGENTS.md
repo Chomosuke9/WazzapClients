@@ -231,7 +231,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    or business's sections in contactinfo.go), and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
-                   (viewer.go); the send view for picked, pasted and dropped files
+                   (viewer.go) and the volume slider of videos, statuses and voice
+                   messages (volume.go, an app preference); the send view for picked, pasted and dropped files
                    (sendview.go), its photo editor (mediaedit.go) and the rendering of
                    edits and the send queue (editrender.go); replies, @mentions and
                    select mode live in compose.go; editing your messages (in the composer)

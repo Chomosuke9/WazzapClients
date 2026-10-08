@@ -114,6 +114,7 @@ const (
 	vPlay               = 32
 	vPause              = 33
 	vSetMuted           = 35
+	vSetVolume          = 37
 	vGetNativeVideoSize = 40
 	vShutdown           = 42
 	vTransferVideoFrame = 43
@@ -400,6 +401,8 @@ func (w *winPlayer) do(c command) {
 			on = 1
 		}
 		syscall.SyscallN(w.engine.vtbl[vSetMuted], e, on)
+	case cmdVolume:
+		syscall.SyscallN(w.engine.vtbl[vSetVolume], e, uintptr(math.Float64bits(c.vol)))
 	}
 }
 

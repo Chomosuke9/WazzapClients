@@ -478,10 +478,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 			v.paused = !v.paused
 		}
 		if v.muteBtn.Clicked(gtx) {
-			v.video.muted = !v.video.muted
-			if v.video.player != nil {
-				v.video.player.SetMuted(v.video.muted)
-			}
+			u.toggleMute(&v.video)
 		}
 		for {
 			ev, ok := v.reply.Update(gtx)
@@ -639,10 +636,19 @@ func (u *UI) layoutStatusViewer(gtx C) {
 				return D{}
 			}
 			ic := icVolumeFill
-			if v.video.muted {
+			if !u.soundOn(v.video.muted) {
 				ic = icVolumeOffFill
 			}
 			return u.iconButton(gtx, &v.muteBtn, ic, 40, 22, white)
+		}),
+		layout.Rigid(func(gtx C) D {
+			if v.video.player == nil {
+				return D{}
+			}
+			w, h := gtx.Dp(72), gtx.Dp(40)
+			defer op.Offset(image.Pt(gtx.Dp(4), h/2)).Push(gtx.Ops).Pop()
+			u.layoutVolume(gtx, &v.video, w)
+			return D{Size: image.Pt(w+gtx.Dp(12), h)}
 		}),
 	)
 	hdr.Pop()
