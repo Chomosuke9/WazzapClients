@@ -53,6 +53,32 @@ func TestReactions(t *testing.T) {
 		t.Errorf("reactors = %+v, want you, then the newest first", rs)
 	}
 
+	// A message's one reaction from before wz_reactions is kept once a
+	// new one comes, and left out of the list (nobody knows who gave it).
+	o := &model.Message{ID: "o", ChatID: m.ChatID, Text: "old", Time: time.Unix(50, 0)}
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: o}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.db.ExecContext(ctx, `UPDATE wz_messages SET reaction = '😹' WHERE id = 'o'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.db.ExecContext(ctx, `DELETE FROM wz_meta WHERE key = 'old_reactions_kept'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.store.keepOldReactions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.store.putReaction(ctx, b.db, o.ChatID, o.ID, reaction{who: "a@lid", ts: 60_000, emoji: "👍"}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := b.store.message(ctx, o.ChatID, o.ID)
+	if r.ReactionTotal() != 2 || len(r.Reactions) != 2 || r.Reactions[0].Emoji != "😹" {
+		t.Errorf("old message's reactions = %v, want the old 😹 kept", r.Reactions)
+	}
+	if rs := b.Reactors(r.Message); len(rs) != 1 || rs[0].ID != "a@lid" {
+		t.Errorf("old message's reactors = %+v, want a@lid alone", rs)
+	}
+
 	// A column from before wz_reactions: the one latest emoji.
 	var old model.Message
 	fillReactions(&old, "😹")

@@ -21,12 +21,34 @@ const reactionsSchema = `
 CREATE TABLE IF NOT EXISTS wz_reactions (
 	chat  TEXT NOT NULL,
 	id    TEXT NOT NULL,            -- the message reacted to
-	who   TEXT NOT NULL,            -- usually a LID; meVoter for you
+	who   TEXT NOT NULL,            -- usually a LID; meVoter for you, oldReactor for one from before
 	ts    INTEGER NOT NULL,         -- unix milliseconds
 	emoji TEXT NOT NULL DEFAULT '', -- '' once taken back
 	PRIMARY KEY (chat, id, who)
 ) WITHOUT ROWID;
 `
+
+// oldReactor is who the one reaction a message kept before wz_reactions
+// existed is stored under: nobody knows who gave it. It counts on the
+// pill, but Reactors leaves it out.
+const oldReactor = "old"
+
+// keepOldReactions copies the reactions kept before wz_reactions existed,
+// one per message in its reaction column, into it once, so the next
+// reaction to the message doesn't drop them from its summary.
+func (s *msgStore) keepOldReactions(ctx context.Context) error {
+	const done = "old_reactions_kept"
+	if s.meta(ctx, done) != "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO wz_reactions (chat, id, who, ts, emoji)
+		SELECT chat, id, ?, ts * 1000, reaction FROM wz_messages
+		WHERE reaction != '' AND instr(reaction, char(10)) = 0`, oldReactor)
+	if err != nil {
+		return err
+	}
+	return s.setMetaValue(ctx, done, "1")
+}
 
 // reaction is one person's reaction, to p.target or a history message.
 type reaction struct {
@@ -169,6 +191,9 @@ func (b *Backend) Reactors(m *model.Message) []model.Reactor {
 	}
 	out := make([]model.Reactor, 0, len(rs))
 	for _, r := range rs {
+		if r.who == oldReactor {
+			continue
+		}
 		rr := model.Reactor{ID: r.who, Me: r.who == meVoter, Emoji: r.emoji, Time: time.UnixMilli(r.ts)}
 		if rr.Me {
 			rr.ID, rr.Name = b.ownJID(m.ChatID).String(), "You"
