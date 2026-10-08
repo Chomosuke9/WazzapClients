@@ -102,7 +102,6 @@ var (
 	icNext          = icon.ArrowBack.Mirrored()
 	icCheckBox      = icon.CheckBox
 	icCheckBoxEmpty = icon.CheckBoxOutlineBlank
-	icCheckBoxSome  = icon.IndeterminateCheckBox
 	icStarFill      = icon.StarFill
 	icPinFill       = icon.KeepFill
 	icAddReaction   = icon.AddReaction

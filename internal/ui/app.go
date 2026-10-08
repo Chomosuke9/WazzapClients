@@ -281,6 +281,7 @@ type UI struct {
 		mentionGhost *mentionState
 		selAnim      tween
 		selV         float32           // select mode's progress this frame
+		band         [2]int            // a selected row's band reaches this far above and below it (px)
 		sendAnim     tween             // the mic turning into the send button
 		glide        glide             // smooth scroll to a message
 		link         composerLink      // the preview of a link being typed

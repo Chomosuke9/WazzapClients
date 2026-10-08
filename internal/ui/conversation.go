@@ -472,24 +472,15 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	}()
 	dims := u.scrollList(gtx, &u.conv.list, len(rows), func(gtx C, i int) D {
 		r := rows[i]
-		in := layout.Inset{Left: dp(gtx, margin), Right: dp(gtx, margin)}
-		switch {
-		case r.kind == rowDate, r.kind == rowEncryption, r.kind == rowUnread, r.kind == rowSystem:
-			in.Top, in.Bottom = 10, 6
-		case r.kind == rowTyping:
-			// The newest message keeps its bottom space, so the gap above
-			// the bubble doesn't jump as it grows in.
-			in.Top, in.Bottom = 2, 8
-		case r.first:
-			in.Top = 10
-		default:
-			in.Top = 2
-		}
-		if i == 0 {
-			in.Top += 10
-		}
-		if i == msgRows-1 {
-			in.Bottom += 8
+		in := convInset(rows, i, msgRows)
+		in.Left, in.Right = dp(gtx, margin), dp(gtx, margin)
+		// A selected message's band reaches halfway into the space on
+		// either side, so the bands of neighbours that are both selected
+		// meet without a gap or an overlap.
+		top := gtx.Dp(in.Top)
+		u.conv.band = [2]int{top - top/2, gtx.Dp(2)}
+		if i+1 < len(rows) {
+			u.conv.band[1] = gtx.Dp(in.Bottom) + gtx.Dp(convInset(rows, i+1, msgRows).Top)/2
 		}
 		row := func(gtx C) D {
 			return in.Layout(gtx, func(gtx C) D {
@@ -548,6 +539,37 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	return dims
 }
 
+// convInset is the space above and below row i of the conversation.
+// msgRows is how many rows are messages (the typing row comes after).
+func convInset(rows []convRow, i, msgRows int) layout.Inset {
+	var in layout.Inset
+	switch r := rows[i]; {
+	case r.kind == rowDate, r.kind == rowEncryption, r.kind == rowUnread, r.kind == rowSystem:
+		in.Top, in.Bottom = 10, 6
+	case r.kind == rowTyping:
+		// The newest message keeps its bottom space, so the gap above
+		// the bubble doesn't jump as it grows in.
+		in.Top, in.Bottom = 2, 8
+	case r.first:
+		in.Top = 10
+	default:
+		in.Top = 2
+	}
+	if i == 0 {
+		in.Top += 10
+	}
+	if i == msgRows-1 {
+		in.Bottom += 8
+	}
+	return in
+}
+
+// selBand is the band a selected row of height h highlights, across the
+// whole width w and its margins (see u.conv.band).
+func (u *UI) selBand(margin, w, h int) image.Rectangle {
+	return image.Rect(-margin, -u.conv.band[0], w+margin, h+u.conv.band[1])
+}
+
 // layoutTyping draws the bubble with three bouncing dots that shows
 // someone is typing, with the avatars of everyone typing in groups. v is
 // how far it has grown in: the bubble pops up from its bottom corner as it
@@ -585,6 +607,9 @@ func (u *UI) layoutTyping(gtx C, group bool, margin int, v float32) D {
 	return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
 }
 
+// selColor highlights the selected messages' rows.
+var selColor = argb(0x5dbf6e, 0x26)
+
 // layoutMessageRow draws one message with its interactions: the hover
 // chevron and right-click menu, selection, and the flash after jumping to
 // it from a reply.
@@ -605,20 +630,14 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			u.conv.picked[m.ID] = true
 		}
 	}
-	// Select mode moves incoming bubbles over for the checkboxes.
-	selV := easeOut(u.conv.selV)
-	shift := 0
-	if !m.FromMe && !ann {
-		shift = int(float32(max(0, gtx.Dp(44)-margin)) * selV)
-	}
 	cgtx := gtx
-	cgtx.Constraints = layout.Constraints{Max: image.Pt(w-shift, gtx.Constraints.Max.Y)}
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
 	// Privacy mode shows the message under the pointer, or being used.
 	reveal := u.hovered[m.ID] || u.btn("chev:"+m.ID).Hovered() || (u.ctx.isOpen() && u.ctx.msg == m) || u.textSel.id == m.ID
 	unhide := u.hiding(gtx, "msg:"+m.ID, reveal)
 	bubble := record(cgtx, func(gtx C) D { return u.layoutMessage(gtx, c, r, maxW) })
 	cardH := u.conv.cardH
-	x := shift
+	x := 0
 	switch {
 	case ann:
 		x = (w - bubble.size.X) / 2 // down the middle, whoever sent it
@@ -631,7 +650,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		u.drawFlash(gtx, band)
 	}
 	if sel && u.conv.picked[m.ID] {
-		fillRect(gtx, band, argb(0x5dbf6e, 0x26))
+		fillRect(gtx, u.selBand(margin, w, h), selColor)
 	}
 	bubble.at(gtx, x, 0)
 	if c.IsGroup && r.first && !m.FromMe && !ann {
@@ -691,21 +710,12 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		}
 		t.Pop()
 	}
-	if selV > 0 {
-		// The whole row toggles; a checkbox sits in the left margin.
-		t := op.Offset(image.Pt(-margin, 0)).Push(gtx.Ops)
-		if sel {
-			rg := gtx
-			rg.Constraints = layout.Exact(image.Pt(w+2*margin, h))
-			clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
-		}
-		box, col := icCheckBoxEmpty, p.TextSecondary
-		if u.conv.picked[m.ID] {
-			box, col = icCheckBox, p.Green
-		}
-		bt := op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(6))).Push(gtx.Ops)
-		withOpacity(gtx, selV, func() { drawIcon(gtx, box, 24, col) })
-		bt.Pop()
+	if sel {
+		// The whole row toggles, with the space around it.
+		t := op.Offset(image.Pt(-margin, -u.conv.band[0])).Push(gtx.Ops)
+		rg := gtx
+		rg.Constraints = layout.Exact(u.selBand(margin, w, h).Size())
+		clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 		t.Pop()
 	}
 	return D{Size: image.Pt(w, h)}

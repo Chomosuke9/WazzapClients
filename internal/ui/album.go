@@ -95,10 +95,9 @@ func albumMeta(ms []*model.Message) *model.Message {
 }
 
 // layoutAlbumRow draws an album's row: its bubble, the sender's avatar in
-// groups, a chevron on the hovered tile, and in select mode a checkbox
-// that picks all its pictures.
+// groups and a chevron on the hovered tile. In select mode, clicking the
+// row picks all its pictures.
 func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D {
-	p := u.pal
 	ms := r.group
 	m0 := ms[0]
 	out := m0.FromMe
@@ -115,21 +114,15 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 			}
 		}
 	}
-	// Select mode moves incoming bubbles over for the checkboxes.
-	selV := easeOut(u.conv.selV)
-	shift := 0
-	if !out {
-		shift = int(float32(max(0, gtx.Dp(44)-margin)) * selV)
-	}
 	cgtx := gtx
-	cgtx.Constraints = layout.Constraints{Max: image.Pt(w-shift, gtx.Constraints.Max.Y)}
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
 	var tiles []image.Rectangle // in the bubble
 	bubble := record(cgtx, func(gtx C) D {
 		var dims D
 		dims, tiles = u.layoutAlbum(gtx, c, r, maxW)
 		return dims
 	})
-	x := shift
+	x := 0
 	if out {
 		x = w - bubble.size.X
 	}
@@ -138,9 +131,8 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 	if u.conv.flash != "" && r.has(u.conv.flash) {
 		u.drawFlash(gtx, band)
 	}
-	some := sel && u.pickedAny(ms)
-	if some {
-		fillRect(gtx, band, argb(0x5dbf6e, 0x26))
+	if sel && u.pickedAny(ms) {
+		fillRect(gtx, u.selBand(margin, w, h), selColor)
 	}
 	bubble.at(gtx, x, 0)
 	if c.IsGroup && r.first && !out {
@@ -156,23 +148,11 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 			u.albumTile(gtx, c, ms[i], tr.Add(image.Pt(x, 0)))
 		}
 	}
-	if selV > 0 {
-		t := op.Offset(image.Pt(-margin, 0)).Push(gtx.Ops)
-		if sel {
-			rg := gtx
-			rg.Constraints = layout.Exact(image.Pt(w+2*margin, h))
-			clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
-		}
-		box, col := icCheckBoxEmpty, p.TextSecondary
-		switch {
-		case u.pickedAll(ms):
-			box, col = icCheckBox, p.Green
-		case some:
-			box, col = icCheckBoxSome, p.Green
-		}
-		bt := op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(6))).Push(gtx.Ops)
-		withOpacity(gtx, selV, func() { drawIcon(gtx, box, 24, col) })
-		bt.Pop()
+	if sel {
+		t := op.Offset(image.Pt(-margin, -u.conv.band[0])).Push(gtx.Ops)
+		rg := gtx
+		rg.Constraints = layout.Exact(u.selBand(margin, w, h).Size())
+		clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 		t.Pop()
 	}
 	return D{Size: image.Pt(w, h)}
