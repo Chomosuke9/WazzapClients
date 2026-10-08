@@ -319,7 +319,6 @@ func (u *UI) profileSettings() []settingsSection {
 		show: func() bool { return u.avatarImage(u.meID) != nil },
 		run: func() {
 			u.confirm("Remove your profile photo?", "",
-				dialogButton{label: "Cancel"},
 				dialogButton{label: "Remove", danger: true, run: func() { u.backend.SetProfilePhoto("") }})
 		}})
 	name := a.Name
@@ -685,7 +684,6 @@ func (u *UI) blockedContacts() []settingsSection {
 		sec.rows = append(sec.rows, settingRow{key: "blocked:" + c.ID, kind: setContact, id: c.ID, title: c.Name,
 			run: func() {
 				u.confirm("Unblock "+c.Name+"?", "",
-					dialogButton{label: "Cancel"},
 					dialogButton{label: "Unblock", primary: true, run: func() { u.backend.SetBlocked(c.ID, false) }})
 			}})
 	}
