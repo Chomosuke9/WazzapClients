@@ -313,3 +313,16 @@ func TestNoteBeforeMessages(t *testing.T) {
 		t.Error("a note older than the loaded page is shown")
 	}
 }
+
+// "//" sends a command's text as a message, with one slash.
+func TestSlashDoubleSlash(t *testing.T) {
+	st := newSlashTest(t, "work")
+	st.typeText("//kick @Budi")
+	if sp := st.u.slashQuery(); sp != nil {
+		t.Fatalf("//kick reads as a command: %+v", sp)
+	}
+	st.press(key.NameReturn)
+	if last := st.b.Messages("work", 1)[0]; last.Text != "/kick @Budi" || !last.FromMe {
+		t.Fatalf("sent %q, want /kick @Budi", last.Text)
+	}
+}

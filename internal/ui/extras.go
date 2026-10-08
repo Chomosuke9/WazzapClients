@@ -137,7 +137,7 @@ func (u *UI) grayToggle(key, title, sub string, flag *bool, changed func()) sett
 func (u *UI) extrasSettings() []settingsSection {
 	secs := []settingsSection{
 		{title: "Slash commands", rows: []settingRow{
-			u.extraToggle(prefSlash, "Slash commands", "Type / at the start of a message to run a command, like in Discord",
+			u.extraToggle(prefSlash, "Slash commands", "Type / at the start of a message to run a command, like in Discord. Start it with // to send it as text",
 				&u.slash.on, func() { u.conv.richFor = "" }), // the composer starts or stops showing commands
 		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
 		{title: "Mentions", rows: []settingRow{

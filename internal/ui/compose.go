@@ -187,6 +187,10 @@ func (u *UI) sendComposer() {
 	if txt == "" {
 		return
 	}
+	if u.slash.on && strings.HasPrefix(txt, "//") {
+		// "//kick" sends "/kick" as text instead of running it.
+		txt = txt[1:]
+	}
 	d := u.draftFrom(txt)
 	d.Reply = u.conv.reply
 	if r := u.composerPreview(d.Text); r != nil {
