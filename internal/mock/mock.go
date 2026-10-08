@@ -277,6 +277,10 @@ func demo(now time.Time) []*demoChat {
 	grp := func(sender string, t time.Time, s string) *model.Message {
 		return &model.Message{Sender: sender, SenderID: strings.ToLower(sender), Text: s, Time: t}
 	}
+	// sys is a system message, worded as the backend words them.
+	sys := func(t time.Time, s string, n model.Notice) *model.Message {
+		return &model.Message{Kind: model.KindSystem, Text: s, Time: t, Notice: n, Receipt: model.Read}
+	}
 
 	rina := &demoChat{
 		ID: "rina", Name: "Rina Kartika", Pinned: true, Favorite: true, Unread: 2,
@@ -336,6 +340,7 @@ func demo(now time.Time) []*demoChat {
 		ID: "work", Name: "Product Team", IsGroup: true, Unread: 3,
 		Presence: "Andre, Bima, Clara, Dewi, You", Typing: "Clara",
 		Messages: []*model.Message{
+			sys(day(0, 9, 0), "Andre added you", 0),
 			grp("Andre", day(0, 9, 2), "Standup in 5"),
 			grp("Andre", day(0, 9, 4), "Webhook payload from yesterday's failed upload:\n```json\n"+demoPayload+"\n```"),
 			grp("Dewi", day(0, 9, 12), "⁨\u2063@all⁩ demo for the client moves to 3pm"),
@@ -344,6 +349,7 @@ func demo(now time.Time) []*demoChat {
 			{Sender: "Bima", SenderID: "bima", Kind: model.KindSticker, Media: model.MediaSticker, Time: day(0, 9, 31),
 				Quote: &model.Quote{Sender: "Clara", Text: "Release candidate is up on staging. ⁨\u2063@Me Myself⁩ can you check the release notes? ⁨@Bima⁩ too"}},
 			grp("Bima", day(0, 9, 34), "Nice, I'll run the smoke tests"),
+			sys(day(0, 9, 35), "Dewi changed the group description", 0),
 			{Sender: "Clara", SenderID: "clara", Media: model.MediaDocument, Text: "Release notes v2.4.pdf", Time: day(0, 9, 36), Pinned: true,
 				FileName: "Release notes v2.4.pdf", FileSize: 1_284_000, FileType: "application/pdf", Pages: 3},
 			{Sender: "Andre", Media: model.MediaVoice, Duration: 42, Time: day(0, 9, 40),
@@ -362,6 +368,7 @@ func demo(now time.Time) []*demoChat {
 	chats := []*demoChat{
 		rina, family, work,
 		{ID: "budi", Name: "Budi Santoso", Presence: "last seen today at 08:12", Messages: []*model.Message{
+			sys(day(0, 7, 58), "Missed voice call", model.NoticeMissedCall),
 			txt(false, day(0, 8, 2), "Bro, are we still on for futsal tonight?"), {FromMe: true, Text: "Yep, 8 o'clock", Time: day(0, 8, 10), Receipt: model.Read, Reactions: reacts("👍")},
 			// Deleted for everyone, kept by Keep deleted messages.
 			{Text: "Bring 50k for the court, Andi says he's not paying again 🙄", Time: day(0, 8, 14), Revoked: day(0, 8, 15)},

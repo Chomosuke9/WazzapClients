@@ -59,7 +59,7 @@ func (u *UI) showUnread(n int) {
 }
 
 // firstUnread finds the oldest of the newest n incoming messages of the
-// open chat, looking up to unreadPages pages past the loaded ones, and
+// open chat (system messages aren't any), looking up to unreadPages pages past the loaded ones, and
 // reports whether it is loaded. With fewer stored, it finds the oldest
 // incoming one.
 func (u *UI) firstUnread(n int) (id string, loaded bool) {
@@ -67,7 +67,7 @@ func (u *UI) firstUnread(n int) (id string, loaded bool) {
 	msgs, older, inMsgs := u.msgs, u.conv.olderMore, true
 	for page := 0; ; page++ {
 		for i := len(msgs) - 1; i >= 0; i-- {
-			if msgs[i].FromMe {
+			if msgs[i].FromMe || msgs[i].Kind == model.KindSystem {
 				continue
 			}
 			id, loaded = msgs[i].ID, inMsgs

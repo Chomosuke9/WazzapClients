@@ -33,6 +33,7 @@ const (
 	rowNote      // a slash command's note, which only you see (slash.go)
 	rowUnread    // "N unread messages", above the first of them (unread.go)
 	rowScheduled // a message you scheduled, after the newest (scheduled.go)
+	rowSystem    // a system message: "Alice added Bob" (system.go)
 )
 
 // convRow is one entry of the message list: a day separator, the
@@ -93,9 +94,17 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		if newDay {
 			rows = append(rows, convRow{kind: rowDate, date: dateChip(m.Time, now)})
 		}
+		if m.Kind == model.KindSystem {
+			if m.Text != "" {
+				rows = append(rows, convRow{kind: rowSystem, msg: m})
+			}
+			// The message after it starts a run of its own.
+			prev = m
+			continue
+		}
 		// Announcements each have a card of their own. A run goes on, however
 		// long the sender waited, until someone else writes or the day changes.
-		first := ann || newDay || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID
+		first := ann || newDay || prev.Kind == model.KindSystem || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID
 		if u.unreadRow(c, m) {
 			rows = append(rows, convRow{kind: rowUnread})
 			first = true
@@ -462,7 +471,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		r := rows[i]
 		in := layout.Inset{Left: dp(gtx, margin), Right: dp(gtx, margin)}
 		switch {
-		case r.kind == rowDate, r.kind == rowEncryption, r.kind == rowUnread:
+		case r.kind == rowDate, r.kind == rowEncryption, r.kind == rowUnread, r.kind == rowSystem:
 			in.Top, in.Bottom = 10, 6
 		case r.kind == rowTyping:
 			// The newest message keeps its bottom space, so the gap above
@@ -489,6 +498,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
 				case r.kind == rowUnread:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.unreadChip(gtx, u.conv.unread.n) })
+				case r.kind == rowSystem:
+					return layout.N.Layout(gtx, func(gtx C) D { return u.layoutSystem(gtx, c, r.msg, maxBubble) })
 				case r.kind == rowTyping:
 					return u.layoutTyping(gtx, c.IsGroup, margin, typingV)
 				case r.kind == rowNote:

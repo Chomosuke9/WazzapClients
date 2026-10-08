@@ -748,14 +748,17 @@ func itoa(n int) string {
 }
 
 // lastKey returns the timestamp and key of a chat's newest message, which
-// archive, read and delete patches refer to.
+// archive, read and delete patches refer to. System messages don't count:
+// the ones made from live changes have IDs of the app's own.
 func (b *Backend) lastKey(chatID string) (time.Time, *waCommon.MessageKey) {
-	rc, ok := b.store.chat(b.ctx, chatID)
-	if !ok || rc.last == nil {
+	row := b.db.QueryRowContext(b.ctx, `SELECT `+msgColumns+` FROM wz_messages WHERE chat = ? AND kind != ?
+		ORDER BY ts DESC, rowid DESC LIMIT 1`, chatID, int(model.KindSystem))
+	last, err := scanMessage(row)
+	if err != nil {
 		return time.Time{}, nil
 	}
-	_, key := b.messageKey(rc.last.Message)
-	return rc.last.Time, key
+	_, key := b.messageKey(last.Message)
+	return last.Time, key
 }
 
 // chatAction applies a chat setting locally, shows it, and syncs it.
