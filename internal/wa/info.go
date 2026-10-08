@@ -41,6 +41,12 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 			info.Phone = b.lookup(ctx, jid).phone
 		}
 	}
+	if !info.IsGroup {
+		// A contact's timer is the chat's, which messages keep up to date.
+		if secs, ok := b.store.timer(ctx, chatID); ok {
+			info.Disappearing = secs
+		}
+	}
 	return info
 }
 
@@ -114,6 +120,7 @@ func (b *Backend) fetchInfo(jid types.JID) {
 			return
 		}
 		b.fillGroupInfo(ctx, info, g)
+		b.setTimer(ctx, jid.String(), groupTimer(g.GroupEphemeral))
 		_ = b.store.setMembers(ctx, g)
 		b.subMu.Lock()
 		b.subtitles[jid.String()] = b.groupSubtitle(ctx, g.Participants)

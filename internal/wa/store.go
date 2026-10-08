@@ -1,9 +1,11 @@
 package wa
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -174,6 +176,8 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN whisper TEXT NOT NULL DEFAULT ''`,
 	// The admin who deleted someone else's message.
 	`ALTER TABLE wz_messages ADD COLUMN revoked_by TEXT NOT NULL DEFAULT ''`,
+	// The chat's disappearing-messages timer in seconds, 0 = off (timer.go).
+	`ALTER TABLE wz_chats ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -300,6 +304,7 @@ type chatMeta struct {
 	pinned, mutedUntil, lastTS int64
 	archived, mentioned        bool
 	unread                     int
+	ephemeral                  uint32 // disappearing-messages timer, seconds
 }
 
 func (s *msgStore) setMeta(ctx context.Context, x execer, jid string, m chatMeta) error {
@@ -310,18 +315,19 @@ func (s *msgStore) setMeta(ctx context.Context, x execer, jid string, m chatMeta
 			archived = CASE WHEN settled & ?5 THEN archived ELSE ?6 END,
 			mentioned = CASE WHEN settled & ?7 THEN mentioned ELSE ?8 END,
 			unread = CASE WHEN settled & ?7 THEN unread ELSE ?9 END,
-			last_ts = MAX(last_ts, ?10)
+			last_ts = MAX(last_ts, ?10),
+			ephemeral = CASE WHEN settled & ?12 THEN ephemeral ELSE ?13 END
 		WHERE jid = ?11`,
 		settledBits["pinned"], m.pinned, settledBits["muted_until"], m.mutedUntil,
 		settledBits["archived"], boolInt(m.archived), settledBits["unread"], boolInt(m.mentioned),
-		m.unread, m.lastTS, jid)
+		m.unread, m.lastTS, jid, settledBits["ephemeral"], int64(m.ephemeral))
 	return err
 }
 
 // settledBits are the chat settings app state syncs, each with its bit in
 // wz_chats.settled. Their latest value comes from app state, a read
 // receipt or this device; a history sync's copy is older.
-var settledBits = map[string]int{"pinned": 1, "muted_until": 2, "archived": 4, "unread": 8}
+var settledBits = map[string]int{"pinned": 1, "muted_until": 2, "archived": 4, "unread": 8, "ephemeral": 16}
 
 func (s *msgStore) setField(ctx context.Context, jid, field string, v any) error {
 	// field is always a constant from this package.
@@ -775,6 +781,45 @@ func (s *msgStore) searchMessages(ctx context.Context, chat, key string, limit i
 	) ORDER BY ts DESC, rid DESC`)
 }
 
+// searchAllMessages is searchMessages over every chat but channels, for
+// the chat list's search. Sorting every message by time would read all
+// their texts into the sort, so it reads them in storage order, keeps the
+// time of each match and sorts only those.
+func (s *msgStore) searchAllMessages(ctx context.Context, key string, limit int) ([]rawMsg, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, ts, text FROM wz_messages
+		WHERE kind NOT IN (?, ?) AND text != '' AND chat NOT LIKE '%@newsletter'`,
+		int(model.KindDeleted), int(model.KindUnsupported))
+	if err != nil {
+		return nil, err
+	}
+	type hit struct{ id, ts int64 }
+	var hits []hit
+	for rows.Next() {
+		var h hit
+		var text string
+		if err := rows.Scan(&h.id, &h.ts, &text); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if strings.Contains(model.SearchKey(text), key) {
+			hits = append(hits, h)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || len(hits) == 0 {
+		return nil, err
+	}
+	slices.SortFunc(hits, func(a, b hit) int { return cmp.Or(cmp.Compare(b.ts, a.ts), cmp.Compare(b.id, a.id)) })
+	ids := make([]string, 0, min(len(hits), limit))
+	for _, h := range hits[:min(len(hits), limit)] {
+		ids = append(ids, strconv.FormatInt(h.id, 10))
+	}
+	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (
+		SELECT *, rowid AS rid FROM wz_messages WHERE rowid IN (`+strings.Join(ids, ",")+`)
+	) ORDER BY ts DESC, rid DESC`)
+}
+
 func (s *msgStore) queryMessages(ctx context.Context, q string, args ...any) ([]rawMsg, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -803,7 +848,7 @@ type rawChat struct {
 // lasts, and whom a text mentions.
 var chatQuery = fmt.Sprintf(`
 	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts, c.favorite,
-		c.mentioned, c.general, m.id, m.sender_jid, m.sender_push, m.from_me, m.ts, m.kind, m.media, m.text, m.receipt,
+		c.mentioned, c.general, c.ephemeral, m.id, m.sender_jid, m.sender_push, m.from_me, m.ts, m.kind, m.media, m.text, m.receipt,
 		CASE WHEN m.media IN (%d, %d, %d, %d) OR instr(m.text, '@') > 0 THEN m.raw_payload END,
 		CASE WHEN instr(m.text, '@') > 0 THEN m.edit_payload END
 	FROM wz_chats c
@@ -816,6 +861,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		c                              model.Chat
 		isGroup, archived, unread, fav int
 		mentioned, general             int
+		ephemeral                      int64
 		pinned, mutedUntil, lastTS     int64
 		mID, mSender, mPush, mText     sql.NullString
 		mFromMe, mTS, mKind, mMedia    sql.NullInt64
@@ -823,7 +869,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		mRaw, mEdit                    []byte
 	)
 	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS, &fav,
-		&mentioned, &general, &mID, &mSender, &mPush, &mFromMe, &mTS, &mKind, &mMedia, &mText, &mReceipt, &mRaw, &mEdit)
+		&mentioned, &general, &ephemeral, &mID, &mSender, &mPush, &mFromMe, &mTS, &mKind, &mMedia, &mText, &mReceipt, &mRaw, &mEdit)
 	if err != nil {
 		return rawChat{}, err
 	}
@@ -835,6 +881,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	}
 	c.Favorite = fav != 0
 	c.General = general != 0
+	c.Disappearing = uint32(ephemeral)
 	c.Archived = archived != 0
 	c.Unread = unread
 	c.Mentioned = mentioned != 0 && unread > 0

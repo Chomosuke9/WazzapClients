@@ -179,7 +179,6 @@ type filterMenuState struct {
 	origin image.Point // chips row, in content coordinates
 	anchor image.Point // more-chip, relative to origin
 	scrim  widget.Clickable
-	items  [len(filterNames)]widget.Clickable
 }
 
 func (u *UI) updateFilterMenu(gtx C) {
@@ -190,10 +189,9 @@ func (u *UI) updateFilterMenu(gtx C) {
 	if f.scrim.Clicked(gtx) {
 		f.open = false
 	}
-	for i := range f.items {
-		if f.items[i].Clicked(gtx) {
-			u.sidebar.filter = i
-			u.sidebar.list.Position = layout.Position{}
+	for i, it := range u.chipItems() {
+		if u.btn("filtermenu:" + itoa(i)).Clicked(gtx) {
+			u.pickChip(it)
 			f.open = false
 		}
 	}
@@ -223,20 +221,25 @@ func (u *UI) layoutFilterMenu(gtx C) {
 	mgtx.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, gtx.Constraints.Max.Y)}
 	dims := layout.UniformInset(8).Layout(mgtx, func(gtx C) D {
 		var children []layout.FlexChild
+		items := u.chipItems()
+		on := u.activeChip(items)
 		for _, i := range u.sidebar.hiddenFilters {
-			i := i
+			if i >= len(items) {
+				continue
+			}
+			it := items[i]
 			children = append(children, layout.Rigid(func(gtx C) D {
-				c := &f.items[i]
+				c := u.btn("filtermenu:" + itoa(i))
 				return clickable(gtx, c, func(gtx C) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					h := u.hover(gtx, c)
-					if u.sidebar.filter == i {
+					if on == i {
 						h = 1
 					}
 					bg := mix(p.Menu, p.MenuHover, h)
 					return background(gtx, bg, 8, func(gtx C) D {
 						return vcenter(gtx, gtx.Dp(40), func(gtx C) D {
-							return layout.Inset{Left: 12, Right: 12}.Layout(gtx, u.label(15, filterNames[i], p.Text).Layout)
+							return layout.Inset{Left: 12, Right: 12}.Layout(gtx, u.label(15, it.name, p.Text).Layout)
 						})
 					})
 				})

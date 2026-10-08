@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -311,6 +312,12 @@ func (b *Backend) SetInList(chatID, listID string, in bool) {
 		}
 		l.Chats = chats
 	}
+	b.emit(model.ListsEvent{})
+}
+
+func (b *Backend) CreateList(name string, chats []string) {
+	b.lists = append(b.lists, &model.ChatList{ID: "l" + strconv.Itoa(len(b.lists)+1), Name: name, Chats: chats})
+	b.emit(model.ListsEvent{})
 }
 
 func (b *Backend) ClearChat(id string) {

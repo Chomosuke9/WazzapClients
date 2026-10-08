@@ -114,7 +114,7 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 		}
 		chat = &model.Chat{ID: chatID, Name: name}
 	}
-	info := &model.ChatInfo{ID: chatID, Name: chat.Name, IsGroup: chat.IsGroup}
+	info := &model.ChatInfo{ID: chatID, Name: chat.Name, IsGroup: chat.IsGroup, Disappearing: chat.Disappearing}
 	if !chat.IsGroup {
 		info.Phone = "+62 812-5550-" + itoa4(len(chat.Name)*37)
 		info.About = "Hey there! I am using WhatsApp."

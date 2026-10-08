@@ -34,6 +34,7 @@ const (
 	filterUnread
 	filterFavorites
 	filterGroups
+	filterList // a custom list, sidebar.listID (lists.go)
 )
 
 var filterNames = [...]string{"All", "Unread", "Favourites", "Groups"}
@@ -59,6 +60,10 @@ type UI struct {
 	winWidth int
 
 	backend model.Backend
+	// lists are the custom chat lists (lists.go); listsStale asks for
+	// them again.
+	lists      []*model.ChatList
+	listsStale bool
 	// auto is the backend's scheduled messages and AFK (see withAuto).
 	auto    *auto.Backend
 	conn    model.ConnEvent
@@ -191,14 +196,19 @@ type UI struct {
 	sidebar struct {
 		newChat, menu, back widget.Clickable
 		more                widget.Clickable // collapsed filter chips
-		hiddenFilters       []int
+		hiddenFilters       []int            // indexes into chipItems
 		search              widget.Editor
-		chips               [len(filterNames)]widget.Clickable
+		chipBuf             []chipItem // chipItems' buffer
 		filter              int
-		showArchived        bool
-		list                widget.List
-		rows                map[string]*widget.Clickable
-		visible             []*model.Chat
+		listID              string // filterList's list
+		// listSet holds the chats of listID, for filtering.
+		listSet      map[string]bool
+		listSetFor   string
+		find         listSearchState // the search's contacts and messages
+		showArchived bool
+		list         widget.List
+		rows         map[string]*widget.Clickable
+		visible      []*model.Chat
 
 		// Highlights of the open chat and of the chat whose menu is open.
 		openSel, menuSel switcher[string]
@@ -355,6 +365,7 @@ func (u *UI) Start(notify func()) {
 	u.images.invalidate = notify
 	u.emojiImgs.invalidate = notify
 	u.setChats(u.backend.Chats())
+	u.loadLists()
 	u.loadPages()
 	u.backend.Start(notify)
 }
@@ -884,12 +895,7 @@ func (u *UI) update(gtx C) {
 	if u.sidebar.menu.Clicked(gtx) {
 		u.menu.open = !u.menu.open
 	}
-	for i := range u.sidebar.chips {
-		if u.sidebar.chips[i].Clicked(gtx) {
-			u.sidebar.filter = i
-			u.sidebar.list.Position = layout.Position{}
-		}
-	}
+	u.updateChips(gtx)
 	if u.rail.archived.Clicked(gtx) {
 		u.sidebar.showArchived = u.page != pageChats || !u.sidebar.showArchived
 		u.setPage(pageChats)
@@ -1107,6 +1113,9 @@ func (u *UI) applyEvents() {
 			u.conn, u.me, u.meID = e, me, meID
 		case model.ChatsEvent:
 			u.setChats(e.Chats)
+			u.listsStale = true
+		case model.ListsEvent:
+			u.listsStale = true
 		case model.ChatEvent:
 			u.upsertChat(e.Chat)
 		case model.MessageEvent:
@@ -1114,7 +1123,11 @@ func (u *UI) applyEvents() {
 			u.searchChatChanged(e.Msg.ChatID)
 			u.votesChanged(e.Msg)
 		case model.SearchEvent:
-			u.searchResults(e)
+			if e.ChatID == "" {
+				u.listSearchResults(e)
+			} else {
+				u.searchResults(e)
+			}
 		case model.ReceiptEvent:
 			u.applyReceipt(e)
 			u.msgInfoReceipt(e)
@@ -1197,6 +1210,9 @@ func (u *UI) applyEvents() {
 		case model.CommunitiesEvent:
 			u.setCommunities(u.backend.Communities())
 		}
+	}
+	if u.listsStale {
+		u.loadLists()
 	}
 }
 

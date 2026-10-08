@@ -279,7 +279,10 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 									if cm != nil {
 										return u.avatarOf(gtx, cm.ID, avatarCommunity, 41)
 									}
-									return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 41)
+									d := u.avatar(gtx, c.ID, c.Name, c.IsGroup, 41)
+									r := d.Size.X / 2
+									u.timerBadge(gtx, c, image.Pt(r, r), r, p.Panel)
+									return d
 								}),
 								layout.Rigid(layout.Spacer{Width: 16}.Layout),
 								layout.Flexed(1, func(gtx C) D {

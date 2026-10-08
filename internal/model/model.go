@@ -341,10 +341,13 @@ type Chat struct {
 	// Mentioned means one of the unread messages of a group mentions you
 	// (or everyone) or replies to you. It only counts while Unread > 0.
 	Mentioned bool
-	Time      time.Time // last activity, used for ordering
-	Last      *Message
-	Typing    []Typist // who is typing, first to start first; empty when nobody is
-	Presence  string   // header subtitle, e.g. "online"
+	// Disappearing is the disappearing-messages timer in seconds (0 =
+	// off); the chat list marks the avatar while it is on.
+	Disappearing uint32
+	Time         time.Time // last activity, used for ordering
+	Last         *Message
+	Typing       []Typist // who is typing, first to start first; empty when nobody is
+	Presence     string   // header subtitle, e.g. "online"
 }
 
 // Typist is someone typing in a chat.
@@ -763,6 +766,10 @@ type StatusEvent struct{}
 // ChannelsEvent reports that the followed or suggested channels changed.
 type ChannelsEvent struct{}
 
+// ListsEvent says the custom chat lists or the chats in them changed;
+// Backend.Lists has them.
+type ListsEvent struct{}
+
 // CommunitiesEvent reports that the community structure changed.
 type CommunitiesEvent struct{}
 
@@ -1002,6 +1009,7 @@ func (GroupCreatedEvent) isEvent() {}
 func (StickersEvent) isEvent()     {}
 func (DeletedEvent) isEvent()      {}
 func (SearchEvent) isEvent()       {}
+func (ListsEvent) isEvent()        {}
 func (GalleryEvent) isEvent()      {}
 func (MediaSummaryEvent) isEvent() {}
 func (SecurityCodeEvent) isEvent() {}
@@ -1070,6 +1078,8 @@ type Backend interface {
 	// SearchMessages looks in the background for up to limit messages of
 	// a chat whose SearchKey contains the query's, newest first. A
 	// SearchEvent brings the results; a new search cancels the last one.
+	// An empty chatID searches every chat but channels (the chat list's
+	// search), apart from the search of one chat.
 	SearchMessages(chatID, query string, limit int)
 	// PinnedMessage returns the chat's most recently pinned message, or nil.
 	PinnedMessage(chatID string) *Message
@@ -1174,6 +1184,8 @@ type Backend interface {
 	// Lists returns the custom chat lists.
 	Lists() []*ChatList
 	SetInList(chatID, listID string, in bool)
+	// CreateList makes a custom list holding chats. A ListsEvent follows.
+	CreateList(name string, chats []string)
 	// ClearChat deletes a chat's messages; DeleteChat removes the chat too.
 	ClearChat(chatID string)
 	DeleteChat(chatID string)
