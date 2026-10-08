@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"gioui.org/font"
@@ -95,6 +96,8 @@ var settingsViews = map[string]struct {
 	"chatsettings":  {settingChats, ""},
 	"notifications": {settingNotifications, ""},
 	"shortcuts":     {settingShortcuts, ""},
+	"performance":   {settingPerformance, ""},
+	"advanced":      {settingPerformance, "advanced"},
 	"extras":        {settingExtras, ""},
 	"snippets":      {settingSnippets, ""},
 	"gray":          {settingExtras, "gray"},
@@ -146,6 +149,8 @@ func (u *UI) settingsBack() {
 	switch {
 	case s.editing != 0:
 		s.editing = 0
+	case strings.HasPrefix(s.sub, "knob:"): // a knob of the Advanced page
+		u.openSettingsSub("advanced")
 	case s.sub != "":
 		u.openSettingsSub("")
 	default:
@@ -177,6 +182,11 @@ func (u *UI) settingsTitle() string {
 		return "Theme"
 	case "gray":
 		return "Ethically gray features"
+	case "advanced":
+		return "Advanced"
+	}
+	if k := knobNamed(strings.TrimPrefix(s.sub, "knob:")); k != nil {
+		return k.title
 	}
 	return settingsItems[s.detail-1].title
 }
@@ -184,6 +194,9 @@ func (u *UI) settingsTitle() string {
 // settingsPage lists the settings of the open page.
 func (u *UI) settingsPage() []settingsSection {
 	s := &u.settings
+	if key, ok := strings.CutPrefix(s.sub, "knob:"); ok {
+		return u.knobSettings(key)
+	}
 	switch s.sub {
 	case "lastseen", "photo", "about", "groups":
 		return u.privacyChoices(s.sub)
@@ -193,6 +206,8 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.blockedContacts()
 	case "gray":
 		return u.graySettings()
+	case "advanced":
+		return u.advancedSettings()
 	case "theme":
 		t := u.backend.Pref(prefTheme)
 		return []settingsSection{{title: "Choose a theme", rows: []settingRow{
@@ -241,6 +256,8 @@ func (u *UI) settingsPage() []settingsSection {
 		}
 	case settingShortcuts:
 		return shortcutSettings(prefOn(b, prefEnterSend))
+	case settingPerformance:
+		return u.perfSettingsPage()
 	case settingExtras:
 		return u.extrasSettings()
 	case settingSnippets:

@@ -143,8 +143,8 @@ func (t *tween) step(gtx C, on bool, dur time.Duration) float32 {
 		target = 1
 	}
 	now := gtx.Now
-	if now.IsZero() || dur <= 0 {
-		// No clock (tests): jump.
+	if now.IsZero() || dur <= 0 || !perf.animations {
+		// No clock (tests), or animations are off: jump.
 		t.v, t.on = target, on
 		return t.v
 	}
@@ -186,7 +186,7 @@ type follower struct {
 
 // step returns the value for this frame, gliding toward target over dur.
 func (f *follower) step(gtx C, target float32, dur time.Duration) float32 {
-	if !f.set || gtx.Now.IsZero() {
+	if !f.set || gtx.Now.IsZero() || !perf.animations {
 		f.snap(target)
 		return target
 	}

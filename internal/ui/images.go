@@ -66,6 +66,21 @@ func newImageCache(limit, budget int) *imageCache {
 	return &imageCache{m: make(map[string]*imgEntry), limit: limit, budget: budget}
 }
 
+// resize sets the cache's budget, its entry limit growing with it. Any
+// excess goes at the end of the frame.
+func (c *imageCache) resize(budget int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.limit, c.budget = max(60, int(int64(240)*int64(budget)/(32<<20))), budget
+}
+
+// usage returns the decoded bytes held and the budget.
+func (c *imageCache) usage() (held, budget int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bytes, c.budget
+}
+
 // decodeSlots limits how many images decode at once. A full-size photo
 // takes tens of MB while it decodes, and opening a chat full of them
 // would otherwise decode them all in parallel and grow the heap for good.

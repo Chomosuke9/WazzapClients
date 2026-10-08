@@ -12,12 +12,12 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
 
-// maxPlayers caps how many animated stickers play at once, and
-// playerBudget the memory they may hold together: a normal 512x512 sticker
+// maxPlayers caps how many animated stickers play at once (twice
+// perf.gifs, which is 6 by default), and playerBudget the memory they may
+// hold together: a normal 512x512 sticker
 // takes about 2.5 MB, but a sticker's canvas can be up to 4096x4096. The
 // rest show their first frame.
 const (
-	maxPlayers   = 6
 	playerBudget = 24 << 20
 )
 
@@ -51,7 +51,7 @@ func (u *UI) stickerFrame(key string, maxSide int, load func() []byte) (paint.Im
 	ps := &u.players
 	p := ps.m[key]
 	if p == nil {
-		if len(ps.m) >= maxPlayers {
+		if len(ps.m) >= 2*perf.gifs {
 			return paint.ImageOp{}, false
 		}
 		if ps.m == nil {

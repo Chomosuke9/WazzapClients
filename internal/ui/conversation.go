@@ -449,7 +449,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	}
 	if g := &u.conv.glide; g.active {
 		t := float32(1)
-		if !gtx.Now.IsZero() {
+		if !gtx.Now.IsZero() && perf.animations {
 			t = min(1, float32(gtx.Now.Sub(g.start))/float32(durScroll))
 		}
 		// BeforeEnd keeps the list from snapping back to the newest message.
@@ -587,7 +587,7 @@ func (u *UI) layoutTyping(gtx C, group bool, margin int, v float32) D {
 	// Each dot rises and falls in turn, then all rest: a wave.
 	const period, step, rise = 1300 * time.Millisecond, 160 * time.Millisecond, 520 * time.Millisecond
 	var t time.Duration
-	if !gtx.Now.IsZero() {
+	if !gtx.Now.IsZero() && perf.animations { // otherwise the dots rest
 		t = time.Duration(gtx.Now.UnixNano())
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(time.Second / 30)})
 	}
@@ -728,6 +728,11 @@ func (u *UI) drawFlash(gtx C, band image.Rectangle) {
 	left := u.conv.flashUntil.Sub(u.now())
 	if left <= 0 {
 		u.conv.flash = ""
+		return
+	}
+	if !perf.animations {
+		fillRect(gtx, band, argb(0x5dbf6e, 0x30))
+		gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil})
 		return
 	}
 	a := min(1, float32(flashTime-left)/float32(in), float32(left)/float32(out))
@@ -1715,7 +1720,7 @@ func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
 		return
 	}
 	pic, size := img.op, img.size
-	if img.animated && !u.blurred() {
+	if img.animated && !u.blurred() && u.autoplays(m) {
 		b, chat, id := u.backend, m.ChatID, m.ID
 		if f, ok := u.stickerFrame("m:"+chat+"/"+id, sz*2, func() []byte { return b.MediaData(chat, id) }); ok {
 			pic, size = f, f.Size()

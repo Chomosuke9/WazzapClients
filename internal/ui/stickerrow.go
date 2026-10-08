@@ -163,6 +163,9 @@ func (u *UI) stickerCell(gtx C, c *model.Chat, m *model.Message, pt part, at ima
 	}
 	pt.at(gtx, 0, 0)
 	fx.Pop()
+	if perf.autoplay == "hover" {
+		u.hoverArea(gtx, m.ID, pt.size) // plays it (autoplays)
+	}
 	if sel {
 		cg := gtx
 		cg.Constraints = layout.Exact(pt.size)

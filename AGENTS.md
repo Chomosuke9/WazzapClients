@@ -271,6 +271,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    recording and Raw photos: each off until turned on), and
                    its Ethically gray features page (Edit history, Keep deleted messages, Replay view
                    once, and commands marked Gray, like /ghost, each with a switch of its own);
+                   the Performance settings (switches for animations, smooth scrolling and
+                   GIF/sticker autoplay, and an Advanced page of memory and CPU knobs with
+                   live memory numbers; app prefs kept in the package's `perf`) in perf.go;
                    view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
@@ -434,6 +437,9 @@ The helpers are in `internal/ui/anim.go`. Each frame computes an animation's pro
 from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
 (`TestIdleAtRest` checks this).
 
+- Settings > Performance > Animations (`perf.animations`) makes `tween` and `follower`
+  jump to their end. New animations built on them obey it for free; anything that
+  steps itself from `gtx.Now` (the typing dots, the jump-to-message glide) checks it.
 - `tween` is an on/off progress (a popup opening, a panel sliding) that turns around
   midway without jumping. `follower` glides a number to a new target (tab underlines),
   and `switcher` moves a highlight between items (the open chat, the active rail

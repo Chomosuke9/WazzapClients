@@ -114,6 +114,11 @@ var (
 	icVolumeFill    = icon.VolumeUpFill
 	icVolumeOffFill = icon.VolumeOffFill
 
+	// Settings > Performance.
+	icSpeed  = icon.Speed
+	icTune   = icon.Tune
+	icMemory = icon.Memory
+
 	// Extra features and slash commands.
 	icExtension       = icon.Extension
 	icExtensionGray   = icon.ExtensionQuestion

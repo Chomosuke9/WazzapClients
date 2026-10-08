@@ -10,10 +10,10 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/video"
 )
 
-// maxGIFs caps how many GIFs play at once in the conversation, like
-// WhatsApp, which plays them as they come on screen. Each has a video
-// player of its own (Media Foundation and a GPU device on Windows); the
-// rest show their thumbnail and a play button.
+// maxGIFs caps how many GIFs play at once in the conversation by default
+// (perf.gifs), like WhatsApp, which plays them as they come on screen.
+// Each has a video player of its own (Media Foundation and a GPU device
+// on Windows); the rest show their thumbnail and a play button.
 const maxGIFs = 3
 
 // gifPlayer plays a GIF (an MP4 sent with gifPlayback) muted and looping
@@ -51,7 +51,7 @@ func (g *gifPlayer) close() {
 // gifImage returns the frame to show for an image message: a GIF's
 // current frame while it plays (live), or img.
 func (u *UI) gifImage(m *model.Message, img *imgEntry, maxPx int) *imgEntry {
-	if m.Media != model.MediaGIF || u.blurred() {
+	if m.Media != model.MediaGIF || u.blurred() || !u.autoplays(m) {
 		return img
 	}
 	if f := u.gifFrame(m, maxPx); f != nil {
@@ -67,7 +67,7 @@ func (u *UI) gifFrame(m *model.Message, maxPx int) *imgEntry {
 	key := m.ChatID + "/" + m.ID
 	g := ps.gifs[key]
 	if g == nil {
-		if ps.gifFetch[key] != 0 || len(ps.gifs) >= maxGIFs {
+		if ps.gifFetch[key] != 0 || len(ps.gifs) >= perf.gifs {
 			return nil
 		}
 		if ps.gifFetch == nil {

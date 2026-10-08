@@ -68,6 +68,7 @@ type Options struct {
 // open but minimized, when Gio draws no frames.
 func Run(b model.Backend, o Options) error {
 	b, _ = withAuto(b)
+	loadPerf(b)
 	h := &host{
 		b:       b,
 		o:       o,
@@ -266,11 +267,15 @@ func (h *host) poll(invalidate bool) {
 		if invalidate {
 			h.win.Invalidate()
 		}
+	case perf.trimAfter == 0:
+		if h.bgTrim != nil {
+			h.bgTrim.Stop()
+		}
 	case h.bgTrim == nil:
-		h.bgTrim = time.AfterFunc(idleTrim, memtrim.Trim)
+		h.bgTrim = time.AfterFunc(perf.trimAfter, memtrim.Trim)
 	default:
 		// Without a window, trim once the backend has been quiet a while.
-		h.bgTrim.Reset(idleTrim)
+		h.bgTrim.Reset(perf.trimAfter)
 	}
 }
 
@@ -386,6 +391,7 @@ func (h *host) openWindow() {
 	// memtrim). Every frame pushes the trim back. Leaving the window trims
 	// sooner, even while something on screen still animates.
 	h.idle = time.AfterFunc(idleTrim, memtrim.Trim)
+	resetTimer(h.idle, perf.trimAfter)
 	h.away = time.AfterFunc(awayTrim, memtrim.Trim)
 	h.away.Stop()
 }
@@ -436,7 +442,7 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 				u.applyTheme()
 				h.away.Stop()
 			} else {
-				h.away.Reset(awayTrim)
+				resetTimer(h.away, awayAfter())
 			}
 		}
 		switch e.Config.Mode {
@@ -454,7 +460,7 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 		gtx.Now = h.clock.next(gtx.Now)
 		u.Layout(gtx)
 		e.Frame(gtx.Ops)
-		h.idle.Reset(idleTrim)
+		resetTimer(h.idle, perf.trimAfter)
 	default:
 		if hwnd := windowHandle(e); hwnd != 0 && hwnd != h.hwnd {
 			h.hwnd = hwnd

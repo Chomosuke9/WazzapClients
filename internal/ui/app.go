@@ -340,7 +340,9 @@ func New(b model.Backend) *UI {
 		u.loadVoiceRate()
 		u.loadSplit()
 	}
+	loadPerf(b)
 	u.images = newImageCache(240, 32<<20)
+	u.images.resize(perf.imageCache)
 	u.emojiImgs = newImageCache(600, 4<<20)
 	u.clicks.m = make(map[string]*clickEntry)
 	u.drafts = make(map[string]*chatDraft)
@@ -639,7 +641,8 @@ func (u *UI) chatRead(id string) {
 }
 
 // idleTrim is how long the window goes without a frame before memory is
-// trimmed, and awayTrim how long after it loses focus or is minimized.
+// trimmed by default (perf.trimAfter), and awayTrim how long after it
+// loses focus or is minimized (awayAfter).
 // A trim costs a few milliseconds of page faults on the next frames, as
 // the pages still in use come back.
 const (

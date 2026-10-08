@@ -23,8 +23,8 @@ import (
 
 // appPrefs are the preferences that belong to the app rather than to an
 // account: they carry over when another account opens.
-var appPrefs = []string{prefTheme, prefDoodles, prefEnterSend, prefBackground, prefListWidth, prefListHidden, prefZoom,
-	prefPrivacy, prefPrivacyToggle, prefNoCapture, prefVolume, prefVoiceRate}
+var appPrefs = append([]string{prefTheme, prefDoodles, prefEnterSend, prefBackground, prefListWidth, prefListHidden, prefZoom,
+	prefPrivacy, prefPrivacyToggle, prefNoCapture, prefVolume, prefVoiceRate}, perfPrefs...)
 
 // accountRow is an account in the switcher.
 type accountRow struct {
@@ -224,6 +224,7 @@ func (h *host) closeAccount(next model.Backend) {
 func (h *host) useBackend(b model.Backend) {
 	b, _ = withAuto(b)
 	h.b = b
+	loadPerf(b)
 	h.conn, h.syncPct, h.queue = model.ConnEvent{}, -1, nil
 	if cur := h.o.Accounts.Current(); cur != nil && cur.Linked() {
 		// Show the chats right away; the backend reports the real state
