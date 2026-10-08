@@ -248,7 +248,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    in cards.go, and a poll's votes or an event's answers (the Message info
                    panel's other mode) in votes.go; selecting message
                    text in textsel.go; searching a chat's messages (the panel that takes the info
-                   panel's place) and a group's members in chatsearch.go; the composer's
+                   panel's place) and a group's members in chatsearch.go; the chat list's
+                   search (chats, archived ones too, contacts and every chat's messages) in
+                   listsearch.go; custom lists as filter chips and New list in lists.go; the composer's
                    formatting toolbar in formatbar.go; the attach
                    menu, file tray and poll dialog in attach.go; slash commands (their
                    picker over the composer and the notes only you see) in slash.go; scheduled
@@ -307,6 +309,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    votes and event answers they get (wz_votes) in polls.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
                    a group message's ticks wait for every member) in receipts.go;
+                   a chat's disappearing-messages timer (wz_chats.ephemeral, for the
+                   avatars' timer badge) in timer.go;
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
                    and snippetmedia.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
