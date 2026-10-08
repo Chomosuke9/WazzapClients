@@ -264,7 +264,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
-                   opens at in unread.go; group invite links (the dialog that joins
+                   opens at in unread.go; the ⌄ button that goes back to the newest message
+                   (with the unread count) and the day pinned at the top while a chat
+                   scrolls in scrolldown.go; group invite links (the dialog that joins
                    one) in invite.go; a community's announcements (cards down the
                    middle headed by their sender, a forward button beside them, and
                    "Only community admins can send messages" for members) in announce.go;
@@ -478,7 +480,8 @@ go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # closing (Esc) below. Also info, message, reorder, typing, typists (a second person
 # typing in a group, then the first stopping: -ochat work), ghost (on, then off), privacy (on, then off),
 # privacyhover (privacy mode on, the pointer at -at), vote (in a poll: -ochat design,
-# moving the vote below), and hover (the pointer at -at):
+# moving the vote below), scroll (the wheel turned up at -at, then a message comes),
+# and hover (the pointer at -at):
 go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 40ms -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \
