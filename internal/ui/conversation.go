@@ -945,6 +945,11 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		padL, padR, padT, padB = gtx.Dp(3), gtx.Dp(3), gtx.Dp(3), gtx.Dp(3)
 	}
 	inner := maxW - padL - padR
+	if hasLinkCard(m) && wideLink(m) && !ann {
+		// A big link picture sets the bubble's width, and the text wraps
+		// to it; a long text would otherwise stretch the picture with it.
+		inner = min(inner, gtx.Dp(wideLinkW))
+	}
 	cgtx := gtx
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
 
