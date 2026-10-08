@@ -458,7 +458,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		}
 		u.pruneLeaving(c.ID)
 	}()
-	return u.scrollList(gtx, &u.conv.list, len(rows), func(gtx C, i int) D {
+	dims := u.scrollList(gtx, &u.conv.list, len(rows), func(gtx C, i int) D {
 		r := rows[i]
 		in := layout.Inset{Left: dp(gtx, margin), Right: dp(gtx, margin)}
 		switch {
@@ -484,7 +484,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				switch {
 				case r.kind == rowDate:
-					return layout.N.Layout(gtx, func(gtx C) D { return u.systemChip(gtx, r.date) })
+					return layout.N.Layout(gtx, func(gtx C) D { return u.layoutDayChip(gtx, i, in.Top, r.date) })
 				case r.kind == rowEncryption:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
 				case r.kind == rowUnread:
@@ -530,6 +530,8 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		u.conv.heights[i] = dims.Size.Y
 		return dims
 	})
+	u.layoutFloats(gtx, c, rows)
+	return dims
 }
 
 // layoutTyping draws the bubble with three bouncing dots that shows
