@@ -266,13 +266,13 @@ func TestExtrasOffByDefault(t *testing.T) {
 }
 
 // TestSlashStickerHint checks the composer's hint for /sticker's two
-// texts, which # separates.
+// texts, which a new line separates.
 func TestSlashStickerHint(t *testing.T) {
 	st := newSlashTest(t, "rina")
 	for _, c := range []struct{ text, hint string }{
-		{"/sticker ", "[top] #[bottom]"},
-		{"/sticker when it works", "#[bottom]"},
-		{"/sticker when it works#", ""},
+		{"/sticker ", "[top] (new line) [bottom]"},
+		{"/sticker when it works", "(new line) [bottom]"},
+		{"/sticker when it works\n", ""},
 	} {
 		st.typeText(c.text)
 		sp := st.u.slashQuery()

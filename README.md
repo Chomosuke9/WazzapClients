@@ -157,7 +157,7 @@ stays off until both confirmations are completed; canceling either leaves it off
 | `/link` | Shows the group's invite link |
 | `/lockdown on\|off` | Lets only admins send messages, or everyone again |
 | `/description <text>` | Changes the group description |
-| `/sticker top text#bottom text` | Turns a photo into a sticker, meme text included |
+| `/sticker <top text>` | Turns a photo into a sticker, meme text included; a new line (Shift+Enter) starts the bottom text |
 | `/purge <count>` | Deletes your last messages for everyone |
 | `/raffle <winners>` | Draws group members at random and announces them |
 | `/calc <sum>` | A calculator: `12 x 4500`, `15k x 3`, `15% x 80000` |
@@ -173,7 +173,9 @@ stays off until both confirmations are completed; canceling either leaves it off
 To use `/whisper`, enable **Slash commands** and its own switch under **Extra features >
 Ethically gray features**, acknowledge the warning, then pick one or more members and
 type the message, for example `/whisper @Budi @Siti Meet at 8`. The first non-mention
-starts the message body, where `@mentions` work as in any message. It supports text
+starts the message body, where `@mentions` work as in any message. To start the body
+with a mention, put it on a new line (Shift+Enter) after the members: `/whisper @Budi`,
+then `@Siti is here` below. It supports text
 only and respects admin-only groups and ghost mode. Recipients may still copy, quote,
 or forward what they receive.
 

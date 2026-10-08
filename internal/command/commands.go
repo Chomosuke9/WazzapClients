@@ -55,7 +55,7 @@ var All = []*Command{
 	{
 		Name: "sticker", Description: "Turns the photo you reply to, or a picture you pick, into a sticker",
 		Options: []Option{
-			{Name: "top", Description: "Text along the top; # starts the bottom text", Kind: Text, Until: "#"},
+			{Name: "top", Description: "Text along the top; a new line (Shift+Enter) starts the bottom text", Kind: Text, Until: "\n"},
 			{Name: "bottom", Description: "Text along the bottom", Kind: Text},
 		},
 		Run: runSticker,
@@ -106,7 +106,8 @@ var All = []*Command{
 		Name: "whisper", Description: "Sends group text only to selected members; experimental, delivery is unconfirmed",
 		Group: true, Gray: true,
 		Options: []Option{
-			{Name: "members", Description: "Who to send to; pick one or more @mentions", Kind: Member, Required: true, Multiple: true},
+			{Name: "members", Description: "Who to send to; pick one or more @mentions, then a new line (Shift+Enter) to start the text with one",
+				Kind: Member, Required: true, Multiple: true, Until: "\n"},
 			{Name: "text", Description: "The text to send to those members; @mentions work as in any message", Kind: Text, Required: true, Mentions: true},
 		},
 		Run: runWhisper,

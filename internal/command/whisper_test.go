@@ -79,6 +79,30 @@ func TestWhisperCommand(t *testing.T) {
 	}
 }
 
+// TestWhisperMentionFirst checks that a new line ends the members, so the
+// text may start with an @mention of its own.
+func TestWhisperMentionFirst(t *testing.T) {
+	text := "/whisper @Budi Santoso @Siti\n@Sigit hey"
+	in, ok := Parse(text, len([]rune(text)), []Mention{{"Budi Santoso", "budi@lid"}}, testMembers)
+	if !ok || in.Problem() != "" || in.Current != 1 {
+		t.Fatalf("parse: %+v; %s", in, in.Problem())
+	}
+	b, h := &whisperTestBackend{}, &whisperTestHost{}
+	Execute(&Context{Cmd: in.Cmd, Input: text, Values: in.Values, Chat: &model.Chat{ID: "group", IsGroup: true},
+		Info: &model.ChatInfo{Members: testMembers}, Backend: b, Host: h})
+	if !slices.Equal(b.targets, []string{"budi@lid", "siti@lid"}) || b.text != "@sigit hey" ||
+		!slices.Equal(b.mentions, []string{"sigit@lid"}) {
+		t.Fatalf("wrong recipients/body: %+v", b)
+	}
+
+	// Right after the new line, the text is being typed (and missing).
+	text = "/whisper @Siti\n"
+	in, _ = Parse(text, len([]rune(text)), nil, testMembers)
+	if in.Current != 1 || in.Problem() != "Fill in text." {
+		t.Errorf("%q: current %d, problem %q", text, in.Current, in.Problem())
+	}
+}
+
 func TestWhisperInvalid(t *testing.T) {
 	for _, text := range []string{"/whisper ", "/whisper @Siti", "/whisper @Nobody secret", "/whisper @You secret"} {
 		in, ok := Parse(text, len([]rune(text)), nil, testMembers)

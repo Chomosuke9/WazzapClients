@@ -659,13 +659,23 @@ func (u *UI) slashHint(sp *slashPick) string {
 		if !o.Required {
 			p = "[" + p + "]"
 		}
-		if i > 0 && in.Cmd.Options[i-1].Until != "" {
-			// What separates it from the option before: "#[bottom]".
-			p = in.Cmd.Options[i-1].Until + p
+		if prev := in.Cmd.Options[max(i-1, 0)]; i > 0 && prev.Until != "" && prev.Kind == command.Text {
+			// What separates it from the text before (a Member option's
+			// values end without one, at the first word that isn't an
+			// @mention): "(new line) [bottom]".
+			p = untilHint(prev.Until) + p
 		}
 		parts = append(parts, p)
 	}
 	return strings.Join(parts, " ")
+}
+
+// untilHint is how slashHint shows an option's separator.
+func untilHint(sep string) string {
+	if sep == "\n" {
+		return "(new line) "
+	}
+	return sep
 }
 
 // paintSlashHint draws slashHint after the composer's text, when the
