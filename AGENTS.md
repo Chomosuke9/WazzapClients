@@ -470,7 +470,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, replyphoto, linkpreview, invite,
-# delete, select, edit, edits, mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
