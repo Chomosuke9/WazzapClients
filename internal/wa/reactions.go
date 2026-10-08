@@ -50,7 +50,22 @@ type querier interface {
 // putReaction records r unless a newer one from the same person is
 // stored, and updates the message's summary. A removed reaction stays as
 // a row with no emoji, so an older one coming late doesn't bring it back.
+//
+// On the database itself it runs in a transaction of its own: your own
+// reactions are stored from the UI goroutine and others' from the event
+// goroutine, and one summary must not miss the other's row.
 func (s *msgStore) putReaction(ctx context.Context, x querier, chat, id string, r reaction) error {
+	if db, ok := x.(*sql.DB); ok {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err := s.putReaction(ctx, tx, chat, id, r); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	_, err := x.ExecContext(ctx, `INSERT INTO wz_reactions (chat, id, who, ts, emoji) VALUES (?1, ?2, ?3, ?4, ?5)
 		ON CONFLICT (chat, id, who) DO UPDATE SET ts = excluded.ts, emoji = excluded.emoji
 		WHERE excluded.ts >= wz_reactions.ts`, chat, id, r.who, r.ts, r.emoji)
