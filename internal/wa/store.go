@@ -783,8 +783,8 @@ func (s *msgStore) searchMessages(ctx context.Context, chat, key string, limit i
 
 // searchAllMessages is searchMessages over every chat but channels, for
 // the chat list's search. Sorting every message by time would read all
-// their texts into the sort, so it reads them in storage order, keeps the
-// time of each match and sorts only those.
+// their texts into the sort, so it reads them in storage order and keeps
+// the newest matches as it goes.
 func (s *msgStore) searchAllMessages(ctx context.Context, key string, limit int) ([]rawMsg, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT rowid, ts, text FROM wz_messages
 		WHERE kind NOT IN (?, ?) AND text != '' AND chat NOT LIKE '%@newsletter'`,
@@ -793,7 +793,8 @@ func (s *msgStore) searchAllMessages(ctx context.Context, key string, limit int)
 		return nil, err
 	}
 	type hit struct{ id, ts int64 }
-	var hits []hit
+	newer := func(a, b hit) int { return cmp.Or(cmp.Compare(b.ts, a.ts), cmp.Compare(b.id, a.id)) }
+	hits := make([]hit, 0, limit)
 	for rows.Next() {
 		var h hit
 		var text string
@@ -801,18 +802,27 @@ func (s *msgStore) searchAllMessages(ctx context.Context, key string, limit int)
 			rows.Close()
 			return nil, err
 		}
-		if strings.Contains(model.SearchKey(text), key) {
-			hits = append(hits, h)
+		if !strings.Contains(model.SearchKey(text), key) {
+			continue
 		}
+		// Keep only the newest limit matches, newest first: a short
+		// query can match most messages.
+		i, _ := slices.BinarySearchFunc(hits, h, newer)
+		if i >= limit {
+			continue
+		}
+		if len(hits) == limit {
+			hits = hits[:limit-1]
+		}
+		hits = slices.Insert(hits, i, h)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil || len(hits) == 0 {
 		return nil, err
 	}
-	slices.SortFunc(hits, func(a, b hit) int { return cmp.Or(cmp.Compare(b.ts, a.ts), cmp.Compare(b.id, a.id)) })
-	ids := make([]string, 0, min(len(hits), limit))
-	for _, h := range hits[:min(len(hits), limit)] {
+	ids := make([]string, 0, len(hits))
+	for _, h := range hits {
 		ids = append(ids, strconv.FormatInt(h.id, 10))
 	}
 	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM (

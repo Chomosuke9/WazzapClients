@@ -403,6 +403,7 @@ func (u *UI) setCommunities(list []*model.Community) {
 // screenshots of a real session without connecting to WhatsApp.
 func (u *UI) Preview() {
 	u.setChats(u.backend.Chats())
+	u.loadLists()
 	u.loadPages()
 	u.conn = model.ConnEvent{State: model.StateOnline}
 }
