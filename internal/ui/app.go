@@ -1179,6 +1179,7 @@ func (u *UI) applyEvents() {
 			}
 			u.videoDownloaded(e)
 			u.fileDownloaded(e)
+			u.gifDownloaded(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.PhoneEvent:

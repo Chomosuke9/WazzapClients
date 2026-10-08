@@ -100,6 +100,8 @@ Gotchas already found in the pinned version (v0.10.x):
   decode one at a time (`acquireDecode`).
 - `golang.org/x/image/webp` can't read animated WebP. Animated stickers go through
   `internal/webpanim`; `stickerFrame` (`player.go`) plays the ones on screen.
+  GIFs are MP4s: `gifFrame` (`gifplayer.go`) plays the ones on screen in their bubbles,
+  muted and looping (`Player.SetLoop`), at most `maxGIFs` at once.
 - Videos use the OS's decoder, never a bundled codec (`internal/video`). The Windows
   backend calls COM through `syscall.SyscallN` without cgo: convert pointers to
   `uintptr` inside the `SyscallN` argument list, and read `double` results from `r2`

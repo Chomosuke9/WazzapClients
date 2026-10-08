@@ -1260,7 +1260,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		meta.at(gtx, contentW-meta.size.X-gtx.Dp(8), y-meta.size.Y-gtx.Dp(5))
 	}
 	if isImg {
-		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, img)
+		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, u.gifImage(m, img, max(imgW, imgH)))
 		func() {
 			t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 			defer t.Pop()
@@ -1544,7 +1544,7 @@ func (u *UI) layoutImage(gtx C, r image.Rectangle, m *model.Message, img *imgEnt
 			t.Pop()
 		}
 	}()
-	if m.Media != model.MediaVideo && m.Media != model.MediaGIF {
+	if m.Media != model.MediaVideo && m.Media != model.MediaGIF || img != nil && img.live {
 		return
 	}
 	playButton(gtx, r.Min.Add(r.Size().Div(2)), gtx.Dp(26), argb(0x000000, 0x80))

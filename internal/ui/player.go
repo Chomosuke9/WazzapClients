@@ -39,6 +39,9 @@ type players struct {
 	m     map[string]*stickerPlayer
 	frame int64
 	bytes atomic.Int64 // held by the running players, against playerBudget
+
+	gifs     map[string]*gifPlayer // the GIFs playing, by "chat/id"
+	gifFetch map[string]gifFetch
 }
 
 // stickerFrame returns the current frame of an animated sticker, starting
@@ -69,12 +72,19 @@ func (u *UI) stickerFrame(key string, maxSide int, load func() []byte) (paint.Im
 	return p.op, p.shown >= 0
 }
 
-// endFrame stops the players of stickers that weren't drawn this frame.
+// endFrame stops the players of stickers and GIFs that weren't drawn this
+// frame.
 func (ps *players) endFrame() {
 	for k, p := range ps.m {
 		if p.used < ps.frame {
 			close(p.stop)
 			delete(ps.m, k)
+		}
+	}
+	for k, g := range ps.gifs {
+		if g.used < ps.frame {
+			g.close()
+			delete(ps.gifs, k)
 		}
 	}
 	ps.frame++
@@ -85,6 +95,10 @@ func (ps *players) stopAll() {
 	for k, p := range ps.m {
 		close(p.stop)
 		delete(ps.m, k)
+	}
+	for k, g := range ps.gifs {
+		g.close()
+		delete(ps.gifs, k)
 	}
 }
 

@@ -35,6 +35,9 @@ type imgEntry struct {
 	bytes int   // decoded size, counted in imageCache.bytes
 	// animated is set for animated stickers; the image is their first frame.
 	animated bool
+	// live is set for a playing GIF's current frame (gifFrame), which
+	// isn't cached: its bubble shows no play button.
+	live bool
 	// empty is set when load returned nothing: the media isn't downloaded
 	// yet, or the download failed. It is asked for again after retryAfter.
 	empty    bool
