@@ -7,6 +7,8 @@ import (
 	"image/color"
 	"mime"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -334,7 +336,40 @@ func (u *UI) loadVoice() {
 		return
 	}
 	p.SetVolume(float64(u.volume))
+	if v.msg.Media == model.MediaVoice && u.voiceRate != 1 {
+		p.SetRate(u.voiceRate)
+	}
 	v.player = p
+}
+
+// voiceRates are the speeds the voice message pill goes through.
+var voiceRates = []float64{1, 1.5, 2}
+
+// prefVoiceRate is the voice message speed; 1 if "".
+const prefVoiceRate = "voice_rate"
+
+// rateName labels a speed: "1×", "1.5×".
+func rateName(r float64) string {
+	return strconv.FormatFloat(r, 'f', -1, 64) + "×"
+}
+
+// loadVoiceRate reads the saved voice message speed.
+func (u *UI) loadVoiceRate() {
+	u.voiceRate = 1
+	if r, err := strconv.ParseFloat(u.backend.Pref(prefVoiceRate), 64); err == nil && slices.Contains(voiceRates, r) {
+		u.voiceRate = r
+	}
+}
+
+// nextVoiceRate moves the speed of voice messages, the playing one and
+// the next ones, on to the next of voiceRates.
+func (u *UI) nextVoiceRate() {
+	i := slices.Index(voiceRates, u.voiceRate)
+	u.voiceRate = voiceRates[(i+1)%len(voiceRates)]
+	if u.voice.player != nil {
+		u.voice.player.SetRate(u.voiceRate)
+	}
+	u.backend.SetPref(prefVoiceRate, strconv.FormatFloat(u.voiceRate, 'f', -1, 64))
 }
 
 // stopVoice closes the player.
@@ -464,9 +499,35 @@ func (u *UI) layoutAudio(gtx C, c *model.Chat, m *model.Message, maxW, metaW, me
 		picX = w - picSz
 		x0, x1 = 0, w-picSz-gtx.Dp(14)
 	}
+	rateBtn := u.btn("vrate:" + m.ID)
+	if rateBtn.Clicked(gtx) {
+		u.nextVoiceRate()
+	}
 	func() {
 		t := op.Offset(image.Pt(picX, (rowH-picSz)/2)).Push(gtx.Ops)
 		defer t.Pop()
+		if voice && u.voice.key == fileKey(m) && u.voice.player != nil {
+			// While it plays (or pauses midway) the speed takes the
+			// picture's place: 1×, 1.5×, 2×, and round again.
+			lg := gtx
+			lg.Constraints.Min = image.Point{}
+			lbl := record(lg, u.label(14, rateName(u.voiceRate), cols.text, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+			pw, ph := max(gtx.Dp(44), lbl.size.X+gtx.Dp(16)), gtx.Dp(26)
+			pt := op.Offset(image.Pt((picSz-pw)/2, (picSz-ph)/2)).Push(gtx.Ops)
+			pg := gtx
+			pg.Constraints = layout.Exact(image.Pt(pw, ph))
+			clickable(pg, rateBtn, func(gtx C) D {
+				bg := cols.card
+				if h := u.hover(gtx, rateBtn); h > 0 {
+					bg = mix(bg, cols.text, 0.08*h)
+				}
+				fillRRect(gtx, image.Rect(0, 0, pw, ph), ph/2, bg)
+				lbl.at(gtx, (pw-lbl.size.X)/2, (ph-lbl.size.Y)/2)
+				return D{Size: image.Pt(pw, ph)}
+			})
+			pt.Pop()
+			return
+		}
 		if !voice {
 			fillCircle(gtx, image.Pt(picSz/2, picSz/2), picSz/2, rgb(0xfa6533))
 			centerIn(gtx, picSz, iconW(icHeadphonesFill, 26, rgb(0xffffff)))

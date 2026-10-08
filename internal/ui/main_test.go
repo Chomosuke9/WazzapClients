@@ -25,5 +25,6 @@ func testNow() time.Time { return testBase.Add(time.Since(testStarted)) }
 func TestMain(m *testing.M) {
 	time.Local = time.UTC
 	timeNow, mock.Clock = testNow, testNow
+	systemDark = func() (bool, bool) { return true, true } // the theme tests were drawn in
 	os.Exit(m.Run())
 }

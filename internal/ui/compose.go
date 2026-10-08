@@ -774,7 +774,11 @@ func (u *UI) layoutComposerBox(gtx C) D {
 								if u.picker.open && u.picker.mode == pickComposer {
 									col = p.Green
 								}
-								return u.iconButton(gtx, &u.conv.emoji, icEmoji, 40, 26, col)
+								ic := icEmoji
+								if u.picker.composerTab == tabSticker {
+									ic = icStickerSmiley
+								}
+								return u.iconButton(gtx, &u.conv.emoji, ic, 40, 26, col)
 							}),
 							layout.Rigid(layout.Spacer{Width: 10}.Layout),
 							layout.Flexed(1, func(gtx C) D {

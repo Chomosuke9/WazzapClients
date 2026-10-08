@@ -334,7 +334,8 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
                    when read, Reply and Mark as read through a COM activator), notify-send
                    or osascript elsewhere
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
-                   (Windows; stubs elsewhere)
+                   (Windows; stubs elsewhere), and the system's light or dark theme (Settings >
+                   Chats > Theme > System default, read again when the window gets focus)
 internal/update/   updates from GitHub releases when the user asks (Settings > Help): checks
                    the signed SHA256SUMS, swaps the executable (the running one moves to
                    .old on Windows) and the UI restarts it with -wait-pid (ui/update.go).

@@ -433,6 +433,7 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 				u.stopOutgoingTyping()
 			}
 			if f {
+				u.applyTheme()
 				h.away.Stop()
 			} else {
 				h.away.Reset(awayTrim)
