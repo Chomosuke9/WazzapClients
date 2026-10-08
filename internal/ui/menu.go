@@ -40,7 +40,7 @@ func (u *UI) updateMenu(gtx C) {
 		m.open = false
 	}
 	if m.logout.Clicked(gtx) {
-		u.logout()
+		u.confirmLogout()
 		m.open = false
 	}
 	if m.switchAcct.Clicked(gtx) {

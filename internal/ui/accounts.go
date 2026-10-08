@@ -276,6 +276,13 @@ func (u *UI) logout() {
 	u.backend.Logout()
 }
 
+// confirmLogout asks before logging out: the ⋮ menu's "Log out" sits right
+// under "Switch account", and a misclick would unlink the account.
+func (u *UI) confirmLogout() {
+	u.confirm("Log out?", "You'll need to link this device again with your phone to use WhatsApp here.",
+		dialogButton{label: "Log out", primary: true, danger: true, run: u.logout})
+}
+
 // leaving reports whether the open account is logging out for another
 // one to open.
 func (u *UI) leaving() bool { return u.host != nil && u.host.leaving }
