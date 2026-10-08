@@ -41,6 +41,8 @@ type Backend struct {
 	// votes are the votes in polls and answers to events, by chat and
 	// message ID, newest first.
 	votes map[string][]model.Vote
+	// reactors are who reacted to messages, by chat and message ID.
+	reactors map[string][]model.Reactor
 	extras
 }
 
@@ -80,6 +82,8 @@ func New() *Backend {
 	})
 	b.addChannelPosts()
 	b.demoVotes()
+	b.demoReactions()
+	b.seedReactors()
 	sent := b.find(&model.Message{ChatID: "rina", ID: "rina-8"}).Time
 	b.versions = map[string][]model.Version{"rina/rina-8": {
 		{Text: "Let's go there on Saturday", Time: sent},
@@ -290,7 +294,7 @@ func demo(now time.Time) []*demoChat {
 			txt(true, day(1, 19, 20), "Rent a car I think, it's cheaper for 4 people and we can go to Tegallalang early in the morning before it gets crowded"),
 			{FromMe: false, Kind: model.KindImage, Text: "Found this spot near the villa", Time: day(0, 8, 41), ImageA: 0x3a7bd5, ImageB: 0x00d2ff},
 			{FromMe: false, Kind: model.KindViewOnce, Media: model.MediaImage, Time: day(0, 8, 42), ImageA: 0xff9a8b, ImageB: 0xff6a88},
-			{FromMe: true, Text: "Wow that looks amazing", Time: day(0, 8, 45), Receipt: model.Read, Reaction: "❤️",
+			{FromMe: true, Text: "Wow that looks amazing", Time: day(0, 8, 45), Receipt: model.Read, Reactions: reacts("❤️"),
 				Quote: &model.Quote{Sender: "Rina Kartika", Text: "📷 Found this spot near the villa"}},
 			// Edited twice (see demoVersions).
 			{FromMe: true, Text: "Let's go there on Saturday morning, before it gets hot", Time: day(0, 8, 46),
@@ -358,7 +362,7 @@ func demo(now time.Time) []*demoChat {
 	chats := []*demoChat{
 		rina, family, work,
 		{ID: "budi", Name: "Budi Santoso", Presence: "last seen today at 08:12", Messages: []*model.Message{
-			txt(false, day(0, 8, 2), "Bro, are we still on for futsal tonight?"), {FromMe: true, Text: "Yep, 8 o'clock", Time: day(0, 8, 10), Receipt: model.Read, Reaction: "👍"},
+			txt(false, day(0, 8, 2), "Bro, are we still on for futsal tonight?"), {FromMe: true, Text: "Yep, 8 o'clock", Time: day(0, 8, 10), Receipt: model.Read, Reactions: reacts("👍")},
 			// Deleted for everyone, kept by Keep deleted messages.
 			{Text: "Bring 50k for the court, Andi says he's not paying again 🙄", Time: day(0, 8, 14), Revoked: day(0, 8, 15)},
 			txt(false, day(0, 8, 15), "Sorry, wrong chat. See you at 8!"),
@@ -422,7 +426,7 @@ func demo(now time.Time) []*demoChat {
 		{ID: "alumni-ann", Name: "Announcements", IsGroup: true, Muted: true, Unread: 2, Messages: []*model.Message{
 			grp("Fajar", day(3, 10, 0), "Welcome to the CS Alumni Hub! News that matters to every group in the community lands here."),
 			{Sender: "Fajar", Kind: model.KindImage, Media: model.MediaImage, Text: "Reunion venue shortlist: vote in the 2019 group",
-				Time: day(1, 18, 30), ImageA: 0x1d976c, ImageB: 0x93f9b9, Reaction: "🎉"},
+				Time: day(1, 18, 30), ImageA: 0x1d976c, ImageB: 0x93f9b9, Reactions: reacts("🎉")},
 			grp("Fajar", day(0, 8, 30), "Reunion registration closes on the 30th. Don't forget to fill in the form!"),
 		}},
 		{ID: "jobs", Name: "Alumni Jobs Board", IsGroup: true, Muted: true, Unread: 5, Presence: "Fajar, Kevin, Sari, You", Messages: []*model.Message{

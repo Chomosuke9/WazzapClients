@@ -31,7 +31,7 @@ func TestGhost(t *testing.T) {
 	if _, notices := at.poll(); len(notices) != 4 || notices[0] != GhostText {
 		t.Errorf("notices %q", notices)
 	}
-	if now := at.f.Messages("rina", 1000); len(now) != before || now[len(now)-1].Reaction != "" ||
+	if now := at.f.Messages("rina", 1000); len(now) != before || len(now[len(now)-1].Reactions) != 0 ||
 		now[len(now)-1].Kind == model.KindDeleted {
 		t.Error("something went through in ghost mode")
 	}

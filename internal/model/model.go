@@ -100,7 +100,10 @@ type Message struct {
 	Time     time.Time
 	Receipt  Receipt
 	Quote    *Quote
-	Reaction string
+	// Reactions counts the reactions to the message by emoji, the most
+	// given first, and MyReaction is yours ("" for none).
+	Reactions  []ReactionCount
+	MyReaction string
 	// Starred and Pinned mirror the message menu's Star and Pin.
 	Starred, Pinned bool
 	Forwarded       bool
@@ -244,6 +247,30 @@ const (
 	RSVPNotGoing
 	RSVPMaybe
 )
+
+// ReactionCount is how many people reacted to a message with one emoji.
+type ReactionCount struct {
+	Emoji string
+	Count int
+}
+
+// ReactionTotal is how many people reacted to m.
+func (m *Message) ReactionTotal() int {
+	n := 0
+	for _, r := range m.Reactions {
+		n += r.Count
+	}
+	return n
+}
+
+// Reactor is one person's reaction to a message. ID is their JID (yours
+// when Me), and Name "You" when Me.
+type Reactor struct {
+	ID, Name string
+	Me       bool
+	Emoji    string
+	Time     time.Time
+}
 
 // Vote is one person's vote in a poll, or answer to an event.
 type Vote struct {
@@ -1107,6 +1134,9 @@ type Backend interface {
 	Forward(msgs []*Message, chatIDs []string)
 	// React sets (or, with "", removes) your reaction to a message.
 	React(m *Message, emoji string)
+	// Reactors lists who reacted to a message and with what: you first,
+	// then the newest first.
+	Reactors(m *Message) []Reactor
 	// Delete deletes a message for you, or for everyone (your own messages).
 	Delete(m *Message, forEveryone bool)
 	// Star stars or unstars a message.

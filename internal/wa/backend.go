@@ -991,7 +991,9 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 			b.log.Warnf("edit event %s in %s: %v", p.target, chat, err)
 		}
 	case p.target != "":
-		_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
+		if p.reaction != nil {
+			_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
+		}
 	default:
 		name := ""
 		chatJID, _ := types.ParseJID(chat)
@@ -1170,6 +1172,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		receipts []personReceipt
 		// votes are the votes in polls and answers to events.
 		votes []historyVote
+		// reactions are those history sync lists on the messages they react to.
+		reactions []historyReaction
 	}
 	var convs []convData
 	var statuses []storedStatus
@@ -1264,6 +1268,13 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 					cd.votes = append(cd.votes, historyVote{id: p.msg.ID, vote: v})
 				}
 			}
+			for _, r := range hm.GetMessage().GetReactions() {
+				who, ok := b.voterOfKey(ctx, jid, r.GetKey())
+				if ok && r.GetText() != "" {
+					cd.reactions = append(cd.reactions, historyReaction{id: p.msg.ID,
+						reaction: reaction{who: who, ts: r.GetSenderTimestampMS(), emoji: r.GetText()}})
+				}
+			}
 			cd.msgs = append(cd.msgs, p.msg)
 		}
 		convs = append(convs, cd)
@@ -1301,6 +1312,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				b.log.Warnf("history sync: vote on %s: %v", v.id, err)
 			}
 		}
+		for _, r := range cd.reactions {
+			if err := b.store.putReaction(ctx, tx, jid, r.id, r.reaction); err != nil {
+				b.log.Warnf("history sync: reaction to %s: %v", r.id, err)
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		b.log.Errorf("history sync: commit: %v", err)
@@ -1320,8 +1336,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				_ = b.store.putVote(ctx, b.db, chat, p.target, *p.vote)
 			case p.event != nil:
 				_ = b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload)
-			default:
-				_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
+			case p.reaction != nil:
+				_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
 			}
 		}
 	}
