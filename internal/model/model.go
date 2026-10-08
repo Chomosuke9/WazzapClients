@@ -1064,11 +1064,12 @@ type Backend interface {
 	// Send queues a text message and returns it in its pending state.
 	Send(chatID string, d Draft) *Message
 	// SendWhisper sends text only to selected group members. mentions are the
-	// JIDs @mentioned in text, as in a Draft. It returns immediately; the
+	// JIDs @mentioned in text, as in a Draft, and reply the message it
+	// quotes, or nil. It returns immediately; the
 	// buffered channel yields one error (nil on submission) and closes.
 	// Submission does not confirm delivery. No ordinary outgoing message is
 	// stored, broadcast, synced to self, or automatically retried.
-	SendWhisper(chatID string, targets []string, text string, mentions []string) <-chan error
+	SendWhisper(chatID string, targets []string, text string, mentions []string, reply *Message) <-chan error
 	// PressButton answers a message's quick-reply button (Buttons[i]) and
 	// returns the answer in its pending state, or nil.
 	PressButton(m *Message, i int) *Message

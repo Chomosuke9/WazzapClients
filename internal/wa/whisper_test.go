@@ -168,7 +168,7 @@ func TestWhisperBackendGates(t *testing.T) {
 	} {
 		b.SetPref("cmd_whisper", map[bool]string{true: "on", false: "off"}[tc.enabled])
 		b.SetPref(model.PrefGhost, map[bool]string{true: "on", false: "off"}[tc.ghost])
-		done := b.SendWhisper(tc.chat, []string{"2@lid"}, tc.text, nil)
+		done := b.SendWhisper(tc.chat, []string{"2@lid"}, tc.text, nil, nil)
 		if err := <-done; err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%+v: %v", tc, err)
 		}

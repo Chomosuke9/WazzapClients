@@ -11,7 +11,7 @@ func TestWhisperGhostAndAFK(t *testing.T) {
 	at.a.SetPref("cmd_whisper", "on")
 	at.a.SetAway("lunch")
 	at.a.SetPref(model.PrefGhost, "on")
-	if err := <-at.a.SendWhisper("work", []string{"budi@lid"}, "secret", nil); err == nil || err.Error() != GhostText {
+	if err := <-at.a.SendWhisper("work", []string{"budi@lid"}, "secret", nil, nil); err == nil || err.Error() != GhostText {
 		t.Fatalf("ghost mode: %v", err)
 	}
 	if at.a.Away() == nil {
@@ -19,7 +19,7 @@ func TestWhisperGhostAndAFK(t *testing.T) {
 	}
 	at.a.SetPref(model.PrefGhost, "off")
 	before := len(at.f.Messages("work", 1000))
-	if err := <-at.a.SendWhisper("work", []string{"bima"}, "secret", nil); err != nil {
+	if err := <-at.a.SendWhisper("work", []string{"bima"}, "secret", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if at.a.Away() != nil {

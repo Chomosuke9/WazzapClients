@@ -18,20 +18,24 @@ import (
 
 // SendWhisper deliberately bypasses storeAndSend and SendMessage: their
 // normal group fanout/retry paths must never broadcast a selective message.
-func (b *Backend) SendWhisper(chatID string, targets []string, text string, mentions []string) <-chan error {
+func (b *Backend) SendWhisper(chatID string, targets []string, text string, mentions []string, reply *model.Message) <-chan error {
 	done := make(chan error, 1)
 	targets = slices.Clone(targets)
 	mentions = slices.Clone(mentions)
+	if reply != nil {
+		r := *reply
+		reply = &r
+	}
 	go func() {
 		defer close(done)
 		ctx, cancel := context.WithTimeout(b.ctx, 45*time.Second)
 		defer cancel()
-		done <- b.sendWhisper(ctx, chatID, targets, text, mentions)
+		done <- b.sendWhisper(ctx, chatID, targets, text, mentions, reply)
 	}()
 	return done
 }
 
-func (b *Backend) sendWhisper(ctx context.Context, chatID string, targets []string, text string, mentions []string) error {
+func (b *Backend) sendWhisper(ctx context.Context, chatID string, targets []string, text string, mentions []string, reply *model.Message) error {
 	if b.Pref("cmd_whisper") != "on" {
 		return errors.New("Enable /whisper in Ethically gray features first.")
 	}
@@ -71,12 +75,16 @@ func (b *Backend) sendWhisper(ctx context.Context, chatID string, targets []stri
 	// Marshal only the body (and any @mentions in it), without the command or
 	// the recipient picks. EncryptMessageForDevice pads this plaintext itself.
 	msg := &waE2E.Message{Conversation: proto.String(text)}
-	if len(mentions) > 0 {
+	if len(mentions) > 0 || reply != nil {
 		// A ContextInfo turns Conversation into an ExtendedTextMessage, the
-		// same shape an ordinary mentioning message uses.
+		// same shape an ordinary mentioning or replying message uses.
+		ci := &waE2E.ContextInfo{MentionedJID: mentions}
+		if reply != nil {
+			b.quote(chatID, reply, ci)
+		}
 		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text:        proto.String(text),
-			ContextInfo: &waE2E.ContextInfo{MentionedJID: mentions},
+			ContextInfo: ci,
 		}}
 	}
 	plaintext, err := proto.Marshal(msg)

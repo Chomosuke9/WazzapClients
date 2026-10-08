@@ -36,11 +36,12 @@ type whisperTestBackend struct {
 	model.Backend
 	chat, text        string
 	targets, mentions []string
+	reply             *model.Message
 	err               error
 }
 
-func (b *whisperTestBackend) SendWhisper(chat string, targets []string, text string, mentions []string) <-chan error {
-	b.chat, b.targets, b.text, b.mentions = chat, targets, text, mentions
+func (b *whisperTestBackend) SendWhisper(chat string, targets []string, text string, mentions []string, reply *model.Message) <-chan error {
+	b.chat, b.targets, b.text, b.mentions, b.reply = chat, targets, text, mentions, reply
 	done := make(chan error, 1)
 	done <- b.err
 	close(done)
@@ -55,8 +56,12 @@ func TestWhisperCommand(t *testing.T) {
 	}
 	for _, sendErr := range []error{nil, errors.New("partial submission")} {
 		b, h := &whisperTestBackend{err: sendErr}, &whisperTestHost{}
+		reply := &model.Message{ID: "Q1", ChatID: "group", Text: "quoted"}
 		Execute(&Context{Cmd: in.Cmd, Input: text, Values: in.Values, Chat: &model.Chat{ID: "group", IsGroup: true},
-			Info: &model.ChatInfo{Members: testMembers}, Backend: b, Host: h})
+			Info: &model.ChatInfo{Members: testMembers}, Reply: reply, Backend: b, Host: h})
+		if b.reply != reply {
+			t.Fatalf("reply not forwarded: %+v", b.reply)
+		}
 		if b.chat != "group" || !slices.Equal(b.targets, []string{"budi@lid", "siti@lid"}) || b.text != "Halo 👋\nbaris kedua @sigit" {
 			t.Fatalf("wrong recipients/body: %+v", b)
 		}

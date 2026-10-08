@@ -17,7 +17,7 @@ type whisperUIBackend struct {
 	done              chan error
 }
 
-func (b *whisperUIBackend) SendWhisper(chat string, targets []string, text string, mentions []string) <-chan error {
+func (b *whisperUIBackend) SendWhisper(chat string, targets []string, text string, mentions []string, reply *model.Message) <-chan error {
 	b.chat, b.targets, b.text, b.mentions = chat, targets, text, mentions
 	return b.done
 }

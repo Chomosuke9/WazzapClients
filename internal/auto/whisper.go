@@ -1,8 +1,12 @@
 package auto
 
-import "errors"
+import (
+	"errors"
 
-func (a *Backend) SendWhisper(chatID string, targets []string, text string, mentions []string) <-chan error {
+	"github.com/chomosuke9/wazzapclients/internal/model"
+)
+
+func (a *Backend) SendWhisper(chatID string, targets []string, text string, mentions []string, reply *model.Message) <-chan error {
 	if a.refused() {
 		done := make(chan error, 1)
 		done <- errors.New(GhostText)
@@ -10,5 +14,5 @@ func (a *Backend) SendWhisper(chatID string, targets []string, text string, ment
 		return done
 	}
 	a.sent()
-	return a.Backend.SendWhisper(chatID, targets, text, mentions)
+	return a.Backend.SendWhisper(chatID, targets, text, mentions, reply)
 }

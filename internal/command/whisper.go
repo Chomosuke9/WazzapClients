@@ -35,7 +35,7 @@ func runWhisper(c *Context) error {
 	}
 	n := busy(c, "Submitting whisper…")
 	// Start on the UI goroutine, where the auto backend owns ghost/AFK state.
-	done := c.Backend.SendWhisper(c.Chat.ID, ids, d.Text, d.Mentions)
+	done := c.Backend.SendWhisper(c.Chat.ID, ids, d.Text, d.Mentions, c.Reply)
 	c.Do(func() func() {
 		err := <-done
 		return func() {
