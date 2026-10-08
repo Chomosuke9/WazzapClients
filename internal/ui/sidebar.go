@@ -695,10 +695,7 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		switch {
 		case last.Kind == model.KindDeleted:
 			children = append(children, small(icBlock, p.TextSecondary, 17, 4))
-			txt, italic = "This message was deleted", true
-			if last.FromMe {
-				txt = "You deleted this message"
-			}
+			txt, italic = last.DeletedNote(), true
 		case last.Kind == model.KindUnsupported:
 			children = append(children, small(icUnsupported, p.TextSecondary, 17, 4))
 			txt, italic = "This message couldn't load", true

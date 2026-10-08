@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS wz_messages (
 	-- Unix ms its sender deleted it for everyone, for a message kept with
 	-- model.PrefKeepDeleted; 0 otherwise.
 	revoked      INTEGER NOT NULL DEFAULT 0,
+	-- The group admin who deleted it for everyone, when that wasn't its
+	-- sender (kept or not); '' otherwise.
+	revoked_by   TEXT NOT NULL DEFAULT '',
 	opened       INTEGER NOT NULL DEFAULT 0, -- 1 once a view once message was opened here
 	-- The JIDs a /whisper went to, newline-joined; '' on every other
 	-- message. It marks the local-only record a whisper leaves behind.
@@ -169,6 +172,8 @@ var migrations = []string{
 	`ALTER TABLE wz_chats ADD COLUMN settled INTEGER NOT NULL DEFAULT 0`,
 	// The /whisper recipients a local whisper record was sent to.
 	`ALTER TABLE wz_messages ADD COLUMN whisper TEXT NOT NULL DEFAULT ''`,
+	// The admin who deleted someone else's message.
+	`ALTER TABLE wz_messages ADD COLUMN revoked_by TEXT NOT NULL DEFAULT ''`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -498,20 +503,23 @@ func (s *msgStore) setReaction(ctx context.Context, chat, id, emoji string) erro
 	return err
 }
 
-func (s *msgStore) markDeleted(ctx context.Context, chat, id string) error {
+// markDeleted turns a message into "This message was deleted". by is the
+// group admin who deleted it, or "" for its sender.
+func (s *msgStore) markDeleted(ctx context.Context, chat, id, by string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?3, media = 0, text = '', pinned = 0, edited = 0,
-			revoked = 0, raw_payload = NULL, edit_payload = NULL
+			revoked = 0, revoked_by = ?4, raw_payload = NULL, edit_payload = NULL
 		WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
-		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2`, chat, id, int(model.KindDeleted))
+		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2`, chat, id, int(model.KindDeleted), by)
 	return err
 }
 
-// markRevoked flags a message its sender deleted for everyone at at,
-// keeping what it said (model.PrefKeepDeleted).
-func (s *msgStore) markRevoked(ctx context.Context, chat, id string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET revoked = ?, pinned = 0
-		WHERE chat = ? AND id = ? AND kind != ? AND revoked = 0`, at.UnixMilli(), chat, id, int(model.KindDeleted))
+// markRevoked flags a message deleted for everyone at at, keeping what it
+// said (model.PrefKeepDeleted). by is the group admin who deleted it, or
+// "" for its sender.
+func (s *msgStore) markRevoked(ctx context.Context, chat, id string, at time.Time, by string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET revoked = ?, revoked_by = ?, pinned = 0
+		WHERE chat = ? AND id = ? AND kind != ? AND revoked = 0`, at.UnixMilli(), by, chat, id, int(model.KindDeleted))
 	return err
 }
 
@@ -633,6 +641,7 @@ type rawMsg struct {
 	senderJID, senderPush string
 	mentions              string // as mentionsOf joins them
 	whisper               string // /whisper recipient JIDs, newline-joined; resolve makes them Whisper
+	revokedBy             string // the admin who deleted it; resolve makes it DeletedBy
 	buttons               *buttonsInfo
 	quote                 *rawQuote // made Quote by resolve
 	hasBlob               bool      // its payload holds what downloading its media takes
@@ -640,7 +649,7 @@ type rawMsg struct {
 
 // msgColumns are what scanMessage reads.
 const msgColumns = `chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, reaction, starred, pinned,
-	edited, revoked, opened, whisper, raw_payload, edit_payload`
+	edited, revoked, revoked_by, opened, whisper, raw_payload, edit_payload`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -655,7 +664,7 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		raw, edit               []byte
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &fromMe, &ts, &kind, &media, &m.Text, &receipt,
-		&m.Reaction, &starred, &pinned, &edited, &revoked, &opened, &r.whisper, &raw, &edit)
+		&m.Reaction, &starred, &pinned, &edited, &revoked, &r.revokedBy, &opened, &r.whisper, &raw, &edit)
 	if err != nil {
 		return r, err
 	}

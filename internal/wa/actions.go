@@ -492,11 +492,12 @@ func (b *Backend) Delete(m *model.Message, forEveryone bool) {
 	ctx := b.ctx
 	jid, _ := types.ParseJID(m.ChatID)
 	if forEveryone {
-		sender := types.EmptyJID
+		sender, by := types.EmptyJID, ""
 		if !m.FromMe {
 			sender = b.senderOf(m) // as a group admin
+			by = b.ownJID(m.ChatID).String()
 		}
-		_ = b.store.markDeleted(ctx, m.ChatID, m.ID)
+		_ = b.store.markDeleted(ctx, m.ChatID, m.ID, by)
 		b.emitMessage(m.ChatID, m.ID)
 		b.emitChat(m.ChatID)
 		go func() {

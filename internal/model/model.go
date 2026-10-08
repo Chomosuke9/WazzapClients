@@ -129,9 +129,14 @@ type Message struct {
 	// Edited is when the text (or caption) was last edited; zero when it
 	// never was.
 	Edited time.Time
-	// Revoked is when its sender deleted it for everyone, for a message
-	// kept with PrefKeepDeleted; zero otherwise.
+	// Revoked is when it was deleted for everyone, for a message kept
+	// with PrefKeepDeleted; zero otherwise.
 	Revoked time.Time
+	// DeletedBy is the group admin who deleted it for everyone (KindDeleted
+	// or Revoked), when that wasn't its sender, and DeletedByMe is set
+	// when that admin was you.
+	DeletedBy   string
+	DeletedByMe bool
 	// Link is the preview of a link in Text, or nil. Its picture is Thumb.
 	Link *LinkPreview
 	// Location is where a location message points (its map is Thumb),
@@ -272,6 +277,20 @@ func (l *LinkPreview) Shown(text string) bool {
 // EditWindow is how long after sending a message you can edit it, as in
 // WhatsApp.
 const EditWindow = 15 * time.Minute
+
+// DeletedNote is what a message deleted for everyone shows in its place,
+// telling a group admin's delete from its sender's.
+func (m *Message) DeletedNote() string {
+	switch {
+	case m.DeletedByMe:
+		return "You deleted this message as admin"
+	case m.DeletedBy != "":
+		return "This message was deleted by admin " + m.DeletedBy
+	case m.FromMe:
+		return "You deleted this message"
+	}
+	return "This message was deleted"
+}
 
 // CanEdit reports whether you can still edit m at now: one of your own
 // sent text messages, photos or videos.

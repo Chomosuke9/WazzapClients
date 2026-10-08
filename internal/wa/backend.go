@@ -1037,19 +1037,20 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 	}
 }
 
-// revoke applies a delete for everyone. With model.PrefKeepDeleted on, a
-// message someone else deleted keeps its content and is only flagged;
-// your own deletes (from another device) still remove it.
+// revoke applies a delete for everyone, by its sender or a group admin.
+// With model.PrefKeepDeleted on, a message someone else deleted keeps its
+// content and is only flagged; your own deletes (from another device)
+// still remove it.
 func (b *Backend) revoke(ctx context.Context, chat string, p parsed) {
 	if !p.msg.FromMe && b.Pref(model.PrefKeepDeleted) == "on" {
 		at := p.msg.Time
 		if at.IsZero() {
 			at = time.Now()
 		}
-		_ = b.store.markRevoked(ctx, chat, p.target, at)
+		_ = b.store.markRevoked(ctx, chat, p.target, at, p.revokedBy)
 		return
 	}
-	_ = b.store.markDeleted(ctx, chat, p.target)
+	_ = b.store.markDeleted(ctx, chat, p.target, p.revokedBy)
 }
 
 // readElsewhere marks a chat read up to messages read on another device.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waWeb"
+	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
 	"google.golang.org/protobuf/proto"
 
@@ -20,9 +21,12 @@ type parsed struct {
 	target   string // message ID a reaction/revoke/edit/pin applies to
 	reaction string
 	revoke   bool
-	pin      int       // 1 pinned, -1 unpinned
-	vote     *vote     // a vote in a poll or an answer to an event
-	event    *eventDef // an edit of an event
+	// revokedBy is the group admin who deleted someone else's message
+	// (revoke), or "" when its sender did.
+	revokedBy string
+	pin       int       // 1 pinned, -1 unpinned
+	vote      *vote     // a vote in a poll or an answer to an event
+	event     *eventDef // an edit of an event
 
 	// An edit's new text, and when it was made; its content is msg's
 	// payload.
@@ -334,6 +338,14 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		case waE2E.ProtocolMessage_REVOKE:
 			p.revoke = true
 			p.msg.FromMe, p.msg.Time = evt.Info.IsFromMe, evt.Info.Timestamp
+			// An admin deleting someone else's message sends its key as
+			// not theirs, and the stanza says edit="8". History sync
+			// carries no stanza, only the key.
+			admin := evt.Info.Edit == types.EditAttributeAdminRevoke ||
+				evt.Info.Edit == "" && !pm.GetKey().GetFromMe()
+			if evt.Info.IsGroup && admin && !evt.Info.Sender.IsEmpty() {
+				p.revokedBy = evt.Info.Sender.ToNonAD().String()
+			}
 		case waE2E.ProtocolMessage_MESSAGE_EDIT:
 			at := evt.Info.Timestamp
 			if ms := pm.GetTimestampMS(); ms > 0 {

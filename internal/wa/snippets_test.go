@@ -62,7 +62,7 @@ func TestRawPayloadStorageAndEdits(t *testing.T) {
 	if !strings.Contains(body, "edited") {
 		t.Fatal("late edit replaced latest raw")
 	}
-	if err = b.store.markDeleted(b.ctx, "123@g.us", "original"); err != nil {
+	if err = b.store.markDeleted(b.ctx, "123@g.us", "original", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = b.MessagePayload("123@g.us", "original"); err == nil {

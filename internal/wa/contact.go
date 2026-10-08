@@ -126,10 +126,7 @@ func (b *Backend) ExportChat(chatID string) {
 // exportText is a message's line in an exported chat.
 func exportText(m *model.Message) string {
 	if m.Kind == model.KindDeleted {
-		if m.FromMe {
-			return "You deleted this message"
-		}
-		return "This message was deleted"
+		return m.DeletedNote()
 	}
 	t := strings.Map(func(r rune) rune {
 		switch r {

@@ -90,7 +90,7 @@ func TestEdits(t *testing.T) {
 	}
 
 	// Deleting it for everyone drops its versions.
-	if err := b.store.markDeleted(ctx, chat, "M1"); err != nil {
+	if err := b.store.markDeleted(ctx, chat, "M1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if vs := b.Versions(r.Message); len(vs) != 0 {

@@ -240,7 +240,7 @@ func TestDeletedStaysDeleted(t *testing.T) {
 	const chat = "123@g.us"
 	e := snippetEvent("m", &waE2E.Message{Conversation: proto.String("oops")})
 	b.onMessage(e)
-	if err := b.store.markDeleted(b.ctx, chat, "m"); err != nil {
+	if err := b.store.markDeleted(b.ctx, chat, "m", ""); err != nil {
 		t.Fatal(err)
 	}
 	b.onMessage(e)

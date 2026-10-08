@@ -783,6 +783,15 @@ func (u *UI) nbspWidth(gtx C, size unit.Sp) float32 {
 	return w
 }
 
+// deletedTag is the meta of a message kept with Keep deleted messages,
+// which says whether a group admin deleted it rather than its sender.
+func deletedTag(m *model.Message) string {
+	if m.DeletedBy != "" || m.DeletedByMe {
+		return "Deleted by admin"
+	}
+	return "Deleted"
+}
+
 func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color.NRGBA) D {
 	defer u.unhidden()()
 	gtx.Constraints.Min = image.Point{}
@@ -797,7 +806,7 @@ func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color
 		children = append(children,
 			layout.Rigid(iconW(icBlock, 14, u.pal.Danger)),
 			layout.Rigid(layout.Spacer{Width: 2}.Layout),
-			layout.Rigid(u.label(12.5, "Deleted", u.pal.Danger).Layout),
+			layout.Rigid(u.label(12.5, deletedTag(m), u.pal.Danger).Layout),
 			layout.Rigid(layout.Spacer{Width: 4}.Layout))
 	}
 	if !m.Edited.IsZero() && m.Kind != model.KindDeleted {
@@ -1013,10 +1022,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	var voc part           // an unopened view once message's card
 	switch {
 	case m.Kind == model.KindDeleted:
-		text, textCol, italic = "This message was deleted", secondary, true
-		if out {
-			text = "You deleted this message"
-		}
+		text, textCol, italic = m.DeletedNote(), secondary, true
 		lead = iconW(icBlock, 19, secondary)
 	case m.Kind == model.KindUnsupported:
 		text, textCol, italic = "This message couldn't load. Open the message on your phone to view it.", secondary, true
