@@ -164,7 +164,7 @@ func (b *Backend) SendSnippet(chat string, id int64, reply *model.Message, vars 
 		m := *src
 		m.Text = model.ExpandSnippet(m.Text, vars)
 		m.ChatID, m.FromMe, m.Time, m.Receipt = chat, true, b.now(), model.Sent
-		m.Sender, m.SenderID, m.Reaction, m.Starred, m.Pinned, m.Forwarded = "", "", "", false, false, false
+		m.Sender, m.SenderID, m.Reactions, m.MyReaction, m.Starred, m.Pinned, m.Forwarded = "", "", nil, "", false, false, false
 		m.Quote, m.Edited, m.Revoked = quoteOf(reply), time.Time{}, time.Time{}
 		if src.Poll != nil {
 			p := *src.Poll

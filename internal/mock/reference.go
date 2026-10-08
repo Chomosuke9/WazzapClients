@@ -43,7 +43,7 @@ func NewReference() *Backend {
 				{Sender: "Vivy", SenderID: vivy, Time: at(1, 9, 51),
 					Text:  "Maaf @whoami, promo/spam nggak boleh di grup ini ya. Pesannya sudah aku hapus. 🙏",
 					Quote: &model.Quote{Sender: "Group", Text: "test"}},
-				{FromMe: true, Text: "Test", Time: at(0, 2, 19), Receipt: model.Sent, Reaction: "👋"},
+				{FromMe: true, Text: "Test", Time: at(0, 2, 19), Receipt: model.Sent, Reactions: reacts("👋")},
 				out("Vivy", at(0, 2, 19), model.Sent),
 				in("Vivy", vivy, "Halo! Ada yang bisa aku bantu? 😊", at(0, 2, 19)),
 				out("Hai vivy", at(0, 2, 20), model.Sent),
@@ -71,7 +71,7 @@ func NewReference() *Backend {
 		{model.Chat{ID: "fpam-ann@g.us", Name: "Announcements", IsGroup: true, Muted: true, Unread: 2},
 			[]*model.Message{
 				{Sender: "~AlipReall65", SenderID: "alip@lid", Media: model.MediaImage, Kind: model.KindImage,
-					Time: at(2, 0, 59), ImageA: 0x2b2633, ImageB: 0xd9d4cf, Reaction: "😹🍆"},
+					Time: at(2, 0, 59), ImageA: 0x2b2633, ImageB: 0xd9d4cf, Reactions: reacts("😹", "🍆")},
 				{Sender: "~AlipReall65", SenderID: "alip@lid", Media: model.MediaSticker, Kind: model.KindSticker,
 					Time: at(2, 1, 45)},
 				in("~AlipReall65", "alip@lid", "Jangan lupa baca peraturan grup ya", at(2, 2, 10)),
@@ -109,5 +109,6 @@ func NewReference() *Backend {
 	b.extras = referenceExtras(at)
 	b.meName = "whoami"
 	b.addChannelPosts()
+	b.seedReactors()
 	return b
 }

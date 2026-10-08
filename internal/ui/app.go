@@ -138,6 +138,7 @@ type UI struct {
 
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
 	ctx                     ctxMenu
+	reacts                  reactionsPopup // who reacted to a message (reactions.go)
 	dialog                  dialogState
 	picker                  emojiPicker
 	viewer                  mediaViewer
@@ -686,6 +687,7 @@ func (u *UI) layoutWindow(gtx C) D {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
 	u.layoutCtxMenu(gtx)
+	u.layoutReactions(gtx)
 	u.layoutDialog(gtx)
 	u.layoutToast(gtx)
 	u.trackMouse(gtx)
@@ -1031,6 +1033,8 @@ func (u *UI) escape() {
 		u.menu.open = false
 	case u.ctx.isOpen():
 		u.closeMenu()
+	case u.reacts.isOpen():
+		u.closeReactions()
 	case u.dialog.isOpen():
 		u.closeDialog()
 	case u.status.text.isOpen():
@@ -1113,6 +1117,7 @@ func (u *UI) applyEvents() {
 			u.upsertMessage(e.Msg)
 			u.searchChatChanged(e.Msg.ChatID)
 			u.votesChanged(e.Msg)
+			u.reactionsChanged(e.Msg)
 		case model.SearchEvent:
 			u.searchResults(e)
 		case model.ReceiptEvent:
@@ -1369,7 +1374,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
-// first poll's or event's votes), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
 // Font size "zoommenu"; or the New chat panel:
@@ -1512,6 +1517,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			if m.Poll != nil || m.Event != nil {
 				u.openVotes(m)
 				u.msgInfo.anim.snap(true)
+				break
+			}
+		}
+	case "reactions":
+		for _, m := range u.msgs {
+			if len(m.Reactions) > 0 {
+				u.openReactions([]*model.Message{m})
+				u.reacts.anim.snap(true)
 				break
 			}
 		}
