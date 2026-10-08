@@ -508,9 +508,8 @@ func (u *UI) listItems(c *model.Chat) []menuItem {
 			}
 		}})
 	}
-	if len(items) == 0 {
-		items = append(items, menuItem{label: "No lists yet. Create lists on your phone."})
-	}
+	id := c.ID
+	items = append(items, menuItem{key: "newlist", ic: icAdd, label: "New list", run: func() { u.closeMenu(); u.openNewList([]string{id}) }})
 	return items
 }
 

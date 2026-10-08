@@ -3,11 +3,15 @@ package ui
 import (
 	"hash/fnv"
 	"image"
+	"image/color"
 	"strings"
 	"unicode"
 
 	"gioui.org/font"
+	"gioui.org/op"
 	"gioui.org/unit"
+
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // avatarPx is the resolution profile pictures are decoded at; WhatsApp's
@@ -111,6 +115,20 @@ func (u *UI) drawAvatar(gtx C, id, name string, kind avatarKind, size unit.Dp) D
 	fillCircle(gtx, mid, px/2, p.UserAvatar)
 	centerIn(gtx, px, iconW(icPerson, size*0.62, p.UserAvatarIcon))
 	return dims
+}
+
+// timerBadge marks the avatar of a chat whose messages disappear, like
+// WhatsApp: the timer glyph at the bottom right of the circle of radius r
+// around mid (in px), on a disc of bg that cuts into the picture.
+func (u *UI) timerBadge(gtx C, c *model.Chat, mid image.Point, r int, bg color.NRGBA) {
+	if c == nil || c.Disappearing == 0 {
+		return
+	}
+	at := mid.Add(image.Pt(r*707/1000, r*707/1000))
+	d := gtx.Dp(16)
+	fillCircle(gtx, at, d/2+gtx.Dp(1.5), bg)
+	defer op.Offset(at.Sub(image.Pt(d/2, d/2))).Push(gtx.Ops).Pop()
+	disappearingGlyph(gtx, 16, u.pal.TextSecondary)
 }
 
 // avatarInitial is the letter a person without a picture shows: the first

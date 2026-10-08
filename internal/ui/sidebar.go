@@ -122,16 +122,21 @@ func (u *UI) layoutChips(gtx C) D {
 		cgtx := gtx
 		cgtx.Constraints.Min = image.Point{}
 		sel := &u.sidebar.chipSel
-		sel.step(gtx, u.sidebar.filter, durSwitch)
-		parts := make([]part, len(filterNames))
-		for i, name := range filterNames {
-			i, name := i, name
+		items := u.chipItems()
+		sel.step(gtx, u.activeChip(items), durSwitch)
+		parts := make([]part, len(items))
+		for i, it := range items {
 			active := sel.of(i)
 			fg := mix(p.ChipText, p.ChipActiveText, active)
 			parts[i] = record(cgtx, func(gtx C) D {
-				return u.chip(gtx, &u.sidebar.chips[i], active, func(gtx C) D {
+				return u.chip(gtx, u.btn("chip:"+itoa(i)), active, func(gtx C) D {
+					if it.add {
+						// A round "+", as wide as it is tall.
+						gtx.Constraints.Min.X = more
+						return layout.Center.Layout(gtx, iconW(icAdd, 22, p.ChipText))
+					}
 					return layout.Inset{Left: 12, Right: 12}.Layout(gtx,
-						u.label(15, name, fg, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+						u.label(15, it.name, fg, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
 				})
 			})
 		}
@@ -184,10 +189,11 @@ func (u *UI) layoutChips(gtx C) D {
 }
 
 func (u *UI) filteredChats() []*model.Chat {
-	q := strings.ToLower(trimSpace(u.sidebar.search.Text()))
+	q := strings.ToLower(u.listQuery())
 	out := u.sidebar.visible[:0] // reused every frame
 	for _, c := range u.chats {
-		if c.Archived != u.sidebar.showArchived {
+		// The search finds archived chats too, as WhatsApp's does.
+		if c.Archived != u.sidebar.showArchived && (q == "" || u.sidebar.showArchived) {
 			continue
 		}
 		switch u.sidebar.filter {
@@ -203,6 +209,10 @@ func (u *UI) filteredChats() []*model.Chat {
 			if !c.IsGroup {
 				continue
 			}
+		case filterList:
+			if !u.inOpenList(c.ID) {
+				continue
+			}
 		}
 		if q != "" && !strings.Contains(strings.ToLower(u.listName(c)), q) {
 			continue
@@ -213,6 +223,11 @@ func (u *UI) filteredChats() []*model.Chat {
 }
 
 func (u *UI) layoutChatList(gtx C) D {
+	q := u.listQuery()
+	u.runListSearch(q)
+	if q != "" {
+		return u.layoutFindList(gtx, q)
+	}
 	chats := u.sidebar.visible
 	o := &u.sidebar.order
 	return u.scrollList(gtx, &u.sidebar.list, len(chats), func(gtx C, i int) D {
@@ -414,6 +429,7 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 	click := o.click
 	last := c.Last
 	avatar := o.avatar
+	timer := avatar == nil // Channels and Communities pass their own
 	if avatar == nil {
 		avatar = func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 52) }
 	}
@@ -443,6 +459,15 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 				h = gtx.Dp(96.5)
 				avatar = func(gtx C) D { return u.communityGroupAvatar(gtx, c, cm, bg) }
 				text = func(gtx C) D { return u.layoutCommunityRowText(gtx, c, cm, o.verified, hover) }
+			}
+			if timer && o.community == nil {
+				pic := avatar
+				avatar = func(gtx C) D {
+					d := pic(gtx)
+					r := d.Size.X / 2
+					u.timerBadge(gtx, c, image.Pt(r, r), r, bg)
+					return d
+				}
 			}
 			return background(gtx, u.rowBg(bg), 10, func(gtx C) D {
 				return vcenter(gtx, h, func(gtx C) D {
@@ -530,6 +555,7 @@ func (u *UI) communityGroupAvatar(gtx C, c *model.Chat, cm *model.Community, bg 
 	t := op.Offset(image.Pt(box-dpx, box-dpx)).Push(gtx.Ops)
 	u.avatarOf(gtx, c.ID, avatarGroup, d)
 	t.Pop()
+	u.timerBadge(gtx, c, image.Pt(box-dpx/2, box-dpx/2), dpx/2, bg)
 	return D{Size: image.Pt(box, box)}
 }
 
@@ -718,8 +744,9 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 	return children
 }
 
-// rowIndicators are a chat row's muted, unread and pinned indicators, and
-// the menu chevron while the row is hovered (chev, 0 to 1).
+// rowIndicators are a chat row's muted, pinned and unread indicators, in
+// WhatsApp's order, and the menu chevron while the row is hovered (chev,
+// 0 to 1).
 func (u *UI) rowIndicators(c *model.Chat, chev float32) []layout.FlexChild {
 	p := u.pal
 	var row []layout.FlexChild
@@ -728,6 +755,9 @@ func (u *UI) rowIndicators(c *model.Chat, chev float32) []layout.FlexChild {
 	}
 	if c.Muted {
 		row = append(row, indicator(iconW(icMuted, 20, p.TextSecondary)))
+	}
+	if c.Pinned {
+		row = append(row, indicator(iconW(icPin, 20, p.TextSecondary)))
 	}
 	if c.Unread > 0 && c.Mentioned {
 		row = append(row, indicator(u.mentionMark))
@@ -741,9 +771,6 @@ func (u *UI) rowIndicators(c *model.Chat, chev float32) []layout.FlexChild {
 			fillCircle(gtx, image.Pt(s/2, s/2), s/2, p.Green)
 			return D{Size: image.Pt(s, s)}
 		}))
-	}
-	if c.Pinned {
-		row = append(row, indicator(iconW(icPin, 20, p.TextSecondary)))
 	}
 	if chev > 0 {
 		// The chevron slides in, pushing the indicators aside.

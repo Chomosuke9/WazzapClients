@@ -77,7 +77,8 @@ type Backend struct {
 
 	statusPriv   statusPrivacy
 	searchMu     sync.Mutex
-	searchCancel context.CancelFunc // the running SearchMessages
+	searchCancel context.CancelFunc // the running SearchMessages of a chat
+	searchAll    context.CancelFunc // and of every chat (the chat list's)
 
 	galleryMu     sync.Mutex
 	galleryCancel context.CancelFunc // the running Gallery
@@ -427,16 +428,31 @@ func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
 
 func (b *Backend) SearchMessages(chatID, query string, limit int) {
 	ctx, cancel := context.WithCancel(b.ctx)
-	b.searchMu.Lock()
-	if b.searchCancel != nil {
-		b.searchCancel()
+	running := &b.searchCancel
+	if chatID == "" {
+		running = &b.searchAll
 	}
-	b.searchCancel = cancel
+	b.searchMu.Lock()
+	if *running != nil {
+		(*running)()
+	}
+	*running = cancel
 	b.searchMu.Unlock()
 	go func() {
 		defer cancel()
 		var msgs []*model.Message
-		if key := model.SearchKey(query); key != "" {
+		if key := model.SearchKey(query); key != "" && chatID == "" {
+			raw, err := b.store.searchAllMessages(ctx, key, limit)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				b.log.Errorf("search messages: %v", err)
+			}
+			for _, r := range raw {
+				msgs = append(msgs, b.resolve(b.ctx, r, strings.HasSuffix(r.ChatID, "@"+types.GroupServer)))
+			}
+		} else if key != "" {
 			raw, err := b.store.searchMessages(ctx, chatID, key, limit)
 			if ctx.Err() != nil {
 				return
@@ -774,6 +790,9 @@ func (b *Backend) handle(evt any) {
 			b.store.updateMembers(ctx, e.JID.String(), e.Join, e.Leave)
 		}
 		b.recordMemberChanges(ctx, e)
+		if e.Ephemeral != nil {
+			b.setTimer(ctx, e.JID.String(), groupTimer(*e.Ephemeral))
+		}
 		b.onGroupSystem(ctx, e)
 		if e.Announce != nil || e.Locked != nil || e.Ephemeral != nil || e.MembershipApprovalMode != nil ||
 			len(e.Join)+len(e.Leave)+len(e.Promote)+len(e.Demote) > 0 {
@@ -932,6 +951,7 @@ func (b *Backend) onMessage(e *events.Message) {
 		b.onStatus(e)
 		return
 	}
+	b.noteTimer(ctx, e)
 	p, ok := b.parse(ctx, e)
 	if !ok {
 		return
@@ -1242,6 +1262,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			unread:     unread,
 			mentioned:  conv.GetUnreadMentionCount() > 0,
 			lastTS:     int64(max(conv.GetConversationTimestamp(), conv.GetLastMsgTimestamp())),
+			ephemeral:  conv.GetEphemeralExpiration(),
 		}
 		for _, hm := range conv.GetMessages() {
 			if int64(hm.GetMessage().GetMessageTimestamp()) < cutoff.Unix() {
@@ -1467,6 +1488,7 @@ func (b *Backend) refreshGroupNames() {
 		if g.Name != "" {
 			_ = b.store.setName(b.ctx, g.JID.String(), g.Name)
 		}
+		_ = b.store.setField(b.ctx, g.JID.String(), "ephemeral", int64(groupTimer(g.GroupEphemeral)))
 	}
 	b.markGeneralChats()
 	b.emitAllChats()

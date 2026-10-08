@@ -254,7 +254,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    in cards.go, and a poll's votes or an event's answers (the Message info
                    panel's other mode) in votes.go; selecting message
                    text in textsel.go; searching a chat's messages (the panel that takes the info
-                   panel's place) and a group's members in chatsearch.go; the composer's
+                   panel's place) and a group's members in chatsearch.go; the chat list's
+                   search (chats, archived ones too, contacts and every chat's messages) in
+                   listsearch.go; custom lists as filter chips and New list in lists.go; the composer's
                    formatting toolbar in formatbar.go; the attach
                    menu, file tray and poll dialog in attach.go; slash commands (their
                    picker over the composer and the notes only you see) in slash.go; scheduled
@@ -316,6 +318,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    payload and worded when read, in system.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
                    a group message's ticks wait for every member) in receipts.go;
+                   a chat's disappearing-messages timer (wz_chats.ephemeral, for the
+                   avatars' timer badge) in timer.go;
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
                    and snippetmedia.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
@@ -480,7 +484,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, replyphoto, linkpreview, invite,
-# delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with

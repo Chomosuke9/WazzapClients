@@ -34,6 +34,7 @@ const (
 	filterUnread
 	filterFavorites
 	filterGroups
+	filterList // a custom list, sidebar.listID (lists.go)
 )
 
 var filterNames = [...]string{"All", "Unread", "Favourites", "Groups"}
@@ -61,6 +62,10 @@ type UI struct {
 	winWidth int
 
 	backend model.Backend
+	// lists are the custom chat lists (lists.go); listsStale asks for
+	// them again.
+	lists      []*model.ChatList
+	listsStale bool
 	// auto is the backend's scheduled messages and AFK (see withAuto).
 	auto    *auto.Backend
 	conn    model.ConnEvent
@@ -194,14 +199,19 @@ type UI struct {
 	sidebar struct {
 		newChat, menu, back widget.Clickable
 		more                widget.Clickable // collapsed filter chips
-		hiddenFilters       []int
+		hiddenFilters       []int            // indexes into chipItems
 		search              widget.Editor
-		chips               [len(filterNames)]widget.Clickable
+		chipBuf             []chipItem // chipItems' buffer
 		filter              int
-		showArchived        bool
-		list                widget.List
-		rows                map[string]*widget.Clickable
-		visible             []*model.Chat
+		listID              string // filterList's list
+		// listSet holds the chats of listID, for filtering.
+		listSet      map[string]bool
+		listSetFor   string
+		find         listSearchState // the search's contacts and messages
+		showArchived bool
+		list         widget.List
+		rows         map[string]*widget.Clickable
+		visible      []*model.Chat
 
 		// Highlights of the open chat and of the chat whose menu is open.
 		openSel, menuSel switcher[string]
@@ -363,6 +373,7 @@ func (u *UI) Start(notify func()) {
 	u.images.invalidate = notify
 	u.emojiImgs.invalidate = notify
 	u.setChats(u.backend.Chats())
+	u.loadLists()
 	u.loadPages()
 	u.backend.Start(notify)
 }
@@ -397,6 +408,7 @@ func (u *UI) setCommunities(list []*model.Community) {
 // screenshots of a real session without connecting to WhatsApp.
 func (u *UI) Preview() {
 	u.setChats(u.backend.Chats())
+	u.loadLists()
 	u.loadPages()
 	u.conn = model.ConnEvent{State: model.StateOnline}
 }
@@ -894,12 +906,7 @@ func (u *UI) update(gtx C) {
 	if u.sidebar.menu.Clicked(gtx) {
 		u.menu.open = !u.menu.open
 	}
-	for i := range u.sidebar.chips {
-		if u.sidebar.chips[i].Clicked(gtx) {
-			u.sidebar.filter = i
-			u.sidebar.list.Position = layout.Position{}
-		}
-	}
+	u.updateChips(gtx)
 	if u.rail.archived.Clicked(gtx) {
 		u.sidebar.showArchived = u.page != pageChats || !u.sidebar.showArchived
 		u.setPage(pageChats)
@@ -1119,6 +1126,9 @@ func (u *UI) applyEvents() {
 			u.conn, u.me, u.meID = e, me, meID
 		case model.ChatsEvent:
 			u.setChats(e.Chats)
+			u.listsStale = true
+		case model.ListsEvent:
+			u.listsStale = true
 		case model.ChatEvent:
 			u.upsertChat(e.Chat)
 		case model.MessageEvent:
@@ -1128,7 +1138,11 @@ func (u *UI) applyEvents() {
 			u.votesChanged(e.Msg)
 			u.reactionsChanged(e.Msg)
 		case model.SearchEvent:
-			u.searchResults(e)
+			if e.ChatID == "" {
+				u.listSearchResults(e)
+			} else {
+				u.searchResults(e)
+			}
 		case model.ReceiptEvent:
 			u.applyReceipt(e)
 			u.msgInfoReceipt(e)
@@ -1211,6 +1225,9 @@ func (u *UI) applyEvents() {
 		case model.CommunitiesEvent:
 			u.setCommunities(u.backend.Communities())
 		}
+	}
+	if u.listsStale {
+		u.loadLists()
 	}
 }
 
@@ -1384,7 +1401,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
 // first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
-// $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
+// $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
+// $WAZZAP_DEMO_SEARCH), its first list's chip "listchip" and the New list dialog "newlist"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
 // Font size "zoommenu"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
@@ -1557,6 +1575,20 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			q = "the"
 		}
 		u.search.query.SetText(q)
+	case "listsearch":
+		// The chat list's search, with $WAZZAP_DEMO_SEARCH typed in.
+		q := os.Getenv("WAZZAP_DEMO_SEARCH")
+		if q == "" {
+			q = "an"
+		}
+		u.sidebar.search.SetText(q)
+	case "listchip":
+		u.pickChip(u.chipItems()[len(filterNames)]) // the first custom list
+	case "newlist":
+		u.openNewList([]string{"gym"})
+		u.dialog.listName.SetText("Friends")
+		u.dialog.anim.snap(true)
+		u.dialog.bar.snap(true)
 	case "membersearch":
 		u.openInfo(u.selected.ID)
 		u.info.anim.snap(true)

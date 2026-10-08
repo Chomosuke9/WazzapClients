@@ -66,7 +66,7 @@ func New() *Backend {
 		}
 		c := model.Chat{
 			ID: d.ID, Name: d.Name, IsGroup: d.IsGroup, Pinned: d.Pinned, Favorite: d.Favorite,
-			Muted: d.Muted, Archived: d.Archived, Self: d.Self, Unread: d.Unread, Mentioned: d.Mentioned, Presence: d.Presence, Typing: demoTypists(d.Typing),
+			Muted: d.Muted, Archived: d.Archived, Self: d.Self, Unread: d.Unread, Mentioned: d.Mentioned, Disappearing: d.Disappearing, Presence: d.Presence, Typing: demoTypists(d.Typing),
 		}
 		if n := len(d.Messages); n > 0 {
 			c.Last = d.Messages[n-1]
@@ -198,7 +198,15 @@ func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
 func (b *Backend) SearchMessages(chatID, query string, limit int) {
 	key := model.SearchKey(query)
 	var out []*model.Message
-	m := b.msgs[chatID]
+	var m []*model.Message
+	if chatID == "" {
+		for _, c := range b.chats {
+			m = append(m, b.msgs[c.ID]...)
+		}
+		slices.SortStableFunc(m, func(a, b *model.Message) int { return a.Time.Compare(b.Time) })
+	} else {
+		m = b.msgs[chatID]
+	}
 	for i := len(m) - 1; i >= 0 && len(out) < limit && key != ""; i-- {
 		if m[i].Kind != model.KindDeleted && strings.Contains(model.SearchKey(m[i].Text), key) {
 			out = append(out, m[i])
@@ -257,6 +265,7 @@ type demoChat struct {
 	Archived, Self                   bool
 	Unread                           int
 	Mentioned                        bool
+	Disappearing                     uint32 // seconds
 	Messages                         []*model.Message
 }
 
@@ -402,7 +411,7 @@ func demo(now time.Time) []*demoChat {
 			{Media: model.MediaContact, Text: "Pak Joko (Plumber)", Time: day(2, 10, 3), Contacts: []model.ContactCard{
 				{Name: "Pak Joko (Plumber)", Phones: []model.ContactPhone{{Number: "+62 812-9876-5432", WAID: "6281298765432"}}}}},
 		}},
-		{ID: "dewi", Name: "Dewi Lestari", Presence: "online", Messages: []*model.Message{
+		{ID: "dewi", Name: "Dewi Lestari", Presence: "online", Disappearing: 7 * 24 * 3600, Messages: []*model.Message{
 			{FromMe: true, Text: "See you at the conference!", Time: day(3, 14, 22), Receipt: model.Read},
 			{Media: model.MediaLocation, Text: "Bali Nusa Dua Convention Center", Time: day(3, 14, 40),
 				Location: &model.Location{Name: "Bali Nusa Dua Convention Center", Address: "Kawasan Pariwisata Nusa Dua, Bali",

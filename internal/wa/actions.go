@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -851,6 +852,57 @@ func (b *Backend) SetInList(chatID, listID string, in bool) {
 		b.sendAppState(appstate.BuildLabelChat(jid, listID, in))
 	}
 	b.emitChat(chatID)
+	b.emit(model.ListsEvent{})
+}
+
+// CreateList implements model.Backend. The list syncs to the phone as a
+// custom label, numbered after the highest label known.
+func (b *Backend) CreateList(name string, chats []string) {
+	cli := b.connected()
+	if cli == nil {
+		return
+	}
+	ctx := b.ctx
+	id, order, err := b.store.nextList(ctx)
+	if err != nil {
+		b.log.Warnf("new list: %v", err)
+		return
+	}
+	if err := b.store.putList(ctx, id, name, true, false, order); err != nil {
+		b.log.Warnf("store list %s: %v", id, err)
+		return
+	}
+	var jids []types.JID
+	for _, c := range chats {
+		j, err := types.ParseJID(c)
+		if err != nil {
+			continue
+		}
+		_ = b.store.setInList(ctx, id, c, true)
+		jids = append(jids, j)
+	}
+	b.emit(model.ListsEvent{})
+	go func() {
+		listType := waSyncAction.LabelEditAction_CUSTOM
+		b.sendAppStateNow(cli, appstate.PatchInfo{
+			Type: appstate.WAPatchRegular,
+			Mutations: []appstate.MutationInfo{{
+				Index:   []string{appstate.IndexLabelEdit, id},
+				Version: 3,
+				Value: &waSyncAction.SyncActionValue{LabelEditAction: &waSyncAction.LabelEditAction{
+					Name:       proto.String(name),
+					Color:      proto.Int32(int32(order % 20)),
+					Deleted:    proto.Bool(false),
+					OrderIndex: proto.Int32(int32(order)),
+					IsActive:   proto.Bool(true),
+					Type:       &listType,
+				}},
+			}},
+		})
+		for _, j := range jids {
+			b.sendAppStateNow(cli, appstate.BuildLabelChat(j, id, true))
+		}
+	}()
 }
 
 // ClearChat implements model.Backend.
@@ -990,6 +1042,15 @@ func (s *msgStore) putList(ctx context.Context, id, name string, custom, deleted
 	return err
 }
 
+// nextList returns the ID and place of a new list: one more than the
+// highest numbered label and the last list's place.
+func (s *msgStore) nextList(ctx context.Context) (id string, order int, err error) {
+	var maxID, maxOrd int
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0), COALESCE(MAX(ord), 0)
+		FROM wz_lists`).Scan(&maxID, &maxOrd)
+	return strconv.Itoa(maxID + 1), maxOrd + 1, err
+}
+
 func (s *msgStore) setInList(ctx context.Context, list, chat string, in bool) error {
 	q := `INSERT OR IGNORE INTO wz_list_chats (list, chat) VALUES (?, ?)`
 	if !in {
@@ -1035,6 +1096,7 @@ func (b *Backend) onLabelEdit(id string, a *waSyncAction.LabelEditAction) {
 	if err := b.store.putList(ctx, id, a.GetName(), custom, a.GetDeleted(), int(a.GetOrderIndex())); err != nil {
 		b.log.Warnf("store list %s: %v", id, err)
 	}
+	b.emit(model.ListsEvent{})
 }
 
 func (b *Backend) onLabelChat(j types.JID, list string, labeled, quiet bool) {
@@ -1046,6 +1108,7 @@ func (b *Backend) onLabelChat(j types.JID, list string, labeled, quiet bool) {
 	}
 	if !quiet {
 		b.emitChat(chat)
+		b.emit(model.ListsEvent{})
 	}
 }
 

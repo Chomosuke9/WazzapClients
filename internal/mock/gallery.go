@@ -71,6 +71,7 @@ func (b *Backend) SetDisappearing(chatID string, d time.Duration) {
 	}
 	info.Disappearing = uint32(d / time.Second)
 	b.infos[chatID] = info
+	b.setChat(chatID, func(c *model.Chat) { c.Disappearing = info.Disappearing })
 	b.emit(model.InfoEvent{ChatID: chatID})
 }
 
