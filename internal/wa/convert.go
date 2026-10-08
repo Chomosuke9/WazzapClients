@@ -357,6 +357,10 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 				at = time.UnixMilli(ms)
 			}
 			return p, p.setEdit(p.target, pm.GetEditedMessage(), at)
+		case waE2E.ProtocolMessage_EPHEMERAL_SETTING:
+			p.target = ""
+			p.msg, ok = timerSystem(evt, chat, pm)
+			return p, ok
 		default:
 			return p, false
 		}

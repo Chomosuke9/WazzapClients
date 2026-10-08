@@ -1396,6 +1396,9 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	u.mouse = image.Pt(x, y)
 	var lastIn, lastOut, img, sticker *model.Message
 	for _, m := range u.msgs {
+		if m.Kind == model.KindSystem {
+			continue
+		}
 		switch {
 		case m.Kind == model.KindImage:
 			img = m

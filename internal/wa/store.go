@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS wz_messages (
 	whisper      TEXT NOT NULL DEFAULT '',
 	-- The message itself, last so that reading the columns above skips it:
 	-- the waE2E message it came or went as (none for a view once message
-	-- whose media never came), and the content of its latest edit.
+	-- whose media never came; a system message's waWeb stub, system.go),
+	-- and the content of its latest edit.
 	raw_payload  BLOB,
 	edit_payload BLOB,
 	PRIMARY KEY (chat, id)
@@ -375,7 +376,7 @@ func (s *msgStore) readAfter(ctx context.Context, jid string, ts int64, unmark b
 	var after int
 	if ts > 0 {
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wz_messages
-			WHERE chat = ? AND from_me = 0 AND ts > ?`, jid, ts).Scan(&after); err != nil {
+			WHERE chat = ? AND from_me = 0 AND ts > ? AND kind != ?`, jid, ts, int(model.KindSystem)).Scan(&after); err != nil {
 			return err
 		}
 	}
@@ -645,6 +646,10 @@ type rawMsg struct {
 	buttons               *buttonsInfo
 	quote                 *rawQuote // made Quote by resolve
 	hasBlob               bool      // its payload holds what downloading its media takes
+	// stub and stubParams are a system message's (model.KindSystem),
+	// which resolve words.
+	stub       stubType
+	stubParams []string
 }
 
 // msgColumns are what scanMessage reads.
@@ -806,12 +811,12 @@ type rawChat struct {
 var chatQuery = fmt.Sprintf(`
 	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts, c.favorite,
 		c.mentioned, c.general, m.id, m.sender_jid, m.sender_push, m.from_me, m.ts, m.kind, m.media, m.text, m.receipt,
-		CASE WHEN m.media IN (%d, %d, %d, %d) OR instr(m.text, '@') > 0 THEN m.raw_payload END,
+		CASE WHEN m.media IN (%d, %d, %d, %d) OR instr(m.text, '@') > 0 OR m.kind = %d THEN m.raw_payload END,
 		CASE WHEN instr(m.text, '@') > 0 THEN m.edit_payload END
 	FROM wz_chats c
 	LEFT JOIN wz_messages m ON m.rowid = (
 		SELECT rowid FROM wz_messages WHERE chat = c.jid ORDER BY ts DESC, rowid DESC LIMIT 1
-	)`, model.MediaVideo, model.MediaGIF, model.MediaVoice, model.MediaAudio)
+	)`, model.MediaVideo, model.MediaGIF, model.MediaVoice, model.MediaAudio, model.KindSystem)
 
 func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	var (
@@ -909,9 +914,10 @@ func (s *msgStore) chatJIDs(ctx context.Context, groups bool) ([]string, error) 
 }
 
 // unreadIncoming returns the newest n incoming messages, for read receipts.
+// System messages get none.
 func (s *msgStore) unreadIncoming(ctx context.Context, chat string, n int) (ids, senders []string, err error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, sender_jid FROM wz_messages
-		WHERE chat = ? AND from_me = 0 ORDER BY ts DESC LIMIT ?`, chat, n)
+		WHERE chat = ? AND from_me = 0 AND kind != ? ORDER BY ts DESC LIMIT ?`, chat, int(model.KindSystem), n)
 	if err != nil {
 		return nil, nil, err
 	}
