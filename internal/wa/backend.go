@@ -21,6 +21,7 @@ import (
 	"github.com/polymorfa/hypermeow/proto/waCompanionReg"
 	"github.com/polymorfa/hypermeow/proto/waHistorySync"
 	"github.com/polymorfa/hypermeow/proto/waSyncAction"
+	"github.com/polymorfa/hypermeow/proto/waWeb"
 	"github.com/polymorfa/hypermeow/store"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
@@ -792,6 +793,7 @@ func (b *Backend) handle(evt any) {
 		if e.Ephemeral != nil {
 			b.setTimer(ctx, e.JID.String(), groupTimer(*e.Ephemeral))
 		}
+		b.onGroupSystem(ctx, e)
 		if e.Announce != nil || e.Locked != nil || e.Ephemeral != nil || e.MembershipApprovalMode != nil ||
 			len(e.Join)+len(e.Leave)+len(e.Promote)+len(e.Demote) > 0 {
 			// The info panel shows these: fetch it again when it's next asked for.
@@ -814,6 +816,10 @@ func (b *Backend) handle(evt any) {
 		if e.Link != nil || e.Unlink != nil {
 			b.onCommunityLink(ctx, e)
 		}
+	case *events.Picture:
+		b.onPictureSystem(ctx, e)
+	case *events.IdentityChange:
+		b.onIdentitySystem(ctx, e)
 	case *events.JoinedGroup:
 		jid := e.JID.String()
 		_ = b.store.ensureChat(ctx, b.db, jid, true, e.Name)
@@ -828,6 +834,7 @@ func (b *Backend) handle(evt any) {
 			return
 		}
 		_ = b.store.setField(ctx, jid, "last_ts", time.Now().Unix())
+		b.onJoinedSystem(ctx, e)
 		b.emitChat(jid)
 		if !e.LinkedParentJID.IsEmpty() {
 			b.emit(model.CommunitiesEvent{})
@@ -1001,6 +1008,14 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		}
 		_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
 		b.emitAllMessages(chat)
+		if p.pin > 0 && info.ID != "" {
+			// "Alice pinned a message", under the pin's own ID.
+			b.putSystem(ctx, systemMsg(chat, info.ID, info.Timestamp, b.canonical(ctx, info.Sender), info.IsFromMe,
+				waWeb.WebMessageInfo_PINNED_MESSAGE_IN_CHAT))
+		}
+		return
+	case p.msg.Kind == model.KindSystem:
+		b.putSystem(ctx, p.msg)
 		return
 	case p.vote != nil:
 		if err := b.store.putVote(ctx, b.db, chat, p.target, *p.vote); err != nil {
@@ -1011,7 +1026,9 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 			b.log.Warnf("edit event %s in %s: %v", p.target, chat, err)
 		}
 	case p.target != "":
-		_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
+		if p.reaction != nil {
+			_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
+		}
 	default:
 		name := ""
 		chatJID, _ := types.ParseJID(chat)
@@ -1190,6 +1207,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		receipts []personReceipt
 		// votes are the votes in polls and answers to events.
 		votes []historyVote
+		// reactions are those history sync lists on the messages they react to.
+		reactions []historyReaction
 	}
 	var convs []convData
 	var statuses []storedStatus
@@ -1249,6 +1268,12 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			if int64(hm.GetMessage().GetMessageTimestamp()) < cutoff.Unix() {
 				continue
 			}
+			if hm.GetMessage().GetMessageStubType() != 0 {
+				if m, ok := b.historyStub(ctx, jid, hm.GetMessage()); ok {
+					cd.msgs = append(cd.msgs, m)
+				}
+				continue
+			}
 			evt, err := cli.ParseWebMessage(raw, hm.GetMessage())
 			if err != nil {
 				continue
@@ -1283,6 +1308,13 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			if p.msg.Poll != nil || p.msg.Event != nil {
 				for _, v := range b.historyVotes(ctx, raw, hm.GetMessage()) {
 					cd.votes = append(cd.votes, historyVote{id: p.msg.ID, vote: v})
+				}
+			}
+			for _, r := range hm.GetMessage().GetReactions() {
+				who, ok := b.voterOfKey(ctx, jid, r.GetKey())
+				if ok && r.GetText() != "" {
+					cd.reactions = append(cd.reactions, historyReaction{id: p.msg.ID,
+						reaction: reaction{who: who, ts: r.GetSenderTimestampMS(), emoji: r.GetText()}})
 				}
 			}
 			cd.msgs = append(cd.msgs, p.msg)
@@ -1322,6 +1354,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				b.log.Warnf("history sync: vote on %s: %v", v.id, err)
 			}
 		}
+		for _, r := range cd.reactions {
+			if err := b.store.putReaction(ctx, tx, jid, r.id, r.reaction); err != nil {
+				b.log.Warnf("history sync: reaction to %s: %v", r.id, err)
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		b.log.Errorf("history sync: commit: %v", err)
@@ -1341,8 +1378,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				_ = b.store.putVote(ctx, b.db, chat, p.target, *p.vote)
 			case p.event != nil:
 				_ = b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload)
-			default:
-				_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
+			case p.reaction != nil:
+				_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
 			}
 		}
 	}

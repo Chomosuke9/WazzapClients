@@ -459,7 +459,7 @@ func (b *Backend) React(m *model.Message, emoji string) {
 	if cli == nil || err != nil {
 		return
 	}
-	_ = b.store.setReaction(b.ctx, m.ChatID, m.ID, emoji)
+	_ = b.store.putReaction(b.ctx, b.db, m.ChatID, m.ID, reaction{who: meVoter, ts: b.sendTime().UnixMilli(), emoji: emoji})
 	b.emitMessage(m.ChatID, m.ID)
 	msg := cli.BuildReaction(jid, b.senderOf(m), m.ID, emoji)
 	go func() {
@@ -749,14 +749,17 @@ func itoa(n int) string {
 }
 
 // lastKey returns the timestamp and key of a chat's newest message, which
-// archive, read and delete patches refer to.
+// archive, read and delete patches refer to. System messages don't count:
+// the ones made from live changes have IDs of the app's own.
 func (b *Backend) lastKey(chatID string) (time.Time, *waCommon.MessageKey) {
-	rc, ok := b.store.chat(b.ctx, chatID)
-	if !ok || rc.last == nil {
+	row := b.db.QueryRowContext(b.ctx, `SELECT `+msgColumns+` FROM wz_messages WHERE chat = ? AND kind != ?
+		ORDER BY ts DESC, rowid DESC LIMIT 1`, chatID, int(model.KindSystem))
+	last, err := scanMessage(row)
+	if err != nil {
 		return time.Time{}, nil
 	}
-	_, key := b.messageKey(rc.last.Message)
-	return rc.last.Time, key
+	_, key := b.messageKey(last.Message)
+	return last.Time, key
 }
 
 // chatAction applies a chat setting locally, shows it, and syncs it.
@@ -997,18 +1000,21 @@ func (s *msgStore) deleteMessage(ctx context.Context, chat, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_receipts WHERE chat = ?1 AND id = ?2;
-		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2`, chat, id)
+		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2;
+		DELETE FROM wz_reactions WHERE chat = ?1 AND id = ?2`, chat, id)
 	return err
 }
 
-// dropOrphanEdits deletes the versions and receipts of chat ?1's messages
-// that are gone.
+// dropOrphanEdits deletes the versions, receipts, votes and reactions of
+// chat ?1's messages that are gone.
 const dropOrphanEdits = `DELETE FROM wz_edits WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_edits.chat AND m.id = wz_edits.id);
 	DELETE FROM wz_receipts WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_receipts.chat AND m.id = wz_receipts.id);
 	DELETE FROM wz_votes WHERE chat = ?1 AND NOT EXISTS
-	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_votes.chat AND m.id = wz_votes.id)`
+	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_votes.chat AND m.id = wz_votes.id);
+	DELETE FROM wz_reactions WHERE chat = ?1 AND NOT EXISTS
+	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_reactions.chat AND m.id = wz_reactions.id)`
 
 // clearChat deletes the chat's unstarred messages sent at or before upTo
 // (unix seconds), or all of them when upTo is 0.

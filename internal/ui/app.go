@@ -52,10 +52,12 @@ type UI struct {
 	zoom zoomState
 	// volume is the sound's volume, 0 to 1 (volume.go).
 	volume float32
-	now    func() time.Time
-	window *app.Window // nil when rendering headless
-	host   *host       // nil when rendering headless (see Run)
-	deco   widget.Decorations
+	// voiceRate is the speed voice messages play at (files.go).
+	voiceRate float64
+	now       func() time.Time
+	window    *app.Window // nil when rendering headless
+	host      *host       // nil when rendering headless (see Run)
+	deco      widget.Decorations
 	// winWidth is the window width in px, for panels sized relative to it.
 	winWidth int
 
@@ -143,6 +145,7 @@ type UI struct {
 
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
 	ctx                     ctxMenu
+	reacts                  reactionsPopup // who reacted to a message (reactions.go)
 	dialog                  dialogState
 	picker                  emojiPicker
 	viewer                  mediaViewer
@@ -326,12 +329,14 @@ func New(b model.Backend) *UI {
 	u.doodles = true
 	u.zoom.pct = 100
 	u.volume = 1
+	u.voiceRate = 1
 	u.split.anim.snap(true)
 	if b != nil { // nil in some tests
-		u.SetDark(b.Pref(prefTheme) != "light")
+		u.applyTheme()
 		u.doodles = prefOn(b, prefDoodles)
 		u.loadZoom()
 		u.loadVolume()
+		u.loadVoiceRate()
 		u.loadSplit()
 	}
 	u.images = newImageCache(240, 32<<20)
@@ -702,6 +707,7 @@ func (u *UI) layoutWindow(gtx C) D {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
 	u.layoutCtxMenu(gtx)
+	u.layoutReactions(gtx)
 	u.layoutDialog(gtx)
 	u.layoutToast(gtx)
 	u.trackMouse(gtx)
@@ -1042,6 +1048,8 @@ func (u *UI) escape() {
 		u.menu.open = false
 	case u.ctx.isOpen():
 		u.closeMenu()
+	case u.reacts.isOpen():
+		u.closeReactions()
 	case u.dialog.isOpen():
 		u.closeDialog()
 	case u.status.text.isOpen():
@@ -1128,6 +1136,7 @@ func (u *UI) applyEvents() {
 			u.upsertMessage(e.Msg)
 			u.searchChatChanged(e.Msg.ChatID)
 			u.votesChanged(e.Msg)
+			u.reactionsChanged(e.Msg)
 		case model.SearchEvent:
 			if e.ChatID == "" {
 				u.listSearchResults(e)
@@ -1391,7 +1400,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
-// first poll's or event's votes), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
 // $WAZZAP_DEMO_SEARCH), its first list's chip "listchip" and the New list dialog "newlist"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
@@ -1409,6 +1418,9 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	u.mouse = image.Pt(x, y)
 	var lastIn, lastOut, img, sticker *model.Message
 	for _, m := range u.msgs {
+		if m.Kind == model.KindSystem {
+			continue
+		}
 		switch {
 		case m.Kind == model.KindImage:
 			img = m
@@ -1478,8 +1490,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "emoji":
 		u.openPicker(pickComposer, nil)
 	case "sticker":
+		u.picker.composerTab = tabSticker // as if the sticker tab was used last
 		u.openPicker(pickComposer, nil)
-		u.picker.tab, u.picker.stickerSet = tabSticker, u.defaultStickerSet()
 	case "viewer":
 		if img != nil {
 			u.openViewer(img)
@@ -1535,6 +1547,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			if m.Poll != nil || m.Event != nil {
 				u.openVotes(m)
 				u.msgInfo.anim.snap(true)
+				break
+			}
+		}
+	case "reactions":
+		for _, m := range u.msgs {
+			if len(m.Reactions) > 0 {
+				u.openReactions([]*model.Message{m})
+				u.reacts.anim.snap(true)
 				break
 			}
 		}

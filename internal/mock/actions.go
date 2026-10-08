@@ -82,7 +82,7 @@ func quoteOf(r *model.Message) *model.Quote {
 func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool, quote *model.Quote) {
 	m := *src
 	m.ChatID, m.FromMe, m.Time, m.Receipt = chatID, true, b.now(), model.Sent
-	m.Sender, m.SenderID, m.Quote, m.Reaction, m.Starred, m.Pinned = "", "", quote, "", false, false
+	m.Sender, m.SenderID, m.Quote, m.Reactions, m.MyReaction, m.Starred, m.Pinned = "", "", quote, nil, "", false, false
 	m.Forwarded = forwarded
 	b.add(&m)
 	cp := m
@@ -126,10 +126,6 @@ func (b *Backend) update(m *model.Message, f func(*model.Message)) {
 		f(x)
 		b.emit(model.MessageEvent{Msg: deepCopy(x)})
 	}
-}
-
-func (b *Backend) React(m *model.Message, emoji string) {
-	b.update(m, func(x *model.Message) { x.Reaction = emoji })
 }
 
 func (b *Backend) Delete(m *model.Message, forEveryone bool) {

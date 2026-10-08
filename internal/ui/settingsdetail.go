@@ -21,7 +21,7 @@ import (
 
 // Preferences of the Chats and Account settings (Backend.Pref keys).
 const (
-	prefTheme       = "theme"      // "light" or "dark" (the default)
+	prefTheme       = "theme"      // "light", "dark" or "" (the system's, the default)
 	prefDoodles     = "doodles"    // wallpaper doodles; on unless "off"
 	prefEnterSend   = "enter_send" // Enter sends; on unless "off"
 	prefSecurityMsg = "security_notifications"
@@ -194,9 +194,11 @@ func (u *UI) settingsPage() []settingsSection {
 	case "gray":
 		return u.graySettings()
 	case "theme":
+		t := u.backend.Pref(prefTheme)
 		return []settingsSection{{title: "Choose a theme", rows: []settingRow{
-			{key: "light", kind: setRadio, title: "Light", on: !u.dark, run: func() { u.setTheme(false) }},
-			{key: "dark", kind: setRadio, title: "Dark", on: u.dark, run: func() { u.setTheme(true) }},
+			{key: "system", kind: setRadio, title: "System default", on: t != "light" && t != "dark", run: func() { u.setTheme("") }},
+			{key: "light", kind: setRadio, title: "Light", on: t == "light", run: func() { u.setTheme("light") }},
+			{key: "dark", kind: setRadio, title: "Dark", on: t == "dark", run: func() { u.setTheme("dark") }},
 		}}}
 	}
 	b := u.backend
@@ -227,7 +229,7 @@ func (u *UI) settingsPage() []settingsSection {
 	case settingChats:
 		return []settingsSection{
 			{title: "Display", rows: []settingRow{
-				{key: "theme", ic: icPalette, title: "Theme", sub: map[bool]string{false: "Light", true: "Dark"}[u.dark],
+				{key: "theme", ic: icPalette, title: "Theme", sub: themeNames[u.backend.Pref(prefTheme)],
 					trailing: icChevronRight, run: func() { u.openSettingsSub("theme") }},
 				{key: prefDoodles, kind: setToggle, title: "Wallpaper doodles", sub: "Draw doodles on the chat background",
 					on: u.doodles, run: func() { u.doodles = !u.doodles; setPref(b, prefDoodles, u.doodles) }},
@@ -673,14 +675,37 @@ func (u *UI) blockedContacts() []settingsSection {
 	return []settingsSection{sec}
 }
 
-// setTheme switches the palette and remembers the choice.
-func (u *UI) setTheme(dark bool) {
-	u.SetDark(dark)
-	v := "light"
-	if dark {
-		v = "dark"
+// themeNames names the values of prefTheme.
+var themeNames = map[string]string{"": "System default", "light": "Light", "dark": "Dark"}
+
+// systemDark asks the system for its theme (tests pin it).
+var systemDark = desktop.SystemDark
+
+// setTheme remembers the theme ("light", "dark" or "" for the system's)
+// and switches the palette to it.
+func (u *UI) setTheme(t string) {
+	u.backend.SetPref(prefTheme, t)
+	u.applyTheme()
+}
+
+// applyTheme switches the palette to the chosen theme. The system's is
+// read again each time, so it is also called when the window gets focus,
+// to follow a change made while the app ran. A system that doesn't say
+// gets the dark theme, which was the app's own default.
+func (u *UI) applyTheme() {
+	dark := true
+	switch u.backend.Pref(prefTheme) {
+	case "light":
+		dark = false
+	case "dark":
+	default:
+		if d, ok := systemDark(); ok {
+			dark = d
+		}
 	}
-	u.backend.SetPref(prefTheme, v)
+	if dark != u.dark || u.pal == nil {
+		u.SetDark(dark)
+	}
 }
 
 // setEnterSend makes Enter send (and Shift+Enter add a line), or Enter

@@ -706,10 +706,10 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 	case last == nil:
 		children = append(children, layout.Flexed(1, layout.Spacer{}.Layout))
 	default:
-		if c.IsGroup && !last.FromMe && last.Sender != "" {
+		if c.IsGroup && !last.FromMe && last.Sender != "" && last.Kind != model.KindSystem {
 			children = append(children, layout.Rigid(u.label(size, shortName(last.Sender)+": ", p.TextSecondary).Layout))
 		}
-		if last.FromMe && last.Kind != model.KindDeleted {
+		if last.FromMe && last.Kind != model.KindDeleted && last.Kind != model.KindSystem {
 			ic, col := receiptIcon(last.Receipt, p, false)
 			children = append(children, small(ic, col, 18, 3))
 		}
@@ -725,6 +725,8 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		case last.Kind == model.KindUnsupported:
 			children = append(children, small(icUnsupported, p.TextSecondary, 17, 4))
 			txt, italic = "This message couldn't load", true
+		case last.Kind == model.KindSystem && last.Notice == model.NoticeMissedCall:
+			children = append(children, small(icCall, p.Danger, 18, 4))
 		case last.Kind == model.KindViewOnce:
 			children = append(children, layout.Rigid(func(gtx C) D { return u.viewOnceMark(gtx, 18, p.TextSecondary) }),
 				layout.Rigid(layout.Spacer{Width: 4}.Layout))

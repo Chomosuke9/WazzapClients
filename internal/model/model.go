@@ -38,6 +38,25 @@ const (
 	// KindViewOnce is a view once photo, video or voice message: a pill
 	// that opens it (see Message.Opened and Message.OnPhone).
 	KindViewOnce
+	// KindSystem is a note about the chat rather than a message: "Alice
+	// added Bob", "Bob changed the group name", a missed call. It is drawn
+	// as a grey chip in the middle (Text, with Notice saying how).
+	KindSystem
+)
+
+// Notice is what a system message (KindSystem) is about, for the ones the
+// chat draws differently from a plain note.
+type Notice int
+
+const (
+	NoticePlain Notice = iota
+	// NoticeMissedCall shows a red phone and the call's time.
+	NoticeMissedCall
+	// NoticeSecurity is a contact's security code changing; clicking it
+	// shows the code.
+	NoticeSecurity
+	// NoticeTimer is disappearing messages turned on or off.
+	NoticeTimer
 )
 
 // ButtonKind is what a message button does.
@@ -100,7 +119,10 @@ type Message struct {
 	Time     time.Time
 	Receipt  Receipt
 	Quote    *Quote
-	Reaction string
+	// Reactions counts the reactions to the message by emoji, the most
+	// given first, and MyReaction is yours ("" for none).
+	Reactions  []ReactionCount
+	MyReaction string
 	// Starred and Pinned mirror the message menu's Star and Pin.
 	Starred, Pinned bool
 	Forwarded       bool
@@ -157,6 +179,8 @@ type Message struct {
 	// Backend.SendWhisper): the message is drawn as yours but marked as seen
 	// by those members alone. Empty on every ordinary message.
 	Whisper []string
+	// Notice is what a system message (KindSystem) is about.
+	Notice Notice
 }
 
 // Location is a place or position someone shared.
@@ -244,6 +268,30 @@ const (
 	RSVPNotGoing
 	RSVPMaybe
 )
+
+// ReactionCount is how many people reacted to a message with one emoji.
+type ReactionCount struct {
+	Emoji string
+	Count int
+}
+
+// ReactionTotal is how many people reacted to m.
+func (m *Message) ReactionTotal() int {
+	n := 0
+	for _, r := range m.Reactions {
+		n += r.Count
+	}
+	return n
+}
+
+// Reactor is one person's reaction to a message. ID is their JID (yours
+// when Me), and Name "You" when Me.
+type Reactor struct {
+	ID, Name string
+	Me       bool
+	Emoji    string
+	Time     time.Time
+}
 
 // Vote is one person's vote in a poll, or answer to an event.
 type Vote struct {
@@ -1117,6 +1165,9 @@ type Backend interface {
 	Forward(msgs []*Message, chatIDs []string)
 	// React sets (or, with "", removes) your reaction to a message.
 	React(m *Message, emoji string)
+	// Reactors lists who reacted to a message and with what: you first,
+	// then the newest first.
+	Reactors(m *Message) []Reactor
 	// Delete deletes a message for you, or for everyone (your own messages).
 	Delete(m *Message, forEveryone bool)
 	// Star stars or unstars a message.

@@ -182,6 +182,12 @@ Gotchas already found in the pinned version (v0.10.x):
 - modernc's SQLite binds every statement of a multi-statement `Exec` from the first
   argument, so positional `?` in a second statement gets the wrong values. Use
   numbered `?1`, `?2` (as `deleteChat` does) or separate `Exec` calls.
+- History sync sends system messages ("Alice added Bob") as stubs: a `WebMessageInfo`
+  with `MessageStubType` and `MessageStubParameters` and no message, which
+  `ParseWebMessage` drops. `onHistory` reads them first (`historyStub`), and live group
+  notifications, pins, timers and security code changes become the same stubs
+  (`internal/wa/system.go`). `WebMessageInfo.key` is a required proto2 field, so a stub
+  stored alone needs `AllowPartial` both ways, or it marshals to nothing.
 - Poll votes and event answers are encrypted with the poll's or event's message
   secret, which hypermeow stores as messages arrive. It decrypts votes
   (`DecryptPollVote`) but not event answers; `decryptEventResponse` (`internal/wa/polls.go`)
@@ -268,7 +274,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    animation helpers in anim.go; the "N unread messages" divider a chat
                    opens at in unread.go; the ⌄ button that goes back to the newest message
                    (with the unread count) and the day pinned at the top while a chat
-                   scrolls in scrolldown.go; group invite links (the dialog that joins
+                   scrolls in scrolldown.go; system messages ("Alice added Bob", missed
+                   calls: grey chips down the middle) in system.go; group invite links (the dialog that joins
                    one) in invite.go; a community's announcements (cards down the
                    middle headed by their sender, a forward button beside them, and
                    "Only community admins can send messages" for members) in announce.go;
@@ -307,6 +314,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    albums (an albumMessage, then each picture pointing back to it) in album.go;
                    polls, locations, contact cards and events (cards in bubbles) and the
                    votes and event answers they get (wz_votes) in polls.go;
+                   system messages (model.KindSystem), stored with a waWeb stub as their
+                   payload and worded when read, in system.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
                    a group message's ticks wait for every member) in receipts.go;
                    a chat's disappearing-messages timer (wz_chats.ephemeral, for the
@@ -329,7 +338,8 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
                    when read, Reply and Mark as read through a COM activator), notify-send
                    or osascript elsewhere
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
-                   (Windows; stubs elsewhere)
+                   (Windows; stubs elsewhere), and the system's light or dark theme (Settings >
+                   Chats > Theme > System default, read again when the window gets focus)
 internal/update/   updates from GitHub releases when the user asks (Settings > Help): checks
                    the signed SHA256SUMS, swaps the executable (the running one moves to
                    .old on Windows) and the UI restarts it with -wait-pid (ui/update.go).
@@ -474,7 +484,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, replyphoto, linkpreview, invite,
-# delete, select, edit, edits, mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with

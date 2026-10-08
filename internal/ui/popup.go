@@ -685,7 +685,7 @@ func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
 	// The bar keeps drawing after a click: the menu fades out with it.
 	for i, e := range quickReactions {
 		if u.btn("react:" + itoa(i+1)).Clicked(gtx) {
-			if m.Reaction == e {
+			if m.MyReaction == e {
 				e = ""
 			}
 			u.backend.React(m, e)
@@ -717,7 +717,7 @@ func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
 				})
 			}
 			for i, e := range quickReactions {
-				children = append(children, cell("react:"+itoa(i+1), u.label(22, e, p.Text).Layout, m.Reaction == e))
+				children = append(children, cell("react:"+itoa(i+1), u.label(22, e, p.Text).Layout, m.MyReaction == e))
 				children = append(children, layout.Rigid(layout.Spacer{Width: 3}.Layout))
 			}
 			children = append(children, cell("react:more", iconW(icAdd, 24, p.Icon), false))
