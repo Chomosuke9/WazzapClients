@@ -92,12 +92,15 @@ type emojiPicker struct {
 	mode   pickMode
 	target *model.Message // message to react to
 	tab    pickTab
-	search widget.Editor
-	list   widget.List
-	scrim  widget.Clickable
-	active int // highlighted category
-	recent []string
-	loaded bool
+	// composerTab is the tab the composer's panel opens at: the emoji or
+	// sticker tab, whichever was used last. Its button shows it.
+	composerTab pickTab
+	search      widget.Editor
+	list        widget.List
+	scrim       widget.Clickable
+	active      int // highlighted category
+	recent      []string
+	loaded      bool
 
 	stickerSet  model.StickerSet
 	stickers    [3][]*model.Message // per StickerSet
@@ -119,12 +122,18 @@ const recentEmojiMax = 36
 func (u *UI) openPicker(mode pickMode, target *model.Message) {
 	e := &u.picker
 	e.open, e.mode, e.target, e.tab = true, mode, target, tabEmoji
+	if mode == pickComposer {
+		e.tab = e.composerTab
+	}
 	e.search.SetText("")
 	e.search.SingleLine = true
 	e.list.Axis = layout.Vertical
 	e.list.Position = layout.Position{}
 	e.catSel, e.underline, e.tabSel = switcher[int]{}, follower{}, switcher[pickTab]{} // no sliding from last time
 	e.stickerSel, e.stickerLine = switcher[int]{}, follower{}
+	if e.tab == tabSticker {
+		e.stickerSet = u.defaultStickerSet()
+	}
 	if !e.loaded {
 		e.loaded = true
 		e.recent = strings.Fields(u.backend.Pref("recent_emoji"))
@@ -409,6 +418,9 @@ func (u *UI) pickerTabs(gtx C) {
 	for i := range 3 {
 		if u.btn("ptab:" + itoa(i+1)).Clicked(gtx) {
 			e.tab = pickTab(i)
+			if e.tab != tabGIF {
+				e.composerTab = e.tab
+			}
 			if e.tab == tabSticker {
 				e.stickerSet = u.defaultStickerSet()
 				e.list.Position = layout.Position{}

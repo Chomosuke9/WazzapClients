@@ -51,10 +51,12 @@ type UI struct {
 	zoom zoomState
 	// volume is the sound's volume, 0 to 1 (volume.go).
 	volume float32
-	now    func() time.Time
-	window *app.Window // nil when rendering headless
-	host   *host       // nil when rendering headless (see Run)
-	deco   widget.Decorations
+	// voiceRate is the speed voice messages play at (files.go).
+	voiceRate float64
+	now       func() time.Time
+	window    *app.Window // nil when rendering headless
+	host      *host       // nil when rendering headless (see Run)
+	deco      widget.Decorations
 	// winWidth is the window width in px, for panels sized relative to it.
 	winWidth int
 
@@ -317,12 +319,14 @@ func New(b model.Backend) *UI {
 	u.doodles = true
 	u.zoom.pct = 100
 	u.volume = 1
+	u.voiceRate = 1
 	u.split.anim.snap(true)
 	if b != nil { // nil in some tests
-		u.SetDark(b.Pref(prefTheme) != "light")
+		u.applyTheme()
 		u.doodles = prefOn(b, prefDoodles)
 		u.loadZoom()
 		u.loadVolume()
+		u.loadVoiceRate()
 		u.loadSplit()
 	}
 	u.images = newImageCache(240, 32<<20)
@@ -1468,8 +1472,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "emoji":
 		u.openPicker(pickComposer, nil)
 	case "sticker":
+		u.picker.composerTab = tabSticker // as if the sticker tab was used last
 		u.openPicker(pickComposer, nil)
-		u.picker.tab, u.picker.stickerSet = tabSticker, u.defaultStickerSet()
 	case "viewer":
 		if img != nil {
 			u.openViewer(img)
