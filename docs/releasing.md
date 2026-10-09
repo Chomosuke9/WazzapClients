@@ -14,6 +14,11 @@ Versi Go mengikuti `go.mod`. Kedua target menerapkan patch go-text
 | `WazzapClients-windows-amd64.exe` | Aplikasi Windows portable, tanpa jendela console; juga file yang diunduh oleh tombol update |
 | `WazzapClients-linux-amd64` | Executable Linux |
 | `SHA256SUMS`, `SHA256SUMS.sig` | Checksum semua file di atas, dan tanda tangan ed25519-nya (hanya di release) |
+| `LICENSE`, `THIRD_PARTY_NOTICES.md` | Lisensi aplikasi (MPL-2.0) dan lisensi semua software pihak ketiga di dalamnya (hanya di release) |
+
+CI juga menjalankan `go run ./cmd/notices -check`, yang gagal kalau
+`THIRD_PARTY_NOTICES.md` tidak lagi cocok dengan dependensi atau aset yang dibundel.
+Jalankan `go run ./cmd/notices` setelah mengubah dependensi, lalu commit hasilnya.
 
 Unduh hasil dari bagian **Artifacts** pada run yang berhasil. Artefak disimpan
 selama 14 hari; aset yang sudah dilampirkan ke GitHub Release tetap tersimpan.
@@ -28,7 +33,8 @@ code signing Windows belum disediakan oleh workflow ini.
 
 Installer memasang aplikasi untuk user yang sedang login saja, ke
 `%LocalAppData%\Programs\WazzapClients`, tanpa meminta hak admin. Installer membuat
-shortcut di Start Menu (opsional di Desktop) dan mendaftarkan uninstaller di
+shortcut di Start Menu (opsional di Desktop), menyalin `LICENSE.txt` dan
+`THIRD_PARTY_NOTICES.txt` ke folder aplikasi, dan mendaftarkan uninstaller di
 **Settings > Apps**. Uninstaller menutup aplikasi, menghapus entri registry yang
 dibuat aplikasi sendiri (notifikasi dan start at login), lalu menanyakan apakah
 chat dan sesi WhatsApp (`%AppData%\WazzapClients`) ikut dihapus. Defaultnya tidak.

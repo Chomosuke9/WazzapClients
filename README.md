@@ -295,7 +295,25 @@ found in the pinned Gio version, and the screenshot tooling used to match WhatsA
 Low memory use is the reason this project exists, so measure with `cmd/memprobe` before and
 after a change. Run `gofmt`, `go vet ./...` and `go build ./...` before you send it.
 
-## Disclaimer
+## License
 
-This is an unofficial client. It isn't affiliated with or endorsed by WhatsApp or Meta.
-Using a third-party client may break WhatsApp's Terms of Service, so use it at your own risk.
+WazzapClients' source code is licensed under the [Mozilla Public License 2.0](LICENSE).
+If you change one of its files and share the result, that file's source must stay open
+under the same license; code of your own in separate files can be under any license.
+
+The app links [libsignal-protocol-go](https://github.com/polymorfa/libsignal-protocol-go)
+(through hypermeow), which is licensed under the GNU GPL version 3, so the executables, as
+a whole, are distributed under the GPL version 3. The third-party software in them, and
+each one's license, is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which
+the installer copies next to the app and every release carries.
+
+## Trademarks and disclaimer
+
+WazzapClients is an unofficial client. It isn't affiliated with, endorsed by or sponsored
+by WhatsApp LLC or Meta Platforms, Inc. "WhatsApp" is a trademark of WhatsApp LLC, and
+"KLIPY" a trademark of its owner; both names are used here only to say what the app works
+with. The app doesn't use either one's logo, and forks shouldn't add them.
+
+Using a third-party client may break WhatsApp's Terms of Service and can get your account
+banned, so use it at your own risk. The software comes without any warranty (see sections
+6 and 7 of the license).

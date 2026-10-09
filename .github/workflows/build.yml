@@ -95,6 +95,10 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # The licenses of what the app links and bundles (cmd/notices).
+      - name: Check third-party notices
+        run: go run ./cmd/notices -check
+
       - name: Build all packages
         run: go build ./...
 
@@ -285,6 +289,8 @@ jobs:
               --clobber
 
           else
+              LICENSE \
+              THIRD_PARTY_NOTICES.md \
 
             gh release create "$RELEASE_TAG" \
               dist/WazzapClients-windows-amd64.exe \
@@ -295,6 +301,8 @@ jobs:
               --verify-tag \
               --draft \
               --generate-notes \
+              LICENSE \
+              THIRD_PARTY_NOTICES.md \
               --title "WazzapClients $RELEASE_TAG"
 
           fi

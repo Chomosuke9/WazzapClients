@@ -246,6 +246,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    or business's sections in contactinfo.go), and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
                    picker (emoji.go, data in the generated emojidata.go), media viewer
+cmd/notices/       writes THIRD_PARTY_NOTICES.md from the licenses of what cmd/wazzap links
+                   and bundles; CI runs it with -check
                    (viewer.go) and the volume slider of videos, statuses and voice
                    messages (volume.go, an app preference); the send view for picked, pasted and dropped files
                    (sendview.go), its photo editor (mediaedit.go) and the rendering of
@@ -510,6 +512,11 @@ go run ./cmd/screenshot        # render preview PNGs into ./docs/
 go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
 # Scroll the chat list for 1200 frames and print frame times, CPU, GCs, the frame
 # rate and late frames; -ballast adds live heap like a long session's, -cpuprofile
+- The app is MPL-2.0 (`LICENSE`); the executables are GPL-3.0 as a whole, since
+  hypermeow links libsignal-protocol-go. After changing a dependency, or bundling a
+  font, icon set or data from elsewhere (add its license file beside it and to `bundled`
+  in `cmd/notices`), run `go run ./cmd/notices` and commit `THIRD_PARTY_NOTICES.md`.
+  Don't add WhatsApp's or KLIPY's logos: the names only say what the app works with.
 # writes a profile. -chat scrolls the first chat's messages instead, and -size sets
 # the window in dp (1706x1040 is about a maximized 2560x1600 window at 150%):
 go run ./cmd/memprobe -data <copy> -scroll 1200 -ballast 60 -cpuprofile cpu.pprof
