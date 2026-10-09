@@ -27,11 +27,14 @@ const (
 	imgMissing
 )
 
+// imgEntry is an image of the cache. The UI reads one without the cache's
+// lock for the rest of its frame, so an entry never changes once get
+// returned it, but for used: a load puts a new entry in its place.
 type imgEntry struct {
 	state imgState
 	op    paint.ImageOp
 	size  image.Point
-	used  int64 // frame counter of last use, for eviction
+	used  int64 // frame counter of last use, for eviction; under imageCache.mu
 	bytes int   // decoded size, counted in imageCache.bytes
 	// animated is set for animated stickers; the image is their first frame.
 	animated bool
@@ -177,17 +180,19 @@ func (c *imageCache) getWith(key string, load func() []byte, decode func([]byte)
 		release := acquireDecode(data)
 		img, animated := decode(data)
 		release()
+		// Not into e, which the UI may be reading: into the entry that
+		// replaces it.
+		done := &imgEntry{state: imgMissing, empty: len(data) == 0, loadedAt: time.Now()}
+		if img != nil {
+			done = &imgEntry{state: imgReady, op: paint.NewImageOp(img), size: img.Bounds().Size(),
+				animated: animated, loadedAt: done.loadedAt}
+			done.bytes = 4 * done.size.X * done.size.Y
+		}
 		c.mu.Lock()
-		e.loadedAt = time.Now()
-		if img == nil {
-			e.state, e.empty = imgMissing, len(data) == 0
-		} else {
-			e.state, e.op, e.size = imgReady, paint.NewImageOp(img), img.Bounds().Size()
-			e.animated = animated
-			if c.m[key] == e { // not forgotten meanwhile
-				e.bytes = 4 * e.size.X * e.size.Y
-				c.bytes += e.bytes
-			}
+		if c.m[key] == e { // not forgotten meanwhile
+			done.used = e.used
+			c.m[key] = done
+			c.bytes += done.bytes
 		}
 		c.mu.Unlock()
 		if c.invalidate != nil {
