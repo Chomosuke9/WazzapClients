@@ -458,6 +458,9 @@ func (u *UI) ShowPage(name string) {
 	u.setPage(pages[name])
 	u.sidebar.showArchived = name == "archived"
 	if isSetting {
+		if u.accounts == nil && (name == "accounts" || strings.HasPrefix(v.sub, "acct:")) {
+			u.accounts = u.demoAccounts()
+		}
 		u.openSettings(v.category)
 		if v.sub != "" {
 			u.openSettingsSub(v.sub)
@@ -1046,6 +1049,8 @@ func (u *UI) ctrlEnterKeys(gtx C) {
 // escape closes the topmost overlay, like WhatsApp's Esc.
 func (u *UI) escape() {
 	switch {
+	case u.ctx.isOpen() && u.ctx.kind == ctxAcctMode:
+		u.closeMenu() // over the switcher
 	case u.acctMenu.open:
 		u.acctMenu.open, u.menu.open = false, false
 	case u.menu.open:
@@ -1452,24 +1457,24 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.SetPrivacy(true)
 		u.privacy.fx.snap(true)
 		u.privacy.v = 1
-	case "menu", "accounts", "loginaccounts":
-		// The chat list's ⋮ menu, and its account switcher with a second
-		// demo account; or the switcher on the login screen of an account
-		// being added.
+	case "menu", "accounts", "loginaccounts", "acctmode":
+		// The chat list's ⋮ menu, and its account switcher with more demo
+		// accounts (and acctmode, the second one's background modes); or
+		// the switcher on the login screen of an account being added.
 		if u.accounts == nil {
-			u.accounts = []accountRow{
-				{Account: accounts.Account{ID: u.meID, Phone: "+1 555 0100"}, active: true},
-				{Account: accounts.Account{Dir: "accounts/2", ID: "15550142@s.whatsapp.net", Name: "Work", Phone: "+1 555 0142"}},
-			}
+			u.accounts = u.demoAccounts()
 		}
 		if name == "loginaccounts" {
-			u.accounts[0] = accountRow{Account: accounts.Account{Dir: "accounts/3"}, active: true}
+			u.accounts[0] = accountRow{Account: accounts.Account{Dir: "accounts/4"}, active: true}
 			u.me = ""
 			u.conn = model.ConnEvent{State: model.StateQR, QR: "2@demo-qr-code"}
 		} else {
 			u.menu.open = true
 		}
 		u.acctMenu.open = name != "menu"
+		if name == "acctmode" {
+			u.ctx = ctxMenu{kind: ctxAcctMode, chatID: u.accounts[1].Dir, at: image.Pt(x, y)}
+		}
 	case "chatmenu":
 		if len(u.chats) > 1 {
 			u.openChatMenu(u.chats[1])

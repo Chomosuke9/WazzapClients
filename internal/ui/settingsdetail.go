@@ -52,6 +52,7 @@ const (
 	setRadio                      // one of a choice's options
 	setInfo                       // read-only; clicking copies sub
 	setContact                    // a contact's picture and name
+	setAccount                    // an account's picture and name (acct)
 	setKeys                       // a keyboard shortcut: title and key caps
 	setCustom                     // w draws it
 )
@@ -62,8 +63,9 @@ type settingRow struct {
 	kind       settingKind
 	ic         *icon.Icon
 	title, sub string
-	on         bool     // setToggle and setRadio
-	id         string   // setContact
+	on         bool   // setToggle and setRadio
+	id         string // setContact
+	acct       *accountRow
 	keys       []string // setKeys
 	danger     bool
 	trailing   *icon.Icon // e.g. a chevron for rows that open a page
@@ -99,9 +101,14 @@ var settingsViews = map[string]struct {
 	"performance":   {settingPerformance, ""},
 	"advanced":      {settingPerformance, "advanced"},
 	"extras":        {settingExtras, ""},
-	"snippets":      {settingSnippets, ""},
-	"gray":          {settingExtras, "gray"},
-	"help":          {settingHelp, ""},
+	// With demo accounts: the Account page's list of them, and the
+	// pages of the second (always connected) and third (checked).
+	"accounts":     {settingAccount, ""},
+	"accountmode":  {settingAccount, "acct:accounts/2"},
+	"accountcheck": {settingAccount, "acct:accounts/3"},
+	"snippets":     {settingSnippets, ""},
+	"gray":         {settingExtras, "gray"},
+	"help":         {settingHelp, ""},
 }
 
 // openSettings opens a settings category (an index of settingsItems).
@@ -185,6 +192,12 @@ func (u *UI) settingsTitle() string {
 	case "advanced":
 		return "Advanced"
 	}
+	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
+		if a := u.accountByDir(dir); a != nil {
+			return u.accountTitle(a)
+		}
+		return "Account"
+	}
 	if k := knobNamed(strings.TrimPrefix(s.sub, "knob:")); k != nil {
 		return k.title
 	}
@@ -196,6 +209,13 @@ func (u *UI) settingsPage() []settingsSection {
 	s := &u.settings
 	if key, ok := strings.CutPrefix(s.sub, "knob:"); ok {
 		return u.knobSettings(key)
+	}
+	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
+		if u.accountByDir(dir) != nil {
+			return u.accountPage(dir)
+		}
+		s.sub = "" // logged out meanwhile
+		return u.accountSettings()
 	}
 	switch s.sub {
 	case "lastseen", "photo", "about", "groups":
@@ -475,9 +495,9 @@ func (u *UI) accountSettings() []settingsSection {
 	}
 	info = append(info, u.settingInfoRow("device", "This device", appName+" on "+osName()))
 	secure := b.Pref(prefSecurityMsg) == "on"
-	return []settingsSection{
-		{title: "Account info", rows: info},
-		{title: "Security notifications", rows: []settingRow{{
+	return append(u.accountsSection(),
+		settingsSection{title: "Account info", rows: info},
+		settingsSection{title: "Security notifications", rows: []settingRow{{
 			key: "security", kind: setToggle, on: secure,
 			title: "Show security notifications",
 			sub:   "On this computer, when a contact's security code changes",
@@ -490,7 +510,7 @@ func (u *UI) accountSettings() []settingsSection {
 			},
 		}}, note: "Messages and calls in end-to-end encrypted chats stay between you and the people you choose. " +
 			"A contact's security code changes when they reinstall WhatsApp or change phones."},
-	}
+	)
 }
 
 func osName() string {
@@ -937,6 +957,9 @@ func (u *UI) layoutSettingRow(gtx C, r *settingRow) D {
 	case setContact:
 		id, name := r.id, r.title
 		it.glyph = func(gtx C, _ color.NRGBA) D { return u.avatar(gtx, id, name, false, 40) }
+	case setAccount:
+		a := r.acct
+		it.glyph = func(gtx C, _ color.NRGBA) D { return u.accountAvatar(gtx, a, 40) }
 	case setKeys:
 		return u.layoutShortcut(gtx, r.title, r.keys)
 	}

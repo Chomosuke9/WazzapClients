@@ -217,6 +217,13 @@ Gotchas already found in the pinned version (v0.10.x):
   messages) and marks the setting in `wz_chats.settled`, so the history's older
   copy (`setMeta`) doesn't undo it. Reading on the phone with read receipts on comes
   as a plain read receipt from your own device, not `read-self`.
+- A connected client that sends presence "available" shows you online and stops the
+  phone from notifying. The open account sends it as it connects (`sendPresence`); a
+  background account sends "unavailable" (`SetBackground`).
+- What a backend runs after it connects (group names, the app state resync, channels)
+  reads the database. Started with `goWork`, it's what `Close` cancels and waits for:
+  a `meta` read from a closed database reads as "", which started the once-only app
+  state resync over. A check closes its backend seconds after connecting.
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -300,7 +307,11 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    mode (names and messages drawn as bars, pictures blurred, shown under
                    the pointer; the title bar's eye and Ctrl+Shift+P, once the Privacy mode
                    toggle on the Extra features page is on) in privacy.go: `u.hiding` sets `u.secret`, which
-                   `u.label`, `layoutSpans`, `drawAvatar` and `messageImage` read
+                   `u.label`, `layoutSpans`, `drawAvatar` and `messageImage` read;
+                   the accounts that run in the background (connected, or checked every
+                   few minutes) in background.go, and the account switcher, its background
+                   mode menu and the accounts' settings pages (Settings > Account) in
+                   accounts.go
 internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated) and the
                    wallpaper doodles
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
@@ -327,7 +338,9 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    avatars' timer badge) in timer.go;
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
                    and snippetmedia.go
-internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
+internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot); in
+                   background.go, what tests of background accounts need (messages kept
+                   for the next Start, counted starts and closes)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
@@ -351,7 +364,9 @@ internal/update/   updates from GitHub releases when the user asks (Settings > H
                    Only tag builds (-X main.version=v1.2.3) update
 internal/accounts/ the WhatsApp accounts linked on this computer (accounts.json), each with
                    a data directory of its own: the first is the data directory itself,
-                   the ones added later are accounts/<n>
+                   the ones added later are accounts/<n>; and how each runs while another
+                   is open (Mode: off, a check every 5 to 60 minutes, or always connected)
+                   and when it last checked
 patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
 ```
 
@@ -371,16 +386,36 @@ while the window is minimized and Gio draws no frames.
   them all, and the window's `UI` gets them through `hostBackend.Poll`. Only
   `MessageEvent`s with `New` set notify; backends set it for messages that just arrived
   (not history, edits, reactions or repeats).
-- Several accounts can be linked; one is open (connected) at a time, to keep memory
-  low. Switching (`internal/ui/accounts.go`: the ⋮ menu's "Switch account" and the
-  login screen) closes the open backend, opens the other one through `Options.Open`
-  and gives the window a new `UI`. The theme and other `appPrefs` carry over. Logging
-  out with another account linked opens that one and takes the logged-out account
-  off the list; so does switching away from an account that isn't linked.
+- Several accounts can be linked; one is open (in the window) at a time. Switching
+  (`internal/ui/accounts.go`: the ⋮ menu's "Switch account" and the login screen)
+  opens the other one through `Options.Open`, or takes its backend from the
+  background, and gives the window a new `UI`. The theme and other `appPrefs` carry
+  over. Logging out with another account linked opens that one and takes the
+  logged-out account off the list; so does switching away from an account that isn't
+  linked.
+- The others run as their `accounts.Mode` says (`internal/ui/background.go`, set in
+  the switcher and on Settings > Account): not at all (the default, to keep memory
+  low), always connected, or checked every 5 to 60 minutes: opened, connected until
+  the backend's `CaughtUpEvent` (WhatsApp sent what it kept) and a few seconds more,
+  then closed. Each has a backend of its own, wrapped with `withAuto` so scheduled
+  messages and AFK go on (a check also runs when the next scheduled message is due,
+  since `auto` drops late ones), and a notifier, which outlives a checked account's
+  backend. Their backends open and close on goroutines and come back through
+  `bgOpen`; everything else, polling them included, stays on the UI goroutine.
+  Switching away from an always-connected account moves its backend and notifier to
+  the background (`toBackground`) instead of closing it. One logged out, on the phone
+  or from its settings page, leaves the list (`bgLoggedOut`). An idle connected
+  background account costs about 2 MB (a big one's database about 10 more) and
+  almost no CPU.
 - Notification rules follow WhatsApp: one per chat, nothing while the window has focus,
   muted and archived chats only for mentions and replies to you, removed once the chat
   is read (here or on another device). Preferences are `Backend.Pref` keys, on unless
-  "off" (`prefNotify*`, `prefBackground`).
+  "off" (`prefNotify*`, `prefBackground`). Each account's notifier follows its own
+  account's preferences; its notifications' IDs are `<account Dir>|<chat>`, and a
+  background account's name the account ("Alice · Work") and show while the window
+  has focus. Clicking one, or its Reply or Mark as read, switches to its account
+  first (`host.route`); Reply and Mark as read wait until it's online (`host.later`).
+  The tray tooltip counts every account's unread chats.
 
 ## Conventions
 
@@ -483,14 +518,16 @@ go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).
 # -view: chats, archived, status, channels, communities, settings, general, profile,
-# account, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help,
+# account, accounts (Settings > Account with demo accounts), accountmode and
+# accountcheck (the pages of an account always connected and of one checked),
+# privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help,
 # info, statusviewer, contact (a group member's contact info:
 # -contact <id>, default the demo business vivy@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
-# Render one overlay with demo data (menu, accounts, loginaccounts, slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
+# Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, replyphoto, linkpreview, invite,
 # delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:

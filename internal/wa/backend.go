@@ -91,6 +91,16 @@ type Backend struct {
 	// serverSkew is how many seconds the server's clock is ahead of ours,
 	// learned from send acks (sendAsyncPrep).
 	serverSkew atomic.Int64
+
+	// background is set while the account isn't the open one
+	// (SetBackground).
+	background atomic.Bool
+	// work is what runs after each connect (see handle); Close waits for
+	// it, since it reads the database. workMu guards closed, so nothing
+	// starts once Close waits.
+	workMu sync.Mutex
+	work   sync.WaitGroup
+	closed bool
 }
 
 func (b *Backend) now() time.Time {
@@ -106,7 +116,14 @@ func (b *Backend) sendTime() time.Time {
 	return b.now().Add(time.Duration(b.serverSkew.Load()) * time.Second)
 }
 
-var _ model.Backend = (*Backend)(nil)
+var (
+	_ model.Backend      = (*Backend)(nil)
+	_ model.Backgrounder = (*Backend)(nil)
+)
+
+// osInfo says, once for every backend of the process, how this client
+// shows up under "Linked devices" on the phone.
+var osInfo sync.Once
 
 // Open opens (or creates) the session database in dataDir.
 func Open(dataDir string, debug bool) (*Backend, error) {
@@ -150,9 +167,10 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 		return nil, fmt.Errorf("init message store: %w", err)
 	}
 
-	// How this client shows up under "Linked devices" on the phone.
-	store.SetOSInfo("WazzapClients", [3]uint32{0, 1, 0})
-	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
+	osInfo.Do(func() {
+		store.SetOSInfo("WazzapClients", [3]uint32{0, 1, 0})
+		store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
+	})
 
 	// Create the client now (without connecting) so stored chats can be
 	// shown, with names, before the connection is up.
@@ -202,11 +220,39 @@ func (b *Backend) Start(notify func()) {
 }
 
 func (b *Backend) run() {
-	if b.client().Store.ID == nil {
-		b.pair()
-	} else {
+	switch {
+	case b.client().Store.ID != nil:
 		b.connect()
+	case b.background.Load():
+		b.emit(model.ConnEvent{State: model.StateQRExpired}) // see SetBackground
+	default:
+		b.pair()
 	}
+}
+
+// SetBackground implements model.Backgrounder.
+func (b *Backend) SetBackground(on bool) {
+	if b.background.Swap(on) == on {
+		return
+	}
+	if cli := b.client(); cli != nil && cli.IsConnected() {
+		go b.sendPresence(cli)
+	}
+}
+
+// goWork runs f on a goroutine that Close waits for, unless the backend
+// is closing.
+func (b *Backend) goWork(f func()) {
+	b.workMu.Lock()
+	defer b.workMu.Unlock()
+	if b.closed {
+		return
+	}
+	b.work.Add(1)
+	go func() {
+		defer b.work.Done()
+		f()
+	}()
 }
 
 func (b *Backend) useDevice(device *store.Device) {
@@ -364,11 +410,17 @@ func (b *Backend) Logout() {
 	}()
 }
 
+// Close disconnects and closes the database. What runs after a connect
+// stops first: it would read the closed database as empty.
 func (b *Backend) Close() {
+	b.workMu.Lock()
+	b.closed = true
+	b.workMu.Unlock()
+	b.cancel()
 	if cli := b.client(); cli != nil {
 		cli.Disconnect()
 	}
-	b.cancel()
+	b.work.Wait()
 	b.db.Close()
 	b.logf.Close()
 }
@@ -388,6 +440,10 @@ func (b *Backend) resetSession() {
 	b.names.clear()
 	b.emit(model.ChatsEvent{})
 	b.useDevice(b.container.NewDevice())
+	if b.background.Load() {
+		b.emit(model.ConnEvent{State: model.StateQRExpired}) // see SetBackground
+		return
+	}
 	b.pair()
 }
 
@@ -570,12 +626,13 @@ func (b *Backend) markRead(cli *whatsmeow.Client, jid types.JID, c *model.Chat) 
 // without read receipts, and you show offline.
 func (b *Backend) ghost() bool { return b.Pref(model.PrefGhost) == "on" }
 
-// sendPresence tells WhatsApp you're online, or, in ghost mode, offline.
-// Being "available" is what makes WhatsApp send typing notifications, so
-// ghost mode doesn't get them.
+// sendPresence tells WhatsApp you're online, or, in ghost mode or in the
+// background, offline. Being "available" is what makes WhatsApp send
+// typing notifications, so ghost mode doesn't get them; and it stops the
+// phone from notifying, which a background account mustn't do.
 func (b *Backend) sendPresence(cli *whatsmeow.Client) {
 	p := types.PresenceAvailable
-	if b.ghost() {
+	if b.ghost() || b.background.Load() {
 		p = types.PresenceUnavailable
 	}
 	if err := cli.SendPresence(b.ctx, p); err != nil {
@@ -629,12 +686,14 @@ func (b *Backend) handle(evt any) {
 			meID = cli.Store.ID.ToNonAD().String()
 		}
 		b.emit(model.ConnEvent{State: model.StateOnline, Me: cli.Store.PushName, MeID: meID})
-		go func() {
+		b.goWork(func() {
 			b.sendPresence(cli)
 			b.refreshGroupNames()
 			b.resyncAppStateOnce()
 			b.refreshChannels()
-		}()
+		})
+	case *events.OfflineSyncCompleted:
+		b.emit(model.CaughtUpEvent{})
 	case *events.Disconnected, *events.KeepAliveTimeout:
 		b.emit(model.ConnEvent{State: model.StateOffline})
 	case *events.KeepAliveRestored:
@@ -923,7 +982,9 @@ func (b *Backend) requestAppStateRecovery(name appstate.WAPatchName) {
 // events were enabled never received their pins and mutes.
 func (b *Backend) resyncAppStateOnce() {
 	key := appStateResyncKey
-	if b.store.meta(b.ctx, key) != "" {
+	// A meta read fails once the backend closes, which reads as "not
+	// done yet".
+	if b.ctx.Err() != nil || b.store.meta(b.ctx, key) != "" {
 		return
 	}
 	cli := b.client()
@@ -931,6 +992,9 @@ func (b *Backend) resyncAppStateOnce() {
 		// Remember each patch that synced, so that one which keeps failing
 		// doesn't refetch all the others on every connect.
 		done := key + ":" + string(name)
+		if b.ctx.Err() != nil {
+			return
+		}
 		if b.store.meta(b.ctx, done) != "" {
 			continue
 		}

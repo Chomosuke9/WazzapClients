@@ -161,6 +161,23 @@ func (a *Backend) Jobs(chat string) []Job {
 	return out
 }
 
+// Next is when the next scheduled message is due, or zero without one.
+// An account checked in the background is checked then too.
+func (a *Backend) Next() time.Time {
+	if len(a.jobs) == 0 {
+		return time.Time{}
+	}
+	return a.jobs[0].At
+}
+
+// SetBackground passes on to the backend it wraps, if that one can run
+// in the background (model.Backgrounder).
+func (a *Backend) SetBackground(on bool) {
+	if b, ok := a.Backend.(model.Backgrounder); ok {
+		b.SetBackground(on)
+	}
+}
+
 // Cancel takes the job with id off the queue, and reports whether it was
 // still on it.
 func (a *Backend) Cancel(id string) bool {

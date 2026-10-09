@@ -49,7 +49,7 @@ type settingsState struct {
 var settingsItems = [...]listItem{
 	{ic: icLaptop, title: "General", sub: "Startup and close"},
 	{ic: icAccount, title: "Profile", sub: "Name, profile picture, about"},
-	{ic: icKey, title: "Account", sub: "Security notifications, account info"},
+	{ic: icKey, title: "Account", sub: "Security notifications, account info, accounts"},
 	{ic: icLockOutline, title: "Privacy", sub: "Blocked contacts, disappearing messages"},
 	{title: "Chats", sub: "Theme, wallpaper, chat settings"},
 	{ic: icBell, title: "Notifications", sub: "Messages, groups, sounds"},

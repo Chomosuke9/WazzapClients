@@ -796,6 +796,11 @@ type PresenceEvent struct {
 // SyncEvent reports initial history sync progress (0–100).
 type SyncEvent struct{ Percent int }
 
+// CaughtUpEvent reports that the backend, once connected, has received
+// everything WhatsApp kept for it while it was offline. It comes once per
+// connection.
+type CaughtUpEvent struct{}
+
 // AvatarEvent reports that the profile picture of ID became available.
 type AvatarEvent struct{ ID string }
 
@@ -1045,6 +1050,7 @@ func (ReceiptEvent) isEvent()      {}
 func (TypingEvent) isEvent()       {}
 func (PresenceEvent) isEvent()     {}
 func (SyncEvent) isEvent()         {}
+func (CaughtUpEvent) isEvent()     {}
 func (AvatarEvent) isEvent()       {}
 func (MediaEvent) isEvent()        {}
 func (InfoEvent) isEvent()         {}
@@ -1344,6 +1350,19 @@ type Backend interface {
 	// Logout unlinks this device and returns to the QR screen.
 	Logout()
 	Close()
+}
+
+// Backgrounder is implemented by backends that can run as an account
+// that isn't open, beside the one in the window (the UI's background
+// accounts).
+type Backgrounder interface {
+	// SetBackground says whether the account runs in the background. It
+	// can be called before Start and at any time after. In the background
+	// the account shows as unavailable, as WhatsApp does without a window
+	// in front, so the phone still gets notifications; and once WhatsApp
+	// logs it out, it reports StateQRExpired instead of linking again,
+	// which only the window can show.
+	SetBackground(on bool)
 }
 
 // SearchKey is the form of a text that message search compares: case

@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -13,13 +15,17 @@ import (
 	"gioui.org/widget"
 
 	"github.com/chomosuke9/wazzapclients/internal/accounts"
+	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
-// Several WhatsApp accounts can be linked; one is open at a time. The
-// host opens the open one's backend and, on a switch, closes it and
-// gives the window a new UI for the next one (switchAccount).
+// Several WhatsApp accounts can be linked; one is open at a time, and the
+// others are closed or run in the background, as their modes say
+// (background.go). On a switch the host gives the window a new UI for the
+// next account (switchAccount), whose backend runs already if it was in
+// the background.
 
 // appPrefs are the preferences that belong to the app rather than to an
 // account: they carry over when another account opens.
@@ -31,6 +37,7 @@ type accountRow struct {
 	accounts.Account
 	active bool
 	pic    string // the saved picture of an account that isn't open
+	bg     bgView // what it does in the background
 }
 
 // accountRows lists the accounts for the switcher: the linked ones and
@@ -43,7 +50,8 @@ func (h *host) accountRows() []accountRow {
 	rows := make([]accountRow, 0, len(l.Accounts))
 	for _, a := range l.Accounts {
 		if a.Dir == l.Active || a.Linked() {
-			rows = append(rows, accountRow{Account: a, active: a.Dir == l.Active, pic: l.PicturePath(a.Dir)})
+			rows = append(rows, accountRow{Account: a, active: a.Dir == l.Active, pic: l.PicturePath(a.Dir),
+				bg: h.bgView(a.Dir)})
 		}
 	}
 	return rows
@@ -52,6 +60,7 @@ func (h *host) accountRows() []accountRow {
 func (h *host) refreshAccounts() {
 	if h.u != nil {
 		h.u.accounts = h.accountRows()
+		h.u.settings.stale = true
 		h.win.Invalidate()
 	}
 }
@@ -151,7 +160,9 @@ func (h *host) addAccount() {
 	h.switchAccount(dir)
 }
 
-// switchAccount closes the open account and opens the one with dir.
+// switchAccount closes the open account and opens the one with dir. One
+// that runs in the background opens as it is: its backend doesn't open a
+// second time.
 func (h *host) switchAccount(dir string) {
 	l := h.o.Accounts
 	if l == nil || h.o.Open == nil || l.Find(dir) == nil {
@@ -163,25 +174,60 @@ func (h *host) switchAccount(dir string) {
 		h.refreshAccounts()
 		return
 	}
-	b, err := h.o.Open(l.Path(dir))
-	if err != nil {
-		h.leaving = false
-		if !l.Find(dir).Linked() {
-			_ = l.Remove(dir) // added just now
+	bg := h.takeBackground(dir)
+	var b model.Backend
+	if bg != nil && bg.b != nil {
+		b = bg.b
+	} else {
+		h.awaitClosed(dir)
+		var err error
+		b, err = h.o.Open(l.Path(dir))
+		if err != nil {
+			h.leaving = false
+			if !l.Find(dir).Linked() {
+				_ = l.Remove(dir) // added just now
+			}
+			if bg != nil {
+				h.bg[dir] = bg // it goes on as it was
+				h.armBg()
+			}
+			h.toast("Couldn't open the account: " + err.Error())
+			return
 		}
-		h.toast("Couldn't open the account: " + err.Error())
-		return
 	}
 	h.closeAccount(b)
 	l.Active = dir
 	h.saveAccounts()
-	h.useBackend(b)
+	h.useBackend(b, bg)
+}
+
+// takeBackground takes the account with dir out of the background, to
+// open it: a backend being opened is waited for.
+func (h *host) takeBackground(dir string) *bgAccount {
+	bg := h.bg[dir]
+	if bg == nil {
+		return nil
+	}
+	for bg.opening {
+		h.bgOpened(<-h.bgOpen)
+	}
+	if h.bg[dir] != bg {
+		return nil // it was logged out meanwhile
+	}
+	delete(h.bg, dir)
+	if bg.loggingOut {
+		// Opening it cancels the logout from Settings; it stays linked.
+		bg.loggingOut = false
+	}
+	return bg
 }
 
 // closeAccount closes the open account before next opens: the app's
 // preferences carry over to next, the account's picture is kept for the
-// switcher, its notifications go, and an account that isn't linked (any
-// more), or was logged out to leave it, leaves the list.
+// switcher, and an account that isn't linked (any more), or was logged
+// out to leave it, leaves the list. One that runs in the background goes
+// on there, connected (toBackground) or checked from time to time; the
+// others' notifications go.
 func (h *host) closeAccount(next model.Backend) {
 	l := h.o.Accounts
 	cur := *l.Current()
@@ -207,26 +253,61 @@ func (h *host) closeAccount(next model.Backend) {
 			}
 		}
 	}
-	h.notes.clear()
 	if h.u != nil {
+		h.u.stopOutgoingTyping()
 		h.u.shutdown()
 	}
+	linked := a.ID != "" && !h.leaving
+	if linked && cur.Background == accounts.Always {
+		h.toBackground(cur.Dir)
+		return
+	}
+	h.notes.clear()
+	var nextJob time.Time
+	if x, ok := h.b.(*auto.Backend); ok {
+		nextJob = x.Next()
+	}
 	h.b.Close()
-	if a.ID == "" || h.leaving {
+	switch {
+	case !linked:
 		if err := l.Remove(cur.Dir); err != nil {
 			log.Printf("remove account: %v", err)
 		}
+	case cur.Background != accounts.Off:
+		// Checked every few minutes from now on. It was open, so it's
+		// caught up.
+		now := timeNow()
+		l.Find(cur.Dir).Checked = now
+		bg := &bgAccount{dir: cur.Dir, nextJob: nextJob}
+		h.bg[cur.Dir] = bg
+		h.scheduleCheck(bg, now, cur.Background)
 	}
 }
 
-// useBackend makes b, just opened, the open account's backend and gives
-// the window a new UI for it.
-func (h *host) useBackend(b model.Backend) {
+// toBackground keeps the open account's backend running in the
+// background as the next one opens, with its notifier.
+func (h *host) toBackground(dir string) {
+	bg := &bgAccount{dir: dir, b: h.b, notes: h.notes, conn: h.conn, sending: map[string]bool{}}
+	h.bg[dir] = bg
+	if x, ok := bg.b.(model.Backgrounder); ok {
+		x.SetBackground(true)
+	}
+	h.backgroundNotes(bg.notes, dir)
+	h.armBg()
+}
+
+// useBackend makes b the open account's backend and gives the window a
+// new UI for it. b was just opened, or ran in the background (bg) and
+// goes on as it is.
+func (h *host) useBackend(b model.Backend, bg *bgAccount) {
 	b, _ = withAuto(b)
 	h.b = b
 	loadPerf(b)
-	h.conn, h.syncPct, h.queue = model.ConnEvent{}, -1, nil
-	if cur := h.o.Accounts.Current(); cur != nil && cur.Linked() {
+	running := bg != nil && bg.b != nil
+	h.conn, h.syncPct, h.queue, h.later = model.ConnEvent{}, -1, nil, nil
+	if cur := h.o.Accounts.Current(); running {
+		h.conn = bg.conn
+	} else if cur != nil && cur.Linked() {
 		// Show the chats right away; the backend reports the real state
 		// once it starts.
 		h.conn = model.ConnEvent{State: model.StateConnecting, Me: cur.Name, MeID: cur.ID}
@@ -237,15 +318,29 @@ func (h *host) useBackend(b model.Backend) {
 		h.u.dropAttachments()
 	}
 	clearDrafts(h.drafts)
-	h.notes = newNotifier(b, h)
-	h.notes.enabled = h.notifyOK
-	h.notes.setChats(b.Chats())
+	// A background account's notifier goes on, with what it shows.
+	if bg != nil && bg.notes != nil {
+		h.notes = bg.notes
+		h.notes.b = b
+	} else {
+		h.notes = h.newNotifier(b, h.o.Accounts.Active)
+	}
+	h.openNotes(h.notes)
+	if !running {
+		h.notes.setChats(b.Chats())
+	}
+	if x, ok := b.(model.Backgrounder); ok {
+		x.SetBackground(false)
+	}
 	if h.win != nil {
 		dropCaches()
 		h.newUI()
 		h.win.Invalidate()
 	}
-	b.Start(h.poke)
+	if !running {
+		b.Start(h.poke)
+	}
+	h.updateTooltip()
 	memtrim.Trim()
 }
 
@@ -261,11 +356,11 @@ func (h *host) toast(text string) {
 func (n *notifier) clear() {
 	if n.enabled {
 		for id := range n.shown {
-			n.remove(id)
+			n.remove(n.noteID(id))
 		}
 	}
 	clear(n.shown)
-	n.pending, n.due = nil, nil
+	n.pending, n.flushAt = nil, time.Time{}
 }
 
 // logout logs the open account out (the ⋮ menu and Settings).
@@ -311,10 +406,16 @@ type acctMenuState struct {
 	anchor image.Point // top-left corner, in content coordinates
 	scrim  widget.Clickable
 	rows   []widget.Clickable
+	modes  []widget.Clickable // each row's background mode button
 	add    widget.Clickable
 }
 
-const acctMenuWidth = 300
+// acctMenuWidth is the switcher's width, and acctMenuWide its width with
+// the background mode buttons, which leave room for a status line.
+const (
+	acctMenuWidth = 300
+	acctMenuWide  = 340
+)
 
 func (u *UI) updateAccountMenu(gtx C) {
 	m := &u.acctMenu
@@ -323,6 +424,7 @@ func (u *UI) updateAccountMenu(gtx C) {
 	}
 	if len(m.rows) != len(u.accounts) {
 		m.rows = make([]widget.Clickable, len(u.accounts))
+		m.modes = make([]widget.Clickable, len(u.accounts))
 	}
 	for i := range m.rows {
 		if m.rows[i].Clicked(gtx) {
@@ -330,6 +432,10 @@ func (u *UI) updateAccountMenu(gtx C) {
 			if a := u.accounts[i]; !a.active && u.host != nil {
 				u.host.request(request{kind: reqSwitch, dir: a.Dir})
 			}
+		}
+		if m.modes[i].Clicked(gtx) {
+			// Over the switcher, which stays open to show the change.
+			u.ctx = ctxMenu{kind: ctxAcctMode, chatID: u.accounts[i].Dir, at: u.mouse}
 		}
 	}
 	if m.add.Clicked(gtx) {
@@ -361,18 +467,28 @@ func (u *UI) layoutAccountMenu(gtx C) {
 	}
 
 	w := gtx.Dp(acctMenuWidth)
+	if u.showAccountModes() {
+		w = gtx.Dp(acctMenuWide)
+	}
 	rec := op.Record(gtx.Ops)
 	mgtx := gtx
 	mgtx.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, gtx.Constraints.Max.Y)}
 	dims := layout.UniformInset(8).Layout(mgtx, func(gtx C) D {
 		var children []layout.FlexChild
+		modes := u.showAccountModes()
 		for i := range u.accounts {
 			if i >= len(m.rows) {
 				break
 			}
 			i := i
 			children = append(children, layout.Rigid(func(gtx C) D {
-				return u.accountItem(gtx, &m.rows[i], &u.accounts[i])
+				// The open account's mode is on its settings page: here
+				// it would read as its notifications.
+				var mode *widget.Clickable
+				if modes && !u.accounts[i].active {
+					mode = &m.modes[i]
+				}
+				return u.accountItem(gtx, &m.rows[i], mode, &u.accounts[i])
 			}))
 		}
 		if u.canAddAccount() {
@@ -419,12 +535,16 @@ func (u *UI) layoutAccountMenu(gtx C) {
 }
 
 // accountItem is an account's row in the switcher: its picture, name and
-// number, and a tick on the open one.
-func (u *UI) accountItem(gtx C, c *widget.Clickable, a *accountRow) D {
+// number (or what it does in the background), and a tick on the open one.
+// With mode, a button at the end chooses how it runs in the background.
+func (u *UI) accountItem(gtx C, c, mode *widget.Clickable, a *accountRow) D {
 	p := u.pal
 	name, sub := a.Name, a.Phone
 	if a.active && u.me != "" {
 		name = u.me
+	}
+	if s := a.status(u.now()); s != "" {
+		sub = s
 	}
 	switch {
 	case name == "" && sub != "":
@@ -436,7 +556,23 @@ func (u *UI) accountItem(gtx C, c *widget.Clickable, a *accountRow) D {
 	if a.active {
 		tick = iconW(icTick, 20, p.Green)
 	}
-	return u.acctMenuItem(gtx, c, func(gtx C) D {
+	const btn, gap = 36, 4
+	mark := tick
+	if mode != nil {
+		// Room for the mode button, drawn over the row once it's laid out
+		// (the row's Clickable would hide one inside it).
+		mark = func(gtx C) D {
+			w, h := gtx.Dp(btn), gtx.Dp(btn)
+			if tick != nil {
+				off := op.Offset(image.Pt(w+gtx.Dp(gap), (h-gtx.Dp(20))/2)).Push(gtx.Ops)
+				tick(gtx)
+				off.Pop()
+				w += gtx.Dp(gap + 20)
+			}
+			return D{Size: image.Pt(w, h)}
+		}
+	}
+	dims := u.acctMenuItem(gtx, c, func(gtx C) D {
 		return u.accountAvatar(gtx, a, 40)
 	}, func(gtx C) D {
 		if sub == "" {
@@ -447,7 +583,109 @@ func (u *UI) accountItem(gtx C, c *widget.Clickable, a *accountRow) D {
 			layout.Rigid(layout.Spacer{Height: 2}.Layout),
 			layout.Rigid(u.label(13, sub, p.TextSecondary).Layout),
 		)
-	}, tick)
+	}, mark)
+	if mode != nil {
+		x := dims.Size.X - gtx.Dp(12) - gtx.Dp(btn)
+		if tick != nil {
+			x -= gtx.Dp(gap + 20)
+		}
+		off := op.Offset(image.Pt(x, (dims.Size.Y-gtx.Dp(btn))/2)).Push(gtx.Ops)
+		u.iconButton(gtx, mode, modeIcon(a.Background), btn, 20, p.Icon)
+		off.Pop()
+	}
+	return dims
+}
+
+// modeIcon shows how an account runs in the background.
+func modeIcon(m accounts.Mode) *icon.Icon {
+	switch {
+	case m == accounts.Always:
+		return icBell
+	case m > 0:
+		return icClock
+	}
+	return icMuted
+}
+
+// showAccountModes reports whether the switcher offers the accounts'
+// background modes: with another account to switch to, once logged in.
+func (u *UI) showAccountModes() bool {
+	return u.conn.State.LoggedIn() && u.otherAccounts()
+}
+
+// accountByDir returns the switcher's row of the account with dir, or
+// nil.
+func (u *UI) accountByDir(dir string) *accountRow {
+	for i := range u.accounts {
+		if u.accounts[i].Dir == dir {
+			return &u.accounts[i]
+		}
+	}
+	return nil
+}
+
+// acctModeItems are the background modes of the account with dir, its
+// own ticked.
+func (u *UI) acctModeItems(dir string) []menuItem {
+	a := u.accountByDir(dir)
+	if a == nil {
+		return nil
+	}
+	item := func(key string, m accounts.Mode) menuItem {
+		return menuItem{key: "acctmode:" + key, label: m.String(), tick: a.Background == m,
+			run: func() { u.setAccountMode(dir, m) }}
+	}
+	items := []menuItem{item("off", accounts.Off)}
+	for _, m := range accounts.Checks {
+		items = append(items, item(strconv.Itoa(int(m)), m))
+	}
+	return append(items, item("always", accounts.Always),
+		menuItem{divider: true},
+		menuItem{note: true, label: modeNote(u.accountName(a))},
+	)
+}
+
+// modeNote explains the background modes of the account named name.
+func modeNote(name string) string {
+	return "How " + name + " runs while another account is open. Always connected notifies at once; " +
+		"checking connects for a few seconds now and then, and uses less memory."
+}
+
+// accountName is what the switcher calls an account.
+func (u *UI) accountName(a *accountRow) string {
+	switch {
+	case a.active && u.me != "":
+		return u.me
+	case a.Label() != "":
+		return a.Label()
+	}
+	return "this account"
+}
+
+// setAccountMode sets how the account with dir runs in the background.
+func (u *UI) setAccountMode(dir string, m accounts.Mode) {
+	if u.host != nil {
+		u.host.setBackgroundMode(dir, m)
+		return
+	}
+	if a := u.accountByDir(dir); a != nil {
+		a.Background = m // demo data
+		u.settings.stale = true
+	}
+}
+
+// demoAccounts are the accounts screenshots show: the open one and a
+// second, connected in the background, and a third checked every 15
+// minutes.
+func (u *UI) demoAccounts() []accountRow {
+	at := u.now().Add(-12 * time.Minute)
+	return []accountRow{
+		{Account: accounts.Account{ID: u.meID, Phone: "+1 555 0100"}, active: true},
+		{Account: accounts.Account{Dir: "accounts/2", ID: "15550142@s.whatsapp.net", Name: "Work", Phone: "+1 555 0142",
+			Background: accounts.Always}, bg: bgView{running: true, state: model.StateOnline}},
+		{Account: accounts.Account{Dir: "accounts/3", ID: "15550177@s.whatsapp.net", Name: "Shop", Phone: "+1 555 0177",
+			Background: 15, Checked: at}},
+	}
 }
 
 // acctMenuItem draws a switcher row: a 40dp picture, text and, at the
@@ -533,4 +771,81 @@ func (u *UI) layoutLoginSwitch(gtx C) {
 	call.Add(gtx.Ops)
 	t.Pop()
 	u.acctMenu.anchor = image.Pt(lim.X-m-gtx.Dp(acctMenuWidth), pos.Y+dims.Size.Y+gtx.Dp(6))
+}
+
+// accountTitle names an account on its settings pages.
+func (u *UI) accountTitle(a *accountRow) string {
+	switch {
+	case a.active && u.me != "":
+		return u.me
+	case a.Label() != "":
+		return a.Label()
+	}
+	return "Account"
+}
+
+// accountsSection is the Account page's list of the accounts linked on
+// this computer, each opening its own page (accountPage), when there is
+// more than one.
+func (u *UI) accountsSection() []settingsSection {
+	if len(u.accounts) < 2 {
+		return nil
+	}
+	sec := settingsSection{title: "Accounts on this computer",
+		note: "Choose how each account notifies you while another one is open."}
+	now := u.now()
+	for i := range u.accounts {
+		a := &u.accounts[i]
+		sub := a.status(now)
+		switch {
+		case a.active:
+			sub = "Open now"
+		case sub == "":
+			sub = a.Background.String()
+		}
+		dir := a.Dir
+		sec.rows = append(sec.rows, settingRow{key: "acct:" + dir, kind: setAccount, acct: a, title: u.accountTitle(a),
+			sub: sub, trailing: icChevronRight, run: func() { u.openSettingsSub("acct:" + dir) }})
+	}
+	return []settingsSection{sec}
+}
+
+// accountPage is an account's settings page: what it's doing in the
+// background, how it runs while another account is open, and logging it
+// out.
+func (u *UI) accountPage(dir string) []settingsSection {
+	a := u.accountByDir(dir)
+	name := u.accountName(a)
+	var secs []settingsSection
+	if s := a.status(u.now()); s != "" {
+		secs = append(secs, settingsSection{title: "Status", rows: []settingRow{
+			{key: "acctstatus", ic: modeIcon(a.Background), title: s}}})
+	}
+	modes := settingsSection{title: "While another account is open", note: modeNote(name)}
+	add := func(m accounts.Mode, sub string) {
+		modes.rows = append(modes.rows, settingRow{key: "acctmode:" + strconv.Itoa(int(m)), kind: setRadio,
+			title: m.String(), sub: sub, on: a.Background == m, run: func() { u.setAccountMode(dir, m) }})
+	}
+	add(accounts.Off, "No notifications from it")
+	for _, m := range accounts.Checks {
+		add(m, "")
+	}
+	add(accounts.Always, "Notifies at once")
+	secs = append(secs, modes)
+	if a.active {
+		return secs // logged out from the Settings list
+	}
+	return append(secs, settingsSection{rows: []settingRow{{key: "acctlogout", ic: icLogout, title: "Log out",
+		danger: true, run: func() { u.confirmLogoutAccount(dir, name) }}}})
+}
+
+// confirmLogoutAccount asks before logging out an account that isn't
+// open.
+func (u *UI) confirmLogoutAccount(dir, name string) {
+	u.confirm("Log out of "+name+"?", "You'll need to link this device again with your phone to use "+name+" here.",
+		dialogButton{label: "Log out", primary: true, danger: true, run: func() {
+			if u.host != nil {
+				u.host.logoutAccount(dir)
+			}
+		}})
 }

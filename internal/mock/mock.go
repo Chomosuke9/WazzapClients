@@ -44,6 +44,9 @@ type Backend struct {
 	// reactors are who reacted to messages, by chat and message ID.
 	reactors map[string][]model.Reactor
 	extras
+
+	// Running as a background account (see background.go).
+	bg bgState
 }
 
 // Clock is the time new demo backends read. They date their chats by it
@@ -110,11 +113,14 @@ func (b *Backend) addChannelPosts() {
 
 func (b *Backend) Start(notify func()) {
 	b.notify = notify
+	b.bg.starts++
+	b.bg.closed = false
 	me := b.meName
 	if me == "" {
 		me = "Me Myself"
 	}
 	b.emit(model.ConnEvent{State: model.StateOnline, Me: me, MeID: "me@lid"})
+	b.deliverOffline()
 }
 
 func (b *Backend) ReportTyping(chatID string) {}
@@ -257,7 +263,6 @@ func (b *Backend) Logout() {
 	b.emit(model.ConnEvent{State: model.StateQR, QR: "demo"})
 }
 func (b *Backend) Retry() {}
-func (b *Backend) Close() {}
 
 type demoChat struct {
 	ID, Name, Presence, Typing       string

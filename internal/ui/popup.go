@@ -139,6 +139,7 @@ const (
 	ctxGallerySort // the Media panel's sort order
 	ctxScheduled   // a scheduled message's (scheduled.go)
 	ctxZoom        // the Font size choices (scale.go)
+	ctxAcctMode    // an account's background modes (chatID is its Dir)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -395,6 +396,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			items = u.statusMenuItems()
 		case ctxZoom:
 			items = u.zoomMenuItems()
+		case ctxAcctMode:
+			if u.acctMenu.open {
+				items = u.acctModeItems(m.chatID)
+			}
 		}
 		if items == nil {
 			u.ctx = ctxMenu{} // its chat went away
