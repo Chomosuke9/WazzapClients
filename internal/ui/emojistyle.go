@@ -156,6 +156,9 @@ func allEmojiNames() []string {
 	return out
 }
 
+// emojiBatch is how many downloads the last "Download all" started with.
+var emojiBatch int
+
 // downloadAllEmojis queues every picture of the chosen style and returns
 // how many it queued.
 func downloadAllEmojis() int {
@@ -163,13 +166,15 @@ func downloadAllEmojis() int {
 		return 0
 	}
 	names := allEmojiNames()
+	n := 0
 	switch emojiStyle() {
 	case emoji3D:
-		return emojiStore.Prefetch(emojiset.ThreeD, names)
+		n = emojiStore.Prefetch(emojiset.ThreeD, names)
 	case emojiAnimateJumbo, emojiAnimated:
-		return emojiStore.Prefetch(emojiset.Animated, names)
+		n = emojiStore.Prefetch(emojiset.Animated, names)
 	}
-	return 0
+	emojiBatch = n
+	return n
 }
 
 func buildEmojiNames(f *fontapi.Font) map[fontapi.GID]string {
@@ -515,7 +520,10 @@ func (u *UI) emojiStyleSettings() []settingsSection {
 	if emojiStore != nil && cur != emoji2D {
 		row := settingRow{key: "emoji:all", title: "Download all emojis", sub: "Get every emoji of this style now, instead of as each shows"}
 		if n := emojiStore.Pending(); n > 0 {
-			row.sub = "Downloading… " + fmt.Sprint(n) + " left"
+			row.sub = fmt.Sprintf("Downloading… %d left", n)
+			if emojiBatch >= n {
+				row.sub = fmt.Sprintf("Downloading… %d%% (%d left)", 100*(emojiBatch-n)/max(emojiBatch, 1), n)
+			}
 		} else {
 			row.run = func() {
 				if loadEmojiFont() == nil {
