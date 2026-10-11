@@ -23,10 +23,11 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
 
-// Settings > Chats > Emoji style. The bundled font is Noto's 2D emojis.
-// Its animated and 3D emojis aren't bundled (the 3D font alone is 148 MB):
-// each picture downloads the first time it shows (internal/emojiset), and
-// the 2D one shows until then, and for good where the set has none.
+// Settings > Chats > Emoji style. No emojis are bundled: Noto's 2D font
+// downloads once (LoadEmojiFont), and its animated and 3D emojis (the 3D
+// font alone is 148 MB) a picture at a time, the first time each shows
+// (internal/emojiset). The 2D one shows until then, and for good where the
+// set has none.
 //
 //   - 3D replaces the font's pictures wherever text is drawn: the patched
 //     go-text asks emojiBitmap (Font.BitmapHook) for each bitmap glyph.
@@ -52,7 +53,7 @@ const (
 var emojiStyles = []struct {
 	pref, title, sub string
 }{
-	emoji2D:           {"", "2D", "Noto Color Emoji, built into the app"},
+	emoji2D:           {"", "2D", "Noto Color Emoji"},
 	emojiAnimateJumbo: {"2d_anim_alone", "2D, animated when alone", "Messages of only emojis play their animations"},
 	emojiAnimated:     {"2d_anim", "2D animated", "Emojis in messages play their animations"},
 	emoji3D:           {"3d", "3D", "Noto's 3D emojis"},
@@ -115,21 +116,24 @@ func (u *UI) setEmojiStyle(k emojiStyleKind) {
 }
 
 var (
-	emojiNamesOnce sync.Once
-	emojiNames     map[fontapi.GID]string
+	emojiNamesMu sync.Mutex
+	emojiNames   map[fontapi.GID]string
 )
 
-// emojiGlyphName returns the Noto file name (emojiset.Name) of the bundled
-// emoji font's glyph gid, or "". The font's cmap names its single code
-// point glyphs and its ligatures (GSUB) the sequences, such as skin tones,
-// ZWJ families and flags.
+// emojiGlyphName returns the Noto file name (emojiset.Name) of the emoji
+// font's glyph gid, or "" (also before the font loads). The font's cmap
+// names its single code point glyphs and its ligatures (GSUB) the
+// sequences, such as skin tones, ZWJ families and flags.
 func emojiGlyphName(gid fontapi.GID) string {
-	emojiNamesOnce.Do(func() {
-		if loadEmojiFont() == nil {
-			return
+	emojiNamesMu.Lock()
+	defer emojiNamesMu.Unlock()
+	if emojiNames == nil {
+		f := loadEmojiFont()
+		if f == nil {
+			return ""
 		}
-		emojiNames = buildEmojiNames(emojiFont)
-	})
+		emojiNames = buildEmojiNames(f)
+	}
 	return emojiNames[gid]
 }
 
@@ -196,7 +200,7 @@ func seqOf(single map[fontapi.GID]rune, seqs map[fontapi.GID][]rune, g fontapi.G
 	return nil
 }
 
-// emojiBitmap is the bundled emoji font's BitmapHook: in the 3D style, the
+// emojiBitmap is the emoji font's BitmapHook: in the 3D style, the
 // downloaded picture of a glyph, which it downloads when it hasn't yet.
 func emojiBitmap(gid fontapi.GID) ([]byte, bool) {
 	if emojiStyle() != emoji3D || emojiStore == nil {
@@ -217,7 +221,8 @@ type emojiView struct {
 }
 
 // refreshEmoji gives the UI a new shaper when the emojis it draws have
-// changed: the style, or (in 3D) the pictures downloaded. Gio's shaper
+// changed: the 2D font loaded, the style, or (in 3D) the pictures
+// downloaded. Gio's shaper
 // caches glyph pictures, and whole lines of them, for good. Pictures
 // arriving one by one swap the shaper at most once a second.
 func (u *UI) refreshEmoji(gtx C) {
@@ -228,6 +233,13 @@ func (u *UI) refreshEmoji(gtx C) {
 		gen = emojiStore.Gen()
 	}
 	redraw := false
+	if loadEmojiFont() == nil && emojiStore != nil {
+		// The 2D font arrived (FontPath downloads it until then).
+		if p := emojiStore.FontPath(); p != "" && LoadEmojiFont(p) == nil {
+			redraw = true
+			jumbos.m = nil // splitEmojis found no emojis without it
+		}
+	}
 	switch {
 	case v.shaper == nil:
 		v.style, v.gen, v.at = style, gen, gtx.Now
@@ -271,7 +283,8 @@ func emojiFaceIndex(sh *text.Shaper) int {
 // glyphEmoji returns the Noto name of an emoji glyph drawn with the
 // UI's shaper, or "".
 func (u *UI) glyphEmoji(g text.Glyph) string {
-	if u.emojiView.face < 0 || int(uint64(g.ID)>>48) != u.emojiView.face {
+	// Before the font loads, face is the system emoji font's.
+	if loadEmojiFont() == nil || u.emojiView.face < 0 || int(uint64(g.ID)>>48) != u.emojiView.face {
 		return ""
 	}
 	return emojiGlyphName(fontapi.GID(uint64(g.ID) & (1<<32 - 1)))
@@ -455,9 +468,9 @@ func (as *emojiAnims) endFrame(gtx C) {
 func (u *UI) emojiStyleSettings() []settingsSection {
 	cur := emojiStyle()
 	sec := settingsSection{title: "Emoji style",
-		note: "Only the 2D emojis are built into the app. Animated and 3D emojis download from Google's Noto Emoji " +
-			"the first time each one shows, and are kept on this computer; the 2D one shows until then, and " +
-			"where there is no animation."}
+		note: "Emojis come from Google's Noto Emoji and are kept on this computer. The 2D ones download once, " +
+			"when the app first runs. Animated and 3D emojis download the first time each one shows; the 2D one " +
+			"shows until then, and where there is no animation."}
 	for i, s := range emojiStyles {
 		k := emojiStyleKind(i)
 		sec.rows = append(sec.rows, settingRow{key: "emoji:" + s.pref, kind: setRadio, title: s.title, sub: s.sub,

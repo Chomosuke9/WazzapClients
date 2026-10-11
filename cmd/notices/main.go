@@ -35,8 +35,8 @@ var bundled = []struct {
 	name, source, note string
 	files              []string
 }{
-	{"Noto Color Emoji", "https://github.com/googlefonts/noto-emoji", "font",
-		[]string{"internal/ui/fonts/LICENSE-NotoColorEmoji"}},
+	{"Noto Color Emoji", "https://github.com/googlefonts/noto-emoji", "font, for tests and previews (the app downloads it)",
+		[]string{"internal/ui/testdata/LICENSE-NotoColorEmoji"}},
 	{"Anton", "https://github.com/googlefonts/AntonFont", "font, for sticker text",
 		[]string{"internal/sticker/fonts/Anton-OFL.txt"}},
 	{"Material Symbols", "https://github.com/marella/material-symbols", "icons and wallpaper doodles",

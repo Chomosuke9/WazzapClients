@@ -1,12 +1,14 @@
-// Package emojiset downloads the emoji pictures that aren't bundled with
-// the app: Noto's 3D emojis and its animated ones. The bundled font is the
-// 2D set; the others would add hundreds of megabytes (the 3D font alone is
-// 148 MB), so each picture is fetched the first time it shows and kept in
-// a folder of the app's data. No Gio here.
+// Package emojiset downloads the emojis, which aren't bundled with the
+// app: Noto Color Emoji, the 2D font (10.7 MB), once, and Noto's 3D and
+// animated emojis one picture at a time, the first time each shows (the
+// 3D font alone is 148 MB). They are kept in a folder of the app's data.
+// No Gio here.
 package emojiset
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -32,13 +34,20 @@ const (
 	// Animated is Noto's animated emojis, animated WebPs 512 pixels square
 	// from Google Fonts. Not every emoji has one.
 	Animated
+	// Font is Noto Color Emoji, the 2D emoji font (see FontPath).
+	Font
 )
 
 const (
 	threeDURL   = "https://raw.githubusercontent.com/googlefonts/noto-emoji/d6a792cb12e3eb7224f4fbf13173a0dded455651/3D/png/128/emoji_u%s.png"
 	animatedURL = "https://fonts.gstatic.com/s/e/notoemoji/latest/%s/512.webp"
+	// The font is the one on the same commit as the 3D pictures, the file
+	// the app used to bundle; its SHA-256 is checked.
+	fontURL    = "https://raw.githubusercontent.com/googlefonts/noto-emoji/d6a792cb12e3eb7224f4fbf13173a0dded455651/2D/fonts/NotoColorEmoji.ttf"
+	fontSHA256 = "15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44"
+	fontName   = "NotoColorEmoji"
 
-	maxFile  = 4 << 20 // bigger isn't an emoji
+	maxFile  = 16 << 20 // bigger isn't an emoji (nor the font)
 	workers  = 4
 	retryIn  = time.Minute // after a network error
 	memLimit = 2 << 20     // bytes of 3D pictures kept in memory
@@ -46,23 +55,34 @@ const (
 
 // dir names each kind's folder (and what Kind.String says).
 func (k Kind) dir() string {
-	if k == Animated {
+	switch k {
+	case Animated:
 		return "animated"
+	case Font:
+		return "font"
 	}
 	return "3d"
 }
 
 func (k Kind) url(name string) string {
-	if k == Animated {
+	switch k {
+	case Animated:
 		return fmt.Sprintf(animatedURL, name)
+	case Font:
+		return fontURL
 	}
 	return fmt.Sprintf(threeDURL, name)
 }
 
-// valid reports whether data looks like a picture of kind k.
+// valid reports whether data looks like a picture of kind k (or is the
+// font).
 func (k Kind) valid(data []byte) bool {
-	if k == Animated {
+	switch k {
+	case Animated:
 		return len(data) > 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP"
+	case Font:
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:]) == fontSHA256
 	}
 	return bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n"))
 }
@@ -128,7 +148,8 @@ type Store struct {
 // New returns a store of the pictures in dir, which it creates when the
 // first one arrives.
 func New(dir string) *Store {
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Long enough for the font on a slow line.
+	client := &http.Client{Timeout: 10 * time.Minute}
 	return &Store{dir: dir, known: map[key]*entry{}, mem: map[key][]byte{}, Fetch: func(url string) ([]byte, int, error) {
 		resp, err := client.Get(url)
 		if err != nil {
@@ -167,10 +188,22 @@ func (s *Store) path(k key) string { return filepath.Join(s.dir, k.kind.dir(), k
 func (s *Store) nonePath(k key) string { return filepath.Join(s.dir, k.kind.dir(), k.name+".none") }
 
 func ext(k Kind) string {
-	if k == Animated {
+	switch k {
+	case Animated:
 		return ".webp"
+	case Font:
+		return ".ttf"
 	}
 	return ".png"
+}
+
+// FontPath returns the path of the 2D emoji font when it is on disk.
+// Otherwise it downloads it (Gen changes when it arrives) and returns "".
+func (s *Store) FontPath() string {
+	if !s.Ready(Font, fontName) {
+		return ""
+	}
+	return s.path(key{Font, fontName})
 }
 
 // Ready reports whether the picture of name is on disk. When it isn't, and
@@ -312,21 +345,25 @@ func (s *Store) download(k key) state {
 	return onDisk
 }
 
-// Size returns how many bytes the downloaded pictures take on disk.
+// Size returns how many bytes the downloaded 3D and animated pictures take
+// on disk (not the font).
 func (s *Store) Size() int64 {
 	var n int64
-	filepath.WalkDir(s.dir, func(_ string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			if fi, err := d.Info(); err == nil {
-				n += fi.Size()
+	for _, k := range []Kind{ThreeD, Animated} {
+		filepath.WalkDir(filepath.Join(s.dir, k.dir()), func(_ string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				if fi, err := d.Info(); err == nil {
+					n += fi.Size()
+				}
 			}
-		}
-		return nil
-	})
+			return nil
+		})
+	}
 	return n
 }
 
-// Clear deletes every downloaded picture. Those still shown download again.
+// Clear deletes every downloaded 3D and animated picture (not the font).
+// Those still shown download again.
 func (s *Store) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -336,7 +373,7 @@ func (s *Store) Clear() error {
 		}
 	}
 	for k, e := range s.known {
-		if e.state != queued {
+		if e.state != queued && k.kind != Font {
 			delete(s.known, k)
 		}
 	}
@@ -346,7 +383,7 @@ func (s *Store) Clear() error {
 	return nil
 }
 
-// The bundled 2D font's pictures are 136x128 (the emoji 128 high), and Gio
+// The 2D font's pictures are 136x128 (the emoji 128 high), and Gio
 // stretches a glyph's picture over the glyph's box. The 3D ones (128x128)
 // are kept centered on a 136x128 canvas so they take the 2D ones' place
 // without stretching.

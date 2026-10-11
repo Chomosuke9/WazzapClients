@@ -55,7 +55,11 @@ func main() {
 	readme := flag.Bool("readme", false, "render every screenshot in README.md into <out> (use -out docs/screenshots -w 1280 -h 800 -scale 1.25)")
 	emojiStyle := flag.String("emoji", "", "draw emojis in this Emoji style (2d_anim_alone, 2d_anim or 3d) from the pictures in -emojidir")
 	emojiDir := flag.String("emojidir", "", "with -emoji, a folder of downloaded emojis (the app's <data>/emoji)")
+	emojiFont := flag.String("emojifont", "internal/ui/testdata/NotoColorEmoji.ttf", "the emoji font (the app downloads it; run from the repository's root)")
 	flag.Parse()
+	if err := ui.LoadEmojiFont(*emojiFont); err != nil {
+		log.Fatal(err)
+	}
 	if *emojiStyle != "" {
 		if err := ui.PreviewEmojis(*emojiDir, *emojiStyle); err != nil {
 			log.Fatal(err)

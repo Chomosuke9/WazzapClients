@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/png"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -80,7 +81,7 @@ func TestDownloadsOnce(t *testing.T) {
 	if !s.Ready(ThreeD, "1f600") {
 		t.Fatal("not ready after downloading")
 	}
-	// Kept as wide as the bundled font's pictures.
+	// Kept as wide as the 2D font's pictures.
 	if c, err := png.DecodeConfig(bytes.NewReader(s.Read(ThreeD, "1f600"))); err != nil || c.Width != 136 || c.Height != 128 {
 		t.Errorf("kept %dx%d (%v), want 136x128", c.Width, c.Height, err)
 	}
@@ -142,5 +143,36 @@ func TestOfflineRetriesLater(t *testing.T) {
 	asked.Range(func(_, v any) bool { n += *v.(*int); return true })
 	if n != 2 {
 		t.Errorf("asked %d times after the retry time, want 2", n)
+	}
+}
+
+func TestFont(t *testing.T) {
+	font, err := os.ReadFile("../ui/testdata/NotoColorEmoji.ttf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _, got := fakeStore(t, map[string]string{"NotoColorEmoji.ttf": string(font)}, false)
+	if s.FontPath() != "" {
+		t.Fatal("the font is there before downloading")
+	}
+	<-got
+	p := s.FontPath()
+	if b, err := os.ReadFile(p); err != nil || !bytes.Equal(b, font) {
+		t.Fatalf("the font at %q isn't what was downloaded (%v)", p, err)
+	}
+	if s.Size() != 0 {
+		t.Error("the font counts in Size")
+	}
+	s.Clear()
+	if s.FontPath() != p {
+		t.Error("Clear deleted the font")
+	}
+
+	// Anything else at the URL is refused.
+	s, _, _ = fakeStore(t, map[string]string{"NotoColorEmoji.ttf": string(font[:len(font)-1])}, false)
+	s.FontPath()
+	settle(s)
+	if s.FontPath() != "" {
+		t.Error("a font that isn't the pinned one was kept")
 	}
 }

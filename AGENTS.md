@@ -57,10 +57,14 @@ Gotchas already found in the pinned version (v0.10.x):
   auto-import); delete that module version from `GOMODCACHE`, re-download it, and
   `go clean -cache`.
 - Text rendering supports bitmap color-emoji fonts (CBDT/sbix) but not COLR fonts such as
-  Windows' Segoe UI Emoji, which renders monochrome.
+  Windows' Segoe UI Emoji, which renders monochrome. Noto Color Emoji (CBDT) isn't
+  bundled (10.7 MB): `emojiset.FontPath` downloads it on first run (SHA-256 pinned),
+  `LoadEmojiFont` maps it copy-on-write (`internal/mapfile`), and `refreshEmoji` loads it
+  into a new shaper when it arrives. Tests, `cmd/screenshot` and `cmd/memprobe` load the
+  copy in `internal/ui/testdata`.
 - The shaper never switches fonts for a space, so a space after an emoji takes the emoji
   font's (very wide) advance. `narrowEmojiSpaces` in `internal/ui/fonts.go` patches the
-  bundled font's space glyphs at load time.
+  emoji font's space glyphs at load time.
 - `layout.Flex` passes its cross-axis minimum to every child. Giving a row a minimum
   height stretches its labels and pins their text to the top. Use `vcenter`
   (`internal/ui/draw.go`) to make a row taller.
@@ -157,7 +161,7 @@ Gotchas already found in the pinned version (v0.10.x):
   too, and text outlines are rebuilt. `moveBy` rounds to whole pixels; `pushFx` counts
   real scales in `fxDepth`, under which `paintRRect` draws one path (no seams).
 - Gio's shaper caches every bitmap glyph's decoded picture, and the drawing of whole lines
-  of them, for good. The 3D emoji style swaps the bundled emoji font's pictures through
+  of them, for good. The 3D emoji style swaps the emoji font's pictures through
   `Font.BitmapHook` (a go-text patch) and gives the UI a new shaper when the style
   changes or pictures arrive (`refreshEmoji`, `emojistyle.go`). Animated emojis in
   message text are drawn by `styledtext`'s `TextStyle.Bitmap` hook instead of the font;
@@ -367,9 +371,11 @@ internal/mock/     demo Backend with fake chats (used by -demo and cmd/screensho
                    for the next Start, counted starts and closes)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
-internal/emojiset/ downloads Noto's 3D emojis (googlefonts/noto-emoji, 3dpng branch) and animated
-                   ones (Google Fonts) one at a time, the first time each shows, into <data>/emoji;
-                   a 404 is remembered (an empty .none file)
+internal/emojiset/ downloads the emojis into <data>/emoji: Noto Color Emoji, the 2D font, once;
+                   Noto's 3D emojis (googlefonts/noto-emoji, 3dpng branch) and animated ones
+                   (Google Fonts) one at a time, the first time each shows. A 404 is remembered
+                   (an empty .none file)
+internal/mapfile/  maps a file into memory copy-on-write (the downloaded emoji font)
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way

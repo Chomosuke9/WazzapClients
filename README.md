@@ -59,7 +59,7 @@ whatsmeow. You get the same app, pixel for pixel where it matters, in one small 
     <td><img src="docs/screenshots/gallery.png" alt="Media panel"></td>
   </tr>
   <tr>
-    <td><b>Emoji and stickers</b>, including animated ones, with search and recents. Emojis can be 2D, animated or 3D (downloaded as they show, not bundled).</td>
+    <td><b>Emoji and stickers</b>, including animated ones, with search and recents. Emojis can be 2D, animated or 3D. None are bundled: the 2D font downloads on first run, the others as they show.</td>
     <td><b>The Media panel:</b> photos, videos, docs and links from every chat, or from just one.</td>
   </tr>
   <tr>

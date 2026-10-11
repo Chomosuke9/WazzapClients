@@ -1,7 +1,6 @@
 package ui
 
 import (
-	_ "embed"
 	"image/color"
 
 	"gioui.org/font"
@@ -203,12 +202,6 @@ func hashIndex(s string, n int) int {
 	}
 	return int(h % uint32(n))
 }
-
-// NotoColorEmoji is a bitmap (CBDT) color emoji font. Gio can't draw the COLR
-// glyphs of Windows' Segoe UI Emoji in color, so it's bundled.
-//
-//go:embed fonts/NotoColorEmoji.ttf
-var notoColorEmoji []byte
 
 // Typeface prefers Segoe UI (what WhatsApp Desktop uses on Windows), color
 // emoji from Noto, then common system UI fonts and the bundled Go fonts.

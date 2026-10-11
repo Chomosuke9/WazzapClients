@@ -77,6 +77,11 @@ type Options struct {
 func Run(b model.Backend, o Options) error {
 	if o.EmojiDir != "" {
 		emojiStore = emojiset.New(o.EmojiDir)
+		// The 2D font, or its download; windows load it when it arrives
+		// (refreshEmoji).
+		if p := emojiStore.FontPath(); p != "" && LoadEmojiFont(p) != nil {
+			os.Remove(p) // broken: downloaded again next time
+		}
 	}
 	h := newHost(b, o)
 	h.upd.h = h

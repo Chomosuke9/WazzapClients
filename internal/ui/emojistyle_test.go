@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -321,5 +322,48 @@ func TestEmojiStyleSettings(t *testing.T) {
 	clearRow.run()
 	if emojiStore.Size() != 0 {
 		t.Error("Delete downloaded emojis left files")
+	}
+}
+
+// TestEmojiFontArrives: without the 2D font (before its download ends) no
+// emoji is drawn from it; when it arrives the UI loads it and gets a new
+// shaper.
+func TestEmojiFontArrives(t *testing.T) {
+	loaded := emojiFonts.Load()
+	emojiFonts.Store(nil)
+	t.Cleanup(func() { emojiFonts.Store(loaded); jumbos.m = nil })
+	jumbos.m = nil
+	dir, asked := useEmojiStore(t, emoji2D, nil)
+
+	u := New(mock.New())
+	gtx := layout.Context{Ops: new(op.Ops), Now: testNow()}
+	u.refreshEmoji(gtx)
+	sh := u.th.Shaper
+	if jumboEmojis("😀") != nil || emojiPNG("😀") != nil {
+		t.Error("emojis drawn from a font that isn't there")
+	}
+	select {
+	case url := <-asked:
+		if !strings.HasSuffix(url, "/NotoColorEmoji.ttf") {
+			t.Errorf("asked for %s, want the font", url)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the font wasn't downloaded")
+	}
+
+	// It arrives (as a new store would find it).
+	font, err := os.ReadFile(testEmojiFont)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(dir, "font"), 0o700)
+	os.WriteFile(filepath.Join(dir, "font", "NotoColorEmoji.ttf"), font, 0o600)
+	emojiStore = emojiset.New(dir)
+	u.refreshEmoji(gtx)
+	if loadEmojiFont() == nil || u.th.Shaper == sh {
+		t.Fatal("the font that arrived wasn't loaded into a new shaper")
+	}
+	if len(jumboEmojis("😀")) != 1 || emojiPNG("😀") == nil {
+		t.Error("no emojis from the font that arrived")
 	}
 }
