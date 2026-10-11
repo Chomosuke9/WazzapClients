@@ -32,10 +32,14 @@ const (
 	prefTrimAfter  = "trim_after"      // seconds without a frame, or "never"
 	prefPlaying    = "playing"         // GIFs playing at once; stickers twice as many
 	prefCPUs       = "cpus"            // GOMAXPROCS, or "" for all
+	prefEmojiAnims = "emoji_anims"     // MB of animated emoji frames
+	prefEmojiDec   = "emoji_decoders"  // animated emojis decoding at once
+	prefEmojiFPS   = "emoji_fps"       // frames a second of animated emojis
 )
 
 var perfPrefs = []string{prefAnimations, prefSmoothScroll, prefAutoplay,
-	prefImageCache, prefLoadedMsgs, prefGCPercent, prefTrimAfter, prefPlaying, prefCPUs}
+	prefImageCache, prefLoadedMsgs, prefGCPercent, prefTrimAfter, prefPlaying, prefCPUs,
+	prefEmojiAnims, prefEmojiDec, prefEmojiFPS}
 
 // perfSettings is what the Performance prefs say, parsed.
 type perfSettings struct {
@@ -48,6 +52,9 @@ type perfSettings struct {
 	trimAfter    time.Duration // 0: never
 	gifs         int           // stickers play twice as many
 	cpus         int           // 0: all
+	emojiAnims   int           // bytes of animated emoji frames (emojiAnims)
+	emojiDec     int           // animated emojis decoding at once
+	emojiFPS     int           // frames a second of animated emojis
 }
 
 var defaultPerf = perfSettings{
@@ -58,6 +65,9 @@ var defaultPerf = perfSettings{
 	gcPercent:    50, // as cmd/wazzap sets it
 	trimAfter:    idleTrim,
 	gifs:         maxGIFs,
+	emojiAnims:   16 << 20,
+	emojiDec:     2,
+	emojiFPS:     30,
 }
 
 // perf is the app's performance settings. Animation helpers and the host
@@ -104,6 +114,15 @@ func readPerf(b model.Backend) perfSettings {
 	}
 	if n, ok := num(prefCPUs, 1, runtime.NumCPU()); ok {
 		p.cpus = n
+	}
+	if n, ok := num(prefEmojiAnims, 2, 256); ok {
+		p.emojiAnims = n << 20
+	}
+	if n, ok := num(prefEmojiDec, 1, 8); ok {
+		p.emojiDec = n
+	}
+	if n, ok := num(prefEmojiFPS, 5, 120); ok {
+		p.emojiFPS = n
 	}
 	return p
 }
@@ -217,6 +236,20 @@ var perfKnobs = []*perfKnob{
 	{key: prefPlaying, title: "Playing at once", ic: icPlayFill,
 		about: "How many GIFs, and twice as many animated stickers, play at the same time. The rest show a still picture.",
 		opts:  []perfOpt{{"", "3 GIFs (default)"}, {"1", "1 GIF"}, {"6", "6 GIFs"}}},
+	{key: prefEmojiAnims, title: "Animated emojis", ic: icEmoji,
+		about: "Frames of animated emojis kept in memory, for the 2D animated emoji styles. An emoji in a " +
+			"message takes about 150 to 350 KB, a big one sent alone about 1 to 2.5 MB. Emojis that don't fit " +
+			"show a still picture; those off screen for a few seconds let go of theirs.",
+		opts: []perfOpt{{"", "16 MB (default)"}, {"4", "4 MB"}, {"8", "8 MB"}, {"32", "32 MB"}, {"64", "64 MB"}}},
+	{key: prefEmojiDec, title: "Emoji decoding", ic: icSpeed,
+		about: "How many animated emojis are decoded at once, each on a core of its own. Decoding one takes " +
+			"about a quarter of a second of a core, once each time it shows after a while away. More " +
+			"start playing sooner; fewer leave more of the CPU to everything else.",
+		opts: []perfOpt{{"", "2 at a time (default)"}, {"1", "1 at a time"}, {"4", "4 at a time"}}},
+	{key: prefEmojiFPS, title: "Emoji frame rate", ic: icPlayFill,
+		about: "How often animated emojis move on. While any shows, the window is drawn again this many " +
+			"times a second. Noto's animations are made at about 30.",
+		opts: []perfOpt{{"", "30 a second (default)"}, {"15", "15 a second"}, {"60", "60 a second"}}},
 	{key: prefCPUs, title: "CPU cores", ic: icMemory,
 		about: "How many cores the app's work may use at once. Fewer keeps a busy moment, " +
 			"such as a history sync, from slowing down other apps, and makes it take longer.",
@@ -255,7 +288,8 @@ func (u *UI) perfSettingsPage() []settingsSection {
 		play.rows = append(play.rows, settingRow{key: "autoplay:" + o.v, kind: setRadio, title: o.label,
 			on: perf.autoplay == o.v, run: func() { u.setPerfPref(prefAutoplay, o.v) }})
 	}
-	play.note = "GIFs that don't play show their first picture: click one to play it in the viewer."
+	play.note = "GIFs that don't play show their first picture: click one to play it in the viewer. " +
+		"Never also keeps animated emojis still."
 	return []settingsSection{
 		{title: "Motion", rows: []settingRow{
 			toggle(prefAnimations, "Animations", "Menus, panels and highlights slide and fade. Off, they change at once"),
@@ -299,8 +333,8 @@ func (u *UI) advancedSettings() []settingsSection {
 		}}
 	return []settingsSection{
 		now,
-		{title: "Memory", rows: knobs(prefImageCache, prefLoadedMsgs, prefGCPercent, prefTrimAfter)},
-		{title: "CPU", rows: knobs(prefPlaying, prefCPUs)},
+		{title: "Memory", rows: knobs(prefImageCache, prefEmojiAnims, prefLoadedMsgs, prefGCPercent, prefTrimAfter)},
+		{title: "CPU", rows: knobs(prefPlaying, prefEmojiDec, prefEmojiFPS, prefCPUs)},
 		{rows: []settingRow{reset},
 			note: "These change how much memory and CPU the app uses, not what it shows. Watch Memory now as you try them."},
 	}
@@ -327,6 +361,7 @@ type memStats struct {
 	private      uint64 // the private working set; 0 where it isn't known
 	heap, fromOS uint64
 	images       int
+	emojis       int // bytes of animated emoji frames
 }
 
 // memoryStats draws Memory now: what Task Manager shows, the Go heap and
@@ -340,6 +375,9 @@ func (u *UI) memoryStats(gtx C) D {
 		s.at, s.private = now, memtrim.PrivateWorkingSet()
 		s.heap, s.fromOS = ms.HeapInuse, ms.HeapSys-ms.HeapReleased
 		s.images, _ = u.images.usage()
+		u.emojiAnims.mu.Lock()
+		s.emojis = u.emojiAnims.held
+		u.emojiAnims.mu.Unlock()
 	}
 	if !gtx.Now.IsZero() {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(time.Second)})
@@ -356,6 +394,7 @@ func (u *UI) memoryStats(gtx C) D {
 	stat("Go heap in use", mb(s.heap))
 	stat("Go heap held from the system", mb(s.fromOS))
 	stat("Pictures decoded", mb(uint64(s.images))+" of "+mb(uint64(budget)))
+	stat("Animated emojis", mb(uint64(s.emojis))+" of "+mb(uint64(perf.emojiAnims)))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 }
 

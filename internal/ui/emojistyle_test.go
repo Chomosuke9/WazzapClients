@@ -261,6 +261,8 @@ func TestEmojiAnimation(t *testing.T) {
 	}
 	if u.emojiAnims.next.IsZero() {
 		t.Error("no frame asked for the next picture")
+	} else if d := u.emojiAnims.next.Sub(u.emojiAnims.start); d%(time.Second/time.Duration(perf.emojiFPS)) != 0 {
+		t.Errorf("the next picture is asked for %v after the start, off the emojis' ticks", d)
 	}
 	u.emojiAnims.endFrame(gtx)
 	if u.emojiAnims.m[k] == nil {

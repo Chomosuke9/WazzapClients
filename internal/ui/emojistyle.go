@@ -398,7 +398,9 @@ func (u *UI) textEmojiKey(name string, side int) string {
 // Animated emojis are decoded once, every frame scaled down to the size
 // they show at, and played from memory while they show: a 512x512 frame
 // takes about 6 ms to decode. The frames of all of them together are kept
-// under emojiAnimBudget; those not drawn for emojiAnimKeep go.
+// under perf.emojiAnims (Settings > Performance > Advanced), and at most
+// perf.emojiDec decode at once; those not drawn for emojiAnimKeep go.
+// They play at most perf.emojiFPS frames a second.
 //
 // An animation's frames are cells of one picture (its sheet), drawn a cell
 // at a time. Gio uploads each image to a GPU texture of its own (with
@@ -407,10 +409,8 @@ func (u *UI) textEmojiKey(name string, side int) string {
 // second for a message full of emojis, which grew the graphics driver's
 // memory by gigabytes. The sheet is uploaded once and stays while it shows.
 const (
-	emojiAnimBudget = 16 << 20
-	emojiAnimKeep   = 3 * time.Second
-	emojiDecoders   = 2
-	emojiSheetMax   = 4096 // pixels across or down a sheet
+	emojiAnimKeep = 3 * time.Second
+	emojiSheetMax = 4096 // pixels across or down a sheet
 )
 
 type emojiAnimKey struct {
@@ -460,7 +460,7 @@ func (u *UI) drawEmojiAnim(gtx C, name string, side int, at image.Point) bool {
 	a := as.m[k]
 	if a == nil {
 		cost := emojiAnimCost(side)
-		if as.decoding >= emojiDecoders || as.held+cost > emojiAnimBudget {
+		if as.decoding >= perf.emojiDec || as.held+cost > perf.emojiAnims {
 			as.mu.Unlock()
 			return false
 		}
@@ -480,12 +480,19 @@ func (u *UI) drawEmojiAnim(gtx C, name string, side int, at image.Point) bool {
 	if sheet == nil {
 		return false
 	}
-	t := gtx.Now.Sub(as.start) % total
+	// Every animation moves on the same ticks, perf.emojiFPS a second:
+	// each on its own frame times, many of them would ask for a frame of
+	// the whole window almost every time the display refreshes.
+	tick := time.Second / time.Duration(perf.emojiFPS)
+	el := gtx.Now.Sub(as.start).Truncate(tick)
+	t := el % total
 	i := 0
 	for ; i < len(delays)-1 && t >= delays[i]; i++ {
 		t -= delays[i]
 	}
-	if next := gtx.Now.Add(delays[i] - t); as.next.IsZero() || next.Before(as.next) {
+	// The next frame shows from the first tick after this one ends.
+	change := el + delays[i] - t
+	if next := as.start.Add((change + tick - 1) / tick * tick); as.next.IsZero() || next.Before(as.next) {
 		as.next = next
 	}
 	if a.op == (paint.ImageOp{}) {
