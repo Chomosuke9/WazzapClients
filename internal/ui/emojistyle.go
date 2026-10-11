@@ -36,10 +36,12 @@ import (
 //     go-text asks emojiBitmap (Font.BitmapHook) for each bitmap glyph.
 //     Gio caches glyph pictures and the drawing of whole lines, so the UI
 //     gets a new shaper when pictures arrive (refreshEmoji).
-//   - The animated styles play the animations of a message of emojis alone
-//     (jumbo.go) and, with emojiAnimated, of the emojis in message text
-//     (styledtext's Bitmap hook). Labels (the chat list, names) and the
-//     picker stay still.
+//   - The animated styles play every emoji's animation: in labels (the
+//     chat list, names, quotes, reactions: hookLabel's bitmap hook), a
+//     message of emojis alone (jumbo.go) and the picker. Message text
+//     (styledtext's Bitmap hook), where a message full of emojis is the
+//     heavy case, plays only in emojiAnimated. The composer stays still:
+//     widget.Editor paints its own text.
 
 // prefEmojiStyle is an app preference (appPrefs): "" is 2D.
 const prefEmojiStyle = "emoji_style"
@@ -47,19 +49,19 @@ const prefEmojiStyle = "emoji_style"
 type emojiStyleKind int32
 
 const (
-	emoji2D           emojiStyleKind = iota
-	emojiAnimateJumbo                // 2D, a message of emojis alone animated
-	emojiAnimated                    // 2D, emojis in messages animated
+	emoji2D          emojiStyleKind = iota
+	emojiAnimOutside                // 2D, animated everywhere but in message text
+	emojiAnimated                   // 2D, animated everywhere
 	emoji3D
 )
 
 var emojiStyles = []struct {
 	pref, title, sub string
 }{
-	emoji2D:           {"", "2D", "Noto Color Emoji"},
-	emojiAnimateJumbo: {"2d_anim_alone", "2D, animated when alone", "Messages of only emojis play their animations"},
-	emojiAnimated:     {"2d_anim", "2D animated", "Emojis in messages play their animations"},
-	emoji3D:           {"3d", "3D", "Noto's 3D emojis"},
+	emoji2D:          {"", "2D", "Noto Color Emoji"},
+	emojiAnimOutside: {"2d_anim_alone", "2D, animated outside messages", "Emojis play their animations, except in the text of messages: big emojis sent alone still do"},
+	emojiAnimated:    {"2d_anim", "2D animated", "Every emoji plays its animation, in messages too"},
+	emoji3D:          {"3d", "3D", "Noto's 3D emojis"},
 }
 
 // emojiStyleNow is the chosen style. The 3D hook reads it from any
@@ -172,7 +174,7 @@ func downloadAllEmojis() int {
 	switch emojiStyle() {
 	case emoji3D:
 		n = emojiStore.Prefetch(emojiset.ThreeD, names)
-	case emojiAnimateJumbo, emojiAnimated:
+	case emojiAnimOutside, emojiAnimated:
 		n = emojiStore.Prefetch(emojiset.Animated, names)
 	}
 	emojiBatch = n
@@ -333,32 +335,42 @@ func (u *UI) glyphEmoji(g text.Glyph) string {
 }
 
 // animateEmojis reports whether emojis in message text play, and
-// animateJumbo whether those of messages of emojis alone do.
+// animateOthers whether all the others do (labels, big emojis, the picker).
 func animateEmojis() bool {
 	return emojiStyle() == emojiAnimated && emojiStore != nil && perf.autoplay != "never"
 }
 
-func animateJumbo() bool {
+func animateOthers() bool {
 	s := emojiStyle()
-	return (s == emojiAnimated || s == emojiAnimateJumbo) && emojiStore != nil && perf.autoplay != "never"
+	return (s == emojiAnimated || s == emojiAnimOutside) && emojiStore != nil && perf.autoplay != "never"
 }
 
-// textEmoji draws an emoji glyph of message text in place of its picture
-// at r (styledtext's Bitmap hook): animated when the style says so and the
-// animation is ready, else the still picture from u.emojiImgs, decoded at
-// the size it shows at. It reports false to leave the glyph to the font.
+// textEmoji draws an emoji glyph of message text (styledtext's Bitmap
+// hook), and labelEmoji one of a label (hookLabel's), with drawEmojiGlyph.
+func (u *UI) textEmoji(gtx C, g text.Glyph, r image.Rectangle) bool {
+	return u.drawEmojiGlyph(gtx, g, r, animateEmojis())
+}
+
+func (u *UI) labelEmoji(gtx C, g text.Glyph, r image.Rectangle) bool {
+	return u.drawEmojiGlyph(gtx, g, r, animateOthers())
+}
+
+// drawEmojiGlyph draws an emoji glyph in place of its picture at r:
+// animated when animate is set and the animation is ready, else the still
+// picture from u.emojiImgs, decoded at the size it shows at. It reports
+// false to leave the glyph to the font.
 //
 // Gio's shaper would decode each emoji, at each text size, at the font's
 // full 136x128 (70 KB) and keep up to 1000 of them for good, each drawn
 // from a mipmapped texture of that size: a message of a few hundred
 // different emojis held tens of MB after it was deleted. u.emojiImgs is
 // bounded by bytes, and an emoji 30 pixels high takes about 4 KB there.
-func (u *UI) textEmoji(gtx C, g text.Glyph, r image.Rectangle) bool {
+func (u *UI) drawEmojiGlyph(gtx C, g text.Glyph, r image.Rectangle, animate bool) bool {
 	name := u.glyphEmoji(g)
 	if name == "" {
 		return false
 	}
-	if animateEmojis() {
+	if animate {
 		// The font's pictures are 136x128 with the emoji 128 high; the
 		// animations are squares.
 		side := r.Dy()

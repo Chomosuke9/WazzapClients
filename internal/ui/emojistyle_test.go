@@ -18,6 +18,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/text"
+	"gioui.org/unit"
 	fontapi "github.com/go-text/typesetting/font"
 	"golang.org/x/image/math/fixed"
 
@@ -219,10 +220,10 @@ func animatedWebP(t *testing.T, colors ...color.NRGBA) []byte {
 // the size it shows at, and goes when it hasn't shown for a while.
 func TestEmojiAnimation(t *testing.T) {
 	red, blue := color.NRGBA{R: 255, A: 255}, color.NRGBA{B: 255, A: 255}
-	_, asked := useEmojiStore(t, emojiAnimateJumbo, map[string][]byte{
+	_, asked := useEmojiStore(t, emojiAnimOutside, map[string][]byte{
 		"animated/1f600.webp": animatedWebP(t, red, blue),
 	})
-	if !animateJumbo() || animateEmojis() {
+	if !animateOthers() || animateEmojis() {
 		t.Fatal("the style animates the wrong emojis")
 	}
 	u := New(mock.New())
@@ -318,6 +319,43 @@ func TestTextEmojiStill(t *testing.T) {
 	}
 }
 
+// TestLabelEmojiAnimation: outside messages, as in a label, emojis play
+// in both animated styles; in message text only in "2D animated".
+func TestLabelEmojiAnimation(t *testing.T) {
+	useEmojiStore(t, emoji2D, map[string][]byte{
+		"animated/1f600.webp": animatedWebP(t, color.NRGBA{R: 255, A: 255}, color.NRGBA{B: 255, A: 255}),
+	})
+	u := New(mock.New())
+	u.setEmojiStyle(emojiAnimOutside)
+	if !animateOthers() || animateEmojis() {
+		t.Fatal("animated outside messages plays message text, or nothing else")
+	}
+	gtx := layout.Context{Ops: new(op.Ops), Now: testNow(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(400, 100)}}
+	u.refreshEmoji(gtx)
+	played := func() bool {
+		u.emojiAnims.mu.Lock()
+		defer u.emojiAnims.mu.Unlock()
+		for k, a := range u.emojiAnims.m {
+			if k.name == "1f600" && a.sheet != nil {
+				return true
+			}
+		}
+		return false
+	}
+	for end := time.Now().Add(10 * time.Second); !played(); time.Sleep(5 * time.Millisecond) {
+		gtx.Ops.Reset()
+		u.label(16, "Hi 😀", u.pal.Text).Layout(gtx)
+		if time.Now().After(end) {
+			t.Fatal("the label's emoji never played")
+		}
+	}
+	u.setEmojiStyle(emojiAnimated)
+	if !animateOthers() || !animateEmojis() {
+		t.Error("2D animated doesn't play everything")
+	}
+}
+
 // TestEmojiStyleSettings: Settings > Chats > Emoji style picks the style.
 func TestEmojiStyleSettings(t *testing.T) {
 	useEmojiStore(t, emoji2D, map[string][]byte{"3d/1f600.png": solidPNG(136, 128, color.NRGBA{A: 255})})
@@ -343,7 +381,7 @@ func TestEmojiStyleSettings(t *testing.T) {
 	for _, r := range page[0].rows {
 		titles = append(titles, r.title)
 	}
-	if want := []string{"2D", "2D, animated when alone", "2D animated", "3D"}; !slices.Equal(titles, want) {
+	if want := []string{"2D", "2D, animated outside messages", "2D animated", "3D"}; !slices.Equal(titles, want) {
 		t.Fatalf("styles %q, want %q", titles, want)
 	}
 	if !page[0].rows[0].on {

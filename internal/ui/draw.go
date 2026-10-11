@@ -170,7 +170,7 @@ type labelOpts struct {
 // label is a label of txt. Privacy mode hides it where u.secret says
 // (privacy.go).
 func (u *UI) label(size unit.Sp, txt string, col color.NRGBA, o ...labelOpts) labelStyle {
-	l := labelStyle{LabelStyle: material.Label(u.th, size, displayText(txt)), hide: u.secret}
+	l := labelStyle{LabelStyle: material.Label(u.th, size, displayText(txt)), hide: u.secret, bitmap: u.labelHook}
 	l.Color = col
 	l.MaxLines = 1
 	if len(o) > 0 {

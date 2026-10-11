@@ -91,8 +91,11 @@ type UI struct {
 	emojiView  emojiView               // what emojis were drawn with (emojistyle.go)
 	emojiAnims emojiAnims              // animated emojis on screen
 	emojiKeys  map[emojiAnimKey]string // see textEmojiKey
-	players    players                 // animated stickers on screen
-	bars       map[*widget.List]*scrollbar
+	// u.textEmoji and u.labelEmoji, bound once: a method value made for
+	// every label would be garbage every frame.
+	textHook, labelHook bitmapHook
+	players             players // animated stickers on screen
+	bars                map[*widget.List]*scrollbar
 
 	page         page
 	statusSeen   time.Time // when the Status page was last open
@@ -348,6 +351,7 @@ func New(b model.Backend) *UI {
 	u.images = newImageCache(240, 32<<20)
 	u.images.resize(perf.imageCache)
 	u.emojiImgs = newImageCache(600, 4<<20)
+	u.textHook, u.labelHook = u.textEmoji, u.labelEmoji
 	u.clicks.m = make(map[string]*clickEntry)
 	u.drafts = make(map[string]*chatDraft)
 	u.info.list.Axis = layout.Vertical

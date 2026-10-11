@@ -10,6 +10,8 @@ import (
 	"github.com/go-text/typesetting/language"
 	"github.com/go-text/typesetting/shaping"
 	"golang.org/x/image/math/fixed"
+
+	"github.com/chomosuke9/wazzapclients/internal/emojiset"
 )
 
 // The emoji picker draws its emojis as pictures scaled to the cell, not as
@@ -129,9 +131,17 @@ func splitEmojis(s string) []string {
 }
 
 // layoutEmojiImage draws ch at text size px (like a label of that size
-// would), centered in a box of size. It reports false when ch has no
+// would), centered in a box of size, animated when the emoji style
+// animates emojis outside message text. It reports false when ch has no
 // picture to draw, and the caller should fall back to a label.
 func (u *UI) layoutEmojiImage(gtx C, ch string, px int, size image.Point) bool {
+	if animateOthers() {
+		// An animation is square, as high as the still picture.
+		s := px * 128 / notoPpem
+		if u.drawEmojiAnim(gtx, emojiset.Name([]rune(ch)), s, image.Pt((size.X-s)/2, (size.Y-s)/2)) {
+			return true
+		}
+	}
 	// Gio draws a bitmap glyph scaled by px/ppem.
 	side := px * notoWidth / notoPpem
 	e := u.emojiImgs.get(ch, side, func() []byte { return emojiPNG(ch) })

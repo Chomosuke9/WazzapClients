@@ -98,7 +98,9 @@ Gotchas already found in the pinned version (v0.10.x):
 - Gio's shaper keeps up to 1000 color-emoji bitmaps decoded at the font's full 136x128
   (70 KB each) for good. The emoji picker draws its emojis as pictures from
   `u.emojiImgs` instead (`emojiimg.go`); scrolling it through Labels pinned ~70 MB.
-  Message text does the same through styledtext's `Bitmap` hook (`textEmoji`).
+  Message text does the same through styledtext's `Bitmap` hook (`textEmoji`), and
+  labels through `hookLabel` (`label.go`, Gio's `widget.Label` with that hook;
+  `labelEmoji`).
 - Gio gives every `paint.ImageOp` a GPU texture of its own (mipmapped) and frees it
   after a frame without it. Don't play precomputed frames as an ImageOp each: every
   frame change made and freed a texture, thousands a second for a message of
@@ -169,9 +171,9 @@ Gotchas already found in the pinned version (v0.10.x):
 - Gio's shaper caches every bitmap glyph's decoded picture, and the drawing of whole lines
   of them, for good. The 3D emoji style swaps the emoji font's pictures through
   `Font.BitmapHook` (a go-text patch) and gives the UI a new shaper when the style
-  changes or pictures arrive (`refreshEmoji`, `emojistyle.go`). Animated emojis in
-  message text are drawn by `styledtext`'s `TextStyle.Bitmap` hook instead of the font;
-  a glyph's face is the top 16 bits of its `text.GlyphID`.
+  changes or pictures arrive (`refreshEmoji`, `emojistyle.go`). Emojis in message
+  text and labels are drawn by bitmap hooks (`styledtext`'s `TextStyle.Bitmap`,
+  `hookLabel`'s) instead of the font, animated or still; a glyph's face is the top 16 bits of its `text.GlyphID`.
 - Gio clips a color-emoji bitmap to the bitmap's own size (about 136x128) before
   scaling it to the font size, so above ~109 px only its top left corner shows. The
   photo editor lays text and emoji out at most `markTextPx` tall and scales them up.
@@ -332,7 +334,7 @@ cmd/notices/       writes THIRD_PARTY_NOTICES.md from the licenses of what cmd/w
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
                    line as fit, in stickerrow.go; a text of one to three emojis
                    alone, drawn big without a bubble like a sticker, in jumbo.go; the Emoji style
-                   (Settings > Chats: 2D, built in; 2D with emoji-only messages animated; 2D animated;
+                   (Settings > Chats: 2D, built in; 2D animated outside message text; 2D animated;
                    3D: the others downloaded one emoji at a time as they show) in emojistyle.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
