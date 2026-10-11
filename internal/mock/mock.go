@@ -87,11 +87,16 @@ func New() *Backend {
 	b.demoVotes()
 	b.demoReactions()
 	b.seedReactors()
-	sent := b.find(&model.Message{ChatID: "rina", ID: "rina-8"}).Time
-	b.versions = map[string][]model.Version{"rina/rina-8": {
-		{Text: "Let's go there on Saturday", Time: sent},
-		{Text: "Let's go there on Saturday morning", Time: sent.Add(time.Minute)},
-	}}
+	// Rina's edited message says what it said before each edit.
+	for _, m := range b.msgs["rina"] {
+		if !m.Edited.IsZero() {
+			b.versions = map[string][]model.Version{m.ChatID + "/" + m.ID: {
+				{Text: "Let's go there on Saturday", Time: m.Time},
+				{Text: "Let's go there on Saturday morning", Time: m.Time.Add(time.Minute)},
+			}}
+			break
+		}
+	}
 	b.lists = []*model.ChatList{{ID: "l1", Name: "Family", Chats: []string{"family", "mom"}}, {ID: "l2", Name: "Work"}}
 	return b
 }

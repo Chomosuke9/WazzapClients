@@ -1419,8 +1419,9 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
 // switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
 // picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", a mention
-// in /schedule's message "slashschedule", the notes of commands run "slashrun", or ghost mode
-// turned on with /ghost "ghost".
+// in /schedule's message "slashschedule", the notes of commands run "slashrun", a scheduled
+// message and the AFK bar without their notes "scheduled", or ghost mode turned on with
+// /ghost "ghost".
 // "graywarning" opens the acknowledgment for Keep deleted messages.
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
@@ -1728,7 +1729,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.attach.anim.snap(true)
 			u.conv.composer.SetText("Sunday at the beach")
 		}
-	case "slash", "slashkick", "slashcalc", "slashschedule", "slashrun", "ghost":
+	case "slash", "slashkick", "slashcalc", "slashschedule", "slashrun", "scheduled", "ghost":
 		// Slash commands (open a group with -ochat): the picker of
 		// commands, /kick's options, /calc's answer, a member picked in
 		// /schedule's message, the notes of commands run, or ghost mode
@@ -1768,6 +1769,16 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 				u.sendComposer()
 			}
 			u.applyEvents()
+		case "scheduled":
+			for _, s := range []string{"/schedule 2h Don't forget the demo", "/afk lunch, back at 2"} {
+				u.applyEvents()
+				set(s)
+				u.sendComposer()
+			}
+			u.applyEvents()
+			// The scheduled bubble and the AFK bar say what the notes would.
+			delete(u.slash.notes, u.selected.ID)
+			u.msgsVer++
 		case "ghost":
 			u.grayCmds["ghost"] = true // a gray command, off by default
 			set("/ghost ")

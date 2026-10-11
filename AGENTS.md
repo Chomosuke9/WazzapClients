@@ -525,6 +525,8 @@ go run ./cmd/wazzap            # run the app (links to WhatsApp via QR code)
 go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/wazzap -background  # start in the tray, without a window
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
+# Every screenshot in README.md (the list is readmeShots in cmd/screenshot/readme.go):
+go run ./cmd/screenshot -readme -w 1280 -h 800 -scale 1.25 -out docs/screenshots
 go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
 # Scroll the chat list for 1200 frames and print frame times, CPU, GCs, the frame
 # rate and late frames; -ballast adds live heap like a long session's, -cpuprofile

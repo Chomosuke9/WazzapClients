@@ -52,6 +52,7 @@ func main() {
 	overlayChat := flag.String("ochat", "rina", "with -overlay, the demo chat to open")
 	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, viewer-click (thumbnail at -at), info, message, reorder, hover, scroll (-at over the chat), typing, typists (-ochat work), ghost, privacy, privacyhover or vote (-ochat design)")
 	step := flag.Duration("step", 30*time.Millisecond, "with -film, time between frames")
+	readme := flag.Bool("readme", false, "render every screenshot in README.md into <out> (use -out docs/screenshots -w 1280 -h 800 -scale 1.25)")
 	flag.Parse()
 	if *memprofile != "" {
 		defer func() {
@@ -79,6 +80,12 @@ func main() {
 
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		log.Fatal(err)
+	}
+	if *readme {
+		if err := renderReadme(*out, int(float64(*width)**scale), int(float64(*height)**scale), float32(*scale)); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 	if *filmName != "" {
 		var x, y int
@@ -144,9 +151,7 @@ func main() {
 		}
 		u := ui.New(b)
 		if s.login {
-			// A made-up pairing payload of realistic length.
-			u.SetConn(model.ConnEvent{State: model.StateQR,
-				QR: "2@Qm9ndXNQYWlyaW5nUmVmZXJlbmNlRm9yU2NyZWVuc2hvdHNPbmx5X19fX19fX19fX19f,ZmFrZU5vaXNlS2V5X19fX19fX19fX19fX19fX19fXw==,ZmFrZUlkZW50aXR5S2V5X19fX19fX19fX19fX19fXw==,ZmFrZUFkdlNlY3JldF9fX19fX19fX19fX19fX19fXw==,1"})
+			u.SetConn(model.ConnEvent{State: model.StateQR, QR: demoQR})
 		} else {
 			u.Start(func() {})
 		}
