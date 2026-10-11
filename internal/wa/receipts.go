@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/types"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -67,6 +68,119 @@ func (s *msgStore) receipts(ctx context.Context, chat, id string) []personReceip
 		out = append(out, r)
 	}
 	return out
+}
+
+// userReceipt is one person's step in a group's grouped receipt.
+type userReceipt struct {
+	id, typ string
+	who     types.JID
+	at      int64
+}
+
+// groupedReceipts reads a group's grouped receipts itself. Without a
+// participant, a <receipt> holds many people's receipts of one of your
+// messages: <participants message_id="…"> with a <user jid="…" t="…"
+// type="delivery|read|played|inactive"/> each. hypermeow reads the
+// message's ID from a "key" attribute and gives every user the receipt's
+// own type, so their receipts were stored under no message at all, and
+// Message info missed most of a big group. The node goes on to hypermeow
+// without its users, which it still acks.
+func (b *Backend) groupedReceipts(_ context.Context, node *waBinary.Node) (*waBinary.Node, bool) {
+	if node.Tag != "receipt" {
+		return nil, false
+	}
+	if _, ok := node.Attrs["participant"]; ok {
+		return nil, false
+	}
+	parts := node.GetChildrenByTag("participants")
+	if len(parts) == 0 {
+		return nil, false
+	}
+	ag := node.AttrGetter()
+	chat := ag.JID("from")
+	if !ag.OK() || chat.Server != types.GroupServer {
+		return nil, false
+	}
+	var rs []userReceipt
+	kept := make([]waBinary.Node, len(parts))
+	for i, p := range parts {
+		kept[i] = waBinary.Node{Tag: p.Tag, Attrs: p.Attrs}
+		pag := p.AttrGetter()
+		id := pag.OptionalString("message_id")
+		if id == "" {
+			id = pag.OptionalString("key")
+		}
+		if id == "" {
+			continue
+		}
+		for _, u := range p.GetChildrenByTag("user") {
+			uag := u.AttrGetter()
+			r := userReceipt{id: id, who: uag.JID("jid"), at: uag.UnixTime("t").Unix(), typ: uag.OptionalString("type")}
+			if uag.OK() {
+				rs = append(rs, r)
+			}
+		}
+	}
+	if len(rs) > 0 {
+		b.goWork(func() { b.onGroupedReceipts(chat.String(), rs) })
+	}
+	out := *node
+	out.Content = kept
+	return &out, false
+}
+
+// onGroupedReceipts stores what a grouped receipt says, then moves the
+// ticks of its messages on, once.
+func (b *Backend) onGroupedReceipts(chat string, rs []userReceipt) {
+	ctx := b.ctx
+	// Names first: the device store must not be read inside a wz_* write
+	// transaction.
+	var prs []personReceipt
+	for _, r := range rs {
+		pr := personReceipt{chat: chat, id: r.id, delivered: r.at}
+		switch types.ReceiptType(r.typ) {
+		case "delivery", types.ReceiptTypeDelivered:
+		case types.ReceiptTypeRead:
+			pr.read = r.at
+		case types.ReceiptTypePlayed:
+			pr.played = r.at
+		default:
+			// "inactive": one of their devices that hasn't been online
+			// for a while, which doesn't mean they got it.
+			continue
+		}
+		if b.isMe(r.who) {
+			continue
+		}
+		pr.who = b.canonical(ctx, r.who).String()
+		prs = append(prs, pr)
+	}
+	if len(prs) == 0 {
+		return
+	}
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		b.log.Warnf("store receipts: %v", err)
+		return
+	}
+	defer tx.Rollback()
+	var ids []string
+	seen := map[string]bool{}
+	for _, pr := range prs {
+		if err := b.store.putReceipt(ctx, tx, pr); err != nil {
+			b.log.Warnf("store receipt: %v", err)
+			return
+		}
+		if !seen[pr.id] {
+			seen[pr.id] = true
+			ids = append(ids, pr.id)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		b.log.Warnf("store receipts: %v", err)
+		return
+	}
+	b.setTicks(ctx, chat, ids, model.Delivered, true)
 }
 
 // otherMembers returns a group's stored members other than you.

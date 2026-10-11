@@ -196,6 +196,12 @@ Gotchas already found in the pinned version (v0.10.x):
   does those the same way. hypermeow can't send an event answer (it has no stanza
   type for it), so the app shows answers but doesn't send them. Your own votes are
   stored under `meVoter`, since they come from your phone number or your LID.
+- A group's delivery receipts mostly come grouped: a `<receipt>` without a participant,
+  holding `<participants message_id="…">` with a `<user jid t type="delivery|read|inactive"/>`
+  each. hypermeow reads the ID from a `key` attribute and gives every user the receipt's
+  own type, so Message info missed most of a group. `groupedReceipts`
+  (`internal/wa/receipts.go`), the client's `RawNodeHandler`, reads them itself and passes
+  the node on without its users, which hypermeow still acks.
 - WhatsApp sends view once media only to the phone. Linked devices get a stanza with
   `<unavailable type="view_once"/>` and no ciphertext, which hypermeow hands out as an
   `events.UndecryptableMessage`; `onUndecryptable` stores it as a `KindViewOnce`

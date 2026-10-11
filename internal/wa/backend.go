@@ -262,6 +262,7 @@ func (b *Backend) useDevice(device *store.Device) {
 	// full sync must emit them too.
 	cli.EmitAppStateEventsOnFullSync = true
 	cli.AddEventHandler(b.handle)
+	cli.RawNodeHandler = b.groupedReceipts
 	b.cliMu.Lock()
 	b.cli = cli
 	b.cliMu.Unlock()
@@ -1232,11 +1233,16 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 			b.log.Warnf("store receipt: %v", err)
 		}
 	}
-	// A group message's ticks wait for every member.
+	b.setTicks(ctx, chat, ids, r, e.IsGroup)
+}
+
+// setTicks moves the ticks of your messages ids on after a receipt that
+// says r. A group message's ticks wait for every member.
+func (b *Backend) setTicks(ctx context.Context, chat string, ids []string, r model.Receipt, group bool) {
 	byReceipt := map[model.Receipt][]string{}
 	for _, id := range ids {
 		rr := r
-		if e.IsGroup {
+		if group {
 			if g, ok := b.groupReceipt(ctx, chat, id); ok {
 				rr = g
 			}
