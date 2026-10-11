@@ -1,0 +1,24 @@
+diff --git a/gpu/gpu.go b/gpu/gpu.go
+index bd8950f..bee71b8 100644
+--- a/gpu/gpu.go
++++ b/gpu/gpu.go
+@@ -888,6 +888,11 @@ func (r *renderer) drawLayers(layers []opacityLayer, ops []imageOp) {
+ 
+ func (d *drawOps) reset(viewport image.Point) {
+ 	d.viewport = viewport
++	// WazzapClients patch: forget the last frame's images. Truncated, the
++	// slice kept pointing at them past its new length, so every picture
++	// drawn in a frame with more images than the frames after it (an emoji
++	// picker, a photo viewer) stayed reachable until one drew as many.
++	clear(d.imageOps)
+ 	d.imageOps = d.imageOps[:0]
+ 	d.pathOps = d.pathOps[:0]
+ 	d.pathOpCache = d.pathOpCache[:0]
+@@ -1111,6 +1116,7 @@ loop:
+ 			if bounds.Min == (image.Point{}) && bounds.Max == d.viewport && rect && mat.opaque && (mat.material == materialColor) && len(d.opacityStack) == 0 {
+ 				// The image is a uniform opaque color and takes up the whole screen.
+ 				// Scrap images up to and including this image and set clear color.
++				clear(d.imageOps) // WazzapClients patch: see reset
+ 				d.imageOps = d.imageOps[:0]
+ 				d.clearColor = mat.color.Opaque()
+ 				d.clear = true

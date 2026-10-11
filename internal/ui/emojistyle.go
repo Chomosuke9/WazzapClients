@@ -21,6 +21,7 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	"github.com/chomosuke9/wazzapclients/internal/emojiset"
+	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
@@ -456,7 +457,25 @@ type emojiAnims struct {
 	decoding int
 	start    time.Time // every animation plays on this clock
 	next     time.Time // the next frame any of this frame's anims needs
+
+	dropped  int       // bytes of sheets let go since the last trim
+	lastTrim time.Time // see endFrame
 }
+
+// emojiTrimAfter is how many bytes of sheets endFrame lets go before it
+// gives memory back to the system, at most once per emojiTrimEvery.
+const (
+	emojiTrimAfter = 8 << 20
+	emojiTrimEvery = 10 * time.Second
+)
+
+// trimMemory gives memory back to the system, trimDelay after endFrame
+// asks: until Gio's next frame its texture cache, and the last frame's
+// ops, still hold the sheets let go. Tests replace both.
+var (
+	trimMemory = memtrim.Trim
+	trimDelay  = time.Second
+)
 
 // drawEmojiAnim draws the animation of emoji name, side pixels square, at
 // at. It reports false (the caller draws the still picture) until the
@@ -509,6 +528,10 @@ func (u *UI) drawEmojiAnim(gtx C, name string, side int, at image.Point) bool {
 	}
 	if a.op == (paint.ImageOp{}) {
 		a.op = paint.NewImageOp(sheet)
+		// Drawn pixel for pixel, a sheet needs no mipmaps, which made
+		// its GPU copy (in system memory with integrated graphics) a
+		// third bigger.
+		a.op.Filter = paint.FilterNearest
 	}
 	defer op.Offset(at).Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: image.Pt(side, side)}.Push(gtx.Ops).Pop()
@@ -585,8 +608,18 @@ func (as *emojiAnims) endFrame(gtx C) {
 	for k, a := range as.m {
 		if a.sheet != nil && gtx.Now.Sub(a.used) > emojiAnimKeep {
 			as.held -= a.cost
+			as.dropped += a.cost
 			delete(as.m, k)
 		}
+	}
+	// The window trims memory only after a while without frames, and
+	// animated emojis on screen keep frames coming: after the picker or
+	// a chat full of them closed, the process went on holding what their
+	// sheets took (about three times the sheets: their GPU copies and GC
+	// headroom) until it next had a quiet moment.
+	if as.dropped >= emojiTrimAfter && perf.trimAfter != 0 && gtx.Now.Sub(as.lastTrim) >= emojiTrimEvery {
+		as.dropped, as.lastTrim = 0, gtx.Now
+		time.AfterFunc(trimDelay, trimMemory)
 	}
 	if !as.next.IsZero() {
 		gtx.Execute(op.InvalidateCmd{At: as.next})

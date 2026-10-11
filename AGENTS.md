@@ -7,9 +7,10 @@ Guidance for AI coding agents (and humans) working on this repository.
 WazzapClients is a lightweight, native WhatsApp desktop client written in Go.
 
 - **UI:** [Gio](https://gioui.org) (`gioui.org`), an immediate-mode GPU UI toolkit.
-  Its text library `github.com/go-text/typesetting` is patched to use less memory:
-  `patches/apply.sh` builds the patched copy in `third_party/typesetting` (not checked in;
-  run it after cloning). See `patches/README.md`.
+  Its text library `github.com/go-text/typesetting` is patched to use less memory, and
+  Gio itself to let go of the pictures it drew: `patches/apply.sh` builds the patched
+  copies in `third_party/typesetting` and `third_party/gio` (not checked in; run it
+  after cloning). See `patches/README.md`.
 - **WhatsApp protocol:** [`github.com/polymorfa/hypermeow`](https://github.com/polymorfa/hypermeow),
   branch `main`. It is a performance-focused fork of `tulir/whatsmeow` that keeps the
   upstream package names. Install it with `go get github.com/polymorfa/hypermeow@main`
@@ -27,11 +28,11 @@ and `app.NewWindow()` became a zero-value `app.Window`.
 **Every time you write or change code**, first check the current documentation for the
 APIs you are about to use:
 
-1. The version pinned in `go.mod` is the source of truth. Read the actual source in the
-   module cache when you're unsure:
-   `$(go env GOMODCACHE)/gioui.org@<version>/...`. go-text is `third_party/typesetting`
-   (upstream plus `patches/typesetting.patch`). Change go-text through the patch, not in
-   `third_party`, which `apply.sh` overwrites.
+1. The version pinned in `go.mod` is the source of truth. Read the actual source when
+   you're unsure: Gio is `third_party/gio` (`gioui.org@<version>` from the module cache
+   plus `patches/gio.patch`) and go-text `third_party/typesetting` (upstream plus
+   `patches/typesetting.patch`). Change them through the patches, not in `third_party`,
+   which `apply.sh` overwrites.
 2. API reference: https://pkg.go.dev/gioui.org (pick the version that matches `go.mod`).
 3. Guides:
    - Learn: https://gioui.org/doc/learn/get-started, https://gioui.org/doc/learn/split-widget,
@@ -101,6 +102,11 @@ Gotchas already found in the pinned version (v0.10.x):
   Message text does the same through styledtext's `Bitmap` hook (`textEmoji`), and
   labels through `hookLabel` (`label.go`, Gio's `widget.Label` with that hook;
   `labelEmoji`).
+- Gio's renderer kept pointing at the pictures of its busiest frame (a truncated
+  slice), so they stayed in the heap after they were gone from the screen.
+  `patches/gio.patch` clears it. Each MB of animated emoji frames costs about 2 MB
+  besides (its GPU copy, in system memory with integrated graphics, and GC headroom),
+  so `emojiAnims.endFrame` trims memory after letting go of many.
 - Gio gives every `paint.ImageOp` a GPU texture of its own (mipmapped) and frees it
   after a frame without it. Don't play precomputed frames as an ImageOp each: every
   frame change made and freed a texture, thousands a second for a message of
@@ -410,7 +416,7 @@ internal/accounts/ the WhatsApp accounts linked on this computer (accounts.json)
                    the ones added later are accounts/<n>; and how each runs while another
                    is open (Mode: off, a check every 5 to 60 minutes, or always connected)
                    and when it last checked
-patches/           go-text memory patch and apply.sh, which builds third_party/ (gitignored)
+patches/           go-text and Gio patches and apply.sh, which builds third_party/ (gitignored)
 ```
 
 ## Window lifecycle and notifications
@@ -603,8 +609,8 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \
 ## Committing
 
 - Stage files by name (`git add path/to/file.go`), never `git add -A` or `git add .`.
-- Never commit `third_party/` (the patched go-text that `patches/apply.sh` generates,
-  ~56k lines) or `.idea/` (IDE settings). Both are gitignored; if either shows up as
+- Never commit `third_party/` (the patched go-text and Gio that `patches/apply.sh`
+  generates, ~56k lines each) or `.idea/` (IDE settings). Both are gitignored; if either shows up as
   untracked, the `.gitignore` is missing or out of date, so sync with `origin/main`.
 - Check `git diff --cached --stat` before committing. A change of tens of thousands of
   lines means something generated got staged.

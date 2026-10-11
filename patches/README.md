@@ -2,8 +2,10 @@
 
 `typesetting.patch` patches go-text (`github.com/go-text/typesetting`, Gio's
 text library) to use far less memory for fonts, and lets the app swap emoji
-pictures. `go.mod` replaces the module with `third_party/typesetting`, which
-`apply.sh` builds from the Go module cache and is not checked in:
+pictures. `gio.patch` patches Gio (`gioui.org`) so it lets go of pictures it
+drew. `go.mod` replaces the modules with `third_party/typesetting` and
+`third_party/gio`, which `apply.sh` builds from the Go module cache and are
+not checked in:
 
 ```sh
 sh patches/apply.sh
@@ -13,7 +15,15 @@ Run it after cloning, and again when the patch or the go-text version in
 `go.mod` changes. Until then the build fails with "replacement directory
 ./third_party/typesetting does not exist".
 
-What the patch does (each change is marked `WazzapClients patch`):
+What `gio.patch` does (marked `WazzapClients patch`):
+
+- `gpu/gpu.go`: the renderer clears its list of the frame's image draws
+  before reusing it. Truncated, the list kept pointing past its new length
+  at the pictures of earlier, busier frames, which stayed reachable until a
+  frame drew as many: closing the emoji picker with its animated emojis left
+  ~50 MB of their frames in the heap.
+
+What `typesetting.patch` does (each change is marked `WazzapClients patch`):
 
 - `font/opentype/tables/glyphs_glyf_src.go` and its users in `font/`: glyphs
   are parsed on demand. Upstream parses a font's whole `glyf` table when it
@@ -37,3 +47,6 @@ cd "$(mktemp -d)" && cp -R "$(go env GOMODCACHE)/github.com/go-text/typesetting@
     cp -R <repo>/third_party/typesetting/. . && git add -A &&
     git diff --cached > <repo>/patches/typesetting.patch
 ```
+
+Gio's patch moves the same way: `gioui.org@<version>` into `third_party/gio`
+and `patches/gio.patch`.
