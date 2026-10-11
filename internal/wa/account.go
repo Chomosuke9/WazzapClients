@@ -117,7 +117,7 @@ func (b *Backend) refreshBlocklist(ctx context.Context) {
 	if cli == nil {
 		return
 	}
-	list, err := cli.GetBlocklist(ctx)
+	list, err := cli.GetBlocklist(ctx, "")
 	if err != nil {
 		b.log.Debugf("blocklist: %v", err)
 		return
@@ -129,9 +129,9 @@ func (b *Backend) setBlocklist(ctx context.Context, list *types.Blocklist) {
 	if list == nil {
 		return
 	}
-	blocked := make([]model.Contact, 0, len(list.JIDs))
-	for _, j := range list.JIDs {
-		j = b.canonical(ctx, j)
+	blocked := make([]model.Contact, 0, len(list.Items))
+	for _, it := range list.Items {
+		j := b.canonical(ctx, it.LID)
 		blocked = append(blocked, model.Contact{ID: j.String(), Name: b.chatName(ctx, j)})
 	}
 	b.saveAccount(func(a *model.Account) { a.Blocked, a.BlockedKnown = blocked, true })

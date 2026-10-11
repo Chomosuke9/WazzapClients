@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	gioui.org v0.10.3
 	github.com/go-text/typesetting v0.3.5
-	github.com/polymorfa/hypermeow v0.0.0-20260819021508-07d103b3683c
+	github.com/polymorfa/hypermeow v0.0.0-20261010085506-b0e8e85a4075
 	github.com/tc-hib/winres v0.3.1
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba
 	golang.org/x/image v0.46.0
