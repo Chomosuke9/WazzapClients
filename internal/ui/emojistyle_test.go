@@ -14,9 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/text"
+	"gioui.org/unit"
 	fontapi "github.com/go-text/typesetting/font"
+	"golang.org/x/image/math/fixed"
 
 	"github.com/chomosuke9/wazzapclients/internal/emojiset"
 	"github.com/chomosuke9/wazzapclients/internal/mock"
@@ -216,10 +220,10 @@ func animatedWebP(t *testing.T, colors ...color.NRGBA) []byte {
 // the size it shows at, and goes when it hasn't shown for a while.
 func TestEmojiAnimation(t *testing.T) {
 	red, blue := color.NRGBA{R: 255, A: 255}, color.NRGBA{B: 255, A: 255}
-	_, asked := useEmojiStore(t, emojiAnimateJumbo, map[string][]byte{
+	_, asked := useEmojiStore(t, emojiAnimOutside, map[string][]byte{
 		"animated/1f600.webp": animatedWebP(t, red, blue),
 	})
-	if !animateJumbo() || animateEmojis() {
+	if !animateOthers() || animateEmojis() {
 		t.Fatal("the style animates the wrong emojis")
 	}
 	u := New(mock.New())
@@ -233,7 +237,7 @@ func TestEmojiAnimation(t *testing.T) {
 	for end := time.Now().Add(10 * time.Second); ; {
 		u.emojiAnims.mu.Lock()
 		a = u.emojiAnims.m[k]
-		done := a != nil && (a.frames != nil || a.failed)
+		done := a != nil && (a.sheet != nil || a.failed)
 		u.emojiAnims.mu.Unlock()
 		if done {
 			break
@@ -243,13 +247,14 @@ func TestEmojiAnimation(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(a.frames) != 2 || a.frames[0].Bounds().Size() != image.Pt(side, side) {
-		t.Fatalf("decoded %d frames", len(a.frames))
+	if len(a.delays) != 2 || a.sheet.Bounds().Size() != image.Pt(2*side, side) {
+		t.Fatalf("decoded %d frames on a %v sheet", len(a.delays), a.sheet.Bounds().Size())
 	}
-	if c := a.frames[0].RGBAAt(side/2, side/2); c.R < 250 || c.B > 5 {
+	at := func(i int) color.RGBA { return a.sheet.RGBAAt(a.cell(i, side).X+side/2, a.cell(i, side).Y+side/2) }
+	if c := at(0); c.R < 250 || c.B > 5 {
 		t.Errorf("the first frame is %v, want red", c)
 	}
-	if c := a.frames[1].RGBAAt(side/2, side/2); c.B < 250 || c.R > 5 {
+	if c := at(1); c.B < 250 || c.R > 5 {
 		t.Errorf("the second frame is %v, want blue", c)
 	}
 	if !u.drawEmojiAnim(gtx, "1f600", side, image.Pt(0, 0)) {
@@ -257,6 +262,8 @@ func TestEmojiAnimation(t *testing.T) {
 	}
 	if u.emojiAnims.next.IsZero() {
 		t.Error("no frame asked for the next picture")
+	} else if d := u.emojiAnims.next.Sub(u.emojiAnims.start); d%(time.Second/time.Duration(perf.emojiFPS)) != 0 {
+		t.Errorf("the next picture is asked for %v after the start, off the emojis' ticks", d)
 	}
 	u.emojiAnims.endFrame(gtx)
 	if u.emojiAnims.m[k] == nil {
@@ -277,6 +284,75 @@ func TestEmojiAnimation(t *testing.T) {
 	u.emojiAnims.endFrame(gtx)
 	if u.emojiAnims.m[k] != nil || u.emojiAnims.held != 0 {
 		t.Errorf("kept after not showing, %d bytes held", u.emojiAnims.held)
+	}
+}
+
+// TestTextEmojiStill: emojis in message text are drawn from u.emojiImgs
+// at the size they show at, not from the shaper's cache of full-size
+// pictures, which kept them for good.
+func TestTextEmojiStill(t *testing.T) {
+	useEmojiStore(t, emoji2D, nil)
+	u := New(mock.New())
+	gtx := layout.Context{Ops: new(op.Ops), Now: testNow()}
+	u.refreshEmoji(gtx)
+	sh := u.th.Shaper
+	sh.LayoutString(text.Parameters{Font: font.Font{Typeface: typeface}, PxPerEm: fixed.I(22), MaxWidth: 1000}, "😀")
+	g, ok := sh.NextGlyph()
+	if !ok {
+		t.Fatal("no glyph")
+	}
+	r := image.Rect(0, 0, 26, 24)
+	key := u.textEmojiKey("1f600", 26)
+	for end := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if !u.textEmoji(gtx, g, r) {
+			t.Fatal("left to the font")
+		}
+		if e := u.emojiImgs.get(key, 26, func() []byte { return nil }); e.state == imgReady {
+			if e.size.X > 26 || e.size.Y > 26 {
+				t.Errorf("decoded at %v, want to fit 26 pixels", e.size)
+			}
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatal("never decoded")
+		}
+	}
+}
+
+// TestLabelEmojiAnimation: outside messages, as in a label, emojis play
+// in both animated styles; in message text only in "2D animated".
+func TestLabelEmojiAnimation(t *testing.T) {
+	useEmojiStore(t, emoji2D, map[string][]byte{
+		"animated/1f600.webp": animatedWebP(t, color.NRGBA{R: 255, A: 255}, color.NRGBA{B: 255, A: 255}),
+	})
+	u := New(mock.New())
+	u.setEmojiStyle(emojiAnimOutside)
+	if !animateOthers() || animateEmojis() {
+		t.Fatal("animated outside messages plays message text, or nothing else")
+	}
+	gtx := layout.Context{Ops: new(op.Ops), Now: testNow(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(400, 100)}}
+	u.refreshEmoji(gtx)
+	played := func() bool {
+		u.emojiAnims.mu.Lock()
+		defer u.emojiAnims.mu.Unlock()
+		for k, a := range u.emojiAnims.m {
+			if k.name == "1f600" && a.sheet != nil {
+				return true
+			}
+		}
+		return false
+	}
+	for end := time.Now().Add(10 * time.Second); !played(); time.Sleep(5 * time.Millisecond) {
+		gtx.Ops.Reset()
+		u.label(16, "Hi 😀", u.pal.Text).Layout(gtx)
+		if time.Now().After(end) {
+			t.Fatal("the label's emoji never played")
+		}
+	}
+	u.setEmojiStyle(emojiAnimated)
+	if !animateOthers() || !animateEmojis() {
+		t.Error("2D animated doesn't play everything")
 	}
 }
 
@@ -305,7 +381,7 @@ func TestEmojiStyleSettings(t *testing.T) {
 	for _, r := range page[0].rows {
 		titles = append(titles, r.title)
 	}
-	if want := []string{"2D", "2D, animated when alone", "2D animated", "3D"}; !slices.Equal(titles, want) {
+	if want := []string{"2D", "2D, animated outside messages", "2D animated", "3D"}; !slices.Equal(titles, want) {
 		t.Fatalf("styles %q, want %q", titles, want)
 	}
 	if !page[0].rows[0].on {

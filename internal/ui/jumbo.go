@@ -8,13 +8,12 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
-	"github.com/chomosuke9/wazzapclients/internal/emojiset"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // A text of one to three emojis and nothing else shows them big, without a
 // bubble, with the time on a chip under them like a sticker's, as in
-// WhatsApp. The fewer the emojis, the bigger. The animated emoji styles
+// WhatsApp. The fewer the emojis, the bigger. Both animated emoji styles
 // play them (emojistyle.go).
 var jumboSizes = [jumboMax]unit.Sp{56, 46, 38}
 
@@ -76,14 +75,8 @@ func (u *UI) layoutJumbo(gtx C, m *model.Message, emojis []string) D {
 		if hide > 0 {
 			fade = paint.PushOpacity(gtx.Ops, 1-hide)
 		}
-		anim := animateJumbo()
 		for i, e := range emojis {
 			t := op.Offset(image.Pt(i*cell.X, 0)).Push(gtx.Ops)
-			// An animation is square, as high as the still picture.
-			if anim && u.drawEmojiAnim(gtx, emojiset.Name([]rune(e)), cell.Y, image.Pt((cell.X-cell.Y)/2, 0)) {
-				t.Pop()
-				continue
-			}
 			if !u.layoutEmojiImage(gtx, e, px, cell) {
 				lg := gtx
 				lg.Constraints = layout.Exact(cell)

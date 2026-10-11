@@ -27,11 +27,13 @@ func TestReadPerf(t *testing.T) {
 		prefAnimations: "off", prefSmoothScroll: "off", prefAutoplay: "hover",
 		prefImageCache: "64", prefLoadedMsgs: "800", prefGCPercent: "200",
 		prefTrimAfter: "never", prefPlaying: "1", prefCPUs: "1",
+		prefEmojiAnims: "64", prefEmojiDec: "4", prefEmojiFPS: "15",
 	} {
 		b.SetPref(k, v)
 	}
 	p := readPerf(b)
-	want := perfSettings{autoplay: "hover", imageCache: 64 << 20, loadedMsgs: 800, gcPercent: 200, gifs: 1, cpus: 1}
+	want := perfSettings{autoplay: "hover", imageCache: 64 << 20, loadedMsgs: 800, gcPercent: 200, gifs: 1, cpus: 1,
+		emojiAnims: 64 << 20, emojiDec: 4, emojiFPS: 15}
 	if p != want {
 		t.Fatalf("got %+v, want %+v", p, want)
 	}
@@ -39,6 +41,7 @@ func TestReadPerf(t *testing.T) {
 	for k, v := range map[string]string{
 		prefAutoplay: "sometimes", prefImageCache: "lots", prefLoadedMsgs: "50",
 		prefGCPercent: "-1", prefTrimAfter: "0", prefPlaying: "99", prefCPUs: "100000",
+		prefEmojiAnims: "1", prefEmojiDec: "0", prefEmojiFPS: "1000",
 	} {
 		b.SetPref(k, v)
 	}

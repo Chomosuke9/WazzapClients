@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"math"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,10 +36,12 @@ import (
 //     go-text asks emojiBitmap (Font.BitmapHook) for each bitmap glyph.
 //     Gio caches glyph pictures and the drawing of whole lines, so the UI
 //     gets a new shaper when pictures arrive (refreshEmoji).
-//   - The animated styles play the animations of a message of emojis alone
-//     (jumbo.go) and, with emojiAnimated, of the emojis in message text
-//     (styledtext's Bitmap hook). Labels (the chat list, names) and the
-//     picker stay still.
+//   - The animated styles play every emoji's animation: in labels (the
+//     chat list, names, quotes, reactions: hookLabel's bitmap hook), a
+//     message of emojis alone (jumbo.go) and the picker. Message text
+//     (styledtext's Bitmap hook), where a message full of emojis is the
+//     heavy case, plays only in emojiAnimated. The composer stays still:
+//     widget.Editor paints its own text.
 
 // prefEmojiStyle is an app preference (appPrefs): "" is 2D.
 const prefEmojiStyle = "emoji_style"
@@ -45,19 +49,19 @@ const prefEmojiStyle = "emoji_style"
 type emojiStyleKind int32
 
 const (
-	emoji2D           emojiStyleKind = iota
-	emojiAnimateJumbo                // 2D, a message of emojis alone animated
-	emojiAnimated                    // 2D, emojis in messages animated
+	emoji2D          emojiStyleKind = iota
+	emojiAnimOutside                // 2D, animated everywhere but in message text
+	emojiAnimated                   // 2D, animated everywhere
 	emoji3D
 )
 
 var emojiStyles = []struct {
 	pref, title, sub string
 }{
-	emoji2D:           {"", "2D", "Noto Color Emoji"},
-	emojiAnimateJumbo: {"2d_anim_alone", "2D, animated when alone", "Messages of only emojis play their animations"},
-	emojiAnimated:     {"2d_anim", "2D animated", "Emojis in messages play their animations"},
-	emoji3D:           {"3d", "3D", "Noto's 3D emojis"},
+	emoji2D:          {"", "2D", "Noto Color Emoji"},
+	emojiAnimOutside: {"2d_anim_alone", "2D, animated outside messages", "Emojis play their animations, except in the text of messages: big emojis sent alone still do"},
+	emojiAnimated:    {"2d_anim", "2D animated", "Every emoji plays its animation, in messages too"},
+	emoji3D:          {"3d", "3D", "Noto's 3D emojis"},
 }
 
 // emojiStyleNow is the chosen style. The 3D hook reads it from any
@@ -170,7 +174,7 @@ func downloadAllEmojis() int {
 	switch emojiStyle() {
 	case emoji3D:
 		n = emojiStore.Prefetch(emojiset.ThreeD, names)
-	case emojiAnimateJumbo, emojiAnimated:
+	case emojiAnimOutside, emojiAnimated:
 		n = emojiStore.Prefetch(emojiset.Animated, names)
 	}
 	emojiBatch = n
@@ -331,39 +335,94 @@ func (u *UI) glyphEmoji(g text.Glyph) string {
 }
 
 // animateEmojis reports whether emojis in message text play, and
-// animateJumbo whether those of messages of emojis alone do.
+// animateOthers whether all the others do (labels, big emojis, the picker).
 func animateEmojis() bool {
 	return emojiStyle() == emojiAnimated && emojiStore != nil && perf.autoplay != "never"
 }
 
-func animateJumbo() bool {
+func animateOthers() bool {
 	s := emojiStyle()
-	return (s == emojiAnimated || s == emojiAnimateJumbo) && emojiStore != nil && perf.autoplay != "never"
+	return (s == emojiAnimated || s == emojiAnimOutside) && emojiStore != nil && perf.autoplay != "never"
 }
 
-// textEmoji draws an emoji glyph of message text animated, in place of its
-// picture at r (styledtext's Bitmap hook). It reports false to leave the
-// glyph to the font.
+// textEmoji draws an emoji glyph of message text (styledtext's Bitmap
+// hook), and labelEmoji one of a label (hookLabel's), with drawEmojiGlyph.
 func (u *UI) textEmoji(gtx C, g text.Glyph, r image.Rectangle) bool {
+	return u.drawEmojiGlyph(gtx, g, r, animateEmojis())
+}
+
+func (u *UI) labelEmoji(gtx C, g text.Glyph, r image.Rectangle) bool {
+	return u.drawEmojiGlyph(gtx, g, r, animateOthers())
+}
+
+// drawEmojiGlyph draws an emoji glyph in place of its picture at r:
+// animated when animate is set and the animation is ready, else the still
+// picture from u.emojiImgs, decoded at the size it shows at. It reports
+// false to leave the glyph to the font.
+//
+// Gio's shaper would decode each emoji, at each text size, at the font's
+// full 136x128 (70 KB) and keep up to 1000 of them for good, each drawn
+// from a mipmapped texture of that size: a message of a few hundred
+// different emojis held tens of MB after it was deleted. u.emojiImgs is
+// bounded by bytes, and an emoji 30 pixels high takes about 4 KB there.
+func (u *UI) drawEmojiGlyph(gtx C, g text.Glyph, r image.Rectangle, animate bool) bool {
 	name := u.glyphEmoji(g)
 	if name == "" {
 		return false
 	}
-	// The font's pictures are 136x128 with the emoji 128 high; the
-	// animations are squares.
-	side := r.Dy()
-	at := image.Pt(r.Min.X+(r.Dx()-side)/2, r.Min.Y)
-	return u.drawEmojiAnim(gtx, name, side, at)
+	if animate {
+		// The font's pictures are 136x128 with the emoji 128 high; the
+		// animations are squares.
+		side := r.Dy()
+		at := image.Pt(r.Min.X+(r.Dx()-side)/2, r.Min.Y)
+		if u.drawEmojiAnim(gtx, name, side, at) {
+			return true
+		}
+	}
+	side := max(r.Dx(), r.Dy())
+	gid := fontapi.GID(uint64(g.ID) & (1<<32 - 1))
+	e := u.emojiImgs.get(u.textEmojiKey(name, side), side, func() []byte { return glyphPNG(gid) })
+	switch e.state {
+	case imgMissing:
+		return false
+	case imgLoading:
+		return true // blank for a frame or two, as in the picker
+	}
+	paintCover(gtx, e.op, e.size, r)
+	return true
+}
+
+// textEmojiKey returns the u.emojiImgs key of emoji name side pixels
+// across, made once rather than every frame.
+func (u *UI) textEmojiKey(name string, side int) string {
+	k := emojiAnimKey{name, side}
+	if s, ok := u.emojiKeys[k]; ok {
+		return s
+	}
+	if u.emojiKeys == nil || len(u.emojiKeys) >= 4096 {
+		u.emojiKeys = map[emojiAnimKey]string{}
+	}
+	s := "text:" + name + ":" + strconv.Itoa(side)
+	u.emojiKeys[k] = s
+	return s
 }
 
 // Animated emojis are decoded once, every frame scaled down to the size
 // they show at, and played from memory while they show: a 512x512 frame
 // takes about 6 ms to decode. The frames of all of them together are kept
-// under emojiAnimBudget; those not drawn for emojiAnimKeep go.
+// under perf.emojiAnims (Settings > Performance > Advanced), and at most
+// perf.emojiDec decode at once; those not drawn for emojiAnimKeep go.
+// They play at most perf.emojiFPS frames a second.
+//
+// An animation's frames are cells of one picture (its sheet), drawn a cell
+// at a time. Gio uploads each image to a GPU texture of its own (with
+// mipmaps) and frees it after a frame without it, so an image per frame
+// made a texture, and freed one, every time a frame changed: thousands a
+// second for a message full of emojis, which grew the graphics driver's
+// memory by gigabytes. The sheet is uploaded once and stays while it shows.
 const (
-	emojiAnimBudget = 16 << 20
-	emojiAnimKeep   = 3 * time.Second
-	emojiDecoders   = 2
+	emojiAnimKeep = 3 * time.Second
+	emojiSheetMax = 4096 // pixels across or down a sheet
 )
 
 type emojiAnimKey struct {
@@ -374,20 +433,26 @@ type emojiAnimKey struct {
 type emojiAnim struct {
 	// Set once by the decoding goroutine (under emojiAnims.mu), then
 	// read-only.
-	frames []*image.RGBA
+	sheet  *image.RGBA // the frames, side pixels square, cols to a row
+	cols   int
 	delays []time.Duration
 	total  time.Duration
 	failed bool
 
-	ops  []paint.ImageOp // made on the UI goroutine as frames first show
+	op   paint.ImageOp // the sheet's, made on the UI goroutine when it first shows
 	used time.Time
 	cost int
+}
+
+// cell is where frame i is on the sheet of an animation side pixels square.
+func (a *emojiAnim) cell(i, side int) image.Point {
+	return image.Pt(i%a.cols*side, i/a.cols*side)
 }
 
 type emojiAnims struct {
 	mu       sync.Mutex
 	m        map[emojiAnimKey]*emojiAnim
-	held     int // bytes of the entries' frames, reserved as decoding starts
+	held     int // bytes of the entries' sheets, reserved as decoding starts
 	decoding int
 	start    time.Time // every animation plays on this clock
 	next     time.Time // the next frame any of this frame's anims needs
@@ -407,7 +472,7 @@ func (u *UI) drawEmojiAnim(gtx C, name string, side int, at image.Point) bool {
 	a := as.m[k]
 	if a == nil {
 		cost := emojiAnimCost(side)
-		if as.decoding >= emojiDecoders || as.held+cost > emojiAnimBudget {
+		if as.decoding >= perf.emojiDec || as.held+cost > perf.emojiAnims {
 			as.mu.Unlock()
 			return false
 		}
@@ -422,62 +487,87 @@ func (u *UI) drawEmojiAnim(gtx C, name string, side int, at image.Point) bool {
 		go as.decode(k, a, u.emojiImgs.invalidate)
 	}
 	a.used = gtx.Now
-	frames, delays, total := a.frames, a.delays, a.total
+	sheet, delays, total := a.sheet, a.delays, a.total
 	as.mu.Unlock()
-	if len(frames) == 0 {
+	if sheet == nil {
 		return false
 	}
-	if len(a.ops) == 0 {
-		a.ops = make([]paint.ImageOp, len(frames))
-	}
-	t := gtx.Now.Sub(as.start) % total
+	// Every animation moves on the same ticks, perf.emojiFPS a second:
+	// each on its own frame times, many of them would ask for a frame of
+	// the whole window almost every time the display refreshes.
+	tick := time.Second / time.Duration(perf.emojiFPS)
+	el := gtx.Now.Sub(as.start).Truncate(tick)
+	t := el % total
 	i := 0
 	for ; i < len(delays)-1 && t >= delays[i]; i++ {
 		t -= delays[i]
 	}
-	if next := gtx.Now.Add(delays[i] - t); as.next.IsZero() || next.Before(as.next) {
+	// The next frame shows from the first tick after this one ends.
+	change := el + delays[i] - t
+	if next := as.start.Add((change + tick - 1) / tick * tick); as.next.IsZero() || next.Before(as.next) {
 		as.next = next
 	}
-	if a.ops[i] == (paint.ImageOp{}) {
-		a.ops[i] = paint.NewImageOp(frames[i])
+	if a.op == (paint.ImageOp{}) {
+		a.op = paint.NewImageOp(sheet)
 	}
 	defer op.Offset(at).Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: image.Pt(side, side)}.Push(gtx.Ops).Pop()
-	a.ops[i].Add(gtx.Ops)
+	defer op.Offset(a.cell(i, side).Mul(-1)).Push(gtx.Ops).Pop()
+	a.op.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 	return true
 }
 
-// emojiAnimCost is what the frames of an animation side pixels square are
-// expected to take (Noto's have about 50).
-func emojiAnimCost(side int) int { return 60 * side * side * 4 }
+// emojiAnimCost is what the sheet of an animation side pixels square is
+// expected to take (Noto's have about 50 frames: 8 by 8 cells).
+func emojiAnimCost(side int) int { return 64 * side * side * 4 }
+
+// sheetGrid returns how many columns and rows of cells side pixels square
+// a sheet of n frames has, or 0, 0 when it would be too big.
+func sheetGrid(n, side int) (cols, rows int) {
+	cols = int(math.Ceil(math.Sqrt(float64(n))))
+	rows = (n + cols - 1) / cols
+	if n <= 0 || cols*side > emojiSheetMax || rows*side > emojiSheetMax {
+		return 0, 0
+	}
+	return cols, rows
+}
 
 func (as *emojiAnims) decode(k emojiAnimKey, a *emojiAnim, invalidate func()) {
-	var frames []*image.RGBA
+	var sheet *image.RGBA
+	var cols int
 	var delays []time.Duration
 	var total time.Duration
 	if an, err := webpanim.Parse(emojiStore.Read(emojiset.Animated, k.name)); err == nil {
-		for range an.Frames {
+		var rows int
+		if cols, rows = sheetGrid(len(an.Frames), k.side); cols > 0 {
+			sheet = image.NewRGBA(image.Rect(0, 0, cols*k.side, rows*k.side))
+		}
+		for i := 0; sheet != nil && i < len(an.Frames); i++ {
 			canvas, d, err := an.Next()
 			if err != nil {
-				frames = nil
+				sheet = nil
 				break
 			}
+			at := image.Pt(i%cols*k.side, i/cols*k.side)
+			f := photo.Shrink(canvas, k.side, k.side)
+			for y := range k.side {
+				copy(sheet.Pix[sheet.PixOffset(at.X, at.Y+y):][:4*k.side], f.Pix[y*f.Stride:])
+			}
 			d = max(d, 20*time.Millisecond)
-			frames = append(frames, photo.Shrink(canvas, k.side, k.side))
 			delays = append(delays, d)
 			total += d
 		}
 	}
 	as.mu.Lock()
 	as.decoding--
-	if len(frames) == 0 {
+	if sheet == nil {
 		a.failed = true // stays, so it isn't decoded again
 		as.held -= a.cost
 		a.cost = 0
 	} else {
-		a.frames, a.delays, a.total = frames, delays, total
-		cost := len(frames) * k.side * k.side * 4
+		a.sheet, a.cols, a.delays, a.total = sheet, cols, delays, total
+		cost := len(sheet.Pix)
 		as.held += cost - a.cost
 		a.cost = cost
 	}
@@ -493,7 +583,7 @@ func (as *emojiAnims) endFrame(gtx C) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	for k, a := range as.m {
-		if a.frames != nil && gtx.Now.Sub(a.used) > emojiAnimKeep {
+		if a.sheet != nil && gtx.Now.Sub(a.used) > emojiAnimKeep {
 			as.held -= a.cost
 			delete(as.m, k)
 		}
