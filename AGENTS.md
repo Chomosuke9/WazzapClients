@@ -212,6 +212,11 @@ Gotchas already found in the pinned version (v0.10.x):
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
+- The server refuses native flow button answers (`InteractiveResponseMessage`) in groups
+  with error 479. `PressButton` falls back to the older answer (`TemplateButtonReplyMessage`
+  or `ListResponseMessage`), which still carries the button's or row's ID that bots read,
+  and only then to a quoted text reply. A `single_select` button, or a `ListMessage`'s,
+  is a `model.ButtonList` whose rows open in a dialog (`internal/ui/listpick.go`).
 - `widget.Clickable.Layout` reads and drops the clicks nobody has asked about yet.
   Check `Clicked` before laying the button out (the title bar's privacy button).
 - Many buttons act on their click while they're laid out, after parts of the window

@@ -28,6 +28,7 @@ const (
 	dialogTheme   // a chat's theme (chatmenu.go); title is the chat's ID
 	dialogEdits   // an edited message's earlier texts (edit.go)
 	dialogPayload // a message's payload (/catch, snippets.go)
+	dialogList    // a bot's list of choices (listpick.go)
 )
 
 type dialogButton struct {
@@ -72,8 +73,9 @@ type dialogState struct {
 	chats    []*model.Chat // matching chats, a buffer reused every frame
 	bar      tween         // the send bar, shown once a chat is picked
 
-	poll   pollState
-	invite inviteState
+	poll     pollState
+	listPick listPick
+	invite   inviteState
 
 	// Edit history: the message and its earlier texts.
 	editOf   *model.Message
@@ -188,6 +190,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.editsPanel)
 	case dialogPayload:
 		panel = record(gtx, u.snippetPanel)
+	case dialogList:
+		panel = record(gtx, u.listPickPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

@@ -66,6 +66,7 @@ const (
 	ButtonReply ButtonKind = iota // sends a quick reply
 	ButtonURL                     // opens a link
 	ButtonCopy                    // copies a code
+	ButtonList                    // opens a list to pick a reply from
 )
 
 // Button is one of the buttons under a business or bot message.
@@ -74,6 +75,19 @@ type Button struct {
 	Label string
 	// Value is the reply's ID, the link or the code to copy.
 	Value string
+	// Sections are a list button's choices.
+	Sections []ListSection
+}
+
+// ListSection is a titled group of a list button's choices.
+type ListSection struct {
+	Title string
+	Rows  []ListRow
+}
+
+// ListRow is one choice of a list button; picking it answers with its ID.
+type ListRow struct {
+	ID, Title, Description string
 }
 
 // Media identifies attachment types, for preview icons and labels.
@@ -1153,9 +1167,10 @@ type Backend interface {
 	// Submission does not confirm delivery. No ordinary outgoing message is
 	// stored, broadcast, synced to self, or automatically retried.
 	SendWhisper(chatID string, targets []string, text string, mentions []string, reply *Message) <-chan error
-	// PressButton answers a message's quick-reply button (Buttons[i]) and
-	// returns the answer in its pending state, or nil.
-	PressButton(m *Message, i int) *Message
+	// PressButton answers a message's quick-reply button (Buttons[i]), or
+	// with the row of its list button whose ID is row, and returns the
+	// answer in its pending state, or nil.
+	PressButton(m *Message, i int, row string) *Message
 	// SendSticker sends a sticker that was received before, again, as a
 	// reply to reply if it isn't nil.
 	SendSticker(chatID string, sticker, reply *Message)

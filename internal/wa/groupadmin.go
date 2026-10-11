@@ -217,7 +217,7 @@ func (b *Backend) sendGroupInvite(ctx context.Context, group types.JID, r model.
 	chat := b.canonical(ctx, to)
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chat.String(), FromMe: true,
 		Text: "Group invite: " + name, Time: b.sendTime(), Receipt: model.Pending}
-	if sent := b.storeAndSend(chat, storedMsg{Message: m}, msg, nil); sent != nil {
+	if sent := b.storeAndSend(chat, storedMsg{Message: m}, msg); sent != nil {
 		b.emit(model.MessageEvent{Msg: sent})
 	}
 	return nil

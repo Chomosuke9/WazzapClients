@@ -564,7 +564,7 @@ func (b *Backend) SendContacts(chatID string, contactIDs []string) *model.Messag
 		}
 		msg = &waE2E.Message{ContactsArrayMessage: &waE2E.ContactsArrayMessage{DisplayName: proto.String(m.Text), Contacts: cards}}
 	}
-	return b.storeAndSend(jid, storedMsg{Message: m}, msg, nil)
+	return b.storeAndSend(jid, storedMsg{Message: m}, msg)
 }
 
 // vcard is the contact card WhatsApp sends: the waid parameter makes the
@@ -604,7 +604,7 @@ func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 	for _, o := range p.Options {
 		m.Poll.Options = append(m.Poll.Options, model.PollOption{Name: o})
 	}
-	return b.storeAndSend(jid, storedMsg{Message: m}, msg, nil)
+	return b.storeAndSend(jid, storedMsg{Message: m}, msg)
 }
 
 // mp4Seconds reads the length of an MP4 (or M4A, 3GP) file from its movie

@@ -1338,6 +1338,8 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 				ic = icOpenInNew
 			case model.ButtonCopy:
 				ic = icCopy
+			case model.ButtonList:
+				ic = icList
 			case model.ButtonReply:
 			default:
 				ic = nil // the card buttons are words alone

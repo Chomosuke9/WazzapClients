@@ -394,6 +394,15 @@ func demo(now time.Time) []*demoChat {
 					{Kind: model.ButtonReply, Label: "On my way", Value: "otw"},
 					{Kind: model.ButtonCopy, Label: "Copy code", Value: "KS-4821"},
 					{Kind: model.ButtonURL, Label: "Track order", Value: "https://example.com/track/4821"},
+					{Kind: model.ButtonList, Label: "Order again", Sections: []model.ListSection{
+						{Title: "Coffee", Rows: []model.ListRow{
+							{ID: "latte", Title: "Iced latte", Description: "Same as last time"},
+							{ID: "americano", Title: "Americano", Description: "Hot, no sugar"},
+						}},
+						{Title: "Food", Rows: []model.ListRow{
+							{ID: "croissant", Title: "Croissant"},
+						}},
+					}},
 				}},
 			{Kind: model.KindUnsupported, Time: day(0, 7, 56)},
 			{Text: "Eh, `/setting` isn't a command I know 😅\n\n> Say it in plain words, like \"turn off greetings\"\n> or \"add a rule\".\n\n**Menu** today:\n- Iced latte\n- ~Croissant~ _sold out_\n1. Pick up at the counter\n2. Show code `KS-4821`\n\n【注文】ご来店ありがとうございます！ *太字* 谢谢\n\n```\nQuiz for you - 1/3\n```",

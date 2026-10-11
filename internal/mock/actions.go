@@ -89,11 +89,23 @@ func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool, quot
 	b.emit(model.MessageEvent{Msg: &cp})
 }
 
-func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
-	if i < 0 || i >= len(m.Buttons) || m.Buttons[i].Kind != model.ButtonReply {
+func (b *Backend) PressButton(m *model.Message, i int, row string) *model.Message {
+	if i < 0 || i >= len(m.Buttons) {
 		return nil
 	}
-	return b.Send(m.ChatID, model.Draft{Text: m.Buttons[i].Label, Reply: m})
+	switch bt := m.Buttons[i]; bt.Kind {
+	case model.ButtonReply:
+		return b.Send(m.ChatID, model.Draft{Text: bt.Label, Reply: m})
+	case model.ButtonList:
+		for _, s := range bt.Sections {
+			for _, r := range s.Rows {
+				if r.ID == row {
+					return b.Send(m.ChatID, model.Draft{Text: r.Title, Reply: m})
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (b *Backend) SendSticker(chatID string, s, reply *model.Message) {

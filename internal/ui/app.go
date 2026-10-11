@@ -1409,7 +1409,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
-// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
+// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
 // first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
 // $WAZZAP_DEMO_SEARCH), its first list's chip "listchip" and the New list dialog "newlist"; on the Status page "statusadd",
@@ -1550,6 +1550,15 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			if !m.Edited.IsZero() {
 				u.openEditHistory(m)
 				break
+			}
+		}
+	case "listpick":
+		for _, m := range u.msgs {
+			for i, b := range m.Buttons {
+				if b.Kind == model.ButtonList {
+					u.openListPick(m, i)
+					u.dialog.listPick.pick = b.Sections[0].Rows[0].ID
+				}
 			}
 		}
 	case "votes":

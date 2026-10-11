@@ -228,7 +228,7 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		}
 		return b.storeAndSendAfter(jid, sm, msg, nil, prep)
 	}
-	return b.storeAndSend(jid, sm, msg, nil)
+	return b.storeAndSend(jid, sm, msg)
 }
 
 // quote makes a message sent to chatID a reply to r: it fills in ci and
@@ -253,14 +253,14 @@ func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) 
 // storeAndSend stores an outgoing message as pending, sends it in the
 // background and returns it.
 //
-// If the server rejects msg and fallback is given, fallback is sent instead.
-func (b *Backend) storeAndSend(jid types.JID, sm storedMsg, msg, fallback *waE2E.Message) *model.Message {
-	return b.storeAndSendAfter(jid, sm, msg, fallback, nil)
+// If the server rejects msg, the fallbacks are sent in turn instead.
+func (b *Backend) storeAndSend(jid types.JID, sm storedMsg, msg *waE2E.Message, fallbacks ...*waE2E.Message) *model.Message {
+	return b.storeAndSendAfter(jid, sm, msg, fallbacks, nil)
 }
 
 // storeAndSendAfter is storeAndSend that first runs prep, if not nil, on
 // the sending goroutine: an upload that fills in msg.
-func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg, fallback *waE2E.Message, prep func(context.Context)) *model.Message {
+func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg *waE2E.Message, fallbacks []*waE2E.Message, prep func(context.Context)) *model.Message {
 	sm.rawPayload = marshal(msg)
 	ctx, chatID, m := b.ctx, sm.ChatID, sm.Message
 	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
@@ -270,7 +270,7 @@ func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg, fallback *
 		b.log.Errorf("store outgoing message: %v", err)
 	}
 	b.emitChat(chatID)
-	b.sendAsyncPrep(chatID, jid, m.ID, msg, fallback, prep)
+	b.sendAsyncPrep(chatID, jid, m.ID, msg, fallbacks, prep)
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		return b.resolve(ctx, r, jid.Server == types.GroupServer)
 	}
@@ -280,17 +280,17 @@ func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg, fallback *
 
 // sendAsync sends msg in the background and marks it sent when done.
 func (b *Backend) sendAsync(chatID string, jid types.JID, id string, msg *waE2E.Message) {
-	b.sendAsyncOr(chatID, jid, id, msg, nil)
+	b.sendAsyncOr(chatID, jid, id, msg)
 }
 
-// sendAsyncOr is sendAsync that sends fallback instead when the server
-// rejects msg.
-func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg, fallback *waE2E.Message) {
-	b.sendAsyncPrep(chatID, jid, id, msg, fallback, nil)
+// sendAsyncOr is sendAsync that sends the fallbacks in turn instead when
+// the server rejects msg.
+func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg *waE2E.Message, fallbacks ...*waE2E.Message) {
+	b.sendAsyncPrep(chatID, jid, id, msg, fallbacks, nil)
 }
 
 // sendAsyncPrep is sendAsyncOr that runs prep, if not nil, before sending.
-func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fallback *waE2E.Message, prep func(context.Context)) {
+func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg *waE2E.Message, fallbacks []*waE2E.Message, prep func(context.Context)) {
 	cli := b.client()
 	go func() {
 		if prep != nil {
@@ -303,7 +303,10 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fa
 		resp, err := b.sendMessage(b.ctx, cli, jid, msg, whatsmeow.SendRequestExtra{ID: id})
 		// SendMessage can add a message secret and other protocol metadata.
 		_ = b.store.setRawPayload(b.ctx, chatID, id, msg)
-		if err != nil && fallback != nil {
+		for _, fallback := range fallbacks {
+			if err == nil {
+				break
+			}
 			b.log.Warnf("send to %s: %v; sending the fallback", chatID, err)
 			resp, err = b.sendMessage(b.ctx, cli, jid, fallback, whatsmeow.SendRequestExtra{ID: id})
 			if err == nil {

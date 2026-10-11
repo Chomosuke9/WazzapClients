@@ -569,11 +569,11 @@ func (a *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	a.Backend.Forward(msgs, chatIDs)
 }
 
-func (a *Backend) PressButton(m *model.Message, i int) *model.Message {
+func (a *Backend) PressButton(m *model.Message, i int, row string) *model.Message {
 	if a.refused() {
 		return nil
 	}
-	return a.Backend.PressButton(m, i)
+	return a.Backend.PressButton(m, i, row)
 }
 
 // What else others would see, which ghost mode refuses too.
