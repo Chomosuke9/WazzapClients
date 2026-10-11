@@ -33,7 +33,8 @@ var (
 )
 
 // emojiPNG returns the PNG of ch's glyph in the bundled emoji font, read in
-// place from the embedded font, or nil when ch isn't a single color glyph.
+// place from the embedded font (or the 3D one, see emojiBitmap), or nil
+// when ch isn't a single color glyph.
 // It is safe to call from any goroutine.
 func emojiPNG(ch string) []byte {
 	face, glyphs := shapeEmoji([]rune(ch))
@@ -47,17 +48,26 @@ func emojiPNG(ch string) []byte {
 	return bm.Data
 }
 
-// shapeEmoji shapes text with the bundled emoji font alone.
-func shapeEmoji(text []rune) (*fontapi.Face, []shaping.Glyph) {
+// loadEmojiFont parses the bundled emoji font, once, for shapeEmoji. Its
+// pictures follow the emoji style (emojiBitmap), as the shaper's do.
+func loadEmojiFont() *fontapi.Font {
 	emojiFontOnce.Do(func() {
 		bundledFonts() // patches the emoji font's spaces first
 		lds, err := ot.NewLoaders(ot.NewBytesReader(notoColorEmoji))
 		if err != nil || len(lds) == 0 {
 			return
 		}
-		emojiFont, _ = fontapi.NewFont(lds[0])
+		if f, err := fontapi.NewFont(lds[0]); err == nil {
+			f.BitmapHook = emojiBitmap
+			emojiFont = f
+		}
 	})
-	if emojiFont == nil {
+	return emojiFont
+}
+
+// shapeEmoji shapes text with the bundled emoji font alone.
+func shapeEmoji(text []rune) (*fontapi.Face, []shaping.Glyph) {
+	if loadEmojiFont() == nil {
 		return nil, nil
 	}
 	face := fontapi.NewFace(emojiFont)

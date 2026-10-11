@@ -38,6 +38,7 @@ func bundledFonts() []font.FontFace {
 		narrowEmojiSpaces(notoColorEmoji)
 		for _, f := range parseInPlace(notoColorEmoji) {
 			f.Font.Typeface = emojiTypeface
+			f.Face.(memFace).font.BitmapHook = emojiBitmap // the 3D emoji style
 			bundled = append(bundled, f)
 		}
 	})

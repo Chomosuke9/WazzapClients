@@ -220,10 +220,13 @@ var notoColorEmoji []byte
 // two of them.
 const typeface font.Typeface = "Segoe UI, " + emojiTypeface + ", Segoe UI Symbol, MS Gothic, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
 
+// newShaper returns a shaper of the bundled fonts and the system's.
+func newShaper() *text.Shaper { return text.NewShaper(text.WithCollection(bundledFonts())) }
+
 func newTheme() *material.Theme {
 	th := material.NewTheme()
 	// System fonts are enabled by default and cover other scripts.
-	th.Shaper = text.NewShaper(text.WithCollection(bundledFonts()))
+	th.Shaper = newShaper()
 	th.Face = typeface
 	th.TextSize = 14
 	return th

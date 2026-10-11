@@ -80,16 +80,18 @@ type UI struct {
 	// (draft.go); the host's, so they outlast the window.
 	drafts map[string]*chatDraft
 
-	chats     []*model.Chat
-	selected  *model.Chat
-	selPage   page             // page the selected chat was opened from
-	away      bool             // window unfocused or minimized (see markSeen)
-	msgs      []*model.Message // loaded window of the selected chat
-	msgsVer   int              // bumped whenever msgs changes
-	images    *imageCache
-	emojiImgs *imageCache // the emoji picker's, see layoutEmojiImage
-	players   players     // animated stickers on screen
-	bars      map[*widget.List]*scrollbar
+	chats      []*model.Chat
+	selected   *model.Chat
+	selPage    page             // page the selected chat was opened from
+	away       bool             // window unfocused or minimized (see markSeen)
+	msgs       []*model.Message // loaded window of the selected chat
+	msgsVer    int              // bumped whenever msgs changes
+	images     *imageCache
+	emojiImgs  *imageCache // the emoji picker's, see layoutEmojiImage
+	emojiView  emojiView   // what emojis were drawn with (emojistyle.go)
+	emojiAnims emojiAnims  // animated emojis on screen
+	players    players     // animated stickers on screen
+	bars       map[*widget.List]*scrollbar
 
 	page         page
 	statusSeen   time.Time // when the Status page was last open
@@ -341,6 +343,7 @@ func New(b model.Backend) *UI {
 		u.loadSplit()
 	}
 	loadPerf(b)
+	u.loadEmojiStyle()
 	u.images = newImageCache(240, 32<<20)
 	u.images.resize(perf.imageCache)
 	u.emojiImgs = newImageCache(600, 4<<20)
@@ -375,6 +378,9 @@ func New(b model.Backend) *UI {
 func (u *UI) Start(notify func()) {
 	u.images.invalidate = notify
 	u.emojiImgs.invalidate = notify
+	if emojiStore != nil {
+		emojiStore.SetNotify(notify)
+	}
 	u.setChats(u.backend.Chats())
 	u.loadLists()
 	u.loadPages()
@@ -665,6 +671,7 @@ func (u *UI) Layout(gtx C) D {
 // layoutWindow draws the window's contents at the zoom.
 func (u *UI) layoutWindow(gtx C) D {
 	trimShapes()
+	u.refreshEmoji(gtx)
 	u.applyEvents()
 	if a := u.deco.Update(gtx); a != 0 && u.window != nil {
 		u.window.Perform(a)
@@ -672,6 +679,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	defer u.images.endFrame()
 	defer u.emojiImgs.endFrame()
 	defer u.players.endFrame()
+	defer u.emojiAnims.endFrame(gtx)
 	defer u.anims.endFrame()
 	defer u.follows.endFrame()
 	defer u.endFrameClicks()

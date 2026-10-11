@@ -1,9 +1,9 @@
 # Dependency patches
 
 `typesetting.patch` patches go-text (`github.com/go-text/typesetting`, Gio's
-text library) to use far less memory for fonts. `go.mod` replaces the module
-with `third_party/typesetting`, which `apply.sh` builds from the Go module
-cache and is not checked in:
+text library) to use far less memory for fonts, and lets the app swap emoji
+pictures. `go.mod` replaces the module with `third_party/typesetting`, which
+`apply.sh` builds from the Go module cache and is not checked in:
 
 ```sh
 sh patches/apply.sh
@@ -23,6 +23,9 @@ What the patch does (each change is marked `WazzapClients patch`):
   `internal/ui/fonts.go`).
 - `fontscan/mmap*.go`, `footprint.go`: system fonts are memory-mapped
   (copy-on-write) instead of read into the heap.
+- `font/font.go`, `renderer.go`: `Font.BitmapHook` can hand out another PNG
+  for a bitmap glyph. The 3D emoji style (`internal/ui/emojistyle.go`) shows
+  its downloaded pictures in place of the bundled font's this way.
 
 To move to another go-text version (Gio decides which one it needs), change
 `go.mod`, run `apply.sh`, fix any rejected hunks in `third_party/typesetting`,
