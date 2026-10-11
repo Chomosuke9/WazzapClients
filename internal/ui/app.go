@@ -87,10 +87,11 @@ type UI struct {
 	msgs       []*model.Message // loaded window of the selected chat
 	msgsVer    int              // bumped whenever msgs changes
 	images     *imageCache
-	emojiImgs  *imageCache // the emoji picker's, see layoutEmojiImage
-	emojiView  emojiView   // what emojis were drawn with (emojistyle.go)
-	emojiAnims emojiAnims  // animated emojis on screen
-	players    players     // animated stickers on screen
+	emojiImgs  *imageCache             // the emoji picker's, see layoutEmojiImage
+	emojiView  emojiView               // what emojis were drawn with (emojistyle.go)
+	emojiAnims emojiAnims              // animated emojis on screen
+	emojiKeys  map[emojiAnimKey]string // see textEmojiKey
+	players    players                 // animated stickers on screen
 	bars       map[*widget.List]*scrollbar
 
 	page         page

@@ -98,6 +98,12 @@ Gotchas already found in the pinned version (v0.10.x):
 - Gio's shaper keeps up to 1000 color-emoji bitmaps decoded at the font's full 136x128
   (70 KB each) for good. The emoji picker draws its emojis as pictures from
   `u.emojiImgs` instead (`emojiimg.go`); scrolling it through Labels pinned ~70 MB.
+  Message text does the same through styledtext's `Bitmap` hook (`textEmoji`).
+- Gio gives every `paint.ImageOp` a GPU texture of its own (mipmapped) and frees it
+  after a frame without it. Don't play precomputed frames as an ImageOp each: every
+  frame change made and freed a texture, thousands a second for a message of
+  animated emojis, and the graphics driver's memory grew by gigabytes. An animated
+  emoji's frames are cells of one sheet, drawn a cell at a time (`drawEmojiAnim`).
 - `x/image/draw`'s `CatmullRom` allocates dst width x src height x 32 bytes (157 MB to fit
   a 12 MP photo to a screen). Downscale with `photo.Shrink` (`internal/photo`). Go's JPEG decoder
   keeps all of a progressive JPEG's coefficients (~7.5 bytes/pixel), so big pictures

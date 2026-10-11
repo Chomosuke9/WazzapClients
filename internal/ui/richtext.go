@@ -551,9 +551,7 @@ func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, o
 			}
 		})
 	}
-	if animateEmojis() {
-		st.Bitmap = u.textEmoji
-	}
+	st.Bitmap = u.textEmoji
 	fn := onSpan
 	if all&(decoStrike|decoLink) != 0 {
 		fn = func(gtx C, idx int, d D) {

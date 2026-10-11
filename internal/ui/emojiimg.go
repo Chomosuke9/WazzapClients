@@ -41,6 +41,21 @@ func emojiPNG(ch string) []byte {
 	return bm.Data
 }
 
+// glyphPNG returns the PNG of the emoji font's glyph gid (following the
+// emoji style, as emojiPNG does), or nil. It is safe to call from any
+// goroutine.
+func glyphPNG(gid fontapi.GID) []byte {
+	f := loadEmojiFont()
+	if f == nil {
+		return nil
+	}
+	bm, ok := fontapi.NewFace(f).GlyphDataBitmap(gid)
+	if !ok || bm.Format != fontapi.PNG {
+		return nil
+	}
+	return bm.Data
+}
+
 // loadEmojiFont returns the emoji font for shapeEmoji, or nil before
 // LoadEmojiFont. Its pictures follow the emoji style (emojiBitmap), as the
 // shaper's do.
