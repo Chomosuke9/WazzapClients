@@ -77,7 +77,7 @@ func (u *UI) layoutJumbo(gtx C, m *model.Message, emojis []string) D {
 		}
 		for i, e := range emojis {
 			t := op.Offset(image.Pt(i*cell.X, 0)).Push(gtx.Ops)
-			if !u.layoutEmojiImage(gtx, e, px, cell) {
+			if !u.layoutEmojiImage(gtx, e, px, cell, animateOthers()) {
 				lg := gtx
 				lg.Constraints = layout.Exact(cell)
 				layout.Center.Layout(lg, u.label(size, e, p.Text).Layout)

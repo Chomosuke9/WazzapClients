@@ -131,11 +131,11 @@ func splitEmojis(s string) []string {
 }
 
 // layoutEmojiImage draws ch at text size px (like a label of that size
-// would), centered in a box of size, animated when the emoji style
-// animates emojis outside message text. It reports false when ch has no
-// picture to draw, and the caller should fall back to a label.
-func (u *UI) layoutEmojiImage(gtx C, ch string, px int, size image.Point) bool {
-	if animateOthers() {
+// would), centered in a box of size, animated when animate is set and the
+// animation is ready. It reports false when ch has no picture to draw, and
+// the caller should fall back to a label.
+func (u *UI) layoutEmojiImage(gtx C, ch string, px int, size image.Point, animate bool) bool {
+	if animate {
 		// An animation is square, as high as the still picture.
 		s := px * 128 / notoPpem
 		if u.drawEmojiAnim(gtx, emojiset.Name([]rune(ch)), s, image.Pt((size.X-s)/2, (size.Y-s)/2)) {

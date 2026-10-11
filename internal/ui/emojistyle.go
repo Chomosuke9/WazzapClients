@@ -38,10 +38,11 @@ import (
 //     Gio caches glyph pictures and the drawing of whole lines, so the UI
 //     gets a new shaper when pictures arrive (refreshEmoji).
 //   - The animated styles play every emoji's animation: in labels (the
-//     chat list, names, quotes, reactions: hookLabel's bitmap hook), a
-//     message of emojis alone (jumbo.go) and the picker. Message text
-//     (styledtext's Bitmap hook), where a message full of emojis is the
-//     heavy case, plays only in emojiAnimated. The composer stays still:
+//     chat list, names, quotes, reactions: hookLabel's bitmap hook) and a
+//     message of emojis alone (jumbo.go). Message text (styledtext's
+//     Bitmap hook), where a message full of emojis is the heavy case, and
+//     the picker, a screenful of them, play only in emojiAnimated: the two
+//     are most of what animated emojis cost. The composer stays still:
 //     widget.Editor paints its own text.
 
 // prefEmojiStyle is an app preference (appPrefs): "" is 2D.
@@ -60,7 +61,7 @@ var emojiStyles = []struct {
 	pref, title, sub string
 }{
 	emoji2D:          {"", "2D", "Noto Color Emoji"},
-	emojiAnimOutside: {"2d_anim_alone", "2D, animated outside messages", "Emojis play their animations, except in the text of messages: big emojis sent alone still do"},
+	emojiAnimOutside: {"2d_anim_alone", "2D, animated outside messages", "Emojis play their animations, except in the text of messages and the emoji panel: big emojis sent alone still do"},
 	emojiAnimated:    {"2d_anim", "2D animated", "Every emoji plays its animation, in messages too"},
 	emoji3D:          {"3d", "3D", "Noto's 3D emojis"},
 }
@@ -335,8 +336,8 @@ func (u *UI) glyphEmoji(g text.Glyph) string {
 	return emojiGlyphName(fontapi.GID(uint64(g.ID) & (1<<32 - 1)))
 }
 
-// animateEmojis reports whether emojis in message text play, and
-// animateOthers whether all the others do (labels, big emojis, the picker).
+// animateEmojis reports whether emojis in message text and the picker
+// play, and animateOthers whether all the others do (labels, big emojis).
 func animateEmojis() bool {
 	return emojiStyle() == emojiAnimated && emojiStore != nil && perf.autoplay != "never"
 }
