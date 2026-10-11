@@ -398,6 +398,9 @@ type Chat struct {
 	// General is a community's General chat, which shows a speech bubble
 	// while it has no picture.
 	General bool
+	// Left marks a group you're no longer a member of (you left or were
+	// removed): it can't be sent to, only deleted.
+	Left bool
 	// Unread counts unread messages; -1 means marked as unread.
 	Unread int
 	// Mentioned means one of the unread messages of a group mentions you

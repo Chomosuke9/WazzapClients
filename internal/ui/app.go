@@ -1840,6 +1840,11 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		} else {
 			u.openTimerMenu(u.selected)
 		}
+	case "left":
+		// A group you're no longer a member of, with its ⋮ menu.
+		u.backend.LeaveGroup(u.selected.ID)
+		u.applyEvents()
+		u.openConvMenu()
 	case "theme":
 		u.openChatTheme(u.selected)
 		u.setChatTheme(u.selected.ID, 2)

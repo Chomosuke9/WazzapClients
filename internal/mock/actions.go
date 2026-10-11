@@ -345,7 +345,8 @@ func (b *Backend) DeleteChat(id string) {
 	b.emit(model.ChatsEvent{Chats: b.Chats()})
 }
 
-func (b *Backend) LeaveGroup(string) {
+func (b *Backend) LeaveGroup(id string) {
+	b.setChat(id, func(c *model.Chat) { c.Left = true })
 	b.emit(model.NoticeEvent{Text: "You exited the group."})
 }
 

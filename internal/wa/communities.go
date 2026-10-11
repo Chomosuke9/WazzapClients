@@ -143,8 +143,13 @@ func (s *msgStore) clearMembers(ctx context.Context, chat string) {
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_members WHERE chat = ?`, chat)
 }
 
+// setLeft marks whether you're no longer a member of a group.
+func (s *msgStore) setLeft(ctx context.Context, chat string, left bool) {
+	_, _ = s.db.ExecContext(ctx, `UPDATE wz_chats SET not_member = ? WHERE jid = ?`, boolInt(left), chat)
+}
+
 // keepMembers forgets the participants of every group but the joined ones,
-// which drops groups you left while offline.
+// which drops groups you left while offline, and marks those groups left.
 func (s *msgStore) keepMembers(ctx context.Context, joined []string) {
 	if len(joined) == 0 {
 		return // likely a failed fetch rather than no groups at all
@@ -153,7 +158,10 @@ func (s *msgStore) keepMembers(ctx context.Context, joined []string) {
 	for i, j := range joined {
 		args[i] = j
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_members WHERE chat NOT IN (`+placeholders(len(joined))+`)`, args...)
+	in := placeholders(len(joined))
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_members WHERE chat NOT IN (`+in+`)`, args...)
+	_, _ = s.db.ExecContext(ctx, `UPDATE wz_chats SET not_member = (jid NOT IN (`+in+`))
+		WHERE is_group = 1 AND jid LIKE '%@g.us'`, args...)
 }
 
 // members returns a group's stored participants.

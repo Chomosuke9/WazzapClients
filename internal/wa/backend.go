@@ -864,8 +864,17 @@ func (b *Backend) handle(evt any) {
 		}
 		for _, j := range e.Leave {
 			if b.isMe(j) {
-				// A group you left isn't one you share with anyone.
+				// A group you left isn't one you share with anyone, nor
+				// one you can send to.
 				b.store.clearMembers(ctx, e.JID.String())
+				b.store.setLeft(ctx, e.JID.String(), true)
+				b.emitChat(e.JID.String())
+			}
+		}
+		for _, j := range e.Join {
+			if b.isMe(j) {
+				b.store.setLeft(ctx, e.JID.String(), false)
+				b.emitChat(e.JID.String())
 			}
 		}
 		if e.Name != nil {
@@ -887,6 +896,7 @@ func (b *Backend) handle(evt any) {
 		// too: without their place in it, both would list as plain groups.
 		_ = b.store.setGroupShape(ctx, &e.GroupInfo)
 		_ = b.store.setMembers(ctx, &e.GroupInfo)
+		b.store.setLeft(ctx, jid, false)
 		if e.IsParent {
 			// A community's parent group isn't a chat.
 			b.emitAllChats()

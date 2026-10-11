@@ -294,11 +294,15 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 	// Actions on the chat need it in the chat list.
 	if chat := u.chatByID(c.ID); chat != nil {
 		id, name := chat.ID, info.Name
+		exit := u.infoRow("exit", listItem{ic: icLogout, title: "Exit group", danger: true}, func() { u.confirmExitGroup(id, name) })
+		if chat.Left {
+			exit = u.infoRow("delete", listItem{ic: icDelete, title: "Delete group", danger: true}, func() { u.confirmDeleteGroup(id, name) })
+		}
 		rows = append(rows,
 			u.infoFavRow(chat),
 			u.infoRow("list", listItem{ic: icAddToList, title: "Add to list"}, func() { u.openListsMenu(chat) }),
 			u.infoRow("clear", listItem{ic: icClear, title: "Clear chat", danger: true}, func() { u.confirmClearChat(id) }),
-			u.infoRow("exit", listItem{ic: icLogout, title: "Exit group", danger: true}, func() { u.confirmExitGroup(id, name) }),
+			exit,
 		)
 	}
 	rows = append(rows, u.infoRow("report", listItem{ic: icThumbDown, title: "Report group", danger: true}, u.reportUnsupported))

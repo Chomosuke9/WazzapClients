@@ -224,7 +224,10 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 	add(menuItem{key: "lists", ic: icAddToList, label: "Add to list", arrow: true})
 	add(menuItem{divider: true})
 	add(menuItem{key: "clear", ic: icClear, label: "Clear chat", run: func() { u.confirmClearChat(id) }})
-	if c.IsGroup {
+	if c.IsGroup && c.Left {
+		name := c.Name
+		add(menuItem{key: "delete", ic: icDelete, label: "Delete group", run: func() { u.confirmDeleteGroup(id, name) }})
+	} else if c.IsGroup {
 		name := c.Name
 		add(menuItem{key: "exit", ic: icLogout, label: "Exit group", run: func() { u.confirmExitGroup(id, name) }})
 	} else {
