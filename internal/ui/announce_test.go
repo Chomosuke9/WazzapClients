@@ -21,9 +21,9 @@ func TestAnnouncementsSendBlocked(t *testing.T) {
 		chat, want string
 		ann        bool
 	}{
-		{"fpam-ann@g.us", "community admins", true}, // you're a member
-		{"wa-ann@g.us", "", true},                   // you're an admin
-		{"test@g.us", "", false},
+		{"anime-ann@g.us", "community admins", true}, // you're a member
+		{"nova-ann@g.us", "", true},                  // you're an admin
+		{"botlab@g.us", "", false},
 	} {
 		c := u.chatByID(tc.chat)
 		if c == nil {

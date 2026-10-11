@@ -293,7 +293,7 @@ func (u *UI) mentionQuery() *mentionState {
 				return nil
 			}
 			// A mention picked already, with the caret after it, isn't a
-			// query: "@Vivy " would still find Vivy, and Enter would pick
+			// query: "@Nova " would still find Nova, and Enter would pick
 			// her again instead of sending.
 			for _, mr := range u.conv.mentions {
 				at := []rune("@" + mr.name)

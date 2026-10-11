@@ -545,7 +545,7 @@ go vet ./... && go build ./...
 # accountcheck (the pages of an account always connected and of one checked),
 # privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help,
 # info, statusviewer, contact (a group member's contact info:
-# -contact <id>, default the demo business vivy@lid)
+# -contact <id>, default the demo business nova@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \

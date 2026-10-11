@@ -37,12 +37,12 @@ func main() {
 	scale := flag.Float64("scale", 1.5, "pixels per dp")
 	compare := flag.String("compare", "", "WhatsApp screenshot to compare against")
 	crop := flag.String("crop", "1002,0,2000,1250", "window rectangle within -compare (x0,y0,x1,y1)")
-	chat := flag.String("chat", "test@g.us", "chat to open in -compare mode")
+	chat := flag.String("chat", "botlab@g.us", "chat to open in -compare mode")
 	memprofile := flag.String("memprofile", "", "write a heap profile after rendering")
 	data := flag.String("data", "", "in -compare mode, render this session's stored chats (no network)")
 	chatName := flag.String("chatname", "", "in -compare mode with -data, open the chat with this name")
 	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, general, profile, account, accounts, accountmode, accountcheck, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help, info or contact")
-	contact := flag.String("contact", "vivy@lid", "in -compare mode with -view contact, the group member whose contact info opens")
+	contact := flag.String("contact", "nova@lid", "in -compare mode with -view contact, the group member whose contact info opens")
 	infoScroll := flag.Int("infoscroll", 0, "in -compare mode with -view info, first visible item of the info panel")
 	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")
 	win := flag.String("win", "", "in -compare mode, render a window of this size (W,H px) and crop it like the screenshot")
@@ -121,14 +121,14 @@ func main() {
 		ref   bool
 		page  string // "info" opens the chat's info panel
 	}{
-		{"preview-dark.png", true, "test@g.us", false, true, ""},
+		{"preview-dark.png", true, "botlab@g.us", false, true, ""},
 		{"preview-light.png", false, "rina", false, false, ""},
 		{"preview-group.png", false, "family", false, false, ""},
 		{"preview-empty.png", true, "", false, true, ""},
 		{"preview-login.png", true, "", true, false, ""},
-		{"preview-info.png", true, "test@g.us", false, true, "info"},
+		{"preview-info.png", true, "botlab@g.us", false, true, "info"},
 		{"preview-contact.png", false, "rina", false, false, "info"},
-		{"preview-business.png", true, "test@g.us", false, true, "contact:vivy@lid"},
+		{"preview-business.png", true, "botlab@g.us", false, true, "contact:nova@lid"},
 		{"preview-status.png", true, "", false, true, "status"},
 		{"preview-channels.png", true, "", false, true, "channels"},
 		{"preview-communities.png", true, "", false, true, "communities"},
