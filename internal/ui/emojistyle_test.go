@@ -443,3 +443,55 @@ func TestEmojiFontArrives(t *testing.T) {
 		t.Error("no emojis from the font that arrived")
 	}
 }
+
+// TestEmojiAnimTrim: letting go of many animations' sheets gives memory
+// back to the system, at most once per emojiTrimEvery, and not when
+// Performance says never to.
+func TestEmojiAnimTrim(t *testing.T) {
+	trims := make(chan bool, 4)
+	old, oldDelay := trimMemory, trimDelay
+	trimMemory, trimDelay = func() { trims <- true }, 0
+	t.Cleanup(func() { trimMemory, trimDelay = old, oldDelay; perf = defaultPerf })
+	var as emojiAnims
+	gtx := layout.Context{Ops: new(op.Ops), Now: testNow()}
+	drop := func(name string, cost int) {
+		if as.m == nil {
+			as.m = map[emojiAnimKey]*emojiAnim{}
+		}
+		as.m[emojiAnimKey{name, 30}] = &emojiAnim{sheet: image.NewRGBA(image.Rect(0, 0, 1, 1)), cost: cost,
+			used: gtx.Now.Add(-emojiAnimKeep - time.Second)}
+		as.held += cost
+		as.endFrame(gtx)
+	}
+	trimmed := func() bool {
+		select {
+		case <-trims:
+			return true
+		case <-time.After(200 * time.Millisecond):
+			return false
+		}
+	}
+	drop("a", emojiTrimAfter/2)
+	if trimmed() {
+		t.Fatal("trimmed after letting go of less than emojiTrimAfter")
+	}
+	drop("b", emojiTrimAfter/2)
+	if !trimmed() {
+		t.Fatal("not trimmed after letting go of emojiTrimAfter")
+	}
+	drop("c", emojiTrimAfter)
+	if trimmed() {
+		t.Fatal("trimmed twice within emojiTrimEvery")
+	}
+	gtx.Now = gtx.Now.Add(emojiTrimEvery)
+	as.endFrame(gtx)
+	if !trimmed() {
+		t.Fatal("what was let go meanwhile wasn't trimmed later")
+	}
+	perf.trimAfter = 0 // Give memory back: Never
+	gtx.Now = gtx.Now.Add(emojiTrimEvery)
+	drop("d", emojiTrimAfter)
+	if trimmed() {
+		t.Error("trimmed though Performance says never")
+	}
+}
