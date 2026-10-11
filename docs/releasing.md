@@ -13,6 +13,7 @@ Versi Go mengikuti `go.mod`. Kedua target menerapkan patch go-text
 | `WazzapClients-Setup.exe` | Installer Windows (Inno Setup, `installer/wazzap.iss`) |
 | `WazzapClients-windows-amd64.exe` | Aplikasi Windows portable, tanpa jendela console; juga file yang diunduh oleh tombol update |
 | `WazzapClients-linux-amd64` | Executable Linux |
+| `<exe>.from-v1.2.3.bsdiff` | Patch update dari exe rilis `v1.2.3` ke exe rilis ini, untuk tiga rilis sebelumnya (hanya di release, lihat [Patch update](#patch-update)) |
 | `SHA256SUMS`, `SHA256SUMS.sig` | Checksum semua file di atas, dan tanda tangan ed25519-nya (hanya di release) |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md` | Lisensi aplikasi (MPL-2.0) dan lisensi semua software pihak ketiga di dalamnya (hanya di release) |
 
@@ -57,6 +58,30 @@ lebih baru, tombol yang sama mengunduh exe untuk sistem ini, mencocokkannya deng
   pernah ditawarkan.
 - Update butuh folder exe yang bisa ditulis. Installer memasang ke folder seperti
   itu; untuk versi portable, letakkan exe di folder milik user.
+
+### Patch update
+
+Supaya update tidak mengunduh seluruh exe (~42 MB), job release membuat patch
+bsdiff dari exe tiga rilis terakhir yang sudah dipublikasikan ke exe rilis baru,
+untuk Windows dan Linux, dengan `cmd/mkpatch`. Patch antar-rilis biasanya sekitar
+3% dari ukuran exe (v0.27.0 ke v0.28.0: 1,3 MB). Patch ikut masuk ke `SHA256SUMS`
+sebelum ditandatangani.
+
+Kalau rilis punya patch dari versi yang sedang berjalan, aplikasi mengunduh patch
+itu, mencocokkannya dengan `SHA256SUMS`, lalu menyusun exe baru dari exe yang
+sedang berjalan. Exe hasilnya dicek dengan checksum exe lengkap, sama seperti
+unduhan biasa. Kalau ada yang tidak beres (tidak ada patch untuk versi itu karena
+user melompati beberapa rilis, patch rusak, atau exe lokal sudah diubah, misalnya
+oleh antivirus), aplikasi mengunduh exe lengkap.
+
+`cmd/mkpatch` adalah modul Go tersendiri (`go.mod`-nya sendiri), jadi library
+bsdiff-nya tidak masuk ke aplikasi. Aplikasi menerapkan patch dengan bspatch
+miliknya sendiri (`internal/update/bspatch.go`), memakai bzip2 dari standard
+library. Untuk membuat patch secara manual:
+`cd cmd/mkpatch && go run . <exe lama> <exe baru> <patch>`.
+
+Patch hanya kecil kalau build-nya bisa direproduksi. Jangan hapus `-trimpath`,
+dan jangan kompres exe (misalnya dengan UPX).
 
 ### Kunci tanda tangan
 

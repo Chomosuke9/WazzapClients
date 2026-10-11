@@ -238,6 +238,8 @@ cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats
 cmd/winres/        draws the app icon (icon.App) into the .exe's resources and installer/wazzap.ico;
                    run `go generate ./cmd/wazzap` after changing the icon, and commit both
 cmd/signrelease/   signs a release's SHA256SUMS with the update key (CI), or makes a new key
+cmd/mkpatch/       makes a release's update patches (bsdiff) from older releases' executables
+                   (CI); a module of its own, so the app doesn't link its bsdiff
 installer/         the Windows installer (Inno Setup), per user in %LocalAppData%\Programs
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
@@ -360,7 +362,9 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
                    (Windows; stubs elsewhere), and the system's light or dark theme (Settings >
                    Chats > Theme > System default, read again when the window gets focus)
-internal/update/   updates from GitHub releases when the user asks (Settings > Help): checks
+internal/update/   updates from GitHub releases when the user asks (Settings > Help): downloads
+                   a patch from the running version when the release has one (bspatch.go,
+                   on the standard library's bzip2) or else the whole executable, checks
                    the signed SHA256SUMS, swaps the executable (the running one moves to
                    .old on Windows) and the UI restarts it with -wait-pid (ui/update.go).
                    Only tag builds (-X main.version=v1.2.3) update

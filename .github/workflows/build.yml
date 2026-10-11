@@ -199,7 +199,8 @@ jobs:
 
     runs-on: ubuntu-22.04
 
-    timeout-minutes: 10
+    # Each update patch takes bsdiff about half a minute.
+    timeout-minutes: 20
 
     permissions:
       contents: write
@@ -239,13 +240,41 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: |
+      # Patches from the last few releases' executables, so updating from
+      # one downloads only what changed (internal/update). mkpatch is a
+      # module of its own, so its bsdiff stays out of the app's go.mod.
+      - name: Make update patches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          tags=$(gh release list --exclude-drafts --exclude-pre-releases --limit 10 \
+            --json tagName --jq '.[].tagName' |
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vxF "$RELEASE_TAG" | head -n 3 || true)
+
+          for tag in $tags; do
+            for exe in WazzapClients-windows-amd64.exe WazzapClients-linux-amd64; do
+              old="$RUNNER_TEMP/old/$tag"
+              mkdir -p "$old"
+              if ! gh release download "$tag" --pattern "$exe" --dir "$old" --clobber; then
+                echo "$tag has no $exe, so no patch from it"
+                continue
+              fi
+              (cd cmd/mkpatch && go run . "$old/$exe" "$GITHUB_WORKSPACE/dist/$exe" \
+                "$GITHUB_WORKSPACE/dist/$exe.from-$tag.bsdiff")
+            done
+          done
+
           sha256sum \
             WazzapClients-windows-amd64.exe \
             WazzapClients-Setup.exe \
+          shopt -s nullglob
             WazzapClients-linux-amd64 \
             > SHA256SUMS
 
           sha256sum --check SHA256SUMS
+            *.bsdiff \
 
       # The app only installs updates whose SHA256SUMS this key signed
       # (internal/update). signrelease uses only the standard library, so
@@ -276,6 +305,8 @@ jobs:
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft'); then
 
             if [ "$draft" != 'true' ]; then
+          shopt -s nullglob # a release can have no update patches
+
               echo 'Release already published; refusing to replace its assets.' >&2
               exit 1
             fi
@@ -287,6 +318,7 @@ jobs:
               dist/SHA256SUMS \
               dist/SHA256SUMS.sig \
               --clobber
+              dist/*.bsdiff \
 
           else
               LICENSE \
@@ -299,6 +331,7 @@ jobs:
               dist/SHA256SUMS \
               dist/SHA256SUMS.sig \
               --verify-tag \
+              dist/*.bsdiff \
               --draft \
               --generate-notes \
               LICENSE \

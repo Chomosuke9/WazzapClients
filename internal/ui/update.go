@@ -85,7 +85,7 @@ func (up *updater) install() {
 	rel := up.rel
 	up.set(func() { up.step, up.done, up.total, up.err = updDownloading, 0, rel.Size(), nil })
 	go func() {
-		err := rel.Download(context.Background(), update.Staged(up.exe), up.h.o.Version, func(done, total int64) {
+		err := rel.Download(context.Background(), up.exe, up.h.o.Version, func(done, total int64) {
 			up.set(func() { up.done, up.total = done, total })
 		})
 		if err == nil {
