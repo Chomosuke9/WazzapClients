@@ -660,8 +660,8 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		c.mentionGhost = nil
 	}
 	sp := u.slashQuery()
-	if !u.slashShown(sp) || ms != nil {
-		sp = nil // the mention picker takes its place
+	if !u.slashShown(sp) || ms != nil || c.editorElsewhere {
+		sp = nil // the mention picker takes its place, or the send view has the editor
 	}
 	if sp != nil {
 		u.slash.ghost = sp
@@ -789,7 +789,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 								if c.editorElsewhere {
 									// The send view has the editor; this is
 									// only seen while it slides.
-									txt, col := u.attach.draft, p.Text
+									txt, col := c.composer.Text(), p.Text
 									if txt == "" {
 										txt, col = "Type a message", p.ComposerHint
 									}

@@ -549,7 +549,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
-# encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, with
+# encryption, addmember, invitelink, and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and

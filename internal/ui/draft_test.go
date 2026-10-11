@@ -81,11 +81,14 @@ func TestDraftAttachments(t *testing.T) {
 	tmp := filepath.Join(dir, "pasted.png")
 	os.WriteFile(doc, []byte("hello"), 0o600)
 	os.WriteFile(tmp, []byte("png"), 0o600)
-	u.conv.composer.SetText("under")
+	u.conv.composer.SetText("first")
 	u.addFiles("rina", []*attachFile{
 		{Attachment: model.Attachment{Path: doc, Media: model.MediaDocument}},
 		{Attachment: model.Attachment{Path: tmp, Media: model.MediaImage}, temp: true},
 	})
+	if got := u.conv.composer.Text(); got != "first" {
+		t.Fatalf("the first caption starts as %q", got)
+	}
 	u.conv.composer.SetText("first caption")
 	u.showFile(1)
 	u.conv.composer.SetText("second caption")
@@ -115,7 +118,7 @@ func TestDraftAttachments(t *testing.T) {
 		t.Fatalf("the first file's caption is %q", got)
 	}
 	u.closeSendView(false)
-	if got := u.conv.composer.Text(); got != "under" {
+	if got := u.conv.composer.Text(); got != "first caption" {
 		t.Fatalf("closing the send view gave back %q", got)
 	}
 	if _, err := os.Stat(tmp); !os.IsNotExist(err) {

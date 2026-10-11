@@ -552,13 +552,22 @@ func (u *UI) layoutCaption(gtx C, f *attachFile, bottom int, open bool) int {
 	fillRRect(gtx, image.Rect(x, top, x+w, bottom), gtx.Dp(8), p.Composer)
 	box.at(gtx, x, top)
 
-	// The mention picker rises above it.
-	if ms := u.mentionQuery(); ms != nil && open {
+	// The mention picker, or the slash command picker, rises above it,
+	// over the photo drawn after.
+	var picker func(gtx C) D
+	if ms := u.mentionQuery(); ms != nil {
+		picker = func(gtx C) D { return u.layoutMentionPicker(gtx, ms) }
+	} else if sp := u.slashQuery(); u.slashShown(sp) {
+		picker = func(gtx C) D { return u.layoutSlashPicker(gtx, sp) }
+	}
+	if picker != nil && open {
+		m := op.Record(gtx.Ops)
 		pk := record(gtx, func(gtx C) D {
 			gtx.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, top)}
-			return u.layoutMentionPicker(gtx, ms)
+			return picker(gtx)
 		})
 		pk.at(gtx, x, top-pk.size.Y-gtx.Dp(8))
+		op.Defer(gtx.Ops, m.Stop())
 	}
 
 	if once {

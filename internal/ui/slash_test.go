@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -324,5 +326,28 @@ func TestSlashDoubleSlash(t *testing.T) {
 	st.press(key.NameReturn)
 	if last := st.b.Messages("work", 1)[0]; last.Text != "/kick @Budi" || !last.FromMe {
 		t.Fatalf("sent %q, want /kick @Budi", last.Text)
+	}
+}
+
+// TestSlashInCaption: commands run from the send view's caption too, and
+// the files stay to be sent.
+func TestSlashInCaption(t *testing.T) {
+	st := newSlashTest(t, "work")
+	p := filepath.Join(t.TempDir(), "a.pdf")
+	os.WriteFile(p, []byte("%PDF"), 0o600)
+	st.u.attachPaths([]string{p})
+	for range 30 {
+		st.frame() // the send view slides in
+	}
+	st.typeText("/link ")
+	if st.u.slashQuery() == nil {
+		t.Fatal("no command picker in the caption")
+	}
+	st.press(key.NameReturn)
+	if len(st.u.slash.notes["work"]) == 0 {
+		t.Error("/link didn't run from the caption")
+	}
+	if len(st.u.attach.files) != 1 || st.text() != "" {
+		t.Errorf("after the command, %d files and caption %q", len(st.u.attach.files), st.text())
 	}
 }

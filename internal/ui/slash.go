@@ -124,7 +124,7 @@ func (sp *slashPick) rows() int {
 func (u *UI) slashQuery() *slashPick {
 	s := &u.slash
 	c := u.selected
-	if !s.on || c == nil || u.postingStatus() || u.conv.editorElsewhere || u.conv.edit.msg != nil || isChannelID(c.ID) {
+	if !s.on || c == nil || u.postingStatus() || u.conv.edit.msg != nil || isChannelID(c.ID) {
 		return nil
 	}
 	ed := &u.conv.composer

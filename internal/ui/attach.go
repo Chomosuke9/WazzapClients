@@ -36,7 +36,7 @@ type attachState struct {
 	files   []*attachFile
 	cur     int             // the file the send view shows
 	chatID  string          // the chat they go to
-	draft   string          // the composer's text before; the composer holds captions meanwhile
+	draft   string          // a status's: the composer's text before; the composer holds captions meanwhile
 	results chan pickResult // from the file dialog's goroutine, and pastes
 	picking bool            // a file dialog is open
 
@@ -381,10 +381,13 @@ func (u *UI) addFiles(chatID string, files []*attachFile) {
 		}
 	}
 	if len(a.files) == 0 {
-		// The composer becomes the caption field; its text waits.
+		// The composer becomes the caption field, and its text the first
+		// file's caption. A status's caption starts empty; the text waits.
 		a.chatID, a.cur, a.ghost = chatID, 0, nil
-		a.draft = u.conv.composer.Text()
-		u.conv.composer.SetText("")
+		if isStatusDestination(chatID) {
+			a.draft = u.conv.composer.Text()
+			u.conv.composer.SetText("")
+		}
 		u.resetEditor()
 		u.closePicker()
 		a.files = files
@@ -554,7 +557,8 @@ func (u *UI) removeFile(i int) {
 }
 
 // closeSendView closes the send view (sent or not) and gives the composer
-// its text back.
+// its text back: a chat's composer keeps the caption it shows if nothing
+// was sent, a status's gets what it had before.
 func (u *UI) closeSendView(sent bool) {
 	a := &u.attach
 	if len(a.files) == 0 {
@@ -568,7 +572,9 @@ func (u *UI) closeSendView(sent bool) {
 	a.files, a.cur = nil, 0
 	a.ed.tool, a.ed.sel = toolNone, -1
 	ed := &u.conv.composer
-	ed.SetText(a.draft)
+	if sent || isStatusDestination(a.chatID) {
+		ed.SetText(a.draft)
+	}
 	ed.SetCaret(ed.Len(), ed.Len())
 	a.draft = ""
 	if u.picker.mode == pickMedia {

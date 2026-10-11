@@ -1648,7 +1648,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.SelectID("budi")
 		u.addFiles("budi", []*attachFile{{Attachment: model.Attachment{Path: "beach.jpg", Media: model.MediaImage}}})
 		u.SelectID("dewi")
-	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter":
+	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter", "sendslash":
 		// $WAZZAP_DEMO_PHOTO is a real photo to show.
 		photo := os.Getenv("WAZZAP_DEMO_PHOTO")
 		if photo == "" {
@@ -1668,6 +1668,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 		if name == "quality" {
 			u.openQualityMenu()
+		}
+		if name == "sendslash" {
+			// The command picker over the caption.
+			u.slash.on = true
+			ed := &u.conv.composer
+			ed.SetText("/")
+			ed.SetCaret(ed.Len(), ed.Len())
+			u.requestFocus(ed)
 		}
 	case "groupstatus", "groupstatustext", "groupstatusviewer":
 		if u.selected == nil || !u.selected.IsGroup {
