@@ -684,7 +684,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		}
 		// The chevron covers part of the bubble's hover area, so it keeps
 		// itself visible while it is hovered. It fades and slides in.
-		show := (hovered || chev.Hovered() || (u.ctx.isOpen() && u.ctx.msg == m)) && m.Kind != model.KindSticker
+		show := (hovered || chev.Hovered() || (u.ctx.isOpen() && u.ctx.msg == m)) && m.Kind != model.KindSticker && u.jumbo(c, m) == nil
 		if cv := smooth(u.anims.fade(gtx, animKey{p: chev, tag: tagShow}, show, durHoverIn, durHoverOut)); cv > 0 {
 			bg := p.BubbleIn
 			if m.FromMe {
@@ -900,6 +900,8 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 		dims = u.layoutAnnSticker(gtx, m, maxW)
 	case m.Kind == model.KindSticker:
 		dims = u.layoutStickerMessage(gtx, c, m, r.first, maxW)
+	case u.jumbo(c, m) != nil:
+		dims = u.layoutJumboMessage(gtx, c, m, u.jumbo(c, m), r.first, maxW)
 	default:
 		dims = u.layoutBubble(gtx, c, m, r.first, maxW)
 	}

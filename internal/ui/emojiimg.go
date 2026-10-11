@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image"
+	"slices"
+	"strings"
 	"sync"
 
 	"gioui.org/op"
@@ -34,6 +36,19 @@ var (
 // place from the embedded font, or nil when ch isn't a single color glyph.
 // It is safe to call from any goroutine.
 func emojiPNG(ch string) []byte {
+	face, glyphs := shapeEmoji([]rune(ch))
+	if len(glyphs) != 1 {
+		return nil
+	}
+	bm, ok := face.GlyphDataBitmap(glyphs[0].GlyphID)
+	if !ok || bm.Format != fontapi.PNG {
+		return nil
+	}
+	return bm.Data
+}
+
+// shapeEmoji shapes text with the bundled emoji font alone.
+func shapeEmoji(text []rune) (*fontapi.Face, []shaping.Glyph) {
 	emojiFontOnce.Do(func() {
 		bundledFonts() // patches the emoji font's spaces first
 		lds, err := ot.NewLoaders(ot.NewBytesReader(notoColorEmoji))
@@ -43,21 +58,62 @@ func emojiPNG(ch string) []byte {
 		emojiFont, _ = fontapi.NewFont(lds[0])
 	})
 	if emojiFont == nil {
-		return nil
+		return nil, nil
 	}
 	face := fontapi.NewFace(emojiFont)
-	text := []rune(ch)
 	var sh shaping.HarfbuzzShaper
 	out := sh.Shape(shaping.Input{Text: text, RunEnd: len(text), Face: face,
 		Size: fixed.I(notoPpem), Script: language.Common, Language: language.NewLanguage("en")})
-	if len(out.Glyphs) != 1 {
+	return face, out.Glyphs
+}
+
+// jumboMax is how many emojis a message may hold and still show them big,
+// without a bubble, as WhatsApp does.
+const jumboMax = 3
+
+var jumbos = memo[string, []string]{limit: 200}
+
+// jumboEmojis returns the emojis of s when s is nothing but one to
+// jumboMax of them (spaces aside), or nil.
+func jumboEmojis(s string) []string {
+	if s == "" || len(s) > 96 {
 		return nil
 	}
-	bm, ok := face.GlyphDataBitmap(out.Glyphs[0].GlyphID)
-	if !ok || bm.Format != fontapi.PNG {
+	return jumbos.get(s, func() []string { return splitEmojis(s) })
+}
+
+// splitEmojis splits s into the emojis the bundled font draws as one
+// color picture each, or returns nil when s holds anything else.
+func splitEmojis(s string) []string {
+	text := []rune(strings.Join(strings.Fields(s), ""))
+	if len(text) == 0 {
 		return nil
 	}
-	return bm.Data
+	face, glyphs := shapeEmoji(text)
+	if len(glyphs) == 0 || len(glyphs) > jumboMax {
+		return nil
+	}
+	var out []string
+	for i, g := range glyphs {
+		end := len(text)
+		if i+1 < len(glyphs) {
+			end = glyphs[i+1].ClusterIndex
+		}
+		if g.GlyphID == 0 || g.ClusterIndex >= end {
+			return nil
+		}
+		if bm, ok := face.GlyphDataBitmap(g.GlyphID); !ok || bm.Format != fontapi.PNG {
+			return nil
+		}
+		cl := text[g.ClusterIndex:end]
+		// The font has pictures of digits, # and * for keycaps; alone
+		// they are text.
+		if !slices.ContainsFunc(cl, func(r rune) bool { return r >= 0x80 }) {
+			return nil
+		}
+		out = append(out, string(cl))
+	}
+	return out
 }
 
 // layoutEmojiImage draws ch at text size px (like a label of that size

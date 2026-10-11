@@ -314,7 +314,8 @@ cmd/notices/       writes THIRD_PARTY_NOTICES.md from the licenses of what cmd/w
                    changes) in infopages.go; the Media panel (the rail's Media button:
                    media, docs and links from every chat, or one chat's) in gallery.go; the list column's
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
-                   line as fit, in stickerrow.go; the New chat panel and the
+                   line as fit, in stickerrow.go; a text of one to three emojis
+                   alone, drawn big without a bubble like a sticker, in jumbo.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
                    settingsdetail.go; the window's zoom (Settings > General > Font size,
