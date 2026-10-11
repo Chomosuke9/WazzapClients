@@ -237,9 +237,6 @@ jobs:
         run: |
           ls -lah dist
 
-      - name: Generate checksums
-        working-directory: dist
-        run: |
       # Patches from the last few releases' executables, so updating from
       # one downloads only what changed (internal/update). mkpatch is a
       # module of its own, so its bsdiff stays out of the app's go.mod.
@@ -266,15 +263,18 @@ jobs:
             done
           done
 
+      - name: Generate checksums
+        working-directory: dist
+        run: |
+          shopt -s nullglob
           sha256sum \
             WazzapClients-windows-amd64.exe \
             WazzapClients-Setup.exe \
-          shopt -s nullglob
             WazzapClients-linux-amd64 \
+            *.bsdiff \
             > SHA256SUMS
 
           sha256sum --check SHA256SUMS
-            *.bsdiff \
 
       # The app only installs updates whose SHA256SUMS this key signed
       # (internal/update). signrelease uses only the standard library, so
@@ -302,11 +302,11 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
 
         run: |
+          shopt -s nullglob # a release can have no update patches
+
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft'); then
 
             if [ "$draft" != 'true' ]; then
-          shopt -s nullglob # a release can have no update patches
-
               echo 'Release already published; refusing to replace its assets.' >&2
               exit 1
             fi
@@ -315,27 +315,27 @@ jobs:
               dist/WazzapClients-windows-amd64.exe \
               dist/WazzapClients-Setup.exe \
               dist/WazzapClients-linux-amd64 \
+              dist/*.bsdiff \
               dist/SHA256SUMS \
               dist/SHA256SUMS.sig \
-              --clobber
-              dist/*.bsdiff \
-
-          else
               LICENSE \
               THIRD_PARTY_NOTICES.md \
+              --clobber
+
+          else
 
             gh release create "$RELEASE_TAG" \
               dist/WazzapClients-windows-amd64.exe \
               dist/WazzapClients-Setup.exe \
               dist/WazzapClients-linux-amd64 \
+              dist/*.bsdiff \
               dist/SHA256SUMS \
               dist/SHA256SUMS.sig \
-              --verify-tag \
-              dist/*.bsdiff \
-              --draft \
-              --generate-notes \
               LICENSE \
               THIRD_PARTY_NOTICES.md \
+              --verify-tag \
+              --draft \
+              --generate-notes \
               --title "WazzapClients $RELEASE_TAG"
 
           fi
