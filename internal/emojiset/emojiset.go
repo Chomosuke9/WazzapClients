@@ -268,6 +268,42 @@ func (s *Store) Read(kind Kind, name string) []byte {
 	return b
 }
 
+// Prefetch queues the download of every picture of names that isn't on disk
+// (retrying failed ones now). It returns how many it queued.
+func (s *Store) Prefetch(kind Kind, names []string) int {
+	if s == nil {
+		return 0
+	}
+	n := 0
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, name := range names {
+		k := key{kind, name}
+		e := s.known[k]
+		if e == nil {
+			e = &entry{}
+			s.known[k] = e
+			if _, err := os.Stat(s.path(k)); err == nil {
+				e.state = onDisk
+			} else if _, err := os.Stat(s.nonePath(k)); err == nil {
+				e.state = missing
+			}
+		}
+		if e.state == unknown || e.state == failed {
+			s.enqueue(k, e)
+			n++
+		}
+	}
+	return n
+}
+
+// Pending is how many downloads are waiting or running.
+func (s *Store) Pending() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.queue) + s.running
+}
+
 // enqueue queues k's download, starting a worker when fewer than workers
 // run. s.mu is held.
 func (s *Store) enqueue(k key, e *entry) {

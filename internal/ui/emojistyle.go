@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -135,6 +136,40 @@ func emojiGlyphName(gid fontapi.GID) string {
 		emojiNames = buildEmojiNames(f)
 	}
 	return emojiNames[gid]
+}
+
+// allEmojiNames lists the Noto file names of every emoji in the font, or
+// nil before it loads.
+func allEmojiNames() []string {
+	emojiGlyphName(0)
+	emojiNamesMu.Lock()
+	defer emojiNamesMu.Unlock()
+	seen := make(map[string]bool, len(emojiNames))
+	out := make([]string, 0, len(emojiNames))
+	for _, n := range emojiNames {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// downloadAllEmojis queues every picture of the chosen style and returns
+// how many it queued.
+func downloadAllEmojis() int {
+	if emojiStore == nil {
+		return 0
+	}
+	names := allEmojiNames()
+	switch emojiStyle() {
+	case emoji3D:
+		return emojiStore.Prefetch(emojiset.ThreeD, names)
+	case emojiAnimateJumbo, emojiAnimated:
+		return emojiStore.Prefetch(emojiset.Animated, names)
+	}
+	return 0
 }
 
 func buildEmojiNames(f *fontapi.Font) map[fontapi.GID]string {
@@ -477,6 +512,21 @@ func (u *UI) emojiStyleSettings() []settingsSection {
 			on: cur == k, run: func() { u.setEmojiStyle(k) }})
 	}
 	out := []settingsSection{sec}
+	if emojiStore != nil && cur != emoji2D {
+		row := settingRow{key: "emoji:all", title: "Download all emojis", sub: "Get every emoji of this style now, instead of as each shows"}
+		if n := emojiStore.Pending(); n > 0 {
+			row.sub = "Downloading… " + fmt.Sprint(n) + " left"
+		} else {
+			row.run = func() {
+				if loadEmojiFont() == nil {
+					u.toast("The 2D emojis haven't downloaded yet")
+					return
+				}
+				u.toast(fmt.Sprintf("Downloading %d emojis", downloadAllEmojis()))
+			}
+		}
+		out = append(out, settingsSection{title: "Download", rows: []settingRow{row}})
+	}
 	if emojiStore != nil {
 		row := settingRow{key: "emoji:clear", title: "Delete downloaded emojis", sub: "Nothing downloaded"}
 		if size := emojiStore.Size(); size > 0 {
