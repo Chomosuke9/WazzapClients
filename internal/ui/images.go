@@ -216,6 +216,18 @@ func (c *imageCache) remove(key string) {
 	}
 }
 
+// clearAll drops every picture that has loaded, so the next get loads it
+// again (the emoji pictures, when the emoji style changes).
+func (c *imageCache) clearAll() {
+	c.mu.Lock()
+	for k, e := range c.m {
+		if e.state != imgLoading {
+			c.remove(k)
+		}
+	}
+	c.mu.Unlock()
+}
+
 // retryMissing drops media that wasn't there, so the next get asks the
 // backend again. Called when the connection comes back.
 func (c *imageCache) retryMissing() {

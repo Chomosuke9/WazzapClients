@@ -22,9 +22,18 @@ var (
 // that compares gtx.Now with the backend's times (mutes ending).
 func testNow() time.Time { return testBase.Add(time.Since(testStarted)) }
 
+// testEmojiFont is Noto Color Emoji, which the app downloads
+// (emojiset.FontPath): the tests, cmd/screenshot and cmd/memprobe load it
+// from here.
+const testEmojiFont = "testdata/NotoColorEmoji.ttf"
+
 func TestMain(m *testing.M) {
 	time.Local = time.UTC
 	timeNow, mock.Clock = testNow, testNow
 	systemDark = func() (bool, bool) { return true, true } // the theme tests were drawn in
+	// The app downloads the emoji font; tests have a copy.
+	if err := LoadEmojiFont(testEmojiFont); err != nil {
+		panic(err)
+	}
 	os.Exit(m.Run())
 }

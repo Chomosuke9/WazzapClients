@@ -57,10 +57,14 @@ Gotchas already found in the pinned version (v0.10.x):
   auto-import); delete that module version from `GOMODCACHE`, re-download it, and
   `go clean -cache`.
 - Text rendering supports bitmap color-emoji fonts (CBDT/sbix) but not COLR fonts such as
-  Windows' Segoe UI Emoji, which renders monochrome.
+  Windows' Segoe UI Emoji, which renders monochrome. Noto Color Emoji (CBDT) isn't
+  bundled (10.7 MB): `emojiset.FontPath` downloads it on first run (SHA-256 pinned),
+  `LoadEmojiFont` maps it copy-on-write (`internal/mapfile`), and `refreshEmoji` loads it
+  into a new shaper when it arrives. Tests, `cmd/screenshot` and `cmd/memprobe` load the
+  copy in `internal/ui/testdata`.
 - The shaper never switches fonts for a space, so a space after an emoji takes the emoji
   font's (very wide) advance. `narrowEmojiSpaces` in `internal/ui/fonts.go` patches the
-  bundled font's space glyphs at load time.
+  emoji font's space glyphs at load time.
 - `layout.Flex` passes its cross-axis minimum to every child. Giving a row a minimum
   height stretches its labels and pins their text to the top. Use `vcenter`
   (`internal/ui/draw.go`) to make a row taller.
@@ -156,6 +160,12 @@ Gotchas already found in the pinned version (v0.10.x):
 - A rectangle clip under a transform that isn't a whole-pixel offset becomes a path
   too, and text outlines are rebuilt. `moveBy` rounds to whole pixels; `pushFx` counts
   real scales in `fxDepth`, under which `paintRRect` draws one path (no seams).
+- Gio's shaper caches every bitmap glyph's decoded picture, and the drawing of whole lines
+  of them, for good. The 3D emoji style swaps the emoji font's pictures through
+  `Font.BitmapHook` (a go-text patch) and gives the UI a new shaper when the style
+  changes or pictures arrive (`refreshEmoji`, `emojistyle.go`). Animated emojis in
+  message text are drawn by `styledtext`'s `TextStyle.Bitmap` hook instead of the font;
+  a glyph's face is the top 16 bits of its `text.GlyphID`.
 - Gio clips a color-emoji bitmap to the bitmap's own size (about 136x128) before
   scaling it to the font size, so above ~109 px only its top left corner shows. The
   photo editor lays text and emoji out at most `markTextPx` tall and scales them up.
@@ -315,7 +325,9 @@ cmd/notices/       writes THIRD_PARTY_NOTICES.md from the licenses of what cmd/w
                    media, docs and links from every chat, or one chat's) in gallery.go; the list column's
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
                    line as fit, in stickerrow.go; a text of one to three emojis
-                   alone, drawn big without a bubble like a sticker, in jumbo.go; the New chat panel and the
+                   alone, drawn big without a bubble like a sticker, in jumbo.go; the Emoji style
+                   (Settings > Chats: 2D, built in; 2D with emoji-only messages animated; 2D animated;
+                   3D: the others downloaded one emoji at a time as they show) in emojistyle.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
                    settingsdetail.go; the window's zoom (Settings > General > Font size,
@@ -359,6 +371,11 @@ internal/mock/     demo Backend with fake chats (used by -demo and cmd/screensho
                    for the next Start, counted starts and closes)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
+internal/emojiset/ downloads the emojis into <data>/emoji: Noto Color Emoji, the 2D font, once;
+                   Noto's 3D emojis (googlefonts/noto-emoji, 3dpng branch) and animated ones
+                   (Google Fonts) one at a time, the first time each shows. A 404 is remembered
+                   (an empty .none file)
+internal/mapfile/  maps a file into memory copy-on-write (the downloaded emoji font)
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
@@ -567,6 +584,9 @@ go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # moving the vote below), scroll (the wheel turned up at -at, then a message comes),
 # and hover (the pointer at -at):
 go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 40ms -out /tmp/shots
+# Draw emojis in another Emoji style (2d_anim_alone, 2d_anim or 3d) from the pictures the
+# app downloaded (none are downloaded here; the missing ones draw 2D):
+go run ./cmd/screenshot -emoji 3d -emojidir "$APPDATA/WazzapClients/emoji"
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \
     -data "$APPDATA/WazzapClients" -view channels

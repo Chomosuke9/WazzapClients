@@ -88,9 +88,11 @@ func main() {
 		},
 		Hidden:    *background || *embedding,
 		NotifyDir: filepath.Join(*dataDir, "notifications"),
-		Accounts:  list,
-		Open:      open,
-		Version:   version,
+		// Shared by the demo, which has no data of its own worth keeping.
+		EmojiDir: filepath.Join(*dataDir, "emoji"),
+		Accounts: list,
+		Open:     open,
+		Version:  version,
 	}
 	if *demo {
 		opts.NotifyDir = demoDir

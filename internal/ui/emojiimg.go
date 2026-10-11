@@ -4,11 +4,9 @@ import (
 	"image"
 	"slices"
 	"strings"
-	"sync"
 
 	"gioui.org/op"
 	fontapi "github.com/go-text/typesetting/font"
-	ot "github.com/go-text/typesetting/font/opentype"
 	"github.com/go-text/typesetting/language"
 	"github.com/go-text/typesetting/shaping"
 	"golang.org/x/image/math/fixed"
@@ -20,20 +18,16 @@ import (
 // through the picker once pinned about 70 MB. These come from a small
 // cache of their own, bounded by bytes.
 
-// The bundled emoji font has one bitmap strike: 109 pixels per em, with
+// The emoji font has one bitmap strike: 109 pixels per em, with
 // pictures 136 pixels wide (and 128 high).
 const (
 	notoPpem  = 109
 	notoWidth = 136
 )
 
-var (
-	emojiFontOnce sync.Once
-	emojiFont     *fontapi.Font
-)
-
-// emojiPNG returns the PNG of ch's glyph in the bundled emoji font, read in
-// place from the embedded font, or nil when ch isn't a single color glyph.
+// emojiPNG returns the PNG of ch's glyph in the emoji font, read in place
+// from the mapped font (or the 3D one, see emojiBitmap), or nil when ch
+// isn't a single color glyph or the font isn't loaded.
 // It is safe to call from any goroutine.
 func emojiPNG(ch string) []byte {
 	face, glyphs := shapeEmoji([]rune(ch))
@@ -47,20 +41,23 @@ func emojiPNG(ch string) []byte {
 	return bm.Data
 }
 
-// shapeEmoji shapes text with the bundled emoji font alone.
+// loadEmojiFont returns the emoji font for shapeEmoji, or nil before
+// LoadEmojiFont. Its pictures follow the emoji style (emojiBitmap), as the
+// shaper's do.
+func loadEmojiFont() *fontapi.Font {
+	if e := emojiFonts.Load(); e != nil {
+		return e.font
+	}
+	return nil
+}
+
+// shapeEmoji shapes text with the emoji font alone.
 func shapeEmoji(text []rune) (*fontapi.Face, []shaping.Glyph) {
-	emojiFontOnce.Do(func() {
-		bundledFonts() // patches the emoji font's spaces first
-		lds, err := ot.NewLoaders(ot.NewBytesReader(notoColorEmoji))
-		if err != nil || len(lds) == 0 {
-			return
-		}
-		emojiFont, _ = fontapi.NewFont(lds[0])
-	})
-	if emojiFont == nil {
+	f := loadEmojiFont()
+	if f == nil {
 		return nil, nil
 	}
-	face := fontapi.NewFace(emojiFont)
+	face := fontapi.NewFace(f)
 	var sh shaping.HarfbuzzShaper
 	out := sh.Shape(shaping.Input{Text: text, RunEnd: len(text), Face: face,
 		Size: fixed.I(notoPpem), Script: language.Common, Language: language.NewLanguage("en")})

@@ -19,6 +19,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/accounts"
 	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/desktop"
+	"github.com/chomosuke9/wazzapclients/internal/emojiset"
 	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/notify"
@@ -46,6 +47,9 @@ type Options struct {
 	Relaunch []string
 	// NotifyDir keeps the pictures notifications show.
 	NotifyDir string
+	// EmojiDir keeps the emoji pictures that download (the animated and
+	// 3D emoji styles). "" doesn't download any: every style draws 2D.
+	EmojiDir string
 	// Accounts lists the accounts linked on this computer, and Open opens
 	// the backend of one's data directory; the backend given to Run is
 	// the open one's. With nil Accounts there is only that backend.
@@ -71,6 +75,14 @@ type Options struct {
 // The accounts that aren't open run in the background as their modes say
 // (background.go), whether a window is open or not.
 func Run(b model.Backend, o Options) error {
+	if o.EmojiDir != "" {
+		emojiStore = emojiset.New(o.EmojiDir)
+		// The 2D font, or its download; windows load it when it arrives
+		// (refreshEmoji).
+		if p := emojiStore.FontPath(); p != "" && LoadEmojiFont(p) != nil {
+			os.Remove(p) // broken: downloaded again next time
+		}
+	}
 	h := newHost(b, o)
 	h.upd.h = h
 	if exe, err := os.Executable(); err == nil {

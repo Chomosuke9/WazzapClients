@@ -86,7 +86,11 @@ func main() {
 	scrollChat := flag.Bool("chat", false, "with -scroll, scroll the first chat's messages instead of the chat list")
 	size := flag.String("size", "1200x780", "window size in dp, WxH")
 	ballastMB := flag.Int("ballast", 0, "keep this many MB of extra live heap, as a long session's backend does")
+	emojiFont := flag.String("emojifont", "internal/ui/testdata/NotoColorEmoji.ttf", "the emoji font (the app downloads it; run from the repository's root)")
 	flag.Parse()
+	if err := ui.LoadEmojiFont(*emojiFont); err != nil {
+		log.Fatal(err)
+	}
 	var sw, sh float32
 	if _, err := fmt.Sscanf(*size, "%gx%g", &sw, &sh); err != nil {
 		log.Fatalf("-size: %v", err)

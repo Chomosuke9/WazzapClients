@@ -96,6 +96,7 @@ var settingsViews = map[string]struct {
 	"lastseen":      {settingPrivacy, "lastseen"},
 	"blocked":       {settingPrivacy, "blocked"},
 	"chatsettings":  {settingChats, ""},
+	"emojistyle":    {settingChats, "emoji"},
 	"notifications": {settingNotifications, ""},
 	"shortcuts":     {settingShortcuts, ""},
 	"performance":   {settingPerformance, ""},
@@ -191,6 +192,8 @@ func (u *UI) settingsTitle() string {
 		return "Ethically gray features"
 	case "advanced":
 		return "Advanced"
+	case "emoji":
+		return "Emoji style"
 	}
 	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
 		if a := u.accountByDir(dir); a != nil {
@@ -228,6 +231,8 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.graySettings()
 	case "advanced":
 		return u.advancedSettings()
+	case "emoji":
+		return u.emojiStyleSettings()
 	case "theme":
 		t := u.backend.Pref(prefTheme)
 		return []settingsSection{{title: "Choose a theme", rows: []settingRow{
@@ -268,6 +273,8 @@ func (u *UI) settingsPage() []settingsSection {
 					trailing: icChevronRight, run: func() { u.openSettingsSub("theme") }},
 				{key: prefDoodles, kind: setToggle, title: "Wallpaper doodles", sub: "Draw doodles on the chat background",
 					on: u.doodles, run: func() { u.doodles = !u.doodles; setPref(b, prefDoodles, u.doodles) }},
+				{key: prefEmojiStyle, ic: icEmoji, title: "Emoji style", sub: emojiStyles[emojiStyle()].title,
+					trailing: icChevronRight, run: func() { u.openSettingsSub("emoji") }},
 			}},
 			{title: "Chat settings", rows: []settingRow{
 				{key: prefEnterSend, kind: setToggle, title: "Enter is send", sub: "Enter key will send your message",
