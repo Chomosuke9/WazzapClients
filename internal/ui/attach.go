@@ -48,10 +48,13 @@ type attachState struct {
 	estimates chan photoEst
 
 	// The send view slides in and out; ghost is what it showed, while
-	// it slides away.
+	// it slides away. refocus gives the composer the keys once it's gone:
+	// the composer's editor isn't laid out while it slides, and Gio drops
+	// the focus of a handler a frame leaves out.
 	anim     tween
 	ghost    []*attachFile
 	ghostCur int
+	refocus  bool
 	ed       editState
 	dropAnim tween // the hint while files are dragged over the window
 
@@ -581,6 +584,7 @@ func (u *UI) closeSendView(sent bool) {
 		u.closePicker()
 	}
 	u.requestFocus(ed)
+	a.refocus = !isStatusDestination(a.chatID)
 }
 
 // dropAttachments forgets the send view at once, as when another chat
@@ -590,6 +594,7 @@ func (u *UI) dropAttachments() {
 	a := &u.attach
 	removeTemps(a.files)
 	a.files, a.ghost, a.cur, a.draft = nil, nil, 0, ""
+	a.refocus = false
 	a.anim.snap(false)
 	u.resetEditor()
 }

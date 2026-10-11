@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"gioui.org/font"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -32,9 +33,19 @@ func (u *UI) sendViewStep(gtx C) float32 {
 	a := &u.attach
 	open := len(a.files) > 0
 	v := a.anim.step(gtx, open, durPanel)
+	if open {
+		a.refocus = false
+	}
 	if v == 0 && !open && a.ghost != nil {
 		a.ghost = nil
 		u.resetEditor()
+	}
+	if v == 0 && a.refocus {
+		// Unless something else took the keys while it slid away.
+		a.refocus = false
+		if gtx.Focused(nil) {
+			gtx.Execute(key.FocusCmd{Tag: &u.conv.composer})
+		}
 	}
 	return easeOut(v)
 }
