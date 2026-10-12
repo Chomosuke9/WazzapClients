@@ -38,6 +38,9 @@ jobs:
       # A tag build knows its version, which turns on its updates
       # (internal/update); other builds are development builds.
       VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+      # The KLIPY app key of GIF search (cmd/wazzap). Builds without the
+      # secret (forks, pull requests) ask users for their own.
+      KLIPY_KEY: ${{ secrets.KLIPY_KEY }}
 
     defaults:
       run:
@@ -92,12 +95,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test ./...
-
       # The licenses of what the app links and bundles (cmd/notices).
       - name: Check third-party notices
         run: go run ./cmd/notices -check
+
+      - name: Test
+        run: go test ./...
 
       - name: Build all packages
         run: go build ./...
@@ -114,7 +117,7 @@ jobs:
 
           go build `
             -trimpath `
-            -ldflags "-s -w -H=windowsgui -X main.version=$env:VERSION" `
+            -ldflags "-s -w -H=windowsgui -X main.version=$env:VERSION -X main.klipyKey=$env:KLIPY_KEY" `
             -o bin/dist/WazzapClients-windows-amd64.exe `
             ./cmd/wazzap
 
@@ -175,7 +178,7 @@ jobs:
 
           go build \
             -trimpath \
-            -ldflags "-s -w -X main.version=$VERSION" \
+            -ldflags "-s -w -X main.version=$VERSION -X main.klipyKey=$KLIPY_KEY" \
             -o bin/dist/WazzapClients-linux-amd64 \
             ./cmd/wazzap
 

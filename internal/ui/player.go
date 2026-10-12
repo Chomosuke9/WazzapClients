@@ -32,13 +32,17 @@ type stickerPlayer struct {
 	op    paint.ImageOp
 	used  int64 // frame counter of last use
 	stop  chan struct{}
+	// preview marks a GIF playing in the picker (gifs.go), which counts
+	// against a cap of its own: they are small.
+	preview bool
 }
 
 // players holds the animated stickers on screen, by image cache key.
 type players struct {
-	m     map[string]*stickerPlayer
-	frame int64
-	bytes atomic.Int64 // held by the running players, against playerBudget
+	m        map[string]*stickerPlayer
+	previews int // of m, the picker's GIFs
+	frame    int64
+	bytes    atomic.Int64 // held by the running players, against playerBudget
 
 	gifs     map[string]*gifPlayer // the GIFs playing, by "chat/id"
 	gifFetch map[string]gifFetch
@@ -48,17 +52,34 @@ type players struct {
 // its player. ok is false while the first frame renders, or when too many
 // stickers already play.
 func (u *UI) stickerFrame(key string, maxSide int, load func() []byte) (paint.ImageOp, bool) {
+	return u.animFrame(key, maxSide, false, load)
+}
+
+// previewFrame is stickerFrame for a GIF in the picker, an animated WebP
+// a few hundred px across. Four times perf.gifs of them play at once.
+func (u *UI) previewFrame(key string, maxSide int, load func() []byte) (paint.ImageOp, bool) {
+	return u.animFrame(key, maxSide, true, load)
+}
+
+func (u *UI) animFrame(key string, maxSide int, preview bool, load func() []byte) (paint.ImageOp, bool) {
 	ps := &u.players
 	p := ps.m[key]
 	if p == nil {
-		if len(ps.m) >= 2*perf.gifs {
+		n, limit := len(ps.m)-ps.previews, 2*perf.gifs
+		if preview {
+			n, limit = ps.previews, 4*perf.gifs
+		}
+		if n >= limit {
 			return paint.ImageOp{}, false
 		}
 		if ps.m == nil {
 			ps.m = make(map[string]*stickerPlayer)
 		}
-		p = &stickerPlayer{ready: -1, shown: -1, stop: make(chan struct{})}
+		p = &stickerPlayer{ready: -1, shown: -1, stop: make(chan struct{}), preview: preview}
 		ps.m[key] = p
+		if preview {
+			ps.previews++
+		}
 		go p.run(load, maxSide, &ps.bytes, u.images.invalidate)
 	}
 	p.used = ps.frame
@@ -77,8 +98,7 @@ func (u *UI) stickerFrame(key string, maxSide int, load func() []byte) (paint.Im
 func (ps *players) endFrame() {
 	for k, p := range ps.m {
 		if p.used < ps.frame {
-			close(p.stop)
-			delete(ps.m, k)
+			ps.stop(k, p)
 		}
 	}
 	for k, g := range ps.gifs {
@@ -93,12 +113,20 @@ func (ps *players) endFrame() {
 // stopAll stops every player.
 func (ps *players) stopAll() {
 	for k, p := range ps.m {
-		close(p.stop)
-		delete(ps.m, k)
+		ps.stop(k, p)
 	}
 	for k, g := range ps.gifs {
 		g.close()
 		delete(ps.gifs, k)
+	}
+}
+
+// stop stops the player of key.
+func (ps *players) stop(key string, p *stickerPlayer) {
+	close(p.stop)
+	delete(ps.m, key)
+	if p.preview {
+		ps.previews--
 	}
 }
 

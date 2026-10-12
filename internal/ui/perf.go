@@ -234,8 +234,9 @@ var perfKnobs = []*perfKnob{
 		opts: []perfOpt{{"", "After 10 seconds (default)"}, {"3", "After 3 seconds"}, {"30", "After 30 seconds"},
 			{"60", "After a minute"}, {"never", "Never"}}},
 	{key: prefPlaying, title: "Playing at once", ic: icPlayFill,
-		about: "How many GIFs, and twice as many animated stickers, play at the same time. The rest show a still picture.",
-		opts:  []perfOpt{{"", "3 GIFs (default)"}, {"1", "1 GIF"}, {"6", "6 GIFs"}}},
+		about: "How many GIFs, and twice as many animated stickers, play at the same time (four times as many in the GIF picker, " +
+			"where they are small). The rest show a still picture.",
+		opts: []perfOpt{{"", "3 GIFs (default)"}, {"1", "1 GIF"}, {"6", "6 GIFs"}}},
 	{key: prefEmojiAnims, title: "Animated emojis", ic: icEmoji,
 		about: "Frames of animated emojis kept in memory, for the 2D animated emoji styles. An emoji in a " +
 			"message takes about 150 to 350 KB, a big one sent alone about 1 to 2.5 MB. Emojis that don't fit " +

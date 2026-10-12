@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"cmp"
 	"image"
 	"image/png"
 	"os"
@@ -58,6 +59,9 @@ type Options struct {
 	// Version is the release this build is ("v1.2.3"), or "" for a
 	// development build, which doesn't update itself.
 	Version string
+	// KlipyKey is the build's KLIPY app key for GIF search (gifs.go), or
+	// "" when users must enter their own.
+	KlipyKey string
 }
 
 // Run runs the app until it quits. It opens a window and, while a tray
@@ -83,6 +87,7 @@ func Run(b model.Backend, o Options) error {
 			os.Remove(p) // broken: downloaded again next time
 		}
 	}
+	klipyAppKey, klipyAgent = o.KlipyKey, "WazzapClients/"+cmp.Or(o.Version, "dev")
 	h := newHost(b, o)
 	h.upd.h = h
 	if exe, err := os.Executable(); err == nil {

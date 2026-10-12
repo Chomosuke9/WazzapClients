@@ -103,6 +103,7 @@ var (
 	icCheckBox      = icon.CheckBox
 	icCheckBoxEmpty = icon.CheckBoxOutlineBlank
 	icStarFill      = icon.StarFill
+	icTrending      = icon.TrendingUp
 	icPinFill       = icon.KeepFill
 	icAddReaction   = icon.AddReaction
 	icDownload      = icon.Download

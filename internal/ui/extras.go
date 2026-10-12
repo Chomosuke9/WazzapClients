@@ -50,6 +50,7 @@ func (u *UI) loadExtras() {
 	u.editHistory = extraOn(b, prefEditHistory)
 	u.keepDeleted = extraOn(b, model.PrefKeepDeleted)
 	u.viewOnceReplay = extraOn(b, model.PrefViewOnceReplay)
+	u.loadGIFPrefs()
 	u.grayCmds = map[string]bool{}
 	for _, c := range command.All {
 		if c.Gray && extraOn(b, grayCmdPref(c.Name)) {
@@ -153,6 +154,7 @@ func (u *UI) extrasSettings() []settingsSection {
 					}
 				}),
 		}},
+		u.gifSettings(),
 		{rows: []settingRow{{key: "gray", ic: icExtensionGray, title: "Ethically gray features",
 			sub: "Edit history, deleted messages, view once and more", run: func() { u.openSettingsSub("gray") }}},
 			note: "Extra features aren't made by WhatsApp. They only use what WhatsApp lets every linked device do."},

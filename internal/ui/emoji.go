@@ -13,7 +13,6 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
-	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
@@ -227,7 +226,8 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 			u.closePicker()
 		}
 		for {
-			ev, ok := gtx.Event(key.Filter{Focus: &e.search, Name: key.NameEscape})
+			ev, ok := gtx.Event(key.Filter{Focus: &e.search, Name: key.NameEscape},
+				key.Filter{Focus: &u.gifs.search, Name: key.NameEscape})
 			if !ok {
 				break
 			}
@@ -288,7 +288,7 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	case tabEmoji:
 		u.layoutEmojiTab(pg)
 	case tabGIF:
-		u.pickerMessage(pg, "GIF search needs Tenor, which WazzapClients doesn't use.")
+		u.layoutGIFTab(pg)
 	case tabSticker:
 		u.layoutStickerTab(pg)
 	}
@@ -347,30 +347,7 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 		}),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 15, Right: 15, Top: 6, Bottom: 6}.Layout(gtx, func(gtx C) D {
-				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				hgt := gtx.Dp(46)
-				border := p.PopupBorder
-				if gtx.Focused(&e.search) {
-					border = p.Green
-				}
-				rr := image.Rect(0, 0, gtx.Constraints.Max.X, hgt)
-				fillRRect(gtx, rr, hgt/2, border)
-				fillRRect(gtx, rr.Inset(gtx.Dp(2)), hgt/2-gtx.Dp(2), p.Popup)
-				return vcenter(gtx, hgt, func(gtx C) D {
-					return layout.Inset{Left: 18, Right: 16}.Layout(gtx, func(gtx C) D {
-						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(iconW(icSearch, 22, p.TextSecondary)),
-							layout.Rigid(layout.Spacer{Width: 16}.Layout),
-							layout.Flexed(1, func(gtx C) D {
-								ed := material.Editor(u.th, &e.search, "Search emoji")
-								ed.TextSize = 15.5
-								ed.Color = p.Text
-								ed.HintColor = p.TextSecondary
-								return ed.Layout(gtx)
-							}),
-						)
-					})
-				})
+				return u.pickerSearch(gtx, &e.search, "Search emoji")
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {

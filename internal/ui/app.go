@@ -154,6 +154,7 @@ type UI struct {
 	reacts                  reactionsPopup // who reacted to a message (reactions.go)
 	dialog                  dialogState
 	picker                  emojiPicker
+	gifs                    gifSearch // the picker's GIF tab (gifs.go)
 	viewer                  mediaViewer
 	toastMsg                toastState
 	mouse                   image.Point // last pointer position, in content coordinates
@@ -922,6 +923,7 @@ func (u *UI) update(gtx C) {
 	}
 	u.updateMenu(gtx)
 	u.updateFilterMenu(gtx)
+	u.updateGIFs()
 	u.galleryUpdate(gtx)
 	if u.sidebar.menu.Clicked(gtx) {
 		u.menu.open = !u.menu.open
@@ -1421,7 +1423,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
+// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "gifs" (the GIF tab with demo results), "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
 // first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
@@ -1516,6 +1518,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "sticker":
 		u.picker.composerTab = tabSticker // as if the sticker tab was used last
 		u.openPicker(pickComposer, nil)
+	case "gifs":
+		u.openPicker(pickComposer, nil)
+		u.picker.tab = tabGIF
+		u.showDemoGIFs()
 	case "viewer":
 		if img != nil {
 			u.openViewer(img)

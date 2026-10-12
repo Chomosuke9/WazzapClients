@@ -95,6 +95,16 @@ barunya), ganti `publicKey` dan secret-nya. Versi lama aplikasi tidak akan mau
 memasang rilis yang ditandatangani kunci baru, jadi penggunanya harus mengunduh
 satu rilis itu secara manual.
 
+### Kunci KLIPY
+
+Pencarian GIF (tab GIF di panel emoji) memakai app key KLIPY dari secret
+`KLIPY_KEY`, yang dimasukkan ke build lewat `-X main.klipyKey`. Key KLIPY bukan
+rahasia (setiap aplikasi membawanya), tapi tidak disimpan di repository. Tanpa
+secret itu build tetap jalan, dan pengguna memasukkan key mereka sendiri di
+Settings > Extra features. Buat key di partner.klipy.com (API Keys), minta akses
+production agar tidak terbatas 100 request per jam, dan biarkan iklannya mati:
+aplikasi ini tidak menampilkan iklan.
+
 ## Membuat rilis
 
 1. Commit dan push source beserta workflow ke repository GitHub.

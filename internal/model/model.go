@@ -498,8 +498,9 @@ type LinkImage struct {
 // Attachment is a file to send.
 type Attachment struct {
 	Path string
-	// Media is how it is sent: MediaImage, MediaVideo, MediaAudio or
-	// MediaDocument (any file, as is).
+	// Media is how it is sent: MediaImage, MediaVideo, MediaGIF (an MP4
+	// that plays muted and looping), MediaAudio or MediaDocument (any
+	// file, as is).
 	Media Media
 	// Quality is how a photo is scaled and compressed.
 	Quality Quality
@@ -507,6 +508,11 @@ type Attachment struct {
 	ViewOnce bool
 	// Album puts a photo or video in the album NewAlbum opened.
 	Album string
+	// Thumb is a GIF's still picture, a small JPEG, and W and H its size.
+	Thumb []byte
+	W, H  int
+	// Klipy marks a GIF found on KLIPY, which WhatsApp credits.
+	Klipy bool
 }
 
 // Quality is the size a photo is sent at.

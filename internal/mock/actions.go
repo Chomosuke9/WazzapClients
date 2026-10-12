@@ -221,6 +221,8 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 			if a.ViewOnce {
 				x.Kind, x.Album = model.KindViewOnce, ""
 			}
+		case model.MediaGIF:
+			x.Kind, x.Thumb = model.KindImage, a.Thumb
 		case model.MediaDocument:
 			if x.Text == "" {
 				x.Text = x.FileName

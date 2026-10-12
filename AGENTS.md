@@ -259,6 +259,18 @@ Gotchas already found in the pinned version (v0.10.x):
   reads the database. Started with `goWork`, it's what `Close` cancels and waits for:
   a `meta` read from a closed database reads as "", which started the once-only app
   state resync over. A check closes its backend seconds after connecting.
+- GIF search follows KLIPY's integration requirements (docs.klipy.com): requests and
+  media loads go from the app straight to KLIPY with the app key in the URL (it isn't
+  a secret, but release builds get it from the `KLIPY_KEY` secret through
+  `-X main.klipyKey`), never through a proxy or cache of ours; results show in the
+  order they come; the search box says "Search KLIPY" and the tab shows "Powered by
+  KLIPY". Ads aren't shown, so keys must have them off. WhatsApp's GIFs are MP4 videos
+  with `gifPlayback`, and `gifAttribution` KLIPY credits it (`model.Attachment.Klipy`).
+  `Pref` reads the database, so the tab's preferences are read once (`loadGIFPrefs`).
+  KLIPY allows keeping slugs but not media without its approval: favourites are slugs
+  loaded through Items, and Recent is KLIPY's own list (Share adds to it). Search
+  results' slugs end in "--…", which Recent and Items leave off: compare with
+  `klipy.BaseSlug`, and send KLIPY the slug as it came.
 
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
@@ -275,6 +287,8 @@ cmd/winres/        draws the app icon (icon.App) into the .exe's resources and i
 cmd/signrelease/   signs a release's SHA256SUMS with the update key (CI), or makes a new key
 cmd/mkpatch/       makes a release's update patches (bsdiff) from older releases' executables
                    (CI); a module of its own, so the app doesn't link its bsdiff
+cmd/notices/       writes THIRD_PARTY_NOTICES.md from the licenses of what cmd/wazzap links
+                   and bundles; CI runs it with -check
 installer/         the Windows installer (Inno Setup), per user in %LocalAppData%\Programs
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
@@ -282,9 +296,11 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    album.go), contact/group info panel (a person's
                    or business's sections in contactinfo.go), and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
-                   picker (emoji.go, data in the generated emojidata.go), media viewer
-cmd/notices/       writes THIRD_PARTY_NOTICES.md from the licenses of what cmd/wazzap links
-                   and bundles; CI runs it with -check
+                   picker (emoji.go, data in the generated emojidata.go; its GIF tab, which
+                   searches KLIPY, in gifs.go: an extra feature, but on by default, with a key of the user's own
+                   or the build's; Trending, Recent (KLIPY keeps it by customer ID) and
+                   Favourites, kept as slugs; its animated WebP previews play through
+                   the stickers' players, `previewFrame`, with a cap of their own), media viewer
                    (viewer.go) and the volume slider of videos, statuses and voice
                    messages (volume.go, an app preference); the send view for picked, pasted and dropped files
                    (sendview.go), its photo editor (mediaedit.go) and the rendering of
@@ -393,6 +409,8 @@ internal/mapfile/  maps a file into memory copy-on-write (the downloaded emoji f
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
+internal/klipy/    searches KLIPY's GIFs (trending, search, the share count) and downloads
+                   their media, for the picker's GIF tab
 internal/linkpreview/ reads a page's Open Graph tags (or title) for the preview of a link you
                    send; Settings > Privacy > Disable link previews turns it off
 internal/osclip/   files and pictures on the system clipboard (Gio's carries only text)
@@ -547,6 +565,11 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
   follow each other. Tests and `cmd/memprobe` draw with the real (or test) time.
 - Film an animation with `cmd/screenshot -film` (see Commands) to check its frames.
 - Run `gofmt`, `go vet ./...` and `go build ./...` before you finish.
+- The app is MPL-2.0 (`LICENSE`); the executables are GPL-3.0 as a whole, since
+  hypermeow links libsignal-protocol-go. After changing a dependency, or bundling a
+  font, icon set or data from elsewhere (add its license file beside it and to `bundled`
+  in `cmd/notices`), run `go run ./cmd/notices` and commit `THIRD_PARTY_NOTICES.md`.
+  Don't add WhatsApp's or KLIPY's logos: the names only say what the app works with.
 
 ## Commands
 
@@ -561,11 +584,6 @@ go run ./cmd/screenshot -readme -w 1280 -h 800 -scale 1.25 -out docs/screenshots
 go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the data dir>
 # Scroll the chat list for 1200 frames and print frame times, CPU, GCs, the frame
 # rate and late frames; -ballast adds live heap like a long session's, -cpuprofile
-- The app is MPL-2.0 (`LICENSE`); the executables are GPL-3.0 as a whole, since
-  hypermeow links libsignal-protocol-go. After changing a dependency, or bundling a
-  font, icon set or data from elsewhere (add its license file beside it and to `bundled`
-  in `cmd/notices`), run `go run ./cmd/notices` and commit `THIRD_PARTY_NOTICES.md`.
-  Don't add WhatsApp's or KLIPY's logos: the names only say what the app works with.
 # writes a profile. -chat scrolls the first chat's messages instead, and -size sets
 # the window in dp (1706x1040 is about a maximized 2560x1600 window at 150%):
 go run ./cmd/memprobe -data <copy> -scroll 1200 -ballast 60 -cpuprofile cpu.pprof
@@ -584,7 +602,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
-# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, viewer, forward, reply, replyphoto, linkpreview, invite,
+# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, reply, replyphoto, linkpreview, invite,
 # delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
