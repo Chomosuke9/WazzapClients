@@ -274,6 +274,7 @@ type host struct {
 	notesDue chan struct{}            // notesTimer fired: notifications are due
 	// notesTimer fires when the notifiers' pending messages are due.
 	notesTimer *time.Timer
+	lock       *appLock // App lock, for every window's UI
 }
 
 type request struct {
@@ -547,6 +548,11 @@ func (h *host) openWindow() {
 func (h *host) newUI() {
 	u := New(hostBackend{Backend: h.b, h: h})
 	u.window, u.host = h.win, h
+	// App lock outlives the window and the account (applock.go).
+	if h.lock == nil {
+		h.lock = u.lock
+	}
+	u.lock = h.lock
 	u.drafts = h.drafts
 	h.u = u
 	u.accounts = h.accountRows()

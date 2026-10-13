@@ -30,6 +30,7 @@ const (
 	dialogPayload // a message's payload (/catch, snippets.go)
 	dialogList    // a bot's list of choices (listpick.go)
 	dialogEvent   // the attach menu's Create event (eventnew.go)
+	dialogAppLock // App lock's password and auto-lock (applock.go)
 )
 
 type dialogButton struct {
@@ -199,6 +200,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.listPickPanel)
 	case dialogEvent:
 		panel = record(gtx, u.newEventPanel)
+	case dialogAppLock:
+		panel = record(gtx, u.appLockPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

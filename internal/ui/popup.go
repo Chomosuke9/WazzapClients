@@ -39,6 +39,7 @@ func (u *UI) updateMouse(gtx C) {
 		if e, ok := ev.(pointer.Event); ok {
 			if e.Kind != pointer.Cancel {
 				u.mouse = e.Position.Round()
+				u.touchLock()
 			}
 			if e.Kind == pointer.Press || e.Kind == pointer.Release {
 				// Many buttons act on their click while they're laid out,
@@ -142,6 +143,7 @@ const (
 	ctxAcctMode    // an account's background modes (chatID is its Dir)
 	ctxInfoPhoto   // a group's picture in its info panel (groupedit.go)
 	ctxReact       // a message's reaction bar alone, from its React button (sidebuttons.go)
+	ctxPickMute    // mute durations for the chats picked (selectchats.go)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -220,11 +222,12 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 	} else {
 		add(menuItem{key: "fav", ic: icHeart, label: "Add to favourites", run: func() { b.SetFavorite(id, true) }})
 	}
-	if u.selected != nil && u.selected.ID == id {
-		add(menuItem{key: "close", ic: icCancel, label: "Close chat", run: func() { u.closeChat() }})
-	}
 	add(menuItem{key: "lists", ic: icAddToList, label: "Add to list", arrow: true})
 	add(menuItem{divider: true})
+	if !c.IsGroup && !c.Self && !isChannelID(id) {
+		name := c.Name
+		add(menuItem{key: "block", ic: icBlock, label: "Block", run: func() { u.confirmBlock(id, name) }})
+	}
 	add(menuItem{key: "clear", ic: icClear, label: "Clear chat", run: func() { u.confirmClearChat(id) }})
 	if c.IsGroup && c.Left {
 		name := c.Name
@@ -453,6 +456,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		case ctxInfoPhoto:
 			if u.info.open {
 				items = u.infoPhotoItems(m.chatID)
+			}
+		case ctxPickMute:
+			if u.sidebar.pick.on {
+				items = u.pickMuteItems()
 			}
 		}
 		if items == nil {

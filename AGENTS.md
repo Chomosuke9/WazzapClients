@@ -347,7 +347,11 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    text in textsel.go; searching a chat's messages (the panel that takes the info
                    panel's place) and a group's members in chatsearch.go; the chat list's
                    search (chats, archived ones too, contacts and every chat's messages) in
-                   listsearch.go; custom lists as filter chips and New list in lists.go; the composer's
+                   listsearch.go; custom lists as filter chips and New list in lists.go, the chip row,
+                   which scrolls sideways, in chips.go; Select chats (the ⋮ menu: checkboxes
+                   and a bar of bulk actions) in selectchats.go; App lock (a salted PBKDF2
+                   hash in the prefs, the lock screen, auto-lock; shared by the host's UIs)
+                   in applock.go; the composer's
                    formatting toolbar in formatbar.go; the attach
                    menu (Camera through internal/camera, New sticker as /sticker), file tray and poll
                    dialog in attach.go, and its Create event dialog in eventnew.go; slash commands (their
@@ -659,7 +663,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, invite,
-# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
