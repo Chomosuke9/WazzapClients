@@ -29,6 +29,7 @@ const (
 	dialogEdits   // an edited message's earlier texts (edit.go)
 	dialogPayload // a message's payload (/catch, snippets.go)
 	dialogList    // a bot's list of choices (listpick.go)
+	dialogEvent   // the attach menu's Create event (eventnew.go)
 )
 
 type dialogButton struct {
@@ -78,6 +79,7 @@ type dialogState struct {
 
 	poll     pollState
 	listPick listPick
+	event    newEventState
 	invite   inviteState
 
 	// Edit history: the message and its earlier texts.
@@ -195,6 +197,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.snippetPanel)
 	case dialogList:
 		panel = record(gtx, u.listPickPanel)
+	case dialogEvent:
+		panel = record(gtx, u.newEventPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

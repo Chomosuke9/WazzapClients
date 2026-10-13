@@ -320,7 +320,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    album.go), contact/group info panel (a person's
                    or business's sections in contactinfo.go), and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
-                   picker (emoji.go, data in the generated emojidata.go; its GIF tab, which
+                   picker (emoji.go, data in the generated emojidata.go; skin tones, a tone button and
+                   a right click's menu, in skintone.go, the emojis that take one in emojitones.go; its GIF tab, which
                    searches KLIPY, in gifs.go: an extra feature, but on by default, with a key of the user's own
                    or the build's; Trending, Recent (KLIPY keeps it by customer ID) and
                    Favourites, kept as slugs; its animated WebP previews play through
@@ -348,7 +349,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    search (chats, archived ones too, contacts and every chat's messages) in
                    listsearch.go; custom lists as filter chips and New list in lists.go; the composer's
                    formatting toolbar in formatbar.go; the attach
-                   menu, file tray and poll dialog in attach.go; slash commands (their
+                   menu (Camera through internal/camera, New sticker as /sticker), file tray and poll
+                   dialog in attach.go, and its Create event dialog in eventnew.go; slash commands (their
                    picker over the composer and the notes only you see) in slash.go; scheduled
                    messages as bubbles after a chat's newest (send now, edit, cancel) and
                    the AFK bar above the chat list in scheduled.go; saved messages (Settings >
@@ -460,6 +462,8 @@ internal/klipy/    searches KLIPY's GIFs (trending, search, the share count) and
 internal/linkpreview/ reads a page's Open Graph tags (or title) for the preview of a link you
                    send; Settings > Privacy > Disable link previews turns it off
 internal/osclip/   files and pictures on the system clipboard (Gio's carries only text)
+internal/camera/   the attach menu's Camera: opens the system's camera app and waits for the
+                   photo it saves (no capture of our own; that would need each OS's capture API)
 internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or
                    osascript elsewhere), run on its own goroutine
 internal/memtrim/  gives memory back to the OS after 10 s without a frame (see ui.Run)

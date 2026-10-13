@@ -503,6 +503,14 @@ func scaleAt(origin image.Point, s float32) f32.Affine2D {
 	return f32.AffineId().Scale(pointF(origin), f32.Pt(s, s))
 }
 
+// rotateAt turns by rad radians around origin.
+func rotateAt(origin f32.Point, rad float32) f32.Affine2D {
+	if rad == 0 {
+		return f32.Affine2D{}
+	}
+	return f32.AffineId().Rotate(origin, rad)
+}
+
 // moveBy translates by d px, rounded to whole pixels. Under a fractional
 // offset Gio stencils every clip rectangle as a path, and rebuilds text
 // outlines, which is slow and grows its coverage texture for good.

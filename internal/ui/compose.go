@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -778,7 +779,15 @@ func (u *UI) layoutComposerBox(gtx C) D {
 									if h := u.hover(gtx, &u.conv.attach); h > 0 {
 										fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, faded(p.Hover, h))
 									}
-									return centerIn(gtx, sz, iconW(icAttach, 26, p.IconStrong))
+									// WhatsApp's "+" turns into an "x" while
+									// the menu it opened is up.
+									open := u.ctx.isOpen() && u.ctx.kind == ctxAttach
+									t := smooth(u.conv.attachTurn.step(gtx, open, popDur(open)))
+									mid := pointF(image.Pt(sz/2, sz/2))
+									fx := pushFx(gtx, 1, rotateAt(mid, t*math.Pi/4))
+									centerIn(gtx, sz, iconW(icAdd, 28, p.IconStrong))
+									fx.Pop()
+									return D{Size: image.Pt(sz, sz)}
 								})
 							}),
 							layout.Rigid(layout.Spacer{Width: 2}.Layout),

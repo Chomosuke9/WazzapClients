@@ -239,6 +239,7 @@ type UI struct {
 		video, search, menu widget.Clickable
 		community           widget.Clickable // the announcements' group picker
 		attach, emoji, send widget.Clickable
+		attachTurn          tween // the attach "+" turning into an "x" while its menu is open
 		// editorElsewhere is set while the send view shows: the
 		// composer's editor is its caption field.
 		editorElsewhere bool
@@ -1470,7 +1471,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "keptmenu" (a message kept in the chat), "report" (Report's question for the last message received), "emoji", "sticker", "gifs" (the GIF tab with demo results), "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "recording" (a voice message
 // being recorded) and "recordingpaused" (paused, to play back), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
-// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "skintone" (the picker's tones under its tone button), "emojitones" (👍's tones, a right click at -at in the panel), "attach", "poll", "newevent" (the attach menu's Create event), "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
 // $WAZZAP_DEMO_SEARCH), its first list's chip "listchip" and the New list dialog "newlist"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
@@ -1583,6 +1584,13 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	case "emoji":
 		u.openPicker(pickComposer, nil)
+	case "skintone":
+		u.openPicker(pickComposer, nil)
+		u.picker.tone = 3
+		u.openToneMenu("", image.Point{})
+	case "emojitones":
+		u.openPicker(pickComposer, nil)
+		u.openToneMenu("👍", image.Pt(x, y))
 	case "sticker":
 		u.picker.composerTab = tabSticker // as if the sticker tab was used last
 		u.openPicker(pickComposer, nil)
@@ -1719,6 +1727,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openAttachMenu()
 	case "poll":
 		u.openPoll()
+	case "newevent":
+		u.openNewEvent()
 	case "contacts":
 		u.openContactPicker()
 	case "invite":
