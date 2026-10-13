@@ -1,10 +1,13 @@
 // Package update replaces the app's executable with the latest GitHub
-// release, when the user asks for it: Check looks for a newer release,
+// release: Check looks for a newer release,
 // Download fetches its executable next to the running one and checks it
 // against the release's signed SHA256SUMS, and Apply swaps the two.
 //
-// A release can carry patches (bsdiff, made by cmd/mkpatch) from the
-// releases before it. When there's one from the running version, Download
+// Patches (bsdiff, made by cmd/mkpatch) from the few releases before each
+// one live on a prerelease of their own, PatchTag, so a release's page
+// lists only what people download. Each is named after the versions it
+// goes from and to, and the release's SHA256SUMS lists it. When there's
+// one from the running version to the latest release, Download
 // rebuilds the new executable from the running one and the patch, a small
 // fraction of the executable's size, and checks the result against the
 // same checksum. Any trouble with the patch falls back to the whole file.
@@ -92,10 +95,15 @@ func AssetName() string {
 	return fmt.Sprintf("WazzapClients-%s-%s%s", runtime.GOOS, runtime.GOARCH, ext)
 }
 
-// patchName is the name of the patch in a release that turns version's
-// executable for this system into the release's.
-func patchName(version string) string {
-	return AssetName() + ".from-" + version + ".bsdiff"
+// PatchTag is the tag of the prerelease that keeps the update patches.
+// It isn't a version, and GitHub's latest release leaves prereleases out,
+// so it's never offered as an update.
+const PatchTag = "update-patches"
+
+// patchName is the name of the patch that turns from's executable for
+// this system into to's.
+func patchName(from, to string) string {
+	return AssetName() + ".from-" + from + ".to-" + to + ".bsdiff"
 }
 
 var client = &http.Client{Timeout: 10 * time.Minute}
@@ -117,18 +125,29 @@ func get(ctx context.Context, url, version string) (*http.Response, error) {
 	return resp, nil
 }
 
-// apiURL is the latest release's API address (a variable for tests). The
-// latest release leaves out drafts and prereleases.
-var apiURL = "https://api.github.com/repos/" + Repo + "/releases/latest"
+// apiURL is the latest release's API address and patchesURL the patch
+// release's (variables for tests). The latest release leaves out drafts
+// and prereleases.
+var (
+	apiURL     = "https://api.github.com/repos/" + Repo + "/releases/latest"
+	patchesURL = "https://api.github.com/repos/" + Repo + "/releases/tags/" + PatchTag
+)
 
-// Check returns the latest release when it's newer than current (a
-// version like "v0.9.0"), and nil when current is up to date.
-func Check(ctx context.Context, current string) (*Release, error) {
-	cur, ok := parseVersion(current)
-	if !ok {
-		return nil, ErrDevBuild
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+// ghRelease is what Check reads of a release from GitHub's API.
+type ghRelease struct {
+	Tag    string `json:"tag_name"`
+	Page   string `json:"html_url"`
+	Assets []struct {
+		Name string `json:"name"`
+		URL  string `json:"browser_download_url"`
+		Size int64  `json:"size"`
+	} `json:"assets"`
+}
+
+// getRelease reads the release at url, an API address. It returns nil
+// when there's none.
+func getRelease(ctx context.Context, url, current string) (*ghRelease, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -140,21 +159,27 @@ func Check(ctx context.Context, current string) (*Release, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil // nothing published yet
+		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub: %s", resp.Status)
 	}
-	var rel struct {
-		Tag    string `json:"tag_name"`
-		Page   string `json:"html_url"`
-		Assets []struct {
-			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
-			Size int64  `json:"size"`
-		} `json:"assets"`
-	}
+	var rel ghRelease
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
+		return nil, err
+	}
+	return &rel, nil
+}
+
+// Check returns the latest release when it's newer than current (a
+// version like "v0.9.0"), and nil when current is up to date.
+func Check(ctx context.Context, current string) (*Release, error) {
+	cur, ok := parseVersion(current)
+	if !ok {
+		return nil, ErrDevBuild
+	}
+	rel, err := getRelease(ctx, apiURL, current)
+	if err != nil || rel == nil { // nil: nothing published yet
 		return nil, err
 	}
 	v, ok := parseVersion(rel.Tag)
@@ -167,12 +192,21 @@ func Check(ctx context.Context, current string) (*Release, error) {
 		switch a.Name {
 		case AssetName():
 			r.exe = x
-		case patchName(current):
-			r.patch = x
 		case sumsName:
 			r.sums = x
 		case sigName:
 			r.sig = x
+		}
+	}
+	if r.exe.url != "" {
+		// Without the patch release (or with no patch from current), the
+		// whole executable downloads.
+		if p, err := getRelease(ctx, patchesURL, current); err == nil && p != nil {
+			for _, a := range p.Assets {
+				if a.Name == patchName(current, rel.Tag) {
+					r.patch = asset{name: a.Name, url: a.URL, size: a.Size}
+				}
+			}
 		}
 	}
 	return r, nil

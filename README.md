@@ -227,7 +227,7 @@ photos exactly as they are.
 - 1️⃣ View once messages, opened once, with screenshots blocked while one is shown
 - 🔍 Font size from 80% to 200% (*Settings > General*, or Ctrl with +, - and 0)
 - 🅰️ Initials on a color for people without a profile picture, and clickable @mentions
-- ⬆️ Built-in updates from signed GitHub releases (*Settings > Help > Check for updates*)
+- ⬆️ Automatic updates from signed GitHub releases, downloading only what changed (*Settings > Help*)
 
 ## Download
 
@@ -237,7 +237,7 @@ Prebuilt packages for **Windows** (amd64) and **Linux** (amd64) are on the
 - `WazzapClients-Setup.exe` installs the app for your user only. It doesn't need admin rights.
 - `WazzapClients-windows-amd64.exe` is the same app without an installer.
 
-To update, use **Settings > Help > Check for updates**, which installs the new release in place.
+The app updates itself in the background and installs the new release when it restarts. To turn that off or update now, use **Settings > Help**.
 See [docs/releasing.md](docs/releasing.md) for how releases are made and signed.
 
 ## Try it without an account
