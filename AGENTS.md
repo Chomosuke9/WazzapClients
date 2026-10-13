@@ -337,7 +337,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    over the composer, in linkpreview.go; drafts (what a chat's composer
                    and send view held when another chat opened, and the list's "Draft:")
                    in draft.go;
-                   document cards and the voice/audio player in files.go; polls (voting by
+                   document cards and the voice/audio player in files.go; recording a voice
+                   message (the composer's mic: the recording bar, pause and play back, send)
+                   in voicerec.go; polls (voting by
                    clicking an option), maps, shared contacts and events as cards in bubbles
                    in cards.go, and a poll's votes or an event's answers (the Message info
                    panel's other mode) in votes.go; selecting message
@@ -442,6 +444,10 @@ internal/offheap/  pictures whose pixels live outside the Go heap (animated emoj
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
+internal/record/   records voice messages: the microphone (winmm's waveIn through syscall on
+                   Windows; parec or arecord elsewhere) streams 16 kHz PCM into a temporary
+                   WAV, keeping only its loudness in memory; the system's ffmpeg (on PATH)
+                   encodes it to OGG Opus to send. -demo records a made-up voice (Demo)
 internal/klipy/    searches KLIPY's GIFs (trending, search, the share count) and downloads
                    their media, for the picker's GIF tab
 internal/linkpreview/ reads a page's Open Graph tags (or title) for the preview of a link you
@@ -641,7 +647,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, reply, replyphoto, linkpreview, invite,
-# delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;

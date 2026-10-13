@@ -293,6 +293,7 @@ type voiceState struct {
 	loading bool    // waiting for the download
 	seekTo  float32 // where to go (0 to 1) once the length is known; -1 none
 	drag    bool    // the knob follows the pointer
+	path    string  // the file, for a recording not sent yet (u.rec.draft)
 }
 
 // toggleVoice plays or pauses an audio message.
@@ -314,14 +315,17 @@ func (u *UI) toggleVoice(m *model.Message) {
 		}
 	}
 	u.stopVoice()
-	*v = voiceState{key: fileKey(m), msg: m, seekTo: -1}
+	*v = voiceState{key: fileKey(m), msg: m, seekTo: -1, path: u.draftPath(m)}
 	u.loadVoice()
 }
 
 // loadVoice opens the player, or waits for the download.
 func (u *UI) loadVoice() {
 	v := &u.voice
-	path := u.backend.MediaFile(v.msg)
+	path := v.path
+	if path == "" {
+		path = u.backend.MediaFile(v.msg)
+	}
 	if path == "" {
 		v.loading = true // voiceDownloaded continues
 		return
@@ -330,8 +334,12 @@ func (u *UI) loadVoice() {
 	p, err := video.OpenAudio(path, u.images.invalidate)
 	if err != nil {
 		// No player here: the system's app plays it.
-		m := v.msg
+		m, draft := v.msg, v.path != ""
 		u.stopVoice()
+		if draft {
+			u.toast("The recording can't play here.")
+			return
+		}
 		u.backend.OpenMedia(m)
 		return
 	}
@@ -404,6 +412,11 @@ func (u *UI) voiceProgress(m *model.Message) (t float32, pos int, playing, loadi
 		return max(0, v.seekTo), m.Duration, false, v.loading
 	}
 	st := v.player.Status()
+	if st.Err != nil && v.path != "" {
+		u.stopVoice()
+		u.toast("The recording can't play here.")
+		return 0, m.Duration, false, false
+	}
 	if st.Err != nil {
 		u.stopVoice()
 		u.toast("This audio can't play here. Opening it in your audio player…")

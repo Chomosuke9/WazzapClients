@@ -699,6 +699,7 @@ func (u *UI) openFromNotification(id string) {
 // shutdown stops what plays in a window that is going away.
 func (u *UI) shutdown() {
 	u.stopVoice()
+	u.discardRecording()
 	u.hideViewer()
 	u.status.viewer.close()
 	u.players.stopAll()

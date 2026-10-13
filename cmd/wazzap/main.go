@@ -21,6 +21,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/desktop"
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/record"
 	"github.com/chomosuke9/wazzapclients/internal/ui"
 	"github.com/chomosuke9/wazzapclients/internal/update"
 	"github.com/chomosuke9/wazzapclients/internal/wa"
@@ -102,6 +103,7 @@ func main() {
 	}
 	if *demo {
 		opts.NotifyDir = demoDir
+		record.Demo = true // the mic records a made-up voice
 	} else {
 		opts.Relaunch = []string{}
 		if *dataDir != defaultDataDir() {

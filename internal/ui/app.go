@@ -26,6 +26,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/linkpreview"
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	recorder "github.com/chomosuke9/wazzapclients/internal/record"
 )
 
 // Chat list filters, in chip order.
@@ -144,6 +145,7 @@ type UI struct {
 
 	files  fileState   // documents and audio on disk
 	voice  voiceState  // the audio message playing
+	rec    recState    // the voice message being recorded (voicerec.go)
 	attach attachState // files picked to send
 
 	menu       menuState
@@ -647,6 +649,7 @@ func (u *UI) open(c *model.Chat) {
 	u.closePicker()
 	u.picker.anim.snap(false)
 	u.stopVoice()
+	u.discardRecording()
 	u.dropAttachments()
 	u.restoreDraft()
 }
@@ -1063,9 +1066,10 @@ func (u *UI) update(gtx C) {
 			u.sendComposer()
 		}
 	}
-	if u.conv.send.Clicked(gtx) {
+	if u.conv.send.Clicked(gtx) && !u.micClicked() {
 		u.sendComposer()
 	}
+	u.updateRecording(gtx)
 	if u.conv.outgoingTyping != "" && !u.canReportTyping() {
 		u.stopOutgoingTyping()
 	}
@@ -1458,7 +1462,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "outmenu" (your last message's),
 // "keptmenu" (a message kept in the chat), "report" (Report's question for the last message received), "emoji", "sticker", "gifs" (the GIF tab with demo results), "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
-// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
+// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "recording" (a voice message
+// being recorded) and "recordingpaused" (paused, to play back), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
 // first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
 // $WAZZAP_DEMO_SEARCH), its first list's chip "listchip" and the New list dialog "newlist"; on the Status page "statusadd",
@@ -1617,6 +1622,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "edit":
 		if lastOut != nil {
 			u.startEdit(lastOut)
+		}
+	case "recording", "recordingpaused":
+		// A voice message 0:07 into recording, or paused to play back.
+		if u.selected != nil {
+			u.rec.sess, u.rec.chatID = recorder.Sample(7*time.Second, false), u.selected.ID
+			if name == "recordingpaused" {
+				u.pauseRecording()
+			}
 		}
 	case "edits":
 		for _, m := range u.msgs {

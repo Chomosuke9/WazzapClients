@@ -506,8 +506,8 @@ type LinkImage struct {
 type Attachment struct {
 	Path string
 	// Media is how it is sent: MediaImage, MediaVideo, MediaGIF (an MP4
-	// that plays muted and looping), MediaAudio or MediaDocument (any
-	// file, as is).
+	// that plays muted and looping), MediaAudio, MediaVoice (a recorded
+	// voice message) or MediaDocument (any file, as is).
 	Media Media
 	// Quality is how a photo is scaled and compressed.
 	Quality Quality
@@ -520,6 +520,11 @@ type Attachment struct {
 	W, H  int
 	// Klipy marks a GIF found on KLIPY, which WhatsApp credits.
 	Klipy bool
+	// Seconds and Waveform are a recorded voice message's (MediaVoice,
+	// an OGG Opus file): its length and loudness, as Message has them.
+	// The file is read as it is sent and may be deleted afterwards.
+	Seconds  int
+	Waveform []byte
 }
 
 // Quality is the size a photo is sent at.

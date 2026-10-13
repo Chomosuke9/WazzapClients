@@ -760,6 +760,15 @@ func (u *UI) layoutComposerBox(gtx C) D {
 				return D{Size: image.Pt(full.size.X, h)}
 			}),
 			layout.Rigid(func(gtx C) D {
+				if u.recording() {
+					// A voice message being recorded (voicerec.go).
+					v := easeOut(u.rec.anim.step(gtx, true, durSwitch))
+					return vcenter(gtx, gtx.Dp(55), func(gtx C) D {
+						return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
+							return fadeW(gtx, v, u.layoutRecordBar)
+						})
+					})
+				}
 				return vcenter(gtx, gtx.Dp(55), func(gtx C) D {
 					return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
