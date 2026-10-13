@@ -430,8 +430,9 @@ type LinkImage struct {
 // Attachment is a file to send.
 type Attachment struct {
 	Path string
-	// Media is how it is sent: MediaImage, MediaVideo, MediaAudio or
-	// MediaDocument (any file, as is).
+	// Media is how it is sent: MediaImage, MediaVideo, MediaAudio,
+	// MediaVoice (a recorded voice message) or MediaDocument (any file,
+	// as is).
 	Media Media
 	// Quality is how a photo is scaled and compressed.
 	Quality Quality
@@ -439,6 +440,11 @@ type Attachment struct {
 	ViewOnce bool
 	// Album puts a photo or video in the album NewAlbum opened.
 	Album string
+	// Seconds and Waveform are a recorded voice message's (MediaVoice,
+	// an OGG Opus file): its length and loudness, as Message has them.
+	// The file is read as it is sent and may be deleted afterwards.
+	Seconds  int
+	Waveform []byte
 }
 
 // Quality is the size a photo is sent at.

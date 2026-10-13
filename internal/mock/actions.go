@@ -216,6 +216,8 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 			if x.Text == "" {
 				x.Text = x.FileName
 			}
+		case model.MediaVoice:
+			x.Duration, x.Waveform = a.Seconds, a.Waveform
 		}
 	})
 	return b.copyOf(m)

@@ -270,6 +270,15 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		m.Duration = mp4Seconds(a.Path)
 	case model.MediaAudio:
 		m.Duration = audioSeconds(a.Path, m.FileType, st.Size())
+	case model.MediaVoice:
+		// A recording, small: read now, so its file can go once sent.
+		m.Duration, m.Waveform, m.FileType = a.Seconds, a.Waveform, "audio/ogg; codecs=opus"
+		data, err := os.ReadFile(a.Path)
+		if err != nil {
+			b.emit(model.NoticeEvent{Text: "Couldn't read the voice message."})
+			return nil
+		}
+		up.data = data
 	case model.MediaDocument:
 		if m.Text == "" {
 			m.Text = name
@@ -284,9 +293,12 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		inAlbum(msg, jid, m.Album)
 	}
 	// Keep a copy so your own media shows (and opens) without a download.
-	if up.data != nil {
+	switch {
+	case up.data != nil && a.Media == model.MediaVoice:
+		up.keep(b.mediaFilePath(payloadView(m, msg)))
+	case up.data != nil:
 		up.keep(b.mediaPath(chatID, m.ID))
-	} else if st.Size() <= maxLocalCopy {
+	case st.Size() <= maxLocalCopy:
 		up.copyTo(b.mediaFilePath(payloadView(m, msg)))
 	}
 	ctx := b.ctx
@@ -387,6 +399,7 @@ var mediaTypes = map[model.Media]whatsmeow.MediaType{
 	model.MediaImage:    whatsmeow.MediaImage,
 	model.MediaVideo:    whatsmeow.MediaVideo,
 	model.MediaAudio:    whatsmeow.MediaAudio,
+	model.MediaVoice:    whatsmeow.MediaAudio,
 	model.MediaDocument: whatsmeow.MediaDocument,
 }
 
@@ -461,6 +474,9 @@ func fileMessage(m *model.Message, up upload, caption string, ci *waE2E.ContextI
 		e := &waE2E.AudioMessage{
 			PTT: proto.Bool(m.Media == model.MediaVoice), FileLength: size, Mimetype: proto.String(m.FileType),
 			Seconds: proto.Uint32(uint32(m.Duration)), ContextInfo: ci,
+		}
+		if len(m.Waveform) > 0 {
+			e.Waveform = m.Waveform
 		}
 		msg, inner = &waE2E.Message{AudioMessage: e}, e
 	default:
