@@ -110,7 +110,10 @@ const (
 	vSetCurrentTime     = 17
 	vGetDuration        = 19
 	vIsPaused           = 20
+	vSetDefaultRate     = 22
+	vSetPlaybackRate    = 24
 	vIsEnded            = 27
+	vSetLoop            = 31
 	vPlay               = 32
 	vPause              = 33
 	vSetMuted           = 35
@@ -403,6 +406,17 @@ func (w *winPlayer) do(c command) {
 		syscall.SyscallN(w.engine.vtbl[vSetMuted], e, on)
 	case cmdVolume:
 		syscall.SyscallN(w.engine.vtbl[vSetVolume], e, uintptr(math.Float64bits(c.vol)))
+	case cmdRate:
+		// The default rate too, which a reload of the source goes back to.
+		r := uintptr(math.Float64bits(c.rate))
+		syscall.SyscallN(w.engine.vtbl[vSetDefaultRate], e, r)
+		syscall.SyscallN(w.engine.vtbl[vSetPlaybackRate], e, r)
+	case cmdLoop:
+		on := uintptr(0)
+		if c.on {
+			on = 1
+		}
+		syscall.SyscallN(w.engine.vtbl[vSetLoop], e, on)
 	}
 }
 

@@ -122,19 +122,20 @@ func (u *UI) blurred() bool { return u.secret >= 0.5 }
 // 0 (shown) to 1 (bars where its lines are).
 type labelStyle struct {
 	material.LabelStyle
-	hide float32
+	hide   float32
+	bitmap bitmapHook // draws its color emojis (u.labelEmoji)
 }
 
 func (l labelStyle) Layout(gtx C) D {
 	if l.hide <= 0 {
-		return l.LabelStyle.Layout(gtx)
+		return layoutLabel(gtx, l.LabelStyle, l.bitmap)
 	}
 	// The text's own size, not the minimum it was given: bars only go
 	// where text is.
 	mg := gtx
 	mg.Constraints.Min = image.Point{}
 	m := op.Record(gtx.Ops)
-	td := l.LabelStyle.Layout(mg)
+	td := layoutLabel(mg, l.LabelStyle, l.bitmap)
 	m.Stop()
 	d := D{Size: gtx.Constraints.Constrain(td.Size), Baseline: td.Baseline + gtx.Constraints.Constrain(td.Size).Y - td.Size.Y}
 	x := 0
@@ -147,7 +148,7 @@ func (l labelStyle) Layout(gtx C) D {
 	if l.hide < 1 {
 		t := l.LabelStyle
 		t.Color = faded(t.Color, 1-l.hide)
-		t.Layout(gtx)
+		layoutLabel(gtx, t, l.bitmap)
 	}
 	lh := float32(gtx.Sp(l.TextSize))
 	if l.LineHeight != 0 {

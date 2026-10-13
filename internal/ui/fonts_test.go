@@ -26,7 +26,7 @@ func TestEmojiSpace(t *testing.T) {
 // fonts before our collection, so simulate that order without depending on the
 // test machine's installed fonts.
 func TestEmojiSpaceWithSystemNoto(t *testing.T) {
-	data, err := os.ReadFile("fonts/NotoColorEmoji.ttf")
+	data, err := os.ReadFile(testEmojiFont)
 	if err != nil {
 		t.Fatal(err)
 	}

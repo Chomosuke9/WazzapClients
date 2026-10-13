@@ -140,13 +140,13 @@ func (u *UI) pickedUnread(chats []*model.Chat) bool {
 	return false
 }
 
-// confirmDeleteChats deletes the one-to-one chats picked. Groups you may
-// still be in are left: WhatsApp has you exit a group before deleting it.
+// confirmDeleteChats deletes the chats picked. Groups you're still in are
+// left: WhatsApp has you exit a group before deleting it.
 func (u *UI) confirmDeleteChats(chats []*model.Chat) {
 	var ids []string
 	groups := 0
 	for _, c := range chats {
-		if c.IsGroup {
+		if c.IsGroup && !c.Left {
 			groups++
 		} else {
 			ids = append(ids, c.ID)
@@ -166,11 +166,7 @@ func (u *UI) confirmDeleteChats(chats []*model.Chat) {
 	}
 	u.confirm(title, body, dialogButton{label: "Delete", primary: true, danger: true, run: func() {
 		for _, id := range ids {
-			if u.selected != nil && u.selected.ID == id {
-				u.closeChat()
-			}
-			u.dropDraft(id)
-			u.backend.DeleteChat(id)
+			u.deleteChat(id)
 		}
 		u.endChatSelect()
 	}})

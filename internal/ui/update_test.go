@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/update"
 )
 
 func TestUpdateRows(t *testing.T) {
@@ -46,5 +47,36 @@ func TestUpdateRows(t *testing.T) {
 	}
 	if _, ok := rows()["whatsnew"]; ok {
 		t.Error("What's new shows without a newer release")
+	}
+}
+
+func TestAutoUpdateRows(t *testing.T) {
+	b := mock.New()
+	u := New(b)
+	u.Start(func() {})
+	u.applyEvents()
+	u.ShowPage("help")
+	h := &host{o: Options{Version: "v0.9.0", Relaunch: []string{}}, reqs: make(chan request, 16)}
+	h.upd.h, h.upd.exe = h, "WazzapClients.exe"
+	u.host = h
+
+	if r := settingRowByKey(t, u, prefAutoUpdate); !r.on {
+		t.Fatal("automatic updates are off by default")
+	}
+	settingRowByKey(t, u, prefAutoUpdate).run()
+	if b.Pref(prefAutoUpdate) != "off" {
+		t.Fatal("the toggle didn't turn automatic updates off")
+	}
+	h.b = b
+	h.autoUpdate() // off: it doesn't start a check
+	if step, _, _, _, _ := h.upd.state(); step != updIdle {
+		t.Errorf("with automatic updates off, a tick moved the update to %d", step)
+	}
+
+	u.settings.stale = true
+	h.upd.step, h.upd.rel = updReady, &update.Release{Version: "v0.10.0"}
+	r := settingRowByKey(t, u, "update")
+	if !strings.Contains(r.title, "Restart to update to v0.10.0") || r.run == nil {
+		t.Errorf("ready row: %q", r.title)
 	}
 }

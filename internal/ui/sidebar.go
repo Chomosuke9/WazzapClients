@@ -117,10 +117,11 @@ func (u *UI) chip(gtx C, c *widget.Clickable, active float32, w layout.Widget) D
 }
 
 func (u *UI) filteredChats() []*model.Chat {
-	q := strings.ToLower(trimSpace(u.sidebar.search.Text()))
+	q := strings.ToLower(u.listQuery())
 	out := u.sidebar.visible[:0] // reused every frame
 	for _, c := range u.chats {
-		if c.Archived != u.sidebar.showArchived {
+		// The search finds archived chats too, as WhatsApp's does.
+		if c.Archived != u.sidebar.showArchived && (q == "" || u.sidebar.showArchived) {
 			continue
 		}
 		switch u.sidebar.filter {
@@ -137,7 +138,7 @@ func (u *UI) filteredChats() []*model.Chat {
 				continue
 			}
 		case filterList:
-			if !u.sidebar.chipRow.in[c.ID] {
+			if !u.inOpenList(c.ID) {
 				continue
 			}
 		}
@@ -150,6 +151,11 @@ func (u *UI) filteredChats() []*model.Chat {
 }
 
 func (u *UI) layoutChatList(gtx C) D {
+	q := u.listQuery()
+	u.runListSearch(q)
+	if q != "" {
+		return u.layoutFindList(gtx, q)
+	}
 	chats := u.sidebar.visible
 	o := &u.sidebar.order
 	return u.scrollList(gtx, &u.sidebar.list, len(chats), func(gtx C, i int) D {
@@ -286,6 +292,7 @@ func (u *UI) listName(c *model.Chat) string {
 }
 
 func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
+	defer u.emojiIn(emojiList)()
 	click := u.rowClick(c)
 	chev := u.btn("rowmenu:" + c.ID)
 	if chev.Clicked(gtx) {
@@ -369,6 +376,7 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 	click := o.click
 	last := c.Last
 	avatar := o.avatar
+	timer := avatar == nil // Channels and Communities pass their own
 	if avatar == nil {
 		avatar = func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 52) }
 	}
@@ -398,6 +406,15 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 				h = gtx.Dp(96.5)
 				avatar = func(gtx C) D { return u.communityGroupAvatar(gtx, c, cm, bg) }
 				text = func(gtx C) D { return u.layoutCommunityRowText(gtx, c, cm, o.verified, hover) }
+			}
+			if timer && o.community == nil {
+				pic := avatar
+				avatar = func(gtx C) D {
+					d := pic(gtx)
+					r := d.Size.X / 2
+					u.timerBadge(gtx, c, image.Pt(r, r), r, bg)
+					return d
+				}
 			}
 			return background(gtx, u.rowBg(bg), 10, func(gtx C) D {
 				return vcenter(gtx, h, func(gtx C) D {
@@ -485,6 +502,7 @@ func (u *UI) communityGroupAvatar(gtx C, c *model.Chat, cm *model.Community, bg 
 	t := op.Offset(image.Pt(box-dpx, box-dpx)).Push(gtx.Ops)
 	u.avatarOf(gtx, c.ID, avatarGroup, d)
 	t.Pop()
+	u.timerBadge(gtx, c, image.Pt(box-dpx/2, box-dpx/2), dpx/2, bg)
 	return D{Size: image.Pt(box, box)}
 }
 
@@ -640,10 +658,10 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		if c.Unread != 0 {
 			fg = p.Text
 		}
-		if c.IsGroup && !last.FromMe && last.Sender != "" {
+		if c.IsGroup && !last.FromMe && last.Sender != "" && last.Kind != model.KindSystem {
 			children = append(children, layout.Rigid(u.label(size, shortName(last.Sender)+": ", fg).Layout))
 		}
-		if last.FromMe && last.Kind != model.KindDeleted {
+		if last.FromMe && last.Kind != model.KindDeleted && last.Kind != model.KindSystem {
 			ic, col := receiptIcon(last.Receipt, p, false)
 			children = append(children, small(ic, col, 18, 3))
 		}
@@ -659,6 +677,8 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		case last.Kind == model.KindUnsupported:
 			children = append(children, small(icUnsupported, p.TextSecondary, 17, 4))
 			txt, italic = "This message couldn't load", true
+		case last.Kind == model.KindSystem && last.Notice == model.NoticeMissedCall:
+			children = append(children, small(icCall, p.Danger, 18, 4))
 		case last.Kind == model.KindViewOnce:
 			children = append(children, layout.Rigid(func(gtx C) D { return u.viewOnceMark(gtx, 18, p.TextSecondary) }),
 				layout.Rigid(layout.Spacer{Width: 4}.Layout))
@@ -676,8 +696,9 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 	return children
 }
 
-// rowIndicators are a chat row's muted, unread and pinned indicators, and
-// the menu chevron while the row is hovered (chev, 0 to 1).
+// rowIndicators are a chat row's muted, pinned and unread indicators, in
+// WhatsApp's order, and the menu chevron while the row is hovered (chev,
+// 0 to 1).
 func (u *UI) rowIndicators(c *model.Chat, chev float32) []layout.FlexChild {
 	p := u.pal
 	var row []layout.FlexChild
@@ -686,6 +707,9 @@ func (u *UI) rowIndicators(c *model.Chat, chev float32) []layout.FlexChild {
 	}
 	if c.Muted {
 		row = append(row, indicator(iconW(icMuted, 20, p.TextSecondary)))
+	}
+	if c.Pinned {
+		row = append(row, indicator(iconW(icPin, 20, p.TextSecondary)))
 	}
 	if c.Unread > 0 && c.Mentioned {
 		row = append(row, indicator(u.mentionMark))
@@ -699,9 +723,6 @@ func (u *UI) rowIndicators(c *model.Chat, chev float32) []layout.FlexChild {
 			fillCircle(gtx, image.Pt(s/2, s/2), s/2, p.Green)
 			return D{Size: image.Pt(s, s)}
 		}))
-	}
-	if c.Pinned {
-		row = append(row, indicator(iconW(icPin, 20, p.TextSecondary)))
 	}
 	if chev > 0 {
 		// The chevron slides in, pushing the indicators aside.

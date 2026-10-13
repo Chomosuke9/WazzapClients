@@ -37,8 +37,8 @@ github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 h1:zYyBkD/k9seD2A7fsi6
 github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646/go.mod h1:jpp1/29i3P1S/RLdc7JQKbRpFeM1dOBd8T9ki5s+AY8=
 github.com/petermattis/goid v0.0.0-20260918085751-abfca077860b h1:OzNsuVdSWGwXvWKTtChx9ve89k4cFJ6NxYM4Aw4/f+E=
 github.com/petermattis/goid v0.0.0-20260918085751-abfca077860b/go.mod h1:pxMtw7cyUw6B2bRH0ZBANSPg+AoSud1I1iyJHI69jH4=
-github.com/polymorfa/hypermeow v0.0.0-20260819021508-07d103b3683c h1:U3d0kt7yfn07nnRTCIEL6/JLUzb6XmXZlSkuqnVJWh4=
-github.com/polymorfa/hypermeow v0.0.0-20260819021508-07d103b3683c/go.mod h1:C92v8XIRHx3tThUAEpSlzVYMM3EmOjDV7tCXPFFlLA4=
+github.com/polymorfa/hypermeow v0.0.0-20261010085506-b0e8e85a4075 h1:5F9imGhvKaZBfE5u7/3KOqeRP3tQUvNMkWyK0b9kLVw=
+github.com/polymorfa/hypermeow v0.0.0-20261010085506-b0e8e85a4075/go.mod h1:EvyTVXMPeTcxWr1fcININB6lXlYcysXftCodhsO72LI=
 github.com/polymorfa/libsignal-protocol-go v0.2.3-0.20260806162910-a2adef2e8a11 h1:ZeZ6sUkmZY+v6ULce+O7cuuzUmvu9d3t5sY2CTrJ2AQ=
 github.com/polymorfa/libsignal-protocol-go v0.2.3-0.20260806162910-a2adef2e8a11/go.mod h1:B5KZPsgswdf1eCvC+PZ7z45g5OECgqy6Zb0o7I5CcNQ=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=

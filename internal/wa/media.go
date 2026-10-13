@@ -127,21 +127,7 @@ func (b *Backend) fetchAvatar(id string) {
 	path := b.avatarPath(id)
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
 
-	var info *types.ProfilePictureInfo
-	if isChannel(jid) {
-		// Channel pictures come with their metadata, not the profile API.
-		info, err = b.channelPictureInfo(ctx, jid)
-	} else {
-		params := &whatsmeow.GetProfilePictureParams{Preview: true, IsCommunity: b.store.isCommunity(ctx, id)}
-		info, err = cli.GetProfilePictureInfo(ctx, jid, params)
-		// Your own picture may only be found under your other ID (the LID
-		// of a phone number, or the other way round).
-		if other := b.ownOtherID(jid); !other.IsEmpty() && (err != nil || info == nil) {
-			if i, e := cli.GetProfilePictureInfo(ctx, other, params); e == nil && i != nil {
-				info, err = i, nil
-			}
-		}
-	}
+	info, err := b.pictureInfo(ctx, cli, jid, true)
 	switch {
 	case errors.Is(err, whatsmeow.ErrProfilePictureNotSet), errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized),
 		err == nil && info == nil:
@@ -163,6 +149,50 @@ func (b *Backend) fetchAvatar(id string) {
 		return
 	}
 	b.emit(model.AvatarEvent{ID: id})
+}
+
+// pictureInfo asks where the profile picture of jid is: its preview, or
+// the full picture.
+func (b *Backend) pictureInfo(ctx context.Context, cli *whatsmeow.Client, jid types.JID, preview bool) (*types.ProfilePictureInfo, error) {
+	if isChannel(jid) {
+		// Channel pictures come with their metadata, not the profile API.
+		return b.channelPictureInfo(ctx, jid)
+	}
+	params := &whatsmeow.GetProfilePictureParams{Preview: preview, IsCommunity: b.store.isCommunity(ctx, jid.String())}
+	info, err := cli.GetProfilePictureInfo(ctx, jid, params)
+	// Your own picture may only be found under your other ID (the LID
+	// of a phone number, or the other way round).
+	if other := b.ownOtherID(jid); !other.IsEmpty() && (err != nil || info == nil) {
+		if i, e := cli.GetProfilePictureInfo(ctx, other, params); e == nil && i != nil {
+			info, err = i, nil
+		}
+	}
+	return info, err
+}
+
+// ProfilePhoto implements model.Backend. The full picture isn't kept: it
+// is only fetched to be looked at. A channel's is its preview.
+func (b *Backend) ProfilePhoto(id string) []byte {
+	cli := b.client()
+	jid, err := types.ParseJID(id)
+	if cli == nil || !cli.IsConnected() || err != nil {
+		return b.Avatar(id)
+	}
+	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+	defer cancel()
+	info, err := b.pictureInfo(ctx, cli, jid, false)
+	if err != nil || info == nil {
+		if err != nil {
+			b.log.Debugf("full profile picture of %s: %v", id, err)
+		}
+		return b.Avatar(id)
+	}
+	data, err := httpGet(ctx, info.URL)
+	if err != nil {
+		b.log.Debugf("download full profile picture of %s: %v", id, err)
+		return b.Avatar(id)
+	}
+	return data
 }
 
 // ownOtherID returns your LID for your phone number JID and your phone

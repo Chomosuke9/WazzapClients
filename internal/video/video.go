@@ -54,6 +54,8 @@ const (
 	cmdSeek
 	cmdMute
 	cmdVolume
+	cmdRate
+	cmdLoop
 )
 
 type command struct {
@@ -62,6 +64,7 @@ type command struct {
 	exact bool
 	on    bool
 	vol   float64
+	rate  float64
 }
 
 // Open starts playing path. notify is called from other goroutines when
@@ -106,6 +109,13 @@ func (p *Player) SetMuted(on bool) { p.send(command{kind: cmdMute, on: on}) }
 func (p *Player) SetVolume(v float64) {
 	p.send(command{kind: cmdVolume, vol: min(1, max(0, v))})
 }
+
+// SetRate sets the playback speed: 1 is normal, 2 twice as fast. The
+// system keeps the pitch.
+func (p *Player) SetRate(r float64) { p.send(command{kind: cmdRate, rate: r}) }
+
+// SetLoop makes the video start over when it ends, without a gap (GIFs).
+func (p *Player) SetLoop(on bool) { p.send(command{kind: cmdLoop, on: on}) }
 
 // Close stops playback and frees the player.
 func (p *Player) Close() { p.once.Do(func() { close(p.done) }) }

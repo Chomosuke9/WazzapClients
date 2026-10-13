@@ -30,6 +30,11 @@ import (
 // (-ldflags "-X main.version=v1.2.3"). Builds without one don't update.
 var version = ""
 
+// klipyKey is the KLIPY app key GIF search uses, set by the release build
+// (-ldflags "-X main.klipyKey=..."). KLIPY's keys aren't secrets, but it
+// stays out of the repository; without one, users enter their own.
+var klipyKey = ""
+
 func main() {
 	demo := flag.Bool("demo", false, "show demo chats instead of connecting to WhatsApp")
 	debug := flag.Bool("debug", false, "verbose protocol logging")
@@ -88,9 +93,12 @@ func main() {
 		},
 		Hidden:    *background || *embedding,
 		NotifyDir: filepath.Join(*dataDir, "notifications"),
-		Accounts:  list,
-		Open:      open,
-		Version:   version,
+		// Shared by the demo, which has no data of its own worth keeping.
+		EmojiDir: filepath.Join(*dataDir, "emoji"),
+		Accounts: list,
+		Open:     open,
+		Version:  version,
+		KlipyKey: klipyKey,
 	}
 	if *demo {
 		opts.NotifyDir = demoDir

@@ -153,11 +153,12 @@ func TestParseSeparator(t *testing.T) {
 		text, top, bottom string
 		current           int
 	}{
-		{"/sticker When the code#works ", "When the code", "works", 1},
+		{"/sticker When the code\nworks ", "When the code", "works", 1},
 		{"/sticker  only the top", "only the top", "", 0},
-		{"/sticker #only the bottom", "", "only the bottom", 1},
-		{"/sticker top #", "top", "", 1},
-		{"/sticker a#b#c", "a", "b#c", 1},
+		{"/sticker \nonly the bottom", "", "only the bottom", 1},
+		{"/sticker top \n", "top", "", 1},
+		{"/sticker #1 fan", "#1 fan", "", 0},
+		{"/sticker a\nb\nc", "a", "b\nc", 1},
 	} {
 		in, ok := Parse(c.text, len([]rune(c.text)), nil, nil)
 		if !ok || in.Problem() != "" {
