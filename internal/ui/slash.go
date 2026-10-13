@@ -595,8 +595,9 @@ func (h slashHost) Confirm(title, body, action string, danger bool, run func()) 
 
 func (h slashHost) PickImage(done func(path string)) {
 	h.u.slashDo(func() func() {
-		paths, err := filepick.Open("Choose a picture for the sticker", false,
-			filepick.Filter{Name: "Pictures", Exts: []string{"jpg", "jpeg", "png", "webp", "gif"}})
+		paths, err := filepick.Open("Choose a picture or video for the sticker", false,
+			filepick.Filter{Name: "Pictures and videos", Exts: []string{"jpg", "jpeg", "png", "webp", "gif",
+				"mp4", "mov", "m4v", "webm", "mkv", "avi"}})
 		path := ""
 		if err == nil && len(paths) > 0 {
 			path = paths[0]

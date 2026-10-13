@@ -157,7 +157,7 @@ stays off until both confirmations are completed; canceling either leaves it off
 | `/link` | Shows the group's invite link |
 | `/lockdown on\|off` | Lets only admins send messages, or everyone again |
 | `/description <text>` | Changes the group description |
-| `/sticker <top text>` | Turns a photo into a sticker, meme text included; a new line (Shift+Enter) starts the bottom text |
+| `/sticker <top text>` | Turns a photo into a sticker, meme text included; a new line (Shift+Enter) starts the bottom text. A video, GIF or animated sticker becomes an animated sticker (its first 6 seconds, at the best frame rate and quality that fit in 1 MB) if [ffmpeg](https://ffmpeg.org) is installed |
 | `/purge <count>` | Deletes your last messages for everyone |
 | `/raffle <winners>` | Draws group members at random and announces them |
 | `/calc <sum>` | A calculator: `12 x 4500`, `15k x 3`, `15% x 80000` |
@@ -278,7 +278,7 @@ internal/wa/       hypermeow backend and the SQLite message store
 internal/mock/     the demo backend
 internal/command/  slash commands
 internal/auto/     scheduled messages and AFK replies
-internal/sticker/  makes stickers, with its own small lossless WebP encoder
+internal/sticker/  makes stickers, with its own small lossless WebP encoder (animated ones with ffmpeg)
 internal/video/    plays video and audio with the OS's decoder
 internal/notify/   system notifications
 internal/desktop/  tray icon, start at login, single instance
