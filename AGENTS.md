@@ -121,7 +121,9 @@ Gotchas already found in the pinned version (v0.10.x):
   animation in WhatsApp's 500 KB, needs libwebp (cgo). ffmpeg decodes videos and GIFs
   as PAM frames, which carry their size (ffmpeg turns phone videos upright); animated
   WebP is decoded here, since ffmpeg before 8.0 can't. Text is drawn on every frame in
-  Go. Its `-compression_level 6` took 14 times as long as 4 for 2% less.
+  Go. The first 6 seconds get 90 frames, at most 30 a second, composed once into a
+  temporary file that ffmpeg encodes at the best quality under 1 MB (`search`). Its
+  `-compression_level 6` took 14 times as long as 4 for 2% less.
 - `golang.org/x/image/webp` can't read animated WebP. Animated stickers go through
   `internal/webpanim`; `stickerFrame` (`player.go`) plays the ones on screen.
   GIFs are MP4s: `gifFrame` (`gifplayer.go`) plays the ones on screen in their bubbles,

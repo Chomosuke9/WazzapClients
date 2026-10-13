@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,12 +26,27 @@ import (
 // encoder is all it needs; it decodes videos and GIFs too. Animated WebP
 // is decoded here (internal/webpanim), since ffmpeg before 8.0 can't.
 
-// MaxAnimBytes is the largest animated sticker this makes, as WhatsApp's
-// sticker guidelines ask.
-const MaxAnimBytes = 500 << 10
+// MaxAnimBytes is the largest animated sticker this makes.
+const MaxAnimBytes = 1 << 20
 
 // maxAnim is the longest animation a sticker keeps; the rest is cut.
-const maxAnim = 10 * time.Second
+const maxAnim = 6 * time.Second
+
+// An animation gets frameBudget frames: maxFPS up to 3 seconds, fewer a
+// second the longer it is (15 at 6 seconds). If it doesn't fit even at
+// minQuality, the frame rate drops by a third, down to minFPS.
+const (
+	frameBudget = 90
+	maxFPS      = 30
+	minFPS      = 8
+)
+
+// The qualities searched for the best that fits: maxQuality first, and
+// at least minQuality while the frame rate can still drop.
+const (
+	maxQuality = 90
+	minQuality = 40
+)
 
 // ErrNoFFmpeg means making the sticker needs ffmpeg (with libwebp), and
 // there's none.
@@ -64,20 +80,10 @@ var (
 	ffmpegOK = map[string]bool{} // whether each ffmpeg has libwebp
 )
 
-// tries are the frame rates, qualities and lengths tried, in turn, until
-// an animation fits in MaxAnimBytes. Most GIFs fit the first; 10 s of a
-// busy video only the last ones.
-var tries = []struct {
-	fps, quality int
-	length       time.Duration
-}{
-	{15, 75, maxAnim}, {15, 50, maxAnim}, {12, 35, 8 * time.Second},
-	{10, 25, 6 * time.Second}, {8, 20, 5 * time.Second}, {8, 10, 3 * time.Second},
-}
-
 // Make makes a sticker of the file at path, or of data when path is "":
 // a still one of a still picture (as FromImage), an animated one of a
-// video, a GIF or an animated WebP, cut to 10 seconds. Animations need
+// video, a GIF or an animated WebP, cut to 6 seconds, at the best frame
+// rate and quality that fit in MaxAnimBytes. Animations need
 // ffmpeg; without it a GIF makes a still sticker of its first frame, and
 // anything else fails with ErrNoFFmpeg.
 func Make(path string, data []byte, text Text) ([]byte, error) {
@@ -112,7 +118,10 @@ func Make(path string, data []byte, text Text) ([]byte, error) {
 		}
 		return nil, ErrNoFFmpeg
 	}
-	var src frameSource
+	var (
+		src    frameSource
+		length time.Duration // 0 when unknown
+	)
 	if kind == kindAnimWebP {
 		a, err := webpanim.Parse(data)
 		if err != nil {
@@ -122,6 +131,9 @@ func Make(path string, data []byte, text Text) ([]byte, error) {
 			return nil, ErrTooLarge
 		}
 		src = webpFrames(a)
+		for _, f := range a.Frames {
+			length += delayOf(f.Delay)
+		}
 	} else {
 		in := path
 		if in == "" {
@@ -140,8 +152,9 @@ func Make(path string, data []byte, text Text) ([]byte, error) {
 			in = f.Name()
 		}
 		src = ffmpegFrames(ff, in)
+		length = probeLength(ff, in)
 	}
-	return animate(ff, src, text)
+	return animate(ff, src, fpsFor(length), text)
 }
 
 type kind int
@@ -193,23 +206,73 @@ func fitsAsIs(data []byte) bool {
 	return err == nil && a.Width == Size && a.Height == Size
 }
 
-// A frameSource calls yield with the frames of an animation at fps
-// frames a second, its first length of them, and stops at yield's first
-// error. The frames are reused after yield returns.
-type frameSource func(ctx context.Context, fps int, length time.Duration, yield func(*image.RGBA) error) error
+// fpsFor is the frame rate an animation of length starts at.
+func fpsFor(length time.Duration) int {
+	if length <= 0 || length > maxAnim {
+		length = maxAnim
+	}
+	return max(minFPS, min(maxFPS, int(frameBudget*time.Second/length)))
+}
 
-// animate encodes the frames of src as a sticker: animated if they
-// change, otherwise still (a one-frame GIF, which ffmpeg repeats). It
-// lowers the frame rate, quality and length until the animation fits.
-func animate(ff string, src frameSource, text Text) ([]byte, error) {
+// durationRE finds the length ffmpeg prints for its input.
+var durationRE = regexp.MustCompile(`Duration: (\d+):(\d\d):(\d\d(?:\.\d+)?)`)
+
+// probeLength asks ffmpeg how long a video or GIF is, or returns 0.
+func probeLength(ff, path string) time.Duration {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	// With no output, ffmpeg prints what it found and fails.
+	cmd := exec.CommandContext(ctx, ff, "-hide_banner", "-nostdin", "-i", path)
+	hideWindow(cmd)
+	out, _ := cmd.CombinedOutput()
+	m := durationRE.FindSubmatch(out)
+	if m == nil {
+		return 0
+	}
+	h, _ := strconv.Atoi(string(m[1]))
+	mins, _ := strconv.Atoi(string(m[2]))
+	sec, _ := strconv.ParseFloat(string(m[3]), 64)
+	return time.Duration(h)*time.Hour + time.Duration(mins)*time.Minute + time.Duration(sec*float64(time.Second))
+}
+
+// A frameSource calls yield with the frames of an animation at fps
+// frames a second, at most maxAnim of them, and stops at yield's first
+// error. The frames are reused after yield returns.
+type frameSource func(ctx context.Context, fps int, yield func(*image.RGBA) error) error
+
+// animate encodes the frames of src, at fps frames a second, as a
+// sticker: animated if they change, otherwise still (a one-frame GIF,
+// which ffmpeg repeats).
+//
+// The frames are composed once, with the text, into a temporary file of
+// raw pictures (at most frameBudget of them, 1 MB each), which ffmpeg
+// encodes again and again at falling qualities: decoding the source
+// again each time would cost more, and holding the frames in memory up
+// to 90 MB.
+func animate(ff string, src frameSource, fps int, text Text) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+	f, err := os.CreateTemp("", "wazzap-sticker-*.rgba")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
 	var (
-		layer *image.RGBA // the text, drawn once
-		frame = image.NewRGBA(image.Rect(0, 0, Size, Size))
-		raw   = make([]byte, 4*Size*Size)
+		layer   *image.RGBA // the text, drawn once
+		frame   = image.NewRGBA(image.Rect(0, 0, Size, Size))
+		raw     = make([]byte, 4*Size*Size)
+		w       = bufio.NewWriterSize(f, 256<<10)
+		still   *image.RGBA // the first frame
+		moved   bool        // whether a frame differs from it
+		repeats int         // frames like it before the first that differs
 	)
-	compose := func(img *image.RGBA) error {
+	write := func(img *image.RGBA) error {
+		straight(raw, img.Pix)
+		_, err := w.Write(raw)
+		return err
+	}
+	err = src(ctx, fps, func(img *image.RGBA) error {
 		area := fit(frame, img)
 		if layer == nil {
 			layer = image.NewRGBA(frame.Rect)
@@ -218,60 +281,122 @@ func animate(ff string, src frameSource, text Text) ([]byte, error) {
 			}
 		}
 		draw.Draw(frame, frame.Bounds(), layer, image.Point{}, draw.Over)
-		return nil
-	}
-	for i := 0; i < len(tries); i++ {
-		t := tries[i]
-		still, moved, repeats := (*image.RGBA)(nil), false, 0
-		enc, err := startEncoder(ctx, ff, t.fps, t.quality)
-		if err != nil {
-			return nil, err
-		}
-		err = src(ctx, t.fps, t.length, func(img *image.RGBA) error {
-			if err := compose(img); err != nil {
-				return err
-			}
-			if still == nil {
-				still = image.NewRGBA(frame.Rect)
-				copy(still.Pix, frame.Pix)
-			}
-			if !moved {
-				if bytes.Equal(frame.Pix, still.Pix) {
-					repeats++
-					return nil
-				}
-				moved = true
-				for range repeats {
-					if err := enc.write(still, raw); err != nil {
-						return err
-					}
-				}
-			}
-			return enc.write(frame, raw)
-		})
-		if err != nil {
-			enc.abort()
-			return nil, err
+		if still == nil {
+			still = image.NewRGBA(frame.Rect)
+			copy(still.Pix, frame.Pix)
 		}
 		if !moved {
-			enc.abort()
-			if still == nil {
-				return nil, errors.New("sticker: no frames")
+			if bytes.Equal(frame.Pix, still.Pix) {
+				repeats++
+				return nil
 			}
-			return encodeStill(still)
+			moved = true
+			for range repeats {
+				if err := write(still); err != nil {
+					return err
+				}
+			}
 		}
-		out, err := enc.finish()
+		return write(frame)
+	})
+	if err == nil {
+		err = w.Flush()
+	}
+	if err == nil {
+		err = f.Close()
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !moved {
+		if still == nil {
+			return nil, errors.New("sticker: no frames")
+		}
+		return encodeStill(still)
+	}
+	return search(ctx, ff, f.Name(), fps)
+}
+
+// search encodes the raw frames at path, made at fps frames a second, at
+// the highest frame rate and then quality that fit in MaxAnimBytes.
+func search(ctx context.Context, ff, path string, fps int) ([]byte, error) {
+	for rate := fps; ; rate = rate * 2 / 3 {
+		last := rate*2/3 < minFPS
+		floor := minQuality
+		if last {
+			floor = 0
+		}
+		enc := func(q int) ([]byte, error) { return encode(ctx, ff, path, fps, rate, q) }
+		hiOut, err := enc(maxQuality)
+		if err != nil || len(hiOut) <= MaxAnimBytes {
+			return hiOut, err
+		}
+		best, err := enc(floor)
 		if err != nil {
 			return nil, err
 		}
-		if len(out) <= MaxAnimBytes {
-			return out, nil
+		if len(best) > MaxAnimBytes {
+			if last {
+				return nil, errors.New("sticker: the animation doesn't fit in a sticker")
+			}
+			continue
 		}
-		if len(out) > 2*MaxAnimBytes {
-			i++ // the next try won't halve it
+		// The size grows about evenly with the quality: guess where it
+		// reaches the cap from the two ends, a little under it, until
+		// one comes close to the cap or the qualities that fit and
+		// don't are close.
+		lo, hi := floor, maxQuality
+		loSize, hiSize := len(best), len(hiOut)
+		for range 4 {
+			if hi-lo <= 4 || loSize >= MaxAnimBytes*92/100 {
+				break
+			}
+			q := lo + (hi-lo)*(MaxAnimBytes*97/100-loSize)/(hiSize-loSize)
+			q = max(lo+1, min(hi-1, q))
+			out, err := enc(q)
+			if err != nil {
+				return nil, err
+			}
+			if len(out) <= MaxAnimBytes {
+				lo, loSize, best = q, len(out), out
+			} else {
+				hi, hiSize = q, len(out)
+			}
 		}
+		return best, nil
 	}
-	return nil, errors.New("sticker: the animation doesn't fit in a sticker")
+}
+
+// encode runs ffmpeg on the raw frames at path, made at srcFPS frames a
+// second, to make an animated WebP of fps frames a second at quality.
+func encode(ctx context.Context, ff, path string, srcFPS, fps, quality int) ([]byte, error) {
+	f, err := os.CreateTemp("", "wazzap-sticker-*.webp")
+	if err != nil {
+		return nil, err
+	}
+	out := f.Name()
+	f.Close()
+	defer os.Remove(out)
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin",
+		"-f", "rawvideo", "-pix_fmt", "rgba", "-s", fmt.Sprintf("%dx%d", Size, Size),
+		"-framerate", strconv.Itoa(srcFPS), "-i", path}
+	if fps != srcFPS {
+		args = append(args, "-vf", fmt.Sprintf("fps=%d", fps))
+	}
+	args = append(args, "-c:v", "libwebp_anim", "-pix_fmt", "bgra", "-lossless", "0",
+		"-quality", strconv.Itoa(quality), "-compression_level", "4", "-loop", "0",
+		"-an", "-f", "webp", "-y", out)
+	cmd := exec.CommandContext(ctx, ff, args...)
+	hideWindow(cmd)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("sticker: ffmpeg: %v: %s", err, msg)
+		}
+		return nil, fmt.Errorf("sticker: ffmpeg: %w", err)
+	}
+	return os.ReadFile(out)
 }
 
 // encodeStill encodes a Size x Size picture as a lossless WebP, dropping
@@ -286,78 +411,17 @@ func encodeStill(c *image.RGBA) ([]byte, error) {
 	return nil, errors.New("sticker: the picture doesn't fit in a sticker")
 }
 
-// encoder is an ffmpeg encoding raw frames into an animated WebP file.
-type encoder struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	out    string // the file it writes
-	stderr bytes.Buffer
-}
-
-func startEncoder(ctx context.Context, ff string, fps, quality int) (*encoder, error) {
-	f, err := os.CreateTemp("", "wazzap-sticker-*.webp")
-	if err != nil {
-		return nil, err
-	}
-	f.Close()
-	e := &encoder{out: f.Name()}
-	e.cmd = exec.CommandContext(ctx, ff, "-hide_banner", "-loglevel", "error", "-nostdin",
-		"-f", "rawvideo", "-pix_fmt", "rgba", "-s", fmt.Sprintf("%dx%d", Size, Size),
-		"-framerate", strconv.Itoa(fps), "-i", "pipe:0",
-		"-c:v", "libwebp_anim", "-pix_fmt", "bgra", "-lossless", "0",
-		"-quality", strconv.Itoa(quality), "-compression_level", "4", "-loop", "0",
-		"-an", "-f", "webp", "-y", e.out)
-	hideWindow(e.cmd)
-	e.cmd.Stderr = &e.stderr
-	if e.stdin, err = e.cmd.StdinPipe(); err != nil {
-		os.Remove(e.out)
-		return nil, err
-	}
-	if err := e.cmd.Start(); err != nil {
-		os.Remove(e.out)
-		return nil, err
-	}
-	return e, nil
-}
-
-// write sends a frame, with straight (not premultiplied) alpha.
-func (e *encoder) write(img *image.RGBA, raw []byte) error {
-	for i := 0; i < len(raw); i += 4 {
-		p := img.Pix[i : i+4 : i+4]
+// straight copies premultiplied RGBA pixels into dst with straight alpha,
+// as ffmpeg reads them.
+func straight(dst, pix []byte) {
+	for i := 0; i < len(dst); i += 4 {
+		p := pix[i : i+4 : i+4]
 		r, g, b, a := uint32(p[0]), uint32(p[1]), uint32(p[2]), uint32(p[3])
 		if a != 0 && a != 0xff {
 			r, g, b = min(255, (r*255+a/2)/a), min(255, (g*255+a/2)/a), min(255, (b*255+a/2)/a)
 		}
-		raw[i], raw[i+1], raw[i+2], raw[i+3] = byte(r), byte(g), byte(b), byte(a)
+		dst[i], dst[i+1], dst[i+2], dst[i+3] = byte(r), byte(g), byte(b), byte(a)
 	}
-	if _, err := e.stdin.Write(raw); err != nil {
-		return e.fail(err)
-	}
-	return nil
-}
-
-func (e *encoder) finish() ([]byte, error) {
-	defer os.Remove(e.out)
-	e.stdin.Close()
-	if err := e.cmd.Wait(); err != nil {
-		return nil, e.fail(err)
-	}
-	return os.ReadFile(e.out)
-}
-
-func (e *encoder) abort() {
-	e.stdin.Close()
-	e.cmd.Process.Kill()
-	e.cmd.Wait()
-	os.Remove(e.out)
-}
-
-// fail adds what ffmpeg said to err.
-func (e *encoder) fail(err error) error {
-	if msg := strings.TrimSpace(e.stderr.String()); msg != "" {
-		return fmt.Errorf("sticker: ffmpeg: %v: %s", err, msg)
-	}
-	return fmt.Errorf("sticker: ffmpeg: %w", err)
 }
 
 // ffmpegFrames decodes a video or GIF with ffmpeg, scaled to fit a
@@ -365,13 +429,13 @@ func (e *encoder) fail(err error) error {
 // turns phone videos upright, so the file's own size may be the wrong
 // way round.
 func ffmpegFrames(ff, path string) frameSource {
-	return func(ctx context.Context, fps int, length time.Duration, yield func(*image.RGBA) error) error {
+	return func(ctx context.Context, fps int, yield func(*image.RGBA) error) error {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		vf := fmt.Sprintf("fps=%d,format=rgba,scale=%d:%d:force_original_aspect_ratio=decrease:flags=lanczos", fps, Size, Size)
 		cmd := exec.CommandContext(ctx, ff, "-hide_banner", "-loglevel", "error", "-nostdin",
-			"-t", strconv.FormatFloat(length.Seconds(), 'f', -1, 64), "-i", path,
-			"-an", "-vf", vf, "-frames:v", strconv.Itoa(int(length.Seconds()*float64(fps))),
+			"-t", strconv.FormatFloat(maxAnim.Seconds(), 'f', -1, 64), "-i", path,
+			"-an", "-vf", vf, "-frames:v", strconv.Itoa(int(maxAnim.Seconds()*float64(fps))),
 			"-f", "image2pipe", "-c:v", "pam", "pipe:1")
 		hideWindow(cmd)
 		var stderr bytes.Buffer
@@ -469,10 +533,19 @@ func premultiply(pix []byte) {
 	}
 }
 
+// delayOf is how long a frame with delay d shows: 100 ms without one, as
+// players do.
+func delayOf(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 100 * time.Millisecond
+	}
+	return d
+}
+
 // webpFrames plays an animated WebP once at fps frames a second, the
 // frame showing at each tick.
 func webpFrames(a *webpanim.Anim) frameSource {
-	return func(ctx context.Context, fps int, length time.Duration, yield func(*image.RGBA) error) error {
+	return func(ctx context.Context, fps int, yield func(*image.RGBA) error) error {
 		a.Rewind()
 		tick := time.Second / time.Duration(fps)
 		var (
@@ -480,7 +553,7 @@ func webpFrames(a *webpanim.Anim) frameSource {
 			end  time.Duration // when cur stops showing
 			next int           // frames drawn
 		)
-		for t := time.Duration(0); t < length; t += tick {
+		for t := time.Duration(0); t < maxAnim; t += tick {
 			for cur == nil || t >= end {
 				if next == len(a.Frames) {
 					return nil // played once
@@ -489,10 +562,7 @@ func webpFrames(a *webpanim.Anim) frameSource {
 				if err != nil {
 					return err
 				}
-				if delay <= 0 {
-					delay = 100 * time.Millisecond
-				}
-				cur, end, next = img, end+delay, next+1
+				cur, end, next = img, end+delayOf(delay), next+1
 			}
 			if err := ctx.Err(); err != nil {
 				return err

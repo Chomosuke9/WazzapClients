@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
@@ -114,7 +115,7 @@ func TestMakeVideo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "clip.mp4")
 	// Longer than a sticker keeps, and portrait.
 	cmd := exec.Command(ff, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-		"-i", "testsrc=size=240x320:rate=25:duration=12", "-c:v", "mpeg4", path)
+		"-i", "testsrc=size=240x320:rate=25:duration=8", "-c:v", "mpeg4", path)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("can't make a test video: %v: %s", err, out)
 	}
@@ -201,5 +202,32 @@ func TestSniff(t *testing.T) {
 		if got := sniff([]byte(c.head)); got != c.want {
 			t.Errorf("sniff(%q) = %v, want %v", c.head, got, c.want)
 		}
+	}
+}
+
+func TestFPSFor(t *testing.T) {
+	for _, c := range []struct {
+		length time.Duration
+		want   int
+	}{
+		{0, 15}, {time.Second, 30}, {2 * time.Second, 30}, {3 * time.Second, 30},
+		{4 * time.Second, 22}, {6 * time.Second, 15}, {time.Minute, 15},
+	} {
+		if got := fpsFor(c.length); got != c.want {
+			t.Errorf("fpsFor(%v) = %d, want %d", c.length, got, c.want)
+		}
+	}
+}
+
+func TestProbeLength(t *testing.T) {
+	ff := needFFmpeg(t)
+	path := filepath.Join(t.TempDir(), "clip.gif")
+	cmd := exec.Command(ff, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+		"-i", "testsrc=size=100x100:rate=10:duration=2.3", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got := probeLength(ff, path); got != 2300*time.Millisecond {
+		t.Errorf("probeLength = %v, want 2.3s", got)
 	}
 }
