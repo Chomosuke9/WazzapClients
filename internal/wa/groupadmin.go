@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
 
 // participantChanges maps member actions to hypermeow's.
@@ -54,6 +55,10 @@ func (b *Backend) ManageGroup(r model.GroupRequest) {
 			err = cli.SetGroupTopic(ctx, jid, "", "", r.Text)
 		case model.GroupName:
 			err = cli.SetGroupName(ctx, jid, r.Text)
+		case model.GroupPhoto:
+			if _, err = cli.SetGroupPhoto(ctx, jid, r.Photo); err == nil {
+				b.fetchAvatar(r.ChatID) // announces it with an AvatarEvent
+			}
 		case model.GroupAddMode:
 			mode := types.GroupMemberAddModeAllMember
 			if r.On {
@@ -217,7 +222,7 @@ func (b *Backend) sendGroupInvite(ctx context.Context, group types.JID, r model.
 	chat := b.canonical(ctx, to)
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chat.String(), FromMe: true,
 		Text: "Group invite: " + name, Time: b.sendTime(), Receipt: model.Pending}
-	if sent := b.storeAndSend(chat, storedMsg{Message: m}, msg, nil); sent != nil {
+	if sent := b.storeAndSend(chat, storedMsg{Message: m}, msg); sent != nil {
 		b.emit(model.MessageEvent{Msg: sent})
 	}
 	return nil
@@ -236,6 +241,9 @@ func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Messag
 	// The upload fills in where it is.
 	e := &waE2E.StickerMessage{Mimetype: proto.String("image/webp"), Width: proto.Uint32(512), Height: proto.Uint32(512),
 		FileLength: proto.Uint64(uint64(len(webp))), ContextInfo: ci}
+	if webpanim.IsAnimated(webp) {
+		e.IsAnimated = proto.Bool(true)
+	}
 	msg := &waE2E.Message{StickerMessage: e}
 	sm := storedMsg{Message: m, rawPayload: marshal(msg)}
 	// Keep the picture, so it shows at once and without a download.

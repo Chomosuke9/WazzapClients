@@ -44,7 +44,7 @@ func (nt *notifyTest) receive(chat, sender, text string) *model.Message {
 
 func (nt *notifyTest) flush(t *testing.T) []notify.Notification {
 	t.Helper()
-	if nt.n.due == nil && len(nt.n.pending) > 0 {
+	if nt.n.flushAt.IsZero() && len(nt.n.pending) > 0 {
 		t.Fatal("pending messages without a flush scheduled")
 	}
 	nt.n.flush()

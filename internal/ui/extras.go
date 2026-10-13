@@ -50,6 +50,7 @@ func (u *UI) loadExtras() {
 	u.editHistory = extraOn(b, prefEditHistory)
 	u.keepDeleted = extraOn(b, model.PrefKeepDeleted)
 	u.viewOnceReplay = extraOn(b, model.PrefViewOnceReplay)
+	u.loadGIFPrefs()
 	u.grayCmds = map[string]bool{}
 	for _, c := range command.All {
 		if c.Gray && extraOn(b, grayCmdPref(c.Name)) {
@@ -137,7 +138,7 @@ func (u *UI) grayToggle(key, title, sub string, flag *bool, changed func()) sett
 func (u *UI) extrasSettings() []settingsSection {
 	secs := []settingsSection{
 		{title: "Slash commands", rows: []settingRow{
-			u.extraToggle(prefSlash, "Slash commands", "Type / at the start of a message to run a command, like in Discord",
+			u.extraToggle(prefSlash, "Slash commands", "Type / at the start of a message to run a command, like in Discord. Start it with // to send it as text",
 				&u.slash.on, func() { u.conv.richFor = "" }), // the composer starts or stops showing commands
 		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
 		{title: "Mentions", rows: []settingRow{
@@ -153,6 +154,7 @@ func (u *UI) extrasSettings() []settingsSection {
 					}
 				}),
 		}},
+		u.gifSettings(),
 		{rows: []settingRow{{key: "gray", ic: icExtensionGray, title: "Ethically gray features",
 			sub: "Edit history, deleted messages, view once and more", run: func() { u.openSettingsSub("gray") }}},
 			note: "Extra features aren't made by WhatsApp. They only use what WhatsApp lets every linked device do."},

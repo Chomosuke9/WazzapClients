@@ -82,6 +82,8 @@ func (b *Backend) ManageGroup(r model.GroupRequest) {
 			c.Name = r.Text
 			b.emitChat(c.ID)
 		}
+	case model.GroupPhoto:
+		b.setAvatar(r.ChatID, r.Photo)
 	case model.GroupAddMode:
 		info.AdminsAdd = r.On
 	case model.GroupApproval:

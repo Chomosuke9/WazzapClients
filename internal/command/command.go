@@ -50,7 +50,10 @@ type Option struct {
 	// Min and Max bound a Number option's value.
 	Min, Max int
 	// Until ends a Text option's value at this separator, so that the
-	// next option follows it: "/sticker top text#bottom text".
+	// next option follows it: "/sticker top text" and the bottom text on
+	// a line of its own. It ends a Multiple Member option's values too,
+	// so the next option may start with an @mention: "/whisper @Budi",
+	// then "@Siti hi" on the next line.
 	Until string
 	// Filter narrows the members a Member option offers; nil offers all
 	// but you.
@@ -180,7 +183,7 @@ func (in *Input) Missing() []Option {
 		return nil
 	}
 	for i, o := range in.Cmd.Options {
-		if o.Required && len(in.Values[i]) == 0 {
+		if o.Required && (len(in.Values[i]) == 0 || o.Kind == Text && in.Values[i][0].Text == "") {
 			out = append(out, o)
 		}
 	}
@@ -323,17 +326,24 @@ func (in *Input) assign(rs []rune, toks []token, mentions []Mention, members []m
 		case Text, Snippet:
 			// The value runs to the end, or to the option's separator,
 			// though its text has no spaces around it.
-			stop := len(rs)
+			start, stop := t.start, len(rs)
 			if o.Until != "" {
-				if i := strings.Index(string(rs[t.start:]), o.Until); i >= 0 {
-					stop = t.start + len([]rune(string(rs[t.start:])[:i]))
+				// The separator may be in the spaces before the word, as
+				// when the text starts on a new line: the value is empty.
+				from := t.start
+				for from > 0 && isSpace(rs[from-1]) {
+					from--
+				}
+				if i := strings.Index(string(rs[from:]), o.Until); i >= 0 {
+					stop = from + len([]rune(string(rs[from:])[:i]))
+					start = min(start, stop)
 				}
 			}
 			end := stop
-			for end > t.start && isSpace(rs[end-1]) {
+			for end > start && isSpace(rs[end-1]) {
 				end--
 			}
-			in.Values[oi] = append(in.Values[oi], Value{Text: string(rs[t.start:end]), Start: t.start, End: stop, Done: true})
+			in.Values[oi] = append(in.Values[oi], Value{Text: string(rs[start:end]), Start: start, End: stop, Done: true})
 			oi++
 			if stop == len(rs) {
 				ti = len(toks)
@@ -394,12 +404,22 @@ func (in *Input) assign(rs []rune, toks []token, mentions []Mention, members []m
 			in.Values[oi] = append(in.Values[oi], v)
 			ti++
 		case Member:
-			if !strings.HasPrefix(t.text, "@") && len(in.Values[oi]) > 0 {
+			if vs := in.Values[oi]; len(vs) > 0 && (!strings.HasPrefix(t.text, "@") ||
+				o.Until != "" && strings.Contains(string(rs[vs[len(vs)-1].End:t.start]), o.Until)) {
 				oi++ // the members are done
 				continue
 			}
 			in.Values[oi] = append(in.Values[oi], memberValue(t, o, members))
 			ti++
+			if ti == len(toks) && o.Until != "" && oi+1 < len(opts) {
+				// Nothing typed after the separator yet: the next option
+				// starts there.
+				rest := string(rs[t.end:])
+				if i := strings.Index(rest, o.Until); i >= 0 {
+					at := t.end + len([]rune(rest[:i]+o.Until))
+					in.Values[oi+1] = append(in.Values[oi+1], Value{Start: at, End: at, Done: true})
+				}
+			}
 		case Contact:
 			if t.id != "" {
 				in.Values[oi] = append(in.Values[oi], Value{Text: t.text, ID: t.id, Start: t.start, End: t.end, Done: true})

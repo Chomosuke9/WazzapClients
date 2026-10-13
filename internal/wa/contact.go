@@ -27,7 +27,7 @@ func (b *Backend) SetBlocked(chatID string, blocked bool) {
 		if !blocked {
 			action, verb = events.BlocklistChangeActionUnblock, "unblock"
 		}
-		list, err := cli.UpdateBlocklist(ctx, jid, action)
+		list, err := cli.UpdateBlocklist(ctx, jid, action, "")
 		if err != nil {
 			b.log.Warnf("%s %s: %v", verb, chatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't " + verb + " the contact."})

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,18 +82,30 @@ func quoteOf(r *model.Message) *model.Quote {
 func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool, quote *model.Quote) {
 	m := *src
 	m.ChatID, m.FromMe, m.Time, m.Receipt = chatID, true, b.now(), model.Sent
-	m.Sender, m.SenderID, m.Quote, m.Reaction, m.Starred, m.Pinned = "", "", quote, "", false, false
+	m.Sender, m.SenderID, m.Quote, m.Reactions, m.MyReaction, m.Starred, m.Pinned = "", "", quote, nil, "", false, false
 	m.Forwarded = forwarded
 	b.add(&m)
 	cp := m
 	b.emit(model.MessageEvent{Msg: &cp})
 }
 
-func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
-	if i < 0 || i >= len(m.Buttons) || m.Buttons[i].Kind != model.ButtonReply {
+func (b *Backend) PressButton(m *model.Message, i int, row string) *model.Message {
+	if i < 0 || i >= len(m.Buttons) {
 		return nil
 	}
-	return b.Send(m.ChatID, model.Draft{Text: m.Buttons[i].Label, Reply: m})
+	switch bt := m.Buttons[i]; bt.Kind {
+	case model.ButtonReply:
+		return b.Send(m.ChatID, model.Draft{Text: bt.Label, Reply: m})
+	case model.ButtonList:
+		for _, s := range bt.Sections {
+			for _, r := range s.Rows {
+				if r.ID == row {
+					return b.Send(m.ChatID, model.Draft{Text: r.Title, Reply: m})
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (b *Backend) SendSticker(chatID string, s, reply *model.Message) {
@@ -125,10 +138,6 @@ func (b *Backend) update(m *model.Message, f func(*model.Message)) {
 		f(x)
 		b.emit(model.MessageEvent{Msg: deepCopy(x)})
 	}
-}
-
-func (b *Backend) React(m *model.Message, emoji string) {
-	b.update(m, func(x *model.Message) { x.Reaction = emoji })
 }
 
 func (b *Backend) Delete(m *model.Message, forEveryone bool) {
@@ -212,6 +221,8 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 			if a.ViewOnce {
 				x.Kind, x.Album = model.KindViewOnce, ""
 			}
+		case model.MediaGIF:
+			x.Kind, x.Thumb = model.KindImage, a.Thumb
 		case model.MediaDocument:
 			if x.Text == "" {
 				x.Text = x.FileName
@@ -313,6 +324,12 @@ func (b *Backend) SetInList(chatID, listID string, in bool) {
 		}
 		l.Chats = chats
 	}
+	b.emit(model.ListsEvent{})
+}
+
+func (b *Backend) CreateList(name string, chats []string) {
+	b.lists = append(b.lists, &model.ChatList{ID: "l" + strconv.Itoa(len(b.lists)+1), Name: name, Chats: chats})
+	b.emit(model.ListsEvent{})
 }
 
 func (b *Backend) ClearChat(id string) {
@@ -332,7 +349,8 @@ func (b *Backend) DeleteChat(id string) {
 	b.emit(model.ChatsEvent{Chats: b.Chats()})
 }
 
-func (b *Backend) LeaveGroup(string) {
+func (b *Backend) LeaveGroup(id string) {
+	b.setChat(id, func(c *model.Chat) { c.Left = true })
 	b.emit(model.NoticeEvent{Text: "You exited the group."})
 }
 

@@ -167,6 +167,7 @@ func (b *Backend) SetDisappearing(chatID string, d time.Duration) {
 		info.Disappearing = uint32(d / time.Second)
 		raw, _ := json.Marshal(info)
 		_ = b.store.setMetaValue(ctx, "info:"+chatID, string(raw))
+		b.setTimer(ctx, chatID, uint32(d/time.Second))
 		b.emit(model.InfoEvent{ChatID: chatID})
 	}()
 }

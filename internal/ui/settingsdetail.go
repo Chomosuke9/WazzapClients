@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"gioui.org/font"
@@ -21,7 +22,7 @@ import (
 
 // Preferences of the Chats and Account settings (Backend.Pref keys).
 const (
-	prefTheme       = "theme"      // "light" or "dark" (the default)
+	prefTheme       = "theme"      // "light", "dark" or "" (the system's, the default)
 	prefDoodles     = "doodles"    // wallpaper doodles; on unless "off"
 	prefEnterSend   = "enter_send" // Enter sends; on unless "off"
 	prefSecurityMsg = "security_notifications"
@@ -51,6 +52,7 @@ const (
 	setRadio                      // one of a choice's options
 	setInfo                       // read-only; clicking copies sub
 	setContact                    // a contact's picture and name
+	setAccount                    // an account's picture and name (acct)
 	setKeys                       // a keyboard shortcut: title and key caps
 	setCustom                     // w draws it
 )
@@ -61,8 +63,9 @@ type settingRow struct {
 	kind       settingKind
 	ic         *icon.Icon
 	title, sub string
-	on         bool     // setToggle and setRadio
-	id         string   // setContact
+	on         bool   // setToggle and setRadio
+	id         string // setContact
+	acct       *accountRow
 	keys       []string // setKeys
 	danger     bool
 	trailing   *icon.Icon // e.g. a chevron for rows that open a page
@@ -93,12 +96,21 @@ var settingsViews = map[string]struct {
 	"lastseen":      {settingPrivacy, "lastseen"},
 	"blocked":       {settingPrivacy, "blocked"},
 	"chatsettings":  {settingChats, ""},
+	"emojistyle":    {settingChats, "emoji"},
+	"emojianim":     {settingChats, "emojianim"},
 	"notifications": {settingNotifications, ""},
 	"shortcuts":     {settingShortcuts, ""},
+	"performance":   {settingPerformance, ""},
+	"advanced":      {settingPerformance, "advanced"},
 	"extras":        {settingExtras, ""},
-	"snippets":      {settingSnippets, ""},
-	"gray":          {settingExtras, "gray"},
-	"help":          {settingHelp, ""},
+	// With demo accounts: the Account page's list of them, and the
+	// pages of the second (always connected) and third (checked).
+	"accounts":     {settingAccount, ""},
+	"accountmode":  {settingAccount, "acct:accounts/2"},
+	"accountcheck": {settingAccount, "acct:accounts/3"},
+	"snippets":     {settingSnippets, ""},
+	"gray":         {settingExtras, "gray"},
+	"help":         {settingHelp, ""},
 }
 
 // openSettings opens a settings category (an index of settingsItems).
@@ -146,6 +158,10 @@ func (u *UI) settingsBack() {
 	switch {
 	case s.editing != 0:
 		s.editing = 0
+	case strings.HasPrefix(s.sub, "knob:"): // a knob of the Advanced page
+		u.openSettingsSub("advanced")
+	case s.sub == "emojianim":
+		u.openSettingsSub("emoji")
 	case s.sub != "":
 		u.openSettingsSub("")
 	default:
@@ -177,6 +193,21 @@ func (u *UI) settingsTitle() string {
 		return "Theme"
 	case "gray":
 		return "Ethically gray features"
+	case "advanced":
+		return "Advanced"
+	case "emoji":
+		return "Emoji style"
+	case "emojianim":
+		return "Animated emojis"
+	}
+	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
+		if a := u.accountByDir(dir); a != nil {
+			return u.accountTitle(a)
+		}
+		return "Account"
+	}
+	if k := knobNamed(strings.TrimPrefix(s.sub, "knob:")); k != nil {
+		return k.title
 	}
 	return settingsItems[s.detail-1].title
 }
@@ -184,6 +215,16 @@ func (u *UI) settingsTitle() string {
 // settingsPage lists the settings of the open page.
 func (u *UI) settingsPage() []settingsSection {
 	s := &u.settings
+	if key, ok := strings.CutPrefix(s.sub, "knob:"); ok {
+		return u.knobSettings(key)
+	}
+	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
+		if u.accountByDir(dir) != nil {
+			return u.accountPage(dir)
+		}
+		s.sub = "" // logged out meanwhile
+		return u.accountSettings()
+	}
 	switch s.sub {
 	case "lastseen", "photo", "about", "groups":
 		return u.privacyChoices(s.sub)
@@ -193,10 +234,18 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.blockedContacts()
 	case "gray":
 		return u.graySettings()
+	case "advanced":
+		return u.advancedSettings()
+	case "emoji":
+		return u.emojiStyleSettings()
+	case "emojianim":
+		return u.emojiPlaceSettings()
 	case "theme":
+		t := u.backend.Pref(prefTheme)
 		return []settingsSection{{title: "Choose a theme", rows: []settingRow{
-			{key: "light", kind: setRadio, title: "Light", on: !u.dark, run: func() { u.setTheme(false) }},
-			{key: "dark", kind: setRadio, title: "Dark", on: u.dark, run: func() { u.setTheme(true) }},
+			{key: "system", kind: setRadio, title: "System default", on: t != "light" && t != "dark", run: func() { u.setTheme("") }},
+			{key: "light", kind: setRadio, title: "Light", on: t == "light", run: func() { u.setTheme("light") }},
+			{key: "dark", kind: setRadio, title: "Dark", on: t == "dark", run: func() { u.setTheme("dark") }},
 		}}}
 	}
 	b := u.backend
@@ -227,10 +276,12 @@ func (u *UI) settingsPage() []settingsSection {
 	case settingChats:
 		return []settingsSection{
 			{title: "Display", rows: []settingRow{
-				{key: "theme", ic: icPalette, title: "Theme", sub: map[bool]string{false: "Light", true: "Dark"}[u.dark],
+				{key: "theme", ic: icPalette, title: "Theme", sub: themeNames[u.backend.Pref(prefTheme)],
 					trailing: icChevronRight, run: func() { u.openSettingsSub("theme") }},
 				{key: prefDoodles, kind: setToggle, title: "Wallpaper doodles", sub: "Draw doodles on the chat background",
 					on: u.doodles, run: func() { u.doodles = !u.doodles; setPref(b, prefDoodles, u.doodles) }},
+				{key: prefEmojiStyle, ic: icEmoji, title: "Emoji style", sub: emojiStyles[emojiStyle()].title,
+					trailing: icChevronRight, run: func() { u.openSettingsSub("emoji") }},
 			}},
 			{title: "Chat settings", rows: []settingRow{
 				{key: prefEnterSend, kind: setToggle, title: "Enter is send", sub: "Enter key will send your message",
@@ -239,6 +290,8 @@ func (u *UI) settingsPage() []settingsSection {
 		}
 	case settingShortcuts:
 		return shortcutSettings(prefOn(b, prefEnterSend))
+	case settingPerformance:
+		return u.perfSettingsPage()
 	case settingExtras:
 		return u.extrasSettings()
 	case settingSnippets:
@@ -300,7 +353,6 @@ func (u *UI) profileSettings() []settingsSection {
 		show: func() bool { return u.avatarImage(u.meID) != nil },
 		run: func() {
 			u.confirm("Remove your profile photo?", "",
-				dialogButton{label: "Cancel"},
 				dialogButton{label: "Remove", danger: true, run: func() { u.backend.SetProfilePhoto("") }})
 		}})
 	name := a.Name
@@ -457,9 +509,9 @@ func (u *UI) accountSettings() []settingsSection {
 	}
 	info = append(info, u.settingInfoRow("device", "This device", appName+" on "+osName()))
 	secure := b.Pref(prefSecurityMsg) == "on"
-	return []settingsSection{
-		{title: "Account info", rows: info},
-		{title: "Security notifications", rows: []settingRow{{
+	return append(u.accountsSection(),
+		settingsSection{title: "Account info", rows: info},
+		settingsSection{title: "Security notifications", rows: []settingRow{{
 			key: "security", kind: setToggle, on: secure,
 			title: "Show security notifications",
 			sub:   "On this computer, when a contact's security code changes",
@@ -472,7 +524,7 @@ func (u *UI) accountSettings() []settingsSection {
 			},
 		}}, note: "Messages and calls in end-to-end encrypted chats stay between you and the people you choose. " +
 			"A contact's security code changes when they reinstall WhatsApp or change phones."},
-	}
+	)
 }
 
 func osName() string {
@@ -666,21 +718,43 @@ func (u *UI) blockedContacts() []settingsSection {
 		sec.rows = append(sec.rows, settingRow{key: "blocked:" + c.ID, kind: setContact, id: c.ID, title: c.Name,
 			run: func() {
 				u.confirm("Unblock "+c.Name+"?", "",
-					dialogButton{label: "Cancel"},
 					dialogButton{label: "Unblock", primary: true, run: func() { u.backend.SetBlocked(c.ID, false) }})
 			}})
 	}
 	return []settingsSection{sec}
 }
 
-// setTheme switches the palette and remembers the choice.
-func (u *UI) setTheme(dark bool) {
-	u.SetDark(dark)
-	v := "light"
-	if dark {
-		v = "dark"
+// themeNames names the values of prefTheme.
+var themeNames = map[string]string{"": "System default", "light": "Light", "dark": "Dark"}
+
+// systemDark asks the system for its theme (tests pin it).
+var systemDark = desktop.SystemDark
+
+// setTheme remembers the theme ("light", "dark" or "" for the system's)
+// and switches the palette to it.
+func (u *UI) setTheme(t string) {
+	u.backend.SetPref(prefTheme, t)
+	u.applyTheme()
+}
+
+// applyTheme switches the palette to the chosen theme. The system's is
+// read again each time, so it is also called when the window gets focus,
+// to follow a change made while the app ran. A system that doesn't say
+// gets the dark theme, which was the app's own default.
+func (u *UI) applyTheme() {
+	dark := true
+	switch u.backend.Pref(prefTheme) {
+	case "light":
+		dark = false
+	case "dark":
+	default:
+		if d, ok := systemDark(); ok {
+			dark = d
+		}
 	}
-	u.backend.SetPref(prefTheme, v)
+	if dark != u.dark || u.pal == nil {
+		u.SetDark(dark)
+	}
 }
 
 // setEnterSend makes Enter send (and Shift+Enter add a line), or Enter
@@ -897,6 +971,9 @@ func (u *UI) layoutSettingRow(gtx C, r *settingRow) D {
 	case setContact:
 		id, name := r.id, r.title
 		it.glyph = func(gtx C, _ color.NRGBA) D { return u.avatar(gtx, id, name, false, 40) }
+	case setAccount:
+		a := r.acct
+		it.glyph = func(gtx C, _ color.NRGBA) D { return u.accountAvatar(gtx, a, 40) }
 	case setKeys:
 		return u.layoutShortcut(gtx, r.title, r.keys)
 	}
