@@ -699,6 +699,9 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		case last.Kind == model.KindUnsupported:
 			children = append(children, small(icUnsupported, p.TextSecondary, 17, 4))
 			txt, italic = "This message couldn't load", true
+		case last.Kind == model.KindWaiting:
+			children = append(children, small(icClock, p.TextSecondary, 17, 4))
+			txt, italic = "Waiting for this message. This may take a while.", true
 		case last.Kind == model.KindViewOnce:
 			children = append(children, layout.Rigid(func(gtx C) D { return u.viewOnceMark(gtx, 18, p.TextSecondary) }),
 				layout.Rigid(layout.Spacer{Width: 4}.Layout))

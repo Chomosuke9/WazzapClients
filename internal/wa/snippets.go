@@ -239,6 +239,9 @@ func (b *Backend) SaveMessageSnippet(chat, id, name string) (model.Snippet, erro
 	if r.Kind == model.KindViewOnce {
 		return model.Snippet{}, errors.New("View once messages can't be saved as snippets.")
 	}
+	if r.Kind == model.KindWaiting {
+		return model.Snippet{}, errors.New("This message hasn't come yet.")
+	}
 	if r.Media == model.MediaNone && r.Kind != model.KindUnsupported && r.buttons.empty() {
 		// Use stored text with protocol mention identifiers, not resolved names.
 		if len(r.mentions) == 0 && r.Link == nil {

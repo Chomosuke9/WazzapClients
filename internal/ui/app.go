@@ -1367,7 +1367,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
+// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "outmenu" (your last message's),
+// "keptmenu" (a message kept in the chat), "report" (Report's question for the last message received), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
 // first poll's or event's votes), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
@@ -1451,6 +1452,25 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "stickermenu":
 		if sticker != nil {
 			u.openMessageMenu(sticker)
+		}
+	case "outmenu":
+		if lastOut != nil {
+			u.openMessageMenu(lastOut)
+		}
+	case "keptmenu", "report":
+		// The last message kept in the chat (Keep in chat), or Report's
+		// question for the last one received.
+		var kept *model.Message
+		for _, m := range u.msgs {
+			if m.Kept {
+				kept = m
+			}
+		}
+		switch {
+		case name == "keptmenu" && kept != nil:
+			u.openMessageMenu(kept)
+		case name == "report" && lastIn != nil && u.selected != nil:
+			u.confirmReport(u.selected, lastIn)
 		}
 	case "emoji":
 		u.openPicker(pickComposer, nil)

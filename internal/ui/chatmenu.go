@@ -141,6 +141,15 @@ func (u *UI) timerItems(c *model.Chat) []menuItem {
 	return items
 }
 
+// chatTimer is a chat's disappearing messages timer in seconds, 0 when
+// it's off (or not known).
+func (u *UI) chatTimer(id string) uint32 {
+	if info := u.timerInfo(id); info != nil {
+		return info.Disappearing
+	}
+	return 0
+}
+
 // timerInfo is the chat's info for its timer: the open panel's, or the
 // one the composer loaded.
 func (u *UI) timerInfo(id string) *model.ChatInfo {

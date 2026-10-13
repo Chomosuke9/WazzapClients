@@ -106,6 +106,8 @@ var (
 	icPinFill       = icon.KeepFill
 	icAddReaction   = icon.AddReaction
 	icDownload      = icon.Download
+	icKeep          = icon.Bookmark     // Keep in chat
+	icKept          = icon.BookmarkFill // a kept message's meta
 	icZoomIn        = icon.ZoomIn
 	icZoomOut       = icon.ZoomOut
 	icChevronLeft   = icon.ChevronLeft

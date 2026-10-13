@@ -665,7 +665,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			fx.Pop()
 			ct.Pop()
 		}
-		if ann && m.Kind != model.KindDeleted && m.Kind != model.KindUnsupported && m.Kind != model.KindSticker {
+		if ann && m.Kind != model.KindDeleted && m.Kind != model.KindUnsupported && m.Kind != model.KindWaiting && m.Kind != model.KindSticker {
 			// Announcements offer a forward button beside them, when there's room.
 			if bx := bubble.size.X + gtx.Dp(6); x+bx+gtx.Dp(34) <= w+margin {
 				ft := op.Offset(image.Pt(bx, 0)).Push(gtx.Ops)
@@ -801,6 +801,12 @@ func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color
 			layout.Rigid(iconW(icStarFill, 14, col)),
 			layout.Rigid(layout.Spacer{Width: 3}.Layout))
 	}
+	if m.Kept && m.Kind != model.KindDeleted {
+		// Kept in a disappearing chat.
+		children = append(children,
+			layout.Rigid(iconW(icKept, 13, col)),
+			layout.Rigid(layout.Spacer{Width: 3}.Layout))
+	}
 	if !m.Revoked.IsZero() && m.Kind != model.KindDeleted {
 		// Kept with Keep deleted messages (extras.go).
 		children = append(children,
@@ -928,7 +934,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	voCard := m.Kind == model.KindViewOnce && !m.Opened
 	framed := isImg || voCard
 	footerText, buttons := m.Footer, m.Buttons
-	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported {
+	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported || m.Kind == model.KindWaiting {
 		footerText, buttons = "", nil
 	}
 	if cb := cardButtons(m); len(cb) > 0 {
@@ -1027,6 +1033,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	case m.Kind == model.KindUnsupported:
 		text, textCol, italic = "This message couldn't load. Open the message on your phone to view it.", secondary, true
 		lead = iconW(icUnsupported, 19, secondary)
+	case m.Kind == model.KindWaiting:
+		text, textCol, italic = "Waiting for this message. This may take a while.", secondary, true
+		lead = iconW(icClock, 19, secondary)
 	case voCard:
 		text, textInset = "", gtx.Dp(6)
 		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, 0, meta.size, bg, secondary) })

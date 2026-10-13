@@ -359,9 +359,13 @@ func demo(now time.Time) []*demoChat {
 		rina, family, work,
 		{ID: "budi", Name: "Budi Santoso", Presence: "last seen today at 08:12", Messages: []*model.Message{
 			txt(false, day(0, 8, 2), "Bro, are we still on for futsal tonight?"), {FromMe: true, Text: "Yep, 8 o'clock", Time: day(0, 8, 10), Receipt: model.Read, Reaction: "👍"},
+			// Not decrypted yet: "Waiting for this message".
+			{Kind: model.KindWaiting, Time: day(0, 8, 12)},
 			// Deleted for everyone, kept by Keep deleted messages.
 			{Text: "Bring 50k for the court, Andi says he's not paying again 🙄", Time: day(0, 8, 14), Revoked: day(0, 8, 15)},
-			txt(false, day(0, 8, 15), "Sorry, wrong chat. See you at 8!"),
+			// Disappearing messages, the first kept in the chat.
+			{Text: "Court 3 this time, the one by the parking lot", Time: day(0, 8, 15), Disappears: true, Kept: true},
+			{Text: "Sorry, wrong chat. See you at 8!", Time: day(0, 8, 15), Disappears: true},
 		}},
 		{ID: "shop", Name: "Sunset Coffee", Presence: "Business account", Messages: []*model.Message{
 			{Text: "*Order #4821 is ready* ☕\nYour iced latte is waiting at the counter.", Footer: "Sunset Coffee · 12 Braga St.",

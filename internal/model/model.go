@@ -38,6 +38,10 @@ const (
 	// KindViewOnce is a view once photo, video or voice message: a pill
 	// that opens it (see Message.Opened and Message.OnPhone).
 	KindViewOnce
+	// KindWaiting is a message that came but couldn't be decrypted yet:
+	// "Waiting for this message", until its sender's phone sends it again
+	// and the message takes its place.
+	KindWaiting
 )
 
 // ButtonKind is what a message button does.
@@ -103,7 +107,10 @@ type Message struct {
 	Reaction string
 	// Starred and Pinned mirror the message menu's Star and Pin.
 	Starred, Pinned bool
-	Forwarded       bool
+	// Disappears is set on a message sent with a disappearing messages
+	// timer, and Kept on one someone kept in the chat (Keep in chat).
+	Disappears, Kept bool
+	Forwarded        bool
 	// Footer is the small print under a business message's text, and
 	// Buttons its buttons.
 	Footer  string
@@ -295,7 +302,7 @@ func (m *Message) DeletedNote() string {
 // CanEdit reports whether you can still edit m at now: one of your own
 // sent text messages, photos or videos.
 func (m *Message) CanEdit(now time.Time) bool {
-	if !m.FromMe || m.Kind == KindDeleted || m.Kind == KindUnsupported || m.Forwarded ||
+	if !m.FromMe || m.Kind == KindDeleted || m.Kind == KindUnsupported || m.Kind == KindWaiting || m.Forwarded ||
 		m.Receipt == Pending || m.Receipt == Failed || now.Sub(m.Time) > EditWindow {
 		return false
 	}
@@ -1113,6 +1120,9 @@ type Backend interface {
 	Star(m *Message, starred bool)
 	// PinMessage pins a message to the top of its chat, or unpins it.
 	PinMessage(m *Message, pinned bool)
+	// KeepInChat keeps a disappearing message in its chat for everyone, or
+	// lets it disappear again (Unkeep).
+	KeepInChat(m *Message, keep bool)
 	// OpenedViewOnce marks a view once message opened on this computer.
 	OpenedViewOnce(m *Message)
 	// EditText returns the text of one of your messages to edit, with

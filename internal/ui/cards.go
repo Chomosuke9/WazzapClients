@@ -48,7 +48,7 @@ const (
 
 // cardButtons are the buttons under m's card.
 func cardButtons(m *model.Message) []model.Button {
-	if !hasCard(m) || m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported {
+	if !hasCard(m) || m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported || m.Kind == model.KindWaiting {
 		return nil
 	}
 	switch m.Media {

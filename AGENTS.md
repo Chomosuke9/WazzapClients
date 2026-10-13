@@ -195,6 +195,13 @@ Gotchas already found in the pinned version (v0.10.x):
   `fillViewOnce` gives the placeholder that media. While one is shown the window is kept
   out of screenshots (`desktop.BlockCapture`, `SetWindowDisplayAffinity` posted to the
   window's thread through the drop target's subclass).
+- Any other `events.UndecryptableMessage` (unless its sender marked it `decrypt-fail="hide"`)
+  is stored as a `KindWaiting` placeholder, "Waiting for this message". hypermeow sends a
+  retry receipt, and the decrypted copy that comes back under the same ID replaces it in
+  `putMessage` (and counts as new then); one that shows nothing drops it (`dropWaiting`).
+- Keep in chat is a `KeepInChatMessage` (kept in `wz_messages.kept`; history sync says it
+  in `WebMessageInfo.keepInChat`). WhatsApp reports go only from the phone: hypermeow has
+  no call for them, so Report asks and offers to block (`confirmReport`).
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.

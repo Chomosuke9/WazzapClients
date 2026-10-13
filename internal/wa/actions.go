@@ -616,6 +616,37 @@ func (b *Backend) PinMessage(m *model.Message, pinned bool) {
 	}()
 }
 
+// KeepInChat implements model.Backend.
+func (b *Backend) KeepInChat(m *model.Message, keep bool) {
+	cli := b.connected()
+	if cli == nil {
+		return
+	}
+	ctx := b.ctx
+	jid, key := b.messageKey(m)
+	typ := waE2E.KeepType_KEEP_FOR_ALL
+	if !keep {
+		typ = waE2E.KeepType_UNDO_KEEP_FOR_ALL
+	}
+	msg := &waE2E.Message{KeepInChatMessage: &waE2E.KeepInChatMessage{
+		Key: key, KeepType: typ.Enum(), TimestampMS: proto.Int64(time.Now().UnixMilli()),
+	}}
+	_ = b.store.setMessageFlag(ctx, m.ChatID, m.ID, "kept", keep)
+	b.emitMessage(m.ChatID, m.ID)
+	go func() {
+		if _, err := b.sendMessage(ctx, cli, jid, msg); err != nil {
+			b.log.Warnf("keep in %s: %v", m.ChatID, err)
+			_ = b.store.setMessageFlag(ctx, m.ChatID, m.ID, "kept", !keep)
+			b.emitMessage(m.ChatID, m.ID)
+			text := "Couldn't keep the message."
+			if !keep {
+				text = "Couldn't unkeep the message."
+			}
+			b.emit(model.NoticeEvent{Text: text})
+		}
+	}()
+}
+
 // emitAllMessages asks the UI to reload an open chat.
 func (b *Backend) emitAllMessages(chatID string) {
 	b.emit(model.DeletedEvent{ChatID: chatID})

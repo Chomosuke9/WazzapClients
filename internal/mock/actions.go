@@ -162,6 +162,10 @@ func (b *Backend) PinMessage(m *model.Message, pinned bool) {
 	b.emit(model.DeletedEvent{ChatID: m.ChatID})
 }
 
+func (b *Backend) KeepInChat(m *model.Message, keep bool) {
+	b.update(m, func(x *model.Message) { x.Kept = keep })
+}
+
 func (b *Backend) SaveMedia(*model.Message) {
 	b.emit(model.NoticeEvent{Text: "Demo mode doesn't save files."})
 }

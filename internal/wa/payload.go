@@ -39,6 +39,7 @@ func (r *rawMsg) fill(raw, edit []byte) {
 		m.Album = albumOf(pm)
 	}
 	m.Forwarded = c.ctx.GetIsForwarded()
+	m.Disappears = c.ctx.GetExpiration() > 0
 	if !c.buttons.empty() {
 		r.buttons = c.buttons
 		c.buttons.apply(m)
@@ -130,6 +131,8 @@ func (b *Backend) resolveQuote(ctx context.Context, chat string, q *rawQuote) *m
 				quote.Text = "This message was deleted"
 			case model.KindUnsupported:
 				quote.Text = "This message couldn't load"
+			case model.KindWaiting:
+				quote.Text = "Waiting for this message"
 			}
 			if sender == "" {
 				sender = orig.senderJID

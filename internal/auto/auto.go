@@ -592,6 +592,12 @@ func (a *Backend) PinMessage(m *model.Message, pinned bool) {
 	}
 }
 
+func (a *Backend) KeepInChat(m *model.Message, keep bool) {
+	if !a.refused() {
+		a.Backend.KeepInChat(m, keep)
+	}
+}
+
 func (a *Backend) PostStatus(p model.StatusPost) {
 	if !a.refused() {
 		a.Backend.PostStatus(p)
