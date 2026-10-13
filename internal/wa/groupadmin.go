@@ -54,6 +54,10 @@ func (b *Backend) ManageGroup(r model.GroupRequest) {
 			err = cli.SetGroupTopic(ctx, jid, "", "", r.Text)
 		case model.GroupName:
 			err = cli.SetGroupName(ctx, jid, r.Text)
+		case model.GroupPhoto:
+			if _, err = cli.SetGroupPhoto(ctx, jid, r.Photo); err == nil {
+				b.fetchAvatar(r.ChatID) // announces it with an AvatarEvent
+			}
 		case model.GroupAddMode:
 			mode := types.GroupMemberAddModeAllMember
 			if r.On {
