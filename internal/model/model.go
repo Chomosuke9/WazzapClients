@@ -973,6 +973,8 @@ const (
 	GroupApproval
 	// GroupName renames the group to Text.
 	GroupName
+	// GroupPhoto sets the group's picture to Photo (nil removes it).
+	GroupPhoto
 )
 
 // GroupRequest is a change to a group you administer (Backend.ManageGroup).
@@ -987,6 +989,8 @@ type GroupRequest struct {
 	On      bool
 	Text    string
 	Invite  *GroupInvite
+	// Photo is a square JPEG, for GroupPhoto.
+	Photo []byte
 }
 
 // GroupInvite is an invitation to join a group, which WhatsApp hands out
@@ -1324,6 +1328,11 @@ type Backend interface {
 	// or nil. A missing or stale picture is fetched in the background and
 	// announced with an AvatarEvent. Safe to call from any goroutine.
 	Avatar(id string) []byte
+	// ProfilePhoto downloads the full-size profile picture of a chat or
+	// user (Avatar is a small preview) and returns it, or nil when there
+	// is none or it can't be fetched. It blocks: call it off the UI
+	// goroutine.
+	ProfilePhoto(id string) []byte
 	// MediaData returns a downloaded image or sticker, or nil. Missing media
 	// is downloaded in the background and announced with a MediaEvent. Safe
 	// to call from any goroutine.

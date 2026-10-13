@@ -3,7 +3,6 @@ package ui
 import (
 	"image"
 	"image/color"
-	"os"
 	"strings"
 
 	"gioui.org/font"
@@ -17,7 +16,6 @@ import (
 
 	"github.com/chomosuke9/wazzapclients/internal/filepick"
 	"github.com/chomosuke9/wazzapclients/internal/model"
-	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
@@ -379,29 +377,7 @@ func (u *UI) pickGroupPhoto() {
 		nc.photos = make(chan groupPhoto, 1)
 	}
 	nc.photoBusy = true
-	out, notify := nc.photos, u.images.invalidate
-	go func() {
-		var r groupPhoto
-		paths, err := filepick.Open("Choose a group picture", false,
-			filepick.Filter{Name: "Pictures", Exts: photoExts}, filepick.Filter{Name: "All files"})
-		switch {
-		case err != nil:
-			r.err = err
-		case len(paths) == 0:
-			r.none = true
-		default:
-			var data []byte
-			if data, r.err = os.ReadFile(paths[0]); r.err == nil {
-				release := acquireDecode(data)
-				r.data, r.err = photo.Square(data, groupPhotoPx)
-				release()
-			}
-		}
-		out <- r
-		if notify != nil {
-			notify()
-		}
-	}()
+	pickSquarePhoto("Choose a group picture", nc.photos, u.images.invalidate)
 }
 
 // groupPhotoItems is the menu of the picture on the New group page.

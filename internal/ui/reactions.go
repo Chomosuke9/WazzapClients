@@ -54,6 +54,7 @@ func reactionKey(m *model.Message) string {
 // bubble (or, under, below it: an announcement's card) and returns the
 // row's size. A running pop scales it in.
 func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, pop animKey) D {
+	defer u.emojiIn(emojiReactions)()
 	counts, total := reactionCounts(ms)
 	if total == 0 {
 		return dims
@@ -184,6 +185,7 @@ func (u *UI) reactionsChanged(m *model.Message) {
 
 // layoutReactions draws the open list of who reacted over everything.
 func (u *UI) layoutReactions(gtx C) {
+	defer u.emojiIn(emojiReactions)()
 	r := &u.reacts
 	if r.msgs == nil {
 		return

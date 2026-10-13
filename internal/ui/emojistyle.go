@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,13 +38,15 @@ import (
 //     go-text asks emojiBitmap (Font.BitmapHook) for each bitmap glyph.
 //     Gio caches glyph pictures and the drawing of whole lines, so the UI
 //     gets a new shaper when pictures arrive (refreshEmoji).
-//   - The animated styles play every emoji's animation: in labels (the
-//     chat list, names, quotes, reactions: hookLabel's bitmap hook) and a
-//     message of emojis alone (jumbo.go). Message text (styledtext's
-//     Bitmap hook), where a message full of emojis is the heavy case, and
-//     the picker, a screenful of them, play only in emojiAnimated: the two
-//     are most of what animated emojis cost. The composer stays still:
-//     widget.Editor paints its own text.
+//   - 2D animated plays emojis' animations in the places the Animated
+//     emojis page leaves on (emojiPlaces, prefEmojiStill). Labels draw
+//     their emojis through one hook (hookLabel's, labelEmoji), so the
+//     chat list, quotes and reactions say which place they are while they
+//     draw (u.emojiIn); every other label is "Everywhere else". Message
+//     text (styledtext's Bitmap hook), where a message full of emojis is
+//     the heavy case, and the picker, a screenful of them, are most of
+//     what animated emojis cost. The composer stays still: widget.Editor
+//     paints its own text.
 
 // prefEmojiStyle is an app preference (appPrefs): "" is 2D.
 const prefEmojiStyle = "emoji_style"
@@ -51,19 +54,81 @@ const prefEmojiStyle = "emoji_style"
 type emojiStyleKind int32
 
 const (
-	emoji2D          emojiStyleKind = iota
-	emojiAnimOutside                // 2D, animated everywhere but in message text
-	emojiAnimated                   // 2D, animated everywhere
+	emoji2D       emojiStyleKind = iota
+	emojiAnimated                // 2D, animated where emojiStill allows
 	emoji3D
 )
 
 var emojiStyles = []struct {
 	pref, title, sub string
 }{
-	emoji2D:          {"", "2D", "Noto Color Emoji"},
-	emojiAnimOutside: {"2d_anim_alone", "2D, animated outside messages", "Emojis play their animations, except in the text of messages and the emoji panel: big emojis sent alone still do"},
-	emojiAnimated:    {"2d_anim", "2D animated", "Every emoji plays its animation, in messages too"},
-	emoji3D:          {"3d", "3D", "Noto's 3D emojis"},
+	emoji2D:       {"", "2D", "Noto Color Emoji"},
+	emojiAnimated: {"2d_anim", "2D animated", "Emojis play their animations, where you choose"},
+	emoji3D:       {"3d", "3D", "Noto's 3D emojis"},
+}
+
+// prefOutsideMessages was the style "2D, animated outside messages":
+// 2D animated with message text, quotes and the picker still.
+const prefOutsideMessages = "2d_anim_alone"
+
+var outsideMessages = []emojiPlace{emojiText, emojiQuotes, emojiPanel}
+
+// prefEmojiStill is an app preference: the places (emojiPlaces' prefs,
+// comma separated) where 2D animated emojis stay still. "" animates all.
+const prefEmojiStill = "emoji_still"
+
+// emojiPlace is a part of the UI the Animated emojis page has a switch
+// for. emojiAnywhere is none: a hook's own place.
+type emojiPlace uint8
+
+const (
+	emojiAnywhere emojiPlace = iota
+	emojiText
+	emojiAlone
+	emojiQuotes
+	emojiReactions
+	emojiList
+	emojiPanel
+	emojiOther
+)
+
+var emojiPlaces = []struct {
+	place            emojiPlace
+	pref, title, sub string
+}{
+	{emojiText, "text", "Message text", "Emojis in the text of messages"},
+	{emojiAlone, "alone", "Big emojis", "A message of one to three emojis alone"},
+	{emojiQuotes, "quotes", "Quoted messages", "Replies' quotes, and the message you're replying to"},
+	{emojiReactions, "reactions", "Reactions", "Under messages, in the reaction bar and in who reacted"},
+	{emojiList, "list", "Chat list", "Chat names and last messages"},
+	{emojiPanel, "picker", "Emoji panel", "The emojis you pick from"},
+	{emojiOther, "other", "Everywhere else", "Names, headers, info panels and the rest"},
+}
+
+// emojiStill has a bit (1<<place) for each place where emojis stay
+// still. Only the UI goroutine touches it.
+var emojiStill uint16
+
+func parseEmojiStill(v string) uint16 {
+	var m uint16
+	for _, f := range strings.Split(v, ",") {
+		for _, p := range emojiPlaces {
+			if p.pref == f {
+				m |= 1 << p.place
+			}
+		}
+	}
+	return m
+}
+
+func formatEmojiStill(m uint16) string {
+	var fs []string
+	for _, p := range emojiPlaces {
+		if m&(1<<p.place) != 0 {
+			fs = append(fs, p.pref)
+		}
+	}
+	return strings.Join(fs, ",")
 }
 
 // emojiStyleNow is the chosen style. The 3D hook reads it from any
@@ -80,6 +145,9 @@ var emojiStore *emojiset.Store
 func readEmojiStyle(b model.Backend) emojiStyleKind {
 	if b != nil {
 		v := b.Pref(prefEmojiStyle)
+		if v == prefOutsideMessages {
+			return emojiAnimated
+		}
 		for i, s := range emojiStyles {
 			if s.pref == v {
 				return emojiStyleKind(i)
@@ -93,33 +161,69 @@ func (u *UI) loadEmojiStyle() {
 	if emojiPreview >= 0 {
 		return
 	}
-	emojiStyleNow.Store(int32(readEmojiStyle(u.backend)))
+	b := u.backend
+	if b != nil && b.Pref(prefEmojiStyle) == prefOutsideMessages {
+		// The old style becomes 2D animated with those places still.
+		var m uint16
+		for _, p := range outsideMessages {
+			m |= 1 << p
+		}
+		b.SetPref(prefEmojiStill, formatEmojiStill(m))
+		b.SetPref(prefEmojiStyle, emojiStyles[emojiAnimated].pref)
+	}
+	emojiStyleNow.Store(int32(readEmojiStyle(b)))
+	emojiStill = 0
+	if b != nil {
+		emojiStill = parseEmojiStill(b.Pref(prefEmojiStill))
+	}
 }
 
 // emojiPreview is the style PreviewEmojis set, or -1.
 var emojiPreview emojiStyleKind = -1
 
 // PreviewEmojis makes every UI draw emojis in style (a value of the Emoji
-// style preference: "2d_anim_alone", "2d_anim" or "3d") from the pictures
-// already in dir, which is laid out as the app keeps them (<data>/emoji),
+// style preference: "2d_anim" or "3d", or "2d_anim_alone" for 2D animated
+// outside message text, quotes and the picker) from the pictures already
+// in dir, which is laid out as the app keeps them (<data>/emoji),
 // downloading none. For cmd/screenshot.
 func PreviewEmojis(dir, style string) error {
-	for i, s := range emojiStyles {
-		if s.pref == style {
-			st := emojiset.New(dir)
-			st.Fetch = func(string) ([]byte, int, error) { return nil, 0, errors.New("previews download nothing") }
-			emojiStore = st
-			emojiPreview = emojiStyleKind(i)
-			emojiStyleNow.Store(int32(i))
-			return nil
+	k, still := emojiStyleKind(-1), uint16(0)
+	if style == prefOutsideMessages {
+		k = emojiAnimated
+		for _, p := range outsideMessages {
+			still |= 1 << p
 		}
 	}
-	return fmt.Errorf("no emoji style %q", style)
+	for i, s := range emojiStyles {
+		if s.pref == style {
+			k = emojiStyleKind(i)
+		}
+	}
+	if k < 0 {
+		return fmt.Errorf("no emoji style %q", style)
+	}
+	st := emojiset.New(dir)
+	st.Fetch = func(string) ([]byte, int, error) { return nil, 0, errors.New("previews download nothing") }
+	emojiStore = st
+	emojiPreview = k
+	emojiStyleNow.Store(int32(k))
+	emojiStill = still
+	return nil
 }
 
 func (u *UI) setEmojiStyle(k emojiStyleKind) {
 	u.backend.SetPref(prefEmojiStyle, emojiStyles[k].pref)
 	emojiStyleNow.Store(int32(k))
+}
+
+// setEmojiStill makes emojis in place play (on) or stay still.
+func (u *UI) setEmojiStill(place emojiPlace, on bool) {
+	if on {
+		emojiStill &^= 1 << place
+	} else {
+		emojiStill |= 1 << place
+	}
+	u.backend.SetPref(prefEmojiStill, formatEmojiStill(emojiStill))
 }
 
 var (
@@ -176,7 +280,7 @@ func downloadAllEmojis() int {
 	switch emojiStyle() {
 	case emoji3D:
 		n = emojiStore.Prefetch(emojiset.ThreeD, names)
-	case emojiAnimOutside, emojiAnimated:
+	case emojiAnimated:
 		n = emojiStore.Prefetch(emojiset.Animated, names)
 	}
 	emojiBatch = n
@@ -336,25 +440,35 @@ func (u *UI) glyphEmoji(g text.Glyph) string {
 	return emojiGlyphName(fontapi.GID(uint64(g.ID) & (1<<32 - 1)))
 }
 
-// animateEmojis reports whether emojis in message text and the picker
-// play, and animateOthers whether all the others do (labels, big emojis).
-func animateEmojis() bool {
-	return emojiStyle() == emojiAnimated && emojiStore != nil && perf.autoplay != "never"
+// animateIn reports whether emojis in place play their animations.
+func animateIn(place emojiPlace) bool {
+	return emojiStyle() == emojiAnimated && emojiStill&(1<<place) == 0 && emojiStore != nil && perf.autoplay != "never"
 }
 
-func animateOthers() bool {
-	s := emojiStyle()
-	return (s == emojiAnimated || s == emojiAnimOutside) && emojiStore != nil && perf.autoplay != "never"
+// emojiIn makes the emojis labels and message text draw until the
+// returned func runs count as place's: defer u.emojiIn(emojiList)().
+func (u *UI) emojiIn(place emojiPlace) func() {
+	prev := u.emojiPlace
+	u.emojiPlace = place
+	return func() { u.emojiPlace = prev }
+}
+
+// placeOr is the place u.emojiIn set, or def.
+func (u *UI) placeOr(def emojiPlace) emojiPlace {
+	if u.emojiPlace != emojiAnywhere {
+		return u.emojiPlace
+	}
+	return def
 }
 
 // textEmoji draws an emoji glyph of message text (styledtext's Bitmap
 // hook), and labelEmoji one of a label (hookLabel's), with drawEmojiGlyph.
 func (u *UI) textEmoji(gtx C, g text.Glyph, r image.Rectangle) bool {
-	return u.drawEmojiGlyph(gtx, g, r, animateEmojis())
+	return u.drawEmojiGlyph(gtx, g, r, animateIn(u.placeOr(emojiText)))
 }
 
 func (u *UI) labelEmoji(gtx C, g text.Glyph, r image.Rectangle) bool {
-	return u.drawEmojiGlyph(gtx, g, r, animateOthers())
+	return u.drawEmojiGlyph(gtx, g, r, animateIn(u.placeOr(emojiOther)))
 }
 
 // drawEmojiGlyph draws an emoji glyph in place of its picture at r:
@@ -640,6 +754,10 @@ func (u *UI) emojiStyleSettings() []settingsSection {
 		sec.rows = append(sec.rows, settingRow{key: "emoji:" + s.pref, kind: setRadio, title: s.title, sub: s.sub,
 			on: cur == k, run: func() { u.setEmojiStyle(k) }})
 	}
+	if cur == emojiAnimated {
+		sec.rows = append(sec.rows, settingRow{key: "emoji:places", ic: icEmoji, title: "Animated emojis",
+			sub: emojiPlacesSummary(), trailing: icChevronRight, run: func() { u.openSettingsSub("emojianim") }})
+	}
 	out := []settingsSection{sec}
 	if emojiStore != nil && cur != emoji2D {
 		row := settingRow{key: "emoji:all", title: "Download all emojis", sub: "Get every emoji of this style now, instead of as each shows"}
@@ -674,6 +792,36 @@ func (u *UI) emojiStyleSettings() []settingsSection {
 		out = append(out, settingsSection{title: "Storage", rows: []settingRow{row}})
 	}
 	return out
+}
+
+// emojiPlacesSummary words where emojis play, for the Emoji style page.
+func emojiPlacesSummary() string {
+	n := 0
+	for _, p := range emojiPlaces {
+		if emojiStill&(1<<p.place) == 0 {
+			n++
+		}
+	}
+	switch n {
+	case len(emojiPlaces):
+		return "Everywhere"
+	case 0:
+		return "Nowhere"
+	}
+	return fmt.Sprintf("In %d of %d places", n, len(emojiPlaces))
+}
+
+// emojiPlaceSettings is the Animated emojis page: a switch for each place.
+func (u *UI) emojiPlaceSettings() []settingsSection {
+	sec := settingsSection{title: "Play animations in",
+		note: "Message text and the emoji panel can show many emojis at once, so they cost the most memory and CPU. " +
+			"The message you're writing never animates."}
+	for _, p := range emojiPlaces {
+		place, on := p.place, emojiStill&(1<<p.place) == 0
+		sec.rows = append(sec.rows, settingRow{key: "emojianim:" + p.pref, kind: setToggle, title: p.title, sub: p.sub,
+			on: on, run: func() { u.setEmojiStill(place, !on) }})
+	}
+	return []settingsSection{sec}
 }
 
 // sizeLabel words a number of bytes ("1.5 MB").

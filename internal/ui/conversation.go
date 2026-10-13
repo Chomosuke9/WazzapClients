@@ -1447,6 +1447,7 @@ func (u *UI) paintBubble(gtx C, w, h int, bg color.NRGBA, out, tail bool) {
 // layoutQuote draws a quoted message: a colored bar, the author and a
 // snippet, plus the quoted picture's thumbnail when it's loaded (qm).
 func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width int, qm *model.Message) D {
+	defer u.emojiIn(emojiQuotes)()
 	p := u.pal
 	name := q.Sender
 	if name == "" {

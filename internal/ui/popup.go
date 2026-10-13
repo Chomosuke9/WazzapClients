@@ -140,6 +140,7 @@ const (
 	ctxScheduled   // a scheduled message's (scheduled.go)
 	ctxZoom        // the Font size choices (scale.go)
 	ctxAcctMode    // an account's background modes (chatID is its Dir)
+	ctxInfoPhoto   // a group's picture in its info panel (groupedit.go)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -402,6 +403,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		case ctxAcctMode:
 			if u.acctMenu.open {
 				items = u.acctModeItems(m.chatID)
+			}
+		case ctxInfoPhoto:
+			if u.info.open {
+				items = u.infoPhotoItems(m.chatID)
 			}
 		}
 		if items == nil {
@@ -689,6 +694,7 @@ var quickReactions = [...]string{"👍", "❤️", "😂", "😮", "😢", "🙏
 // layoutReactionBar draws the emoji pill above a message menu, centered on
 // top (its bottom-center point).
 func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
+	defer u.emojiIn(emojiReactions)()
 	p := u.pal
 	// The bar keeps drawing after a click: the menu fades out with it.
 	for i, e := range quickReactions {

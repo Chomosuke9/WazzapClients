@@ -94,7 +94,8 @@ type UI struct {
 	// u.textEmoji and u.labelEmoji, bound once: a method value made for
 	// every label would be garbage every frame.
 	textHook, labelHook bitmapHook
-	players             players // animated stickers on screen
+	emojiPlace          emojiPlace // what the hooks are drawing (u.emojiIn)
+	players             players    // animated stickers on screen
 	bars                map[*widget.List]*scrollbar
 
 	page         page
@@ -156,6 +157,7 @@ type UI struct {
 	picker                  emojiPicker
 	gifs                    gifSearch // the picker's GIF tab (gifs.go)
 	viewer                  mediaViewer
+	picView                 picView // a profile picture shown big (photoview.go)
 	toastMsg                toastState
 	mouse                   image.Point // last pointer position, in content coordinates
 	mousePress              image.Point // primary press, for locating a clicked thumbnail
@@ -724,6 +726,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	u.layoutStatusText(gtx)
 	u.layoutGallery(gtx)
 	u.layoutViewer(gtx)
+	u.layoutPicView(gtx)
 	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
@@ -922,6 +925,7 @@ func (u *UI) update(gtx C) {
 		}
 	}
 	u.updateMenu(gtx)
+	u.updateGroupEdit(gtx)
 	u.updateFilterMenu(gtx)
 	u.updateGIFs()
 	u.galleryUpdate(gtx)
@@ -1076,6 +1080,8 @@ func (u *UI) escape() {
 		u.closeReactions()
 	case u.dialog.isOpen():
 		u.closeDialog()
+	case u.picView.isOpen():
+		u.closePicView()
 	case u.status.text.isOpen():
 		u.closeStatusText()
 	case u.picker.open:
@@ -1113,6 +1119,8 @@ func (u *UI) escape() {
 		default:
 			u.closeSendView(false)
 		}
+	case u.info.edit.field != 0:
+		u.cancelGroupEdit()
 	case u.search.open:
 		u.search.open = false
 	case u.msgInfo.open:
@@ -1886,6 +1894,27 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "invitelink":
 		u.openInviteLink(u.selected.ID)
 		u.applyEvents()
+	case "groupname", "groupdesc", "groupphoto":
+		// A group's info being edited (groupedit.go).
+		u.openInfo(u.selected.ID)
+		u.info.anim.snap(true)
+		info := u.backend.Info(u.selected.ID)
+		switch name {
+		case "groupname":
+			u.startGroupEdit(u.selected, info, editGroupName)
+		case "groupdesc":
+			u.startGroupEdit(u.selected, info, editGroupDesc)
+		default:
+			u.ctx = ctxMenu{kind: ctxInfoPhoto, chatID: u.selected.ID, at: u.mouse}
+		}
+	case "picview":
+		// The open chat's picture, shown big.
+		kind := avatarPerson
+		if u.selected.IsGroup {
+			kind = avatarGroup
+		}
+		u.openPicView(u.selected.ID, u.selected.Name, kind, image.Rectangle{})
+		u.picView.anim.snap(true)
 	case "perms", "starred", "changes":
 		// The info panel's pages.
 		u.openInfo(u.selected.ID)

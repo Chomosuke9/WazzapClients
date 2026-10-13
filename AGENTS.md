@@ -351,13 +351,19 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    the settings it shares with the info panel (disappearing timer, chat
                    theme, encryption code, Add member, invite link) in chatmenu.go; the
                    info panel's own pages (starred messages, group permissions, member
-                   changes) in infopages.go; the Media panel (the rail's Media button:
+                   changes) in infopages.go; editing a group's name and description in
+                   place and its picture's menu (view, change, remove) in groupedit.go;
+                   a profile picture shown big, full size (`Backend.ProfilePhoto`, not
+                   kept on disk), in photoview.go; the Media panel (the rail's Media button:
                    media, docs and links from every chat, or one chat's) in gallery.go; the list column's
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
                    line as fit, in stickerrow.go; a text of one to three emojis
                    alone, drawn big without a bubble like a sticker, in jumbo.go; the Emoji style
-                   (Settings > Chats: 2D, built in; 2D animated outside message text; 2D animated;
-                   3D: the others downloaded one emoji at a time as they show) in emojistyle.go; the New chat panel and the
+                   (Settings > Chats: 2D, built in; 2D animated, with an Animated emojis page of
+                   switches for where they play: message text, big emojis, quotes, reactions, the
+                   chat list, the picker and everywhere else, the parts that draw them marking
+                   themselves with `u.emojiIn`; 3D: the others downloaded one emoji at a time as
+                   they show) in emojistyle.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
                    settingsdetail.go; the window's zoom (Settings > General > Font size,
@@ -606,7 +612,8 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
-# encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes; the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
+# encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
+# a group's info being edited: groupname, groupdesc, groupphoto (its picture's menu); picview (the chat's picture, big); the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and

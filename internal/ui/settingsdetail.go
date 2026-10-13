@@ -97,6 +97,7 @@ var settingsViews = map[string]struct {
 	"blocked":       {settingPrivacy, "blocked"},
 	"chatsettings":  {settingChats, ""},
 	"emojistyle":    {settingChats, "emoji"},
+	"emojianim":     {settingChats, "emojianim"},
 	"notifications": {settingNotifications, ""},
 	"shortcuts":     {settingShortcuts, ""},
 	"performance":   {settingPerformance, ""},
@@ -159,6 +160,8 @@ func (u *UI) settingsBack() {
 		s.editing = 0
 	case strings.HasPrefix(s.sub, "knob:"): // a knob of the Advanced page
 		u.openSettingsSub("advanced")
+	case s.sub == "emojianim":
+		u.openSettingsSub("emoji")
 	case s.sub != "":
 		u.openSettingsSub("")
 	default:
@@ -194,6 +197,8 @@ func (u *UI) settingsTitle() string {
 		return "Advanced"
 	case "emoji":
 		return "Emoji style"
+	case "emojianim":
+		return "Animated emojis"
 	}
 	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
 		if a := u.accountByDir(dir); a != nil {
@@ -233,6 +238,8 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.advancedSettings()
 	case "emoji":
 		return u.emojiStyleSettings()
+	case "emojianim":
+		return u.emojiPlaceSettings()
 	case "theme":
 		t := u.backend.Pref(prefTheme)
 		return []settingsSection{{title: "Choose a theme", rows: []settingRow{

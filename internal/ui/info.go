@@ -47,6 +47,9 @@ type infoState struct {
 	subPos  layout.Position
 	starred galleryList
 	changes []model.MemberChange
+	// edit is a group's name or description being edited, and its
+	// picture being picked (groupedit.go).
+	edit groupEdit
 }
 
 // infoPage is a panel to return to with the back arrow (a group's info
@@ -65,6 +68,7 @@ func (u *UI) hideInfo() {
 	u.info.open = false
 	u.info.sub = ""
 	u.info.back = nil
+	u.info.edit.field = 0
 	u.info.anim.snap(false)
 }
 
@@ -114,6 +118,7 @@ func (u *UI) showInfo(chatID, name string) {
 	u.swapSearchForInfo()
 	u.info.sub = ""
 	if u.info.chatID != chatID {
+		u.info.edit.field = 0
 		u.info.list.Position = layout.Position{}
 		u.info.allMembers = false
 		u.info.allHours = false
@@ -159,6 +164,9 @@ func (u *UI) layoutInfo(gtx C) D {
 	}
 	if info.Name == "" {
 		info.Name = info.Phone
+	}
+	if info.IsGroup {
+		info = u.withPending(c.ID, info)
 	}
 	dims := fill(gtx, p.Panel)
 	var rows []layout.Widget
@@ -207,7 +215,7 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		func(gtx C) D { return u.infoProfile(gtx, c, info) },
 	}
 	if info.IsGroup || info.About != "" {
-		rows = append(rows, func(gtx C) D { return u.infoAbout(gtx, info) })
+		rows = append(rows, func(gtx C) D { return u.infoAbout(gtx, c, info) })
 	}
 	rows = append(rows, u.infoDivider(0, 8),
 		func(gtx C) D { return u.infoMedia(gtx, info) },
@@ -456,25 +464,40 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 		}
 	}
 
+	photo := u.btn("info:photo")
+	if photo.Clicked(gtx) {
+		u.infoPhotoClicked(gtx, photo, gtx.Dp(127), c, info)
+	}
+	editName := u.btn("info:editname")
+	if editName.Clicked(gtx) {
+		u.startGroupEdit(c, info, editGroupName)
+	}
+	editing := u.info.edit.field == editGroupName && u.info.edit.chatID == c.ID
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(layout.Spacer{Height: 26}.Layout),
 		center(func(gtx C) D {
-			px := gtx.Dp(127)
-			if info.IsGroup {
-				if e := u.avatarImage(c.ID); e != nil {
-					r := image.Rect(0, 0, px, px)
-					defer clip.Ellipse(r).Push(gtx.Ops).Pop()
-					paintCover(gtx, e.op, e.size, r)
-					return D{Size: r.Size()}
+			return clickable(gtx, photo, func(gtx C) D {
+				px := gtx.Dp(127)
+				if info.IsGroup {
+					if e := u.avatarImage(c.ID); e != nil {
+						r := image.Rect(0, 0, px, px)
+						defer roundShape(px, px, px/2).Push(gtx.Ops).Pop()
+						paintCover(gtx, e.op, e.size, r)
+						return D{Size: r.Size()}
+					}
+					// A group without a photo offers to add one.
+					fillCircle(gtx, image.Pt(px/2, px/2), px/2, p.GroupAvatar)
+					return centerIn(gtx, px, iconW(icAddPhoto, 56, p.GroupAvatarIcon))
 				}
-				// A group without a photo offers to add one.
-				fillCircle(gtx, image.Pt(px/2, px/2), px/2, p.GroupAvatar)
-				return centerIn(gtx, px, iconW(icAddPhoto, 56, p.GroupAvatarIcon))
-			}
-			return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 127)
+				return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 127)
+			})
 		}),
 		layout.Rigid(layout.Spacer{Height: 19.5}.Layout),
 		layout.Rigid(func(gtx C) D {
+			if editing {
+				return u.infoNameEditor(gtx, contentW)
+			}
 			// The name is centered; the edit pencil sits at the right edge.
 			gtx.Constraints.Min.X = contentW
 			gtx.Constraints.Max.X = contentW
@@ -487,9 +510,9 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 				}
 				return u.label(25.5, info.Name, p.Text, labelOpts{maxLines: 2, align: text.Middle}).Layout(gtx)
 			})
-			if info.IsGroup {
-				pc := gtx.Dp(26)
-				part := record(gtx, iconW(icEdit, 26, p.IconStrong))
+			if info.IsGroup && u.canEditGroup(c, info) {
+				pc := gtx.Dp(40)
+				part := record(gtx, func(gtx C) D { return u.iconButton(gtx, editName, icEdit, 40, 26, p.IconStrong) })
 				part.at(gtx, contentW-gtx.Dp(40)-pc/2, (d.Size.Y-pc)/2)
 			}
 			return d
@@ -538,12 +561,30 @@ func (u *UI) infoAction(gtx C, key string, ic *icon.Icon, label string) D {
 	})
 }
 
-// infoAbout shows a group's description or a contact's about text.
-func (u *UI) infoAbout(gtx C, info *model.ChatInfo) D {
+// infoAbout shows a group's description or a contact's about text. A
+// group's is edited in place: its pencil, or "Add group description".
+func (u *UI) infoAbout(gtx C, c *model.Chat, info *model.ChatInfo) D {
 	p := u.pal
+	edit := u.btn("info:editdesc")
+	if edit.Clicked(gtx) {
+		u.startGroupEdit(c, info, editGroupDesc)
+	}
+	if e := &u.info.edit; e.field == editGroupDesc && e.chatID == c.ID {
+		return layout.Inset{Left: infoPadX, Right: 22, Top: 0, Bottom: 25}.Layout(gtx, func(gtx C) D {
+			e.editor.Alignment = text.Start
+			return u.groupFieldEditor(gtx, 17)
+		})
+	}
+	can := info.IsGroup && u.canEditGroup(c, info)
 	txt := info.About
 	col := p.Text
 	if txt == "" {
+		if !can {
+			if info.IsGroup {
+				return layout.Spacer{Height: 8}.Layout(gtx)
+			}
+			return D{}
+		}
 		txt, col = "Add group description", p.Green
 	}
 	return layout.Inset{Left: infoPadX, Right: 30, Top: 6, Bottom: 31}.Layout(gtx, func(gtx C) D {
@@ -552,13 +593,18 @@ func (u *UI) infoAbout(gtx C, info *model.ChatInfo) D {
 				l := u.label(17, txt, col, labelOpts{})
 				l.MaxLines = 6
 				l.LineHeight, l.LineHeightScale = 25, 1
+				if info.About == "" {
+					return clickable(gtx, edit, l.Layout) // "Add group description"
+				}
 				return l.Layout(gtx)
 			}),
 			layout.Rigid(func(gtx C) D {
-				if !info.IsGroup {
+				if !can {
 					return D{}
 				}
-				return layout.Inset{Left: 16, Right: 1}.Layout(gtx, iconW(icEdit, 26, p.IconStrong))
+				return layout.Inset{Left: 9}.Layout(gtx, func(gtx C) D {
+					return u.iconButton(gtx, edit, icEdit, 40, 26, p.IconStrong)
+				})
 			}),
 		)
 	})
