@@ -126,6 +126,7 @@ func Run(b model.Backend, o Options) error {
 	}
 	h.b.Start(h.poke)
 	h.startBackground()
+	h.startAuto()
 	for {
 		select {
 		case e := <-h.events:
@@ -136,7 +137,7 @@ func Run(b model.Backend, o Options) error {
 				if err != nil {
 					return err
 				}
-				if h.quitting || !h.background() {
+				if h.quitting || !h.background() || h.updateReady() {
 					return nil
 				}
 			}
@@ -291,6 +292,7 @@ const (
 	reqAddAccount                // link a new account
 	reqRedraw                    // an update moved on: show it
 	reqRestart                   // an update is in place: start it and quit
+	reqAutoUpdate                // time for an automatic update check
 )
 
 // request queues r for the UI goroutine. It's called from other
@@ -411,6 +413,9 @@ func (h *host) handle(r request) bool {
 			h.u.settings.stale = true
 			h.win.Invalidate()
 		}
+		return h.updateReady()
+	case reqAutoUpdate:
+		h.autoUpdate()
 	case reqRestart:
 		return h.restart()
 	}

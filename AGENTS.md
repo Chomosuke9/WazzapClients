@@ -439,9 +439,11 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
                    (Windows; stubs elsewhere), and the system's light or dark theme (Settings >
                    Chats > Theme > System default, read again when the window gets focus)
-internal/update/   updates from GitHub releases when the user asks (Settings > Help): downloads
-                   a patch from the running version when the release has one (bspatch.go,
-                   on the standard library's bzip2) or else the whole executable, checks
+internal/update/   updates from GitHub releases (Settings > Help; automatic updates, on by
+                   default, check every few hours and install without restarting, ui/update.go):
+                   downloads a patch from the running version when the update-patches
+                   prerelease has one (bspatch.go, on the standard library's bzip2; kept off
+                   the release's page) or else the whole executable, checks
                    the signed SHA256SUMS, swaps the executable (the running one moves to
                    .old on Windows) and the UI restarts it with -wait-pid (ui/update.go).
                    Only tag builds (-X main.version=v1.2.3) update

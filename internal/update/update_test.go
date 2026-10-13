@@ -55,15 +55,15 @@ func release(t *testing.T, tag string, exe []byte, tamper bool) *served {
 func releaseWithPatch(t *testing.T, tag string, exe []byte, tamper bool, patch []byte) *served {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	oldKey, oldURL := publicKey, apiURL
+	oldKey, oldURL, oldPatches := publicKey, apiURL, patchesURL
 	publicKey = pub
-	t.Cleanup(func() { publicKey, apiURL = oldKey, oldURL })
+	t.Cleanup(func() { publicKey, apiURL, patchesURL = oldKey, oldURL, oldPatches })
 
 	sum := sha256.Sum256(exe)
 	sums := fmt.Sprintf("%s  other-file\n%s  %s\n", hex.EncodeToString(make([]byte, 32)), hex.EncodeToString(sum[:]), AssetName())
 	if patch != nil {
 		psum := sha256.Sum256(patch)
-		sums += fmt.Sprintf("%s  %s\n", hex.EncodeToString(psum[:]), patchName("v0.9.0"))
+		sums += fmt.Sprintf("%s  %s\n", hex.EncodeToString(psum[:]), patchName("v0.9.0", tag))
 	}
 	sig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte(sums)))
 	if tamper {
@@ -74,17 +74,21 @@ func releaseWithPatch(t *testing.T, tag string, exe []byte, tamper bool, patch [
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/latest":
-			patchAsset := ""
-			if patch != nil {
-				patchAsset = fmt.Sprintf(`{"name":%q,"browser_download_url":"%s/patch","size":%d},`,
-					patchName("v0.9.0"), srv.URL, len(patch))
-			}
 			fmt.Fprintf(w, `{"tag_name":%q,"html_url":"https://example.com","assets":[
 				{"name":%q,"browser_download_url":"%s/exe","size":%d},
-				`+patchAsset+`
 				{"name":"SHA256SUMS","browser_download_url":"%s/sums"},
 				{"name":"SHA256SUMS.sig","browser_download_url":"%s/sig"}]}`,
 				tag, AssetName(), srv.URL, len(exe), srv.URL, srv.URL)
+		case "/patches":
+			if patch == nil {
+				http.NotFound(w, r)
+				return
+			}
+			// A patch to an older release is for someone else.
+			fmt.Fprintf(w, `{"tag_name":%q,"assets":[
+				{"name":%q,"browser_download_url":"%s/stale","size":1},
+				{"name":%q,"browser_download_url":"%s/patch","size":%d}]}`,
+				PatchTag, patchName("v0.9.0", "v0.9.5"), srv.URL, patchName("v0.9.0", tag), srv.URL, len(patch))
 		case "/exe":
 			n.exe++
 			w.Write(exe)
@@ -100,7 +104,7 @@ func releaseWithPatch(t *testing.T, tag string, exe []byte, tamper bool, patch [
 		}
 	}))
 	t.Cleanup(srv.Close)
-	apiURL = srv.URL + "/latest"
+	apiURL, patchesURL = srv.URL+"/latest", srv.URL+"/patches"
 	return n
 }
 

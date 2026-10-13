@@ -13,8 +13,7 @@ Versi Go mengikuti `go.mod`. Kedua target menerapkan patch go-text
 | `WazzapClients-Setup.exe` | Installer Windows (Inno Setup, `installer/wazzap.iss`) |
 | `WazzapClients-windows-amd64.exe` | Aplikasi Windows portable, tanpa jendela console; juga file yang diunduh oleh tombol update |
 | `WazzapClients-linux-amd64` | Executable Linux |
-| `<exe>.from-v1.2.3.bsdiff` | Patch update dari exe rilis `v1.2.3` ke exe rilis ini, untuk tiga rilis sebelumnya (hanya di release, lihat [Patch update](#patch-update)) |
-| `SHA256SUMS`, `SHA256SUMS.sig` | Checksum semua file di atas, dan tanda tangan ed25519-nya (hanya di release) |
+| `SHA256SUMS`, `SHA256SUMS.sig` | Checksum semua file di atas dan patch update rilis ini, dan tanda tangan ed25519-nya (hanya di release) |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md` | Lisensi aplikasi (MPL-2.0) dan lisensi semua software pihak ketiga di dalamnya (hanya di release) |
 
 CI juga menjalankan `go run ./cmd/notices -check`, yang gagal kalau
@@ -47,10 +46,18 @@ build exe ke `bin/dist/WazzapClients-windows-amd64.exe`, lalu jalankan
 ## Update dari dalam aplikasi
 
 **Settings > Help** menampilkan versi aplikasi dan tombol **Check for updates**.
-Aplikasi tidak menghubungi GitHub sampai tombol itu ditekan. Kalau ada versi yang
-lebih baru, tombol yang sama mengunduh exe untuk sistem ini, mencocokkannya dengan
-`SHA256SUMS`, memeriksa tanda tangan `SHA256SUMS.sig` dengan kunci publik di
-`internal/update`, menukar exe yang sedang berjalan, lalu me-restart aplikasi.
+Kalau ada versi yang lebih baru, tombol yang sama mengunduh exe untuk sistem ini,
+mencocokkannya dengan `SHA256SUMS`, memeriksa tanda tangan `SHA256SUMS.sig` dengan
+kunci publik di `internal/update`, menukar exe yang sedang berjalan, lalu
+me-restart aplikasi.
+
+Di bawahnya ada toggle **Automatic updates** (default menyala). Selama menyala,
+aplikasi mengecek sendiri satu menit setelah mulai, lalu setiap 4 jam. Rilis baru
+diunduh dan dipasang dengan cara yang sama, tapi aplikasi tidak langsung
+me-restart: versi baru jalan saat aplikasi dibuka lagi, baris di Settings > Help
+menawarkan restart sekarang, dan kalau tidak ada jendela yang terbuka (aplikasi
+hanya di tray), aplikasi me-restart sendiri di background. Cek otomatis yang gagal
+(misalnya offline) tidak menampilkan apa-apa.
 
 - Hanya build dari tag (`-X main.version=v1.2.3`) yang bisa update. Build lain,
   dan prerelease seperti `v1.2.3-rc1`, adalah development build.
@@ -62,12 +69,20 @@ lebih baru, tombol yang sama mengunduh exe untuk sistem ini, mencocokkannya deng
 ### Patch update
 
 Supaya update tidak mengunduh seluruh exe (~42 MB), job release membuat patch
-bsdiff dari exe tiga rilis terakhir yang sudah dipublikasikan ke exe rilis baru,
+bsdiff dari exe lima rilis terakhir yang sudah dipublikasikan ke exe rilis baru,
 untuk Windows dan Linux, dengan `cmd/mkpatch`. Patch antar-rilis biasanya sekitar
 3% dari ukuran exe (v0.27.0 ke v0.28.0: 1,3 MB). Patch ikut masuk ke `SHA256SUMS`
-sebelum ditandatangani.
+rilis baru sebelum ditandatangani.
 
-Kalau rilis punya patch dari versi yang sedang berjalan, aplikasi mengunduh patch
+Patch tidak dilampirkan ke rilisnya, supaya halaman rilis hanya berisi file yang
+diunduh orang. Semuanya ada di satu prerelease bertag `update-patches`, yang dibuat
+job release kalau belum ada, dengan nama `<exe>.from-v1.2.3.to-v1.3.0.bsdiff`.
+Prerelease tidak pernah jadi *latest release*, jadi tidak ditawarkan sebagai update.
+Setiap rilis menghapus patch ke versi yang bukan rilis terbaru dan bukan draft,
+karena tidak ada yang memakainya lagi. Jangan hapus prerelease itu; kalau terhapus,
+rilis berikutnya membuatnya lagi, dan sampai saat itu update mengunduh exe lengkap.
+
+Kalau ada patch dari versi yang sedang berjalan ke rilis terbaru, aplikasi mengunduh patch
 itu, mencocokkannya dengan `SHA256SUMS`, lalu menyusun exe baru dari exe yang
 sedang berjalan. Exe hasilnya dicek dengan checksum exe lengkap, sama seperti
 unduhan biasa. Kalau ada yang tidak beres (tidak ada patch untuk versi itu karena
