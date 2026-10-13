@@ -62,7 +62,7 @@ func (b *Backend) fillAbouts(ctx context.Context, contacts []*model.Contact) {
 			jids = append(jids, j)
 		}
 	}
-	go func() {
+	b.goWork(func() { // it writes the database, which Close waits for
 		ctx, cancel := context.WithTimeout(b.ctx, time.Minute)
 		defer cancel()
 		got := make(map[string]string, len(jids))
@@ -82,7 +82,7 @@ func (b *Backend) fillAbouts(ctx context.Context, contacts []*model.Contact) {
 			jids = jids[n:]
 		}
 		b.setAbouts(ctx, got)
-	}()
+	})
 }
 
 // setAbouts updates cached about texts and saves them.

@@ -34,6 +34,7 @@ const (
 	filterUnread
 	filterFavorites
 	filterGroups
+	filterList // a custom list, sidebar.listID (lists.go)
 )
 
 var filterNames = [...]string{"All", "Unread", "Favourites", "Groups"}
@@ -51,14 +52,20 @@ type UI struct {
 	zoom zoomState
 	// volume is the sound's volume, 0 to 1 (volume.go).
 	volume float32
-	now    func() time.Time
-	window *app.Window // nil when rendering headless
-	host   *host       // nil when rendering headless (see Run)
-	deco   widget.Decorations
+	// voiceRate is the speed voice messages play at (files.go).
+	voiceRate float64
+	now       func() time.Time
+	window    *app.Window // nil when rendering headless
+	host      *host       // nil when rendering headless (see Run)
+	deco      widget.Decorations
 	// winWidth is the window width in px, for panels sized relative to it.
 	winWidth int
 
 	backend model.Backend
+	// lists are the custom chat lists (lists.go); listsStale asks for
+	// them again.
+	lists      []*model.ChatList
+	listsStale bool
 	// auto is the backend's scheduled messages and AFK (see withAuto).
 	auto    *auto.Backend
 	conn    model.ConnEvent
@@ -73,16 +80,23 @@ type UI struct {
 	// (draft.go); the host's, so they outlast the window.
 	drafts map[string]*chatDraft
 
-	chats     []*model.Chat
-	selected  *model.Chat
-	selPage   page             // page the selected chat was opened from
-	away      bool             // window unfocused or minimized (see markSeen)
-	msgs      []*model.Message // loaded window of the selected chat
-	msgsVer   int              // bumped whenever msgs changes
-	images    *imageCache
-	emojiImgs *imageCache // the emoji picker's, see layoutEmojiImage
-	players   players     // animated stickers on screen
-	bars      map[*widget.List]*scrollbar
+	chats      []*model.Chat
+	selected   *model.Chat
+	selPage    page             // page the selected chat was opened from
+	away       bool             // window unfocused or minimized (see markSeen)
+	msgs       []*model.Message // loaded window of the selected chat
+	msgsVer    int              // bumped whenever msgs changes
+	images     *imageCache
+	emojiImgs  *imageCache             // the emoji picker's, see layoutEmojiImage
+	emojiView  emojiView               // what emojis were drawn with (emojistyle.go)
+	emojiAnims emojiAnims              // animated emojis on screen
+	emojiKeys  map[emojiAnimKey]string // see textEmojiKey
+	// u.textEmoji and u.labelEmoji, bound once: a method value made for
+	// every label would be garbage every frame.
+	textHook, labelHook bitmapHook
+	emojiPlace          emojiPlace // what the hooks are drawing (u.emojiIn)
+	players             players    // animated stickers on screen
+	bars                map[*widget.List]*scrollbar
 
 	page         page
 	statusSeen   time.Time // when the Status page was last open
@@ -138,9 +152,12 @@ type UI struct {
 
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
 	ctx                     ctxMenu
+	reacts                  reactionsPopup // who reacted to a message (reactions.go)
 	dialog                  dialogState
 	picker                  emojiPicker
+	gifs                    gifSearch // the picker's GIF tab (gifs.go)
 	viewer                  mediaViewer
+	picView                 picView // a profile picture shown big (photoview.go)
 	toastMsg                toastState
 	mouse                   image.Point // last pointer position, in content coordinates
 	mousePress              image.Point // primary press, for locating a clicked thumbnail
@@ -191,14 +208,19 @@ type UI struct {
 	sidebar struct {
 		newChat, menu, back widget.Clickable
 		more                widget.Clickable // collapsed filter chips
-		hiddenFilters       []int
+		hiddenFilters       []int            // indexes into chipItems
 		search              widget.Editor
-		chips               [len(filterNames)]widget.Clickable
+		chipBuf             []chipItem // chipItems' buffer
 		filter              int
-		showArchived        bool
-		list                widget.List
-		rows                map[string]*widget.Clickable
-		visible             []*model.Chat
+		listID              string // filterList's list
+		// listSet holds the chats of listID, for filtering.
+		listSet      map[string]bool
+		listSetFor   string
+		find         listSearchState // the search's contacts and messages
+		showArchived bool
+		list         widget.List
+		rows         map[string]*widget.Clickable
+		visible      []*model.Chat
 
 		// Highlights of the open chat and of the chat whose menu is open.
 		openSel, menuSel switcher[string]
@@ -243,6 +265,9 @@ type UI struct {
 		scrollTo *layout.Position
 		// scrollAbove is room to leave above scrollTo's row.
 		scrollAbove unit.Dp
+		// float is the ⌄ button and the day pinned over the messages
+		// (scrolldown.go).
+		float convFloat
 		// unread is the "N unread messages" divider (unread.go).
 		unread unreadDivider
 		// olderMore and newerMore report stored messages past either end
@@ -265,6 +290,7 @@ type UI struct {
 		mentionGhost *mentionState
 		selAnim      tween
 		selV         float32           // select mode's progress this frame
+		band         [2]int            // a selected row's band reaches this far above and below it (px)
 		sendAnim     tween             // the mic turning into the send button
 		glide        glide             // smooth scroll to a message
 		link         composerLink      // the preview of a link being typed
@@ -313,16 +339,22 @@ func New(b model.Backend) *UI {
 	u.doodles = true
 	u.zoom.pct = 100
 	u.volume = 1
+	u.voiceRate = 1
 	u.split.anim.snap(true)
 	if b != nil { // nil in some tests
-		u.SetDark(b.Pref(prefTheme) != "light")
+		u.applyTheme()
 		u.doodles = prefOn(b, prefDoodles)
 		u.loadZoom()
 		u.loadVolume()
+		u.loadVoiceRate()
 		u.loadSplit()
 	}
+	loadPerf(b)
+	u.loadEmojiStyle()
 	u.images = newImageCache(240, 32<<20)
+	u.images.resize(perf.imageCache)
 	u.emojiImgs = newImageCache(600, 4<<20)
+	u.textHook, u.labelHook = u.textEmoji, u.labelEmoji
 	u.clicks.m = make(map[string]*clickEntry)
 	u.drafts = make(map[string]*chatDraft)
 	u.info.list.Axis = layout.Vertical
@@ -354,7 +386,11 @@ func New(b model.Backend) *UI {
 func (u *UI) Start(notify func()) {
 	u.images.invalidate = notify
 	u.emojiImgs.invalidate = notify
+	if emojiStore != nil {
+		emojiStore.SetNotify(notify)
+	}
 	u.setChats(u.backend.Chats())
+	u.loadLists()
 	u.loadPages()
 	u.backend.Start(notify)
 }
@@ -389,6 +425,7 @@ func (u *UI) setCommunities(list []*model.Community) {
 // screenshots of a real session without connecting to WhatsApp.
 func (u *UI) Preview() {
 	u.setChats(u.backend.Chats())
+	u.loadLists()
 	u.loadPages()
 	u.conn = model.ConnEvent{State: model.StateOnline}
 }
@@ -419,6 +456,30 @@ func (u *UI) ScrollChat(dy int) bool {
 	return l.Position.BeforeEnd
 }
 
+// ScrollPicker opens the emoji picker if it isn't open, scrolls it by dy px
+// and reports whether it can scroll further that way (used by
+// cmd/memprobe).
+func (u *UI) ScrollPicker(dy int) bool {
+	if !u.picker.open {
+		u.picker.composerTab = tabEmoji
+		u.openPicker(pickComposer, nil)
+	}
+	l := &u.picker.list.List
+	l.Position.Offset += dy
+	if dy < 0 {
+		return l.Position.First > 0 || l.Position.Offset > 0
+	}
+	return l.Position.BeforeEnd
+}
+
+// AnimatedEmojiBytes returns the bytes of animated emoji frames held
+// (used by cmd/memprobe).
+func (u *UI) AnimatedEmojiBytes() int {
+	u.emojiAnims.mu.Lock()
+	defer u.emojiAnims.mu.Unlock()
+	return u.emojiAnims.held
+}
+
 // SetMe sets the user's own name and JID (used for screenshots).
 func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 
@@ -435,6 +496,9 @@ func (u *UI) ShowPage(name string) {
 	u.setPage(pages[name])
 	u.sidebar.showArchived = name == "archived"
 	if isSetting {
+		if u.accounts == nil && (name == "accounts" || strings.HasPrefix(v.sub, "acct:")) {
+			u.accounts = u.demoAccounts()
+		}
 		u.openSettings(v.category)
 		if v.sub != "" {
 			u.openSettingsSub(v.sub)
@@ -571,6 +635,7 @@ func (u *UI) open(c *model.Chat) {
 	u.chatRead(c.ID)
 	u.conv.list.Position = layout.Position{}
 	u.conv.list.ScrollToEnd = true
+	u.conv.float = convFloat{below: unread}
 	u.showUnread(unread)
 	u.conv.composer.SetText("")
 	u.conv.reply, u.conv.mentions = nil, nil
@@ -617,7 +682,8 @@ func (u *UI) chatRead(id string) {
 }
 
 // idleTrim is how long the window goes without a frame before memory is
-// trimmed, and awayTrim how long after it loses focus or is minimized.
+// trimmed by default (perf.trimAfter), and awayTrim how long after it
+// loses focus or is minimized (awayAfter).
 // A trim costs a few milliseconds of page faults on the next frames, as
 // the pages still in use come back.
 const (
@@ -637,6 +703,8 @@ func (u *UI) Layout(gtx C) D {
 // layoutWindow draws the window's contents at the zoom.
 func (u *UI) layoutWindow(gtx C) D {
 	trimShapes()
+	u.refreshEmoji(gtx)
+	u.emojiAnims.setScale(gtx.Metric.PxPerSp)
 	u.applyEvents()
 	if a := u.deco.Update(gtx); a != 0 && u.window != nil {
 		u.window.Perform(a)
@@ -644,6 +712,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	defer u.images.endFrame()
 	defer u.emojiImgs.endFrame()
 	defer u.players.endFrame()
+	defer u.emojiAnims.endFrame(gtx)
 	defer u.anims.endFrame()
 	defer u.follows.endFrame()
 	defer u.endFrameClicks()
@@ -682,10 +751,12 @@ func (u *UI) layoutWindow(gtx C) D {
 	u.layoutStatusText(gtx)
 	u.layoutGallery(gtx)
 	u.layoutViewer(gtx)
+	u.layoutPicView(gtx)
 	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
 	u.layoutCtxMenu(gtx)
+	u.layoutReactions(gtx)
 	u.layoutDialog(gtx)
 	u.layoutToast(gtx)
 	u.trackMouse(gtx)
@@ -879,17 +950,14 @@ func (u *UI) update(gtx C) {
 		}
 	}
 	u.updateMenu(gtx)
+	u.updateGroupEdit(gtx)
 	u.updateFilterMenu(gtx)
+	u.updateGIFs()
 	u.galleryUpdate(gtx)
 	if u.sidebar.menu.Clicked(gtx) {
 		u.menu.open = !u.menu.open
 	}
-	for i := range u.sidebar.chips {
-		if u.sidebar.chips[i].Clicked(gtx) {
-			u.sidebar.filter = i
-			u.sidebar.list.Position = layout.Position{}
-		}
-	}
+	u.updateChips(gtx)
 	if u.rail.archived.Clicked(gtx) {
 		u.sidebar.showArchived = u.page != pageChats || !u.sidebar.showArchived
 		u.setPage(pageChats)
@@ -1025,14 +1093,20 @@ func (u *UI) ctrlEnterKeys(gtx C) {
 // escape closes the topmost overlay, like WhatsApp's Esc.
 func (u *UI) escape() {
 	switch {
+	case u.ctx.isOpen() && u.ctx.kind == ctxAcctMode:
+		u.closeMenu() // over the switcher
 	case u.acctMenu.open:
 		u.acctMenu.open, u.menu.open = false, false
 	case u.menu.open:
 		u.menu.open = false
 	case u.ctx.isOpen():
 		u.closeMenu()
+	case u.reacts.isOpen():
+		u.closeReactions()
 	case u.dialog.isOpen():
 		u.closeDialog()
+	case u.picView.isOpen():
+		u.closePicView()
 	case u.status.text.isOpen():
 		u.closeStatusText()
 	case u.picker.open:
@@ -1070,6 +1144,8 @@ func (u *UI) escape() {
 		default:
 			u.closeSendView(false)
 		}
+	case u.info.edit.field != 0:
+		u.cancelGroupEdit()
 	case u.search.open:
 		u.search.open = false
 	case u.msgInfo.open:
@@ -1107,14 +1183,23 @@ func (u *UI) applyEvents() {
 			u.conn, u.me, u.meID = e, me, meID
 		case model.ChatsEvent:
 			u.setChats(e.Chats)
+			u.listsStale = true
+		case model.ListsEvent:
+			u.listsStale = true
 		case model.ChatEvent:
 			u.upsertChat(e.Chat)
 		case model.MessageEvent:
+			u.newBelow(e)
 			u.upsertMessage(e.Msg)
 			u.searchChatChanged(e.Msg.ChatID)
 			u.votesChanged(e.Msg)
+			u.reactionsChanged(e.Msg)
 		case model.SearchEvent:
-			u.searchResults(e)
+			if e.ChatID == "" {
+				u.listSearchResults(e)
+			} else {
+				u.searchResults(e)
+			}
 		case model.ReceiptEvent:
 			u.applyReceipt(e)
 			u.msgInfoReceipt(e)
@@ -1151,6 +1236,7 @@ func (u *UI) applyEvents() {
 			}
 			u.videoDownloaded(e)
 			u.fileDownloaded(e)
+			u.gifDownloaded(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.PhoneEvent:
@@ -1197,6 +1283,9 @@ func (u *UI) applyEvents() {
 		case model.CommunitiesEvent:
 			u.setCommunities(u.backend.Communities())
 		}
+	}
+	if u.listsStale {
+		u.loadLists()
 	}
 }
 
@@ -1367,18 +1456,20 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
-// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
-// first poll's or event's votes), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
-// $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
+// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "gifs" (the GIF tab with demo results), "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
+// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
+// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
+// $WAZZAP_DEMO_SEARCH), its first list's chip "listchip" and the New list dialog "newlist"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
 // Font size "zoommenu"; or the New chat panel:
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
 // switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
 // picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", a mention
-// in /schedule's message "slashschedule", the notes of commands run "slashrun", or ghost mode
-// turned on with /ghost "ghost".
+// in /schedule's message "slashschedule", the notes of commands run "slashrun", a scheduled
+// message and the AFK bar without their notes "scheduled", or ghost mode turned on with
+// /ghost "ghost".
 // "graywarning" opens the acknowledgment for Keep deleted messages.
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
@@ -1386,6 +1477,9 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	u.mouse = image.Pt(x, y)
 	var lastIn, lastOut, img, sticker *model.Message
 	for _, m := range u.msgs {
+		if m.Kind == model.KindSystem {
+			continue
+		}
 		switch {
 		case m.Kind == model.KindImage:
 			img = m
@@ -1412,24 +1506,24 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.SetPrivacy(true)
 		u.privacy.fx.snap(true)
 		u.privacy.v = 1
-	case "menu", "accounts", "loginaccounts":
-		// The chat list's ⋮ menu, and its account switcher with a second
-		// demo account; or the switcher on the login screen of an account
-		// being added.
+	case "menu", "accounts", "loginaccounts", "acctmode":
+		// The chat list's ⋮ menu, and its account switcher with more demo
+		// accounts (and acctmode, the second one's background modes); or
+		// the switcher on the login screen of an account being added.
 		if u.accounts == nil {
-			u.accounts = []accountRow{
-				{Account: accounts.Account{ID: u.meID, Phone: "+1 555 0100"}, active: true},
-				{Account: accounts.Account{Dir: "accounts/2", ID: "15550142@s.whatsapp.net", Name: "Work", Phone: "+1 555 0142"}},
-			}
+			u.accounts = u.demoAccounts()
 		}
 		if name == "loginaccounts" {
-			u.accounts[0] = accountRow{Account: accounts.Account{Dir: "accounts/3"}, active: true}
+			u.accounts[0] = accountRow{Account: accounts.Account{Dir: "accounts/4"}, active: true}
 			u.me = ""
 			u.conn = model.ConnEvent{State: model.StateQR, QR: "2@demo-qr-code"}
 		} else {
 			u.menu.open = true
 		}
 		u.acctMenu.open = name != "menu"
+		if name == "acctmode" {
+			u.ctx = ctxMenu{kind: ctxAcctMode, chatID: u.accounts[1].Dir, at: image.Pt(x, y)}
+		}
 	case "chatmenu":
 		if len(u.chats) > 1 {
 			u.openChatMenu(u.chats[1])
@@ -1455,8 +1549,12 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "emoji":
 		u.openPicker(pickComposer, nil)
 	case "sticker":
+		u.picker.composerTab = tabSticker // as if the sticker tab was used last
 		u.openPicker(pickComposer, nil)
-		u.picker.tab, u.picker.stickerSet = tabSticker, u.defaultStickerSet()
+	case "gifs":
+		u.openPicker(pickComposer, nil)
+		u.picker.tab = tabGIF
+		u.showDemoGIFs()
 	case "viewer":
 		if img != nil {
 			u.openViewer(img)
@@ -1512,11 +1610,28 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 				break
 			}
 		}
+	case "listpick":
+		for _, m := range u.msgs {
+			for i, b := range m.Buttons {
+				if b.Kind == model.ButtonList {
+					u.openListPick(m, i)
+					u.dialog.listPick.pick = b.Sections[0].Rows[0].ID
+				}
+			}
+		}
 	case "votes":
 		for _, m := range u.msgs {
 			if m.Poll != nil || m.Event != nil {
 				u.openVotes(m)
 				u.msgInfo.anim.snap(true)
+				break
+			}
+		}
+	case "reactions":
+		for _, m := range u.msgs {
+			if len(m.Reactions) > 0 {
+				u.openReactions([]*model.Message{m})
+				u.reacts.anim.snap(true)
 				break
 			}
 		}
@@ -1537,6 +1652,20 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			q = "the"
 		}
 		u.search.query.SetText(q)
+	case "listsearch":
+		// The chat list's search, with $WAZZAP_DEMO_SEARCH typed in.
+		q := os.Getenv("WAZZAP_DEMO_SEARCH")
+		if q == "" {
+			q = "an"
+		}
+		u.sidebar.search.SetText(q)
+	case "listchip":
+		u.pickChip(u.chipItems()[len(filterNames)]) // the first custom list
+	case "newlist":
+		u.openNewList([]string{"gym"})
+		u.dialog.listName.SetText("Friends")
+		u.dialog.anim.snap(true)
+		u.dialog.bar.snap(true)
 	case "membersearch":
 		u.openInfo(u.selected.ID)
 		u.info.anim.snap(true)
@@ -1586,7 +1715,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.SelectID("budi")
 		u.addFiles("budi", []*attachFile{{Attachment: model.Attachment{Path: "beach.jpg", Media: model.MediaImage}}})
 		u.SelectID("dewi")
-	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter":
+	case "tray", "quality", "sendedit", "senddoc", "sendcrop", "sendfilter", "sendslash":
 		// $WAZZAP_DEMO_PHOTO is a real photo to show.
 		photo := os.Getenv("WAZZAP_DEMO_PHOTO")
 		if photo == "" {
@@ -1606,6 +1735,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 		if name == "quality" {
 			u.openQualityMenu()
+		}
+		if name == "sendslash" {
+			// The command picker over the caption.
+			u.slash.on = true
+			ed := &u.conv.composer
+			ed.SetText("/")
+			ed.SetCaret(ed.Len(), ed.Len())
+			u.requestFocus(ed)
 		}
 	case "groupstatus", "groupstatustext", "groupstatusviewer":
 		if u.selected == nil || !u.selected.IsGroup {
@@ -1649,7 +1786,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.attach.anim.snap(true)
 			u.conv.composer.SetText("Sunday at the beach")
 		}
-	case "slash", "slashkick", "slashcalc", "slashschedule", "slashrun", "ghost":
+	case "slash", "slashkick", "slashcalc", "slashschedule", "slashrun", "scheduled", "ghost":
 		// Slash commands (open a group with -ochat): the picker of
 		// commands, /kick's options, /calc's answer, a member picked in
 		// /schedule's message, the notes of commands run, or ghost mode
@@ -1689,6 +1826,16 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 				u.sendComposer()
 			}
 			u.applyEvents()
+		case "scheduled":
+			for _, s := range []string{"/schedule 2h Don't forget the demo", "/afk lunch, back at 2"} {
+				u.applyEvents()
+				set(s)
+				u.sendComposer()
+			}
+			u.applyEvents()
+			// The scheduled bubble and the AFK bar say what the notes would.
+			delete(u.slash.notes, u.selected.ID)
+			u.msgsVer++
 		case "ghost":
 			u.grayCmds["ghost"] = true // a gray command, off by default
 			set("/ghost ")
@@ -1761,6 +1908,11 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		} else {
 			u.openTimerMenu(u.selected)
 		}
+	case "left":
+		// A group you're no longer a member of, with its ⋮ menu.
+		u.backend.LeaveGroup(u.selected.ID)
+		u.applyEvents()
+		u.openConvMenu()
 	case "theme":
 		u.openChatTheme(u.selected)
 		u.setChatTheme(u.selected.ID, 2)
@@ -1772,6 +1924,27 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "invitelink":
 		u.openInviteLink(u.selected.ID)
 		u.applyEvents()
+	case "groupname", "groupdesc", "groupphoto":
+		// A group's info being edited (groupedit.go).
+		u.openInfo(u.selected.ID)
+		u.info.anim.snap(true)
+		info := u.backend.Info(u.selected.ID)
+		switch name {
+		case "groupname":
+			u.startGroupEdit(u.selected, info, editGroupName)
+		case "groupdesc":
+			u.startGroupEdit(u.selected, info, editGroupDesc)
+		default:
+			u.ctx = ctxMenu{kind: ctxInfoPhoto, chatID: u.selected.ID, at: u.mouse}
+		}
+	case "picview":
+		// The open chat's picture, shown big.
+		kind := avatarPerson
+		if u.selected.IsGroup {
+			kind = avatarGroup
+		}
+		u.openPicView(u.selected.ID, u.selected.Name, kind, image.Rectangle{})
+		u.picView.anim.snap(true)
 	case "perms", "starred", "changes":
 		// The info panel's pages.
 		u.openInfo(u.selected.ID)

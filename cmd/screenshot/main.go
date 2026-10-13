@@ -37,22 +37,34 @@ func main() {
 	scale := flag.Float64("scale", 1.5, "pixels per dp")
 	compare := flag.String("compare", "", "WhatsApp screenshot to compare against")
 	crop := flag.String("crop", "1002,0,2000,1250", "window rectangle within -compare (x0,y0,x1,y1)")
-	chat := flag.String("chat", "test@g.us", "chat to open in -compare mode")
+	chat := flag.String("chat", "botlab@g.us", "chat to open in -compare mode")
 	memprofile := flag.String("memprofile", "", "write a heap profile after rendering")
 	data := flag.String("data", "", "in -compare mode, render this session's stored chats (no network)")
 	chatName := flag.String("chatname", "", "in -compare mode with -data, open the chat with this name")
-	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, general, profile, account, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help, info or contact")
-	contact := flag.String("contact", "vivy@lid", "in -compare mode with -view contact, the group member whose contact info opens")
+	view := flag.String("view", "chats", "in -compare mode: chats, archived, status, channels, communities, settings, general, profile, account, accounts, accountmode, accountcheck, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help, info or contact")
+	contact := flag.String("contact", "nova@lid", "in -compare mode with -view contact, the group member whose contact info opens")
 	infoScroll := flag.Int("infoscroll", 0, "in -compare mode with -view info, first visible item of the info panel")
 	infoOffset := flag.Int("infooffset", 0, "with -infoscroll, pixels of that item scrolled out of view")
 	win := flag.String("win", "", "in -compare mode, render a window of this size (W,H px) and crop it like the screenshot")
 	rightAligned := flag.Bool("right", false, "with -win, the screenshot is the window's right edge")
-	overlay := flag.String("overlay", "", "render only this overlay (menu, accounts, loginaccounts, slash, slashkick, slashrun, ghost, chatmenu, mute, lists, msgmenu, stickermenu, emoji, viewer, forward, forwardpick, reply, linkpreview, delete, select, edit, edits, msginfo, mention, mentioned, attach, poll, contacts, invite, tray, quality, sendedit, sendcrop, sendfilter, senddoc, statusadd, statusmenu, statusprivacy, statustext, privacy, privacystatus, privacycommunities, statussend, draft, newchat, newnumber, newmembers, newgroup, search, membersearch) to <out>/overlay-<name>.png")
+	overlay := flag.String("overlay", "", "render only this overlay (menu, accounts, loginaccounts, acctmode, slash, slashkick, slashrun, ghost, chatmenu, mute, lists, msgmenu, stickermenu, emoji, gifs, viewer, forward, forwardpick, reply, linkpreview, delete, select, edit, edits, msginfo, reactions (-ochat work), mention, mentioned, attach, poll, contacts, invite, tray, quality, sendedit, sendcrop, sendfilter, senddoc, statusadd, statusmenu, statusprivacy, statustext, privacy, privacystatus, privacycommunities, statussend, draft, newchat, newnumber, newmembers, newgroup, search, membersearch, listsearch, listchip, newlist) to <out>/overlay-<name>.png")
 	at := flag.String("at", "600,300", "with -overlay, where menus open (x,y px)")
 	overlayChat := flag.String("ochat", "rina", "with -overlay, the demo chat to open")
-	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, viewer-click (thumbnail at -at), info, message, reorder, hover, typing, typists (-ochat work), ghost, privacy, privacyhover or vote (-ochat design)")
+	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, viewer-click (thumbnail at -at), info, message, reorder, hover, scroll (-at over the chat), typing, typists (-ochat work), ghost, privacy, privacyhover or vote (-ochat design)")
 	step := flag.Duration("step", 30*time.Millisecond, "with -film, time between frames")
+	readme := flag.Bool("readme", false, "render every screenshot in README.md into <out> (use -out docs/screenshots -w 1280 -h 800 -scale 1.25)")
+	emojiStyle := flag.String("emoji", "", "draw emojis in this Emoji style (2d_anim_alone, 2d_anim or 3d) from the pictures in -emojidir")
+	emojiDir := flag.String("emojidir", "", "with -emoji, a folder of downloaded emojis (the app's <data>/emoji)")
+	emojiFont := flag.String("emojifont", "internal/ui/testdata/NotoColorEmoji.ttf", "the emoji font (the app downloads it; run from the repository's root)")
 	flag.Parse()
+	if err := ui.LoadEmojiFont(*emojiFont); err != nil {
+		log.Fatal(err)
+	}
+	if *emojiStyle != "" {
+		if err := ui.PreviewEmojis(*emojiDir, *emojiStyle); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if *memprofile != "" {
 		defer func() {
 			runtime.GC()
@@ -79,6 +91,12 @@ func main() {
 
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		log.Fatal(err)
+	}
+	if *readme {
+		if err := renderReadme(*out, int(float64(*width)**scale), int(float64(*height)**scale), float32(*scale)); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 	if *filmName != "" {
 		var x, y int
@@ -121,14 +139,14 @@ func main() {
 		ref   bool
 		page  string // "info" opens the chat's info panel
 	}{
-		{"preview-dark.png", true, "test@g.us", false, true, ""},
+		{"preview-dark.png", true, "botlab@g.us", false, true, ""},
 		{"preview-light.png", false, "rina", false, false, ""},
 		{"preview-group.png", false, "family", false, false, ""},
 		{"preview-empty.png", true, "", false, true, ""},
 		{"preview-login.png", true, "", true, false, ""},
-		{"preview-info.png", true, "test@g.us", false, true, "info"},
+		{"preview-info.png", true, "botlab@g.us", false, true, "info"},
 		{"preview-contact.png", false, "rina", false, false, "info"},
-		{"preview-business.png", true, "test@g.us", false, true, "contact:vivy@lid"},
+		{"preview-business.png", true, "botlab@g.us", false, true, "contact:nova@lid"},
 		{"preview-status.png", true, "", false, true, "status"},
 		{"preview-channels.png", true, "", false, true, "channels"},
 		{"preview-communities.png", true, "", false, true, "communities"},
@@ -144,9 +162,7 @@ func main() {
 		}
 		u := ui.New(b)
 		if s.login {
-			// A made-up pairing payload of realistic length.
-			u.SetConn(model.ConnEvent{State: model.StateQR,
-				QR: "2@Qm9ndXNQYWlyaW5nUmVmZXJlbmNlRm9yU2NyZWVuc2hvdHNPbmx5X19fX19fX19fX19f,ZmFrZU5vaXNlS2V5X19fX19fX19fX19fX19fX19fXw==,ZmFrZUlkZW50aXR5S2V5X19fX19fX19fX19fX19fXw==,ZmFrZUFkdlNlY3JldF9fX19fX19fX19fX19fX19fXw==,1"})
+			u.SetConn(model.ConnEvent{State: model.StateQR, QR: demoQR})
 		} else {
 			u.Start(func() {})
 		}

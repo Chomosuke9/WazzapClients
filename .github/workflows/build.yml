@@ -38,6 +38,9 @@ jobs:
       # A tag build knows its version, which turns on its updates
       # (internal/update); other builds are development builds.
       VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+      # The KLIPY app key of GIF search (cmd/wazzap). Builds without the
+      # secret (forks, pull requests) ask users for their own.
+      KLIPY_KEY: ${{ secrets.KLIPY_KEY }}
 
     defaults:
       run:
@@ -92,6 +95,10 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # The licenses of what the app links and bundles (cmd/notices).
+      - name: Check third-party notices
+        run: go run ./cmd/notices -check
+
       - name: Test
         run: go test ./...
 
@@ -110,7 +117,7 @@ jobs:
 
           go build `
             -trimpath `
-            -ldflags "-s -w -H=windowsgui -X main.version=$env:VERSION" `
+            -ldflags "-s -w -H=windowsgui -X main.version=$env:VERSION -X main.klipyKey=$env:KLIPY_KEY" `
             -o bin/dist/WazzapClients-windows-amd64.exe `
             ./cmd/wazzap
 
@@ -171,7 +178,7 @@ jobs:
 
           go build \
             -trimpath \
-            -ldflags "-s -w -X main.version=$VERSION" \
+            -ldflags "-s -w -X main.version=$VERSION -X main.klipyKey=$KLIPY_KEY" \
             -o bin/dist/WazzapClients-linux-amd64 \
             ./cmd/wazzap
 
@@ -195,7 +202,8 @@ jobs:
 
     runs-on: ubuntu-22.04
 
-    timeout-minutes: 10
+    # Each update patch takes bsdiff about half a minute (ten of them).
+    timeout-minutes: 30
 
     permissions:
       contents: write
@@ -232,13 +240,41 @@ jobs:
         run: |
           ls -lah dist
 
+      # Patches from the last five releases' executables, so updating from
+      # one downloads only what changed (internal/update). mkpatch is a
+      # module of its own, so its bsdiff stays out of the app's go.mod.
+      - name: Make update patches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          tags=$(gh release list --exclude-drafts --exclude-pre-releases --limit 10 \
+            --json tagName --jq '.[].tagName' |
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vxF "$RELEASE_TAG" | head -n 5 || true)
+
+          for tag in $tags; do
+            for exe in WazzapClients-windows-amd64.exe WazzapClients-linux-amd64; do
+              old="$RUNNER_TEMP/old/$tag"
+              mkdir -p "$old"
+              if ! gh release download "$tag" --pattern "$exe" --dir "$old" --clobber; then
+                echo "$tag has no $exe, so no patch from it"
+                continue
+              fi
+              (cd cmd/mkpatch && go run . "$old/$exe" "$GITHUB_WORKSPACE/dist/$exe" \
+                "$GITHUB_WORKSPACE/dist/$exe.from-$tag.to-$RELEASE_TAG.bsdiff")
+            done
+          done
+
       - name: Generate checksums
         working-directory: dist
         run: |
+          shopt -s nullglob
           sha256sum \
             WazzapClients-windows-amd64.exe \
             WazzapClients-Setup.exe \
             WazzapClients-linux-amd64 \
+            *.bsdiff \
             > SHA256SUMS
 
           sha256sum --check SHA256SUMS
@@ -262,6 +298,49 @@ jobs:
           go mod init signrelease
           go run . "$GITHUB_WORKSPACE/dist/SHA256SUMS"
 
+      # The patches go on a prerelease of their own (update.PatchTag), so
+      # the release's page lists only what people download. Its SHA256SUMS
+      # still lists them. Patches to a release that's neither the latest
+      # nor a draft are no use to anyone any more.
+      - name: Upload update patches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PATCH_TAG: update-patches
+        run: |
+          shopt -s nullglob
+          patches=(dist/*.bsdiff)
+          if [ ${#patches[@]} -eq 0 ]; then
+            echo 'No update patches.'
+            exit 0
+          fi
+
+          if ! gh release view "$PATCH_TAG" > /dev/null 2>&1; then
+            gh release create "$PATCH_TAG" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --latest=false \
+              --title 'Update patches' \
+              --notes 'Patches the app downloads to update from one release to another. Download a release instead.'
+          fi
+          gh release upload "$PATCH_TAG" "${patches[@]}" --clobber
+
+          keep=$( (
+            echo "$RELEASE_TAG"
+            gh release view --json tagName --jq '.tagName' || true
+            gh release list --limit 20 --json tagName,isDraft --jq '.[] | select(.isDraft) | .tagName'
+          ) | sort -u)
+          gh release view "$PATCH_TAG" --json assets --jq '.assets[].name' |
+            while read -r name; do
+              target=${name##*.to-}
+              target=${target%.bsdiff}
+              if ! grep -qxF "$target" <<< "$keep"; then
+                echo "Deleting $name"
+                gh release delete-asset "$PATCH_TAG" "$name" --yes
+              fi
+            done
+
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -282,6 +361,8 @@ jobs:
               dist/WazzapClients-linux-amd64 \
               dist/SHA256SUMS \
               dist/SHA256SUMS.sig \
+              LICENSE \
+              THIRD_PARTY_NOTICES.md \
               --clobber
 
           else
@@ -292,6 +373,8 @@ jobs:
               dist/WazzapClients-linux-amd64 \
               dist/SHA256SUMS \
               dist/SHA256SUMS.sig \
+              LICENSE \
+              THIRD_PARTY_NOTICES.md \
               --verify-tag \
               --draft \
               --generate-notes \

@@ -27,14 +27,20 @@ const (
 	imgMissing
 )
 
+// imgEntry is an image of the cache. The UI reads one without the cache's
+// lock for the rest of its frame, so an entry never changes once get
+// returned it, but for used: a load puts a new entry in its place.
 type imgEntry struct {
 	state imgState
 	op    paint.ImageOp
 	size  image.Point
-	used  int64 // frame counter of last use, for eviction
+	used  int64 // frame counter of last use, for eviction; under imageCache.mu
 	bytes int   // decoded size, counted in imageCache.bytes
 	// animated is set for animated stickers; the image is their first frame.
 	animated bool
+	// live is set for a playing GIF's current frame (gifFrame), which
+	// isn't cached: its bubble shows no play button.
+	live bool
 	// empty is set when load returned nothing: the media isn't downloaded
 	// yet, or the download failed. It is asked for again after retryAfter.
 	empty    bool
@@ -61,6 +67,21 @@ type imageCache struct {
 
 func newImageCache(limit, budget int) *imageCache {
 	return &imageCache{m: make(map[string]*imgEntry), limit: limit, budget: budget}
+}
+
+// resize sets the cache's budget, its entry limit growing with it. Any
+// excess goes at the end of the frame.
+func (c *imageCache) resize(budget int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.limit, c.budget = max(60, int(int64(240)*int64(budget)/(32<<20))), budget
+}
+
+// usage returns the decoded bytes held and the budget.
+func (c *imageCache) usage() (held, budget int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bytes, c.budget
 }
 
 // decodeSlots limits how many images decode at once. A full-size photo
@@ -159,17 +180,19 @@ func (c *imageCache) getWith(key string, load func() []byte, decode func([]byte)
 		release := acquireDecode(data)
 		img, animated := decode(data)
 		release()
+		// Not into e, which the UI may be reading: into the entry that
+		// replaces it.
+		done := &imgEntry{state: imgMissing, empty: len(data) == 0, loadedAt: time.Now()}
+		if img != nil {
+			done = &imgEntry{state: imgReady, op: paint.NewImageOp(img), size: img.Bounds().Size(),
+				animated: animated, loadedAt: done.loadedAt}
+			done.bytes = 4 * done.size.X * done.size.Y
+		}
 		c.mu.Lock()
-		e.loadedAt = time.Now()
-		if img == nil {
-			e.state, e.empty = imgMissing, len(data) == 0
-		} else {
-			e.state, e.op, e.size = imgReady, paint.NewImageOp(img), img.Bounds().Size()
-			e.animated = animated
-			if c.m[key] == e { // not forgotten meanwhile
-				e.bytes = 4 * e.size.X * e.size.Y
-				c.bytes += e.bytes
-			}
+		if c.m[key] == e { // not forgotten meanwhile
+			done.used = e.used
+			c.m[key] = done
+			c.bytes += done.bytes
 		}
 		c.mu.Unlock()
 		if c.invalidate != nil {
@@ -191,6 +214,18 @@ func (c *imageCache) remove(key string) {
 		c.bytes -= e.bytes
 		delete(c.m, key)
 	}
+}
+
+// clearAll drops every picture that has loaded, so the next get loads it
+// again (the emoji pictures, when the emoji style changes).
+func (c *imageCache) clearAll() {
+	c.mu.Lock()
+	for k, e := range c.m {
+		if e.state != imgLoading {
+			c.remove(k)
+		}
+	}
+	c.mu.Unlock()
 }
 
 // retryMissing drops media that wasn't there, so the next get asks the

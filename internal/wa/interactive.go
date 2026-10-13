@@ -12,14 +12,15 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
-// Business and bot messages come with buttons. Only quick replies, links
-// and copy-code buttons are supported; other buttons are left out.
+// Business and bot messages come with buttons. Only quick replies, lists,
+// links and copy-code buttons are supported; other buttons are left out.
 
 // Where a button came from decides how pressing it is answered.
 const (
 	srcButtons  = "buttons"  // ButtonsMessage
 	srcTemplate = "template" // TemplateMessage (hydrated four-row template)
 	srcNative   = "native"   // native flow button (InteractiveMessage)
+	srcList     = "list"     // ListMessage's button
 )
 
 // buttonsInfo is a message's footer and the buttons the app supports.
@@ -41,7 +42,14 @@ func (bi *buttonsInfo) add(src string, i int, b model.Button) {
 	if b.Label == "" && b.Kind == model.ButtonCopy {
 		b.Label = "Copy code"
 	}
-	if b.Label == "" || (b.Kind != model.ButtonReply && b.Value == "") {
+	switch {
+	case b.Label == "":
+		return
+	case b.Kind == model.ButtonList:
+		if len(b.Sections) == 0 {
+			return
+		}
+	case b.Kind != model.ButtonReply && b.Value == "":
 		return
 	}
 	bi.Buttons = append(bi.Buttons, storedButton{Button: b, Source: src, Index: i})
@@ -159,8 +167,34 @@ func describeInteractive(e *waE2E.InteractiveMessage) content {
 }
 
 func describeList(e *waE2E.ListMessage) content {
-	return content{text: titled(e.GetTitle(), e.GetDescription()), ctx: e.GetContextInfo(),
-		buttons: &buttonsInfo{Footer: e.GetFooterText()}}
+	bi := &buttonsInfo{Footer: e.GetFooterText()}
+	var sections []model.ListSection
+	for _, sec := range e.GetSections() {
+		var rows []model.ListRow
+		for _, r := range sec.GetRows() {
+			rows = append(rows, model.ListRow{ID: r.GetRowID(), Title: r.GetTitle(), Description: r.GetDescription()})
+		}
+		sections = appendSection(sections, sec.GetTitle(), rows)
+	}
+	bi.add(srcList, 0, model.Button{Kind: model.ButtonList, Label: first(e.GetButtonText(), "Select"), Sections: sections})
+	return content{text: titled(e.GetTitle(), e.GetDescription()), ctx: e.GetContextInfo(), buttons: bi}
+}
+
+// appendSection adds a list's section, leaving out the rows that have no
+// ID to answer with. A section with no rows left is left out too.
+func appendSection(sections []model.ListSection, title string, rows []model.ListRow) []model.ListSection {
+	keep := rows[:0]
+	for _, r := range rows {
+		if r.ID == "" {
+			continue
+		}
+		r.Title = first(r.Title, r.ID)
+		keep = append(keep, r)
+	}
+	if len(keep) == 0 {
+		return sections
+	}
+	return append(sections, model.ListSection{Title: title, Rows: keep})
 }
 
 // nativeButton reads a native flow button's JSON parameters.
@@ -170,6 +204,16 @@ func nativeButton(name, params string) (model.Button, bool) {
 		ID          string `json:"id"`
 		URL         string `json:"url"`
 		CopyCode    string `json:"copy_code"`
+		// single_select's
+		Title    string `json:"title"`
+		Sections []struct {
+			Title string `json:"title"`
+			Rows  []struct {
+				ID          string `json:"id"`
+				Title       string `json:"title"`
+				Description string `json:"description"`
+			} `json:"rows"`
+		} `json:"sections"`
 	}
 	if json.Unmarshal([]byte(params), &p) != nil {
 		return model.Button{}, false
@@ -181,6 +225,18 @@ func nativeButton(name, params string) (model.Button, bool) {
 		return model.Button{Kind: model.ButtonURL, Label: p.DisplayText, Value: p.URL}, true
 	case "cta_copy":
 		return model.Button{Kind: model.ButtonCopy, Label: p.DisplayText, Value: p.CopyCode}, true
+	case "single_select":
+		b := model.Button{Kind: model.ButtonList, Label: p.Title}
+		for _, sec := range p.Sections {
+			var rows []model.ListRow
+			for _, r := range sec.Rows {
+				rows = append(rows, model.ListRow{ID: r.ID, Title: r.Title, Description: r.Description})
+			}
+			b.Sections = appendSection(b.Sections, sec.Title, rows)
+			b.Label = first(b.Label, sec.Title)
+		}
+		b.Label = first(b.Label, "Select")
+		return b, true
 	}
 	return model.Button{}, false
 }
@@ -240,7 +296,7 @@ func fieldNames(m *waE2E.Message) string {
 }
 
 // PressButton implements model.Backend.
-func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
+func (b *Backend) PressButton(m *model.Message, i int, row string) *model.Message {
 	cli := b.connected()
 	jid, err := types.ParseJID(m.ChatID)
 	if cli == nil || err != nil {
@@ -252,7 +308,17 @@ func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
 		return nil
 	}
 	bt := raw.buttons.Buttons[i]
-	if bt.Kind != model.ButtonReply {
+	// id and label are the answer's ID and what it shows.
+	id, label := bt.Value, bt.Label
+	switch bt.Kind {
+	case model.ButtonReply:
+	case model.ButtonList:
+		r, ok := listRow(bt.Sections, row)
+		if !ok {
+			return nil
+		}
+		id, label = r.ID, r.Title
+	default:
 		return nil
 	}
 	sender := b.senderOf(m)
@@ -261,54 +327,79 @@ func (b *Backend) PressButton(m *model.Message, i int) *model.Message {
 		Participant:   proto.String(sender.String()),
 		QuotedMessage: b.quotedMessage(ctx, m.ChatID, m.ID),
 	}
-	var msg *waE2E.Message
-	switch bt.Source {
-	case srcTemplate:
-		msg = &waE2E.Message{TemplateButtonReplyMessage: &waE2E.TemplateButtonReplyMessage{
-			SelectedID:          proto.String(bt.Value),
-			SelectedDisplayText: proto.String(bt.Label),
-			SelectedIndex:       proto.Uint32(uint32(bt.Index)),
-			ContextInfo:         ci,
-		}}
-	case srcNative:
-		params, _ := json.Marshal(map[string]string{"id": bt.Value})
-		msg = &waE2E.Message{InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+	// The answers to try in turn. The server may refuse button answers
+	// (error 479 for native flow answers in groups), so a native flow
+	// answer falls back to the older kind, which still carries the ID,
+	// and that to a quoted text reply, which gets the words across.
+	var msgs []*waE2E.Message
+	if bt.Source == srcNative {
+		name := "quick_reply"
+		if bt.Kind == model.ButtonList {
+			name = "single_select"
+		}
+		params, _ := json.Marshal(map[string]string{"id": id})
+		msgs = append(msgs, &waE2E.Message{InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
 			Body: &waE2E.InteractiveResponseMessage_Body{
-				Text:   proto.String(bt.Label),
+				Text:   proto.String(label),
 				Format: waE2E.InteractiveResponseMessage_Body_DEFAULT.Enum(),
 			},
 			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
 				NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
-					Name:       proto.String("quick_reply"),
+					Name:       proto.String(name),
 					ParamsJSON: proto.String(string(params)),
 					Version:    proto.Int32(3),
 				},
 			},
 			ContextInfo: ci,
-		}}
+		}})
+	}
+	switch {
+	case bt.Kind == model.ButtonList:
+		msgs = append(msgs, &waE2E.Message{ListResponseMessage: &waE2E.ListResponseMessage{
+			Title:             proto.String(label),
+			ListType:          waE2E.ListResponseMessage_SINGLE_SELECT.Enum(),
+			SingleSelectReply: &waE2E.ListResponseMessage_SingleSelectReply{SelectedRowID: proto.String(id)},
+			ContextInfo:       ci,
+		}})
+	case bt.Source == srcTemplate || bt.Source == srcNative:
+		msgs = append(msgs, &waE2E.Message{TemplateButtonReplyMessage: &waE2E.TemplateButtonReplyMessage{
+			SelectedID:          proto.String(id),
+			SelectedDisplayText: proto.String(label),
+			SelectedIndex:       proto.Uint32(uint32(bt.Index)),
+			ContextInfo:         ci,
+		}})
 	default:
-		msg = &waE2E.Message{ButtonsResponseMessage: &waE2E.ButtonsResponseMessage{
-			SelectedButtonID: proto.String(bt.Value),
-			Response:         &waE2E.ButtonsResponseMessage_SelectedDisplayText{SelectedDisplayText: bt.Label},
+		msgs = append(msgs, &waE2E.Message{ButtonsResponseMessage: &waE2E.ButtonsResponseMessage{
+			SelectedButtonID: proto.String(id),
+			Response:         &waE2E.ButtonsResponseMessage_SelectedDisplayText{SelectedDisplayText: label},
 			Type:             waE2E.ButtonsResponseMessage_DISPLAY_TEXT.Enum(),
 			ContextInfo:      ci,
-		}}
+		}})
 	}
+	msgs = append(msgs, &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+		Text:        proto.String(label),
+		ContextInfo: ci,
+	}})
 	out := &model.Message{
 		ID:      cli.GenerateMessageID(),
 		ChatID:  m.ChatID,
 		FromMe:  true,
-		Text:    bt.Label,
+		Text:    label,
 		Time:    b.sendTime(),
 		Receipt: model.Pending,
 		Quote:   &model.Quote{ID: m.ID, SenderID: sender.String(), Text: raw.Text, Media: raw.Media},
 	}
-	// The server may refuse button answers (error 479 was seen for native
-	// flow quick replies in groups); a quoted text reply still gets the
-	// answer across.
-	fallback := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-		Text:        proto.String(bt.Label),
-		ContextInfo: ci,
-	}}
-	return b.storeAndSend(jid, storedMsg{Message: out}, msg, fallback)
+	return b.storeAndSend(jid, storedMsg{Message: out}, msgs[0], msgs[1:]...)
+}
+
+// listRow finds the row of a list whose ID is id.
+func listRow(sections []model.ListSection, id string) (model.ListRow, bool) {
+	for _, s := range sections {
+		for _, r := range s.Rows {
+			if r.ID == id {
+				return r, true
+			}
+		}
+	}
+	return model.ListRow{}, false
 }

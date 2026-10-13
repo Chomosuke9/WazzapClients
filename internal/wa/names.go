@@ -272,6 +272,10 @@ func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions st
 // resolve fills in a loaded message's quote and display names.
 func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Message {
 	m := r.Message
+	if m.Kind == model.KindSystem {
+		m.Text, m.Notice = b.systemText(ctx, r, r.stub, r.stubParams)
+		return m
+	}
 	if isGroup && !m.FromMe && r.senderJID != "" {
 		m.Sender = b.senderNameStr(ctx, r.senderJID, r.senderPush)
 	}

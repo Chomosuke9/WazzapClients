@@ -3,7 +3,6 @@ package command
 import (
 	"errors"
 	"math/rand/v2"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -53,9 +52,9 @@ var All = []*Command{
 		Run:     runDescription,
 	},
 	{
-		Name: "sticker", Description: "Turns the photo you reply to, or a picture you pick, into a sticker",
+		Name: "sticker", Description: "Turns the photo, video or GIF you reply to, or one you pick, into a sticker",
 		Options: []Option{
-			{Name: "top", Description: "Text along the top; # starts the bottom text", Kind: Text, Until: "#"},
+			{Name: "top", Description: "Text along the top; a new line (Shift+Enter) starts the bottom text", Kind: Text, Until: "\n"},
 			{Name: "bottom", Description: "Text along the bottom", Kind: Text},
 		},
 		Run: runSticker,
@@ -106,7 +105,8 @@ var All = []*Command{
 		Name: "whisper", Description: "Sends group text only to selected members; experimental, delivery is unconfirmed",
 		Group: true, Gray: true,
 		Options: []Option{
-			{Name: "members", Description: "Who to send to; pick one or more @mentions", Kind: Member, Required: true, Multiple: true},
+			{Name: "members", Description: "Who to send to; pick one or more @mentions, then a new line (Shift+Enter) to start the text with one",
+				Kind: Member, Required: true, Multiple: true, Until: "\n"},
 			{Name: "text", Description: "The text to send to those members; @mentions work as in any message", Kind: Text, Required: true, Mentions: true},
 		},
 		Run: runWhisper,
@@ -307,24 +307,21 @@ func runSticker(c *Context) error {
 	chat := c.Chat.ID
 	text := sticker.Text{Top: c.Text("top"), Bottom: c.Text("bottom")}
 	plain := strings.TrimSpace(text.Top+text.Bottom) == ""
-	makeSticker := func(read func() ([]byte, error)) {
+	// makeSticker makes one of the file at path, or of data.
+	makeSticker := func(path string, data []byte) {
 		n := busy(c, "Making a sticker…")
 		c.Do(func() func() {
-			data, err := read()
-			var webp []byte
-			if err == nil {
-				webp, err = sticker.FromImage(data, text)
-			}
+			webp, err := sticker.Make(path, data, text)
 			return func() {
 				switch {
-				case errors.Is(err, sticker.ErrAnimated):
-					fail(n, "Text can't go on an animated sticker yet.")
+				case errors.Is(err, sticker.ErrNoFFmpeg):
+					fail(n, noFFmpeg)
 					return
 				case errors.Is(err, sticker.ErrTooLarge):
 					fail(n, "That picture is too big to make a sticker of.")
 					return
 				case err != nil:
-					fail(n, "Couldn't make a sticker of that picture.")
+					fail(n, "Couldn't make a sticker of that.")
 					return
 				}
 				c.Dismiss(n)
@@ -339,7 +336,7 @@ func runSticker(c *Context) error {
 	case src == nil:
 		c.PickImage(func(path string) {
 			if path != "" {
-				makeSticker(func() ([]byte, error) { return os.ReadFile(path) })
+				makeSticker(path, nil)
 			}
 		})
 	case src.Kind == model.KindSticker && plain:
@@ -350,12 +347,24 @@ func runSticker(c *Context) error {
 		if data == nil {
 			return errors.New("It hasn't downloaded yet. Try again in a moment.")
 		}
-		makeSticker(func() ([]byte, error) { return data, nil })
+		makeSticker("", data)
+	case src.Kind == model.KindImage && (src.Media == model.MediaVideo || src.Media == model.MediaGIF):
+		if sticker.FFmpeg() == "" {
+			return errors.New(noFFmpeg)
+		}
+		path := c.Backend.MediaFile(src)
+		if path == "" {
+			return errors.New("It hasn't downloaded yet. Try again in a moment.")
+		}
+		makeSticker(path, nil)
 	default:
-		return errors.New("Reply to a photo or a sticker, or run /sticker without replying to pick a picture.")
+		return errors.New("Reply to a photo, video, GIF or sticker, or run /sticker without replying to pick one.")
 	}
 	return nil
 }
+
+// noFFmpeg says what animated stickers need.
+const noFFmpeg = "Animated stickers need ffmpeg. Install it (with its folder on PATH) and try again."
 
 // maxPurge is the most messages /purge deletes at once.
 const maxPurge = 100

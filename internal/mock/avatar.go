@@ -7,6 +7,8 @@ import (
 	"image/color"
 	"image/jpeg"
 	"math"
+
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // noPicture lists the demo chats and people without a profile picture, so
@@ -18,9 +20,10 @@ var noPicture = map[string]bool{
 
 // Avatar returns a generated profile picture for id: a soft gradient with
 // a shape on it, the same every time. Some IDs have none (see noPicture),
-// and the reference data has no pictures at all.
+// and the reference data has no pictures at all. A group's picture set
+// with GroupPhoto replaces its own, or removes it (nil).
 func (b *Backend) Avatar(id string) []byte {
-	if !b.pics || id == "" || noPicture[id] {
+	if id == "" {
 		return nil
 	}
 	b.mu.Lock()
@@ -28,12 +31,29 @@ func (b *Backend) Avatar(id string) []byte {
 	if pic, ok := b.avatars[id]; ok {
 		return pic
 	}
+	if !b.pics || noPicture[id] {
+		return nil
+	}
 	if b.avatars == nil {
 		b.avatars = make(map[string][]byte)
 	}
 	pic := avatarJPEG(id)
 	b.avatars[id] = pic
 	return pic
+}
+
+// ProfilePhoto returns the demo picture: there is no bigger one.
+func (b *Backend) ProfilePhoto(id string) []byte { return b.Avatar(id) }
+
+// setAvatar replaces id's picture (nil: none).
+func (b *Backend) setAvatar(id string, pic []byte) {
+	b.mu.Lock()
+	if b.avatars == nil {
+		b.avatars = make(map[string][]byte)
+	}
+	b.avatars[id] = pic
+	b.mu.Unlock()
+	b.emit(model.AvatarEvent{ID: id})
 }
 
 // avatarJPEG draws id's picture: two hues from its hash, and one of three

@@ -94,24 +94,10 @@ func albumMeta(ms []*model.Message) *model.Message {
 	return &meta
 }
 
-// albumReactions joins the different reactions to an album's pictures.
-func albumReactions(ms []*model.Message) string {
-	var s string
-	seen := map[string]bool{}
-	for _, m := range ms {
-		if m.Reaction != "" && !seen[m.Reaction] {
-			seen[m.Reaction] = true
-			s += m.Reaction
-		}
-	}
-	return s
-}
-
 // layoutAlbumRow draws an album's row: its bubble, the sender's avatar in
-// groups, a chevron on the hovered tile, and in select mode a checkbox
-// that picks all its pictures.
+// groups and a chevron on the hovered tile. In select mode, clicking the
+// row picks all its pictures.
 func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D {
-	p := u.pal
 	ms := r.group
 	m0 := ms[0]
 	out := m0.FromMe
@@ -128,21 +114,15 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 			}
 		}
 	}
-	// Select mode moves incoming bubbles over for the checkboxes.
-	selV := easeOut(u.conv.selV)
-	shift := 0
-	if !out {
-		shift = int(float32(max(0, gtx.Dp(44)-margin)) * selV)
-	}
 	cgtx := gtx
-	cgtx.Constraints = layout.Constraints{Max: image.Pt(w-shift, gtx.Constraints.Max.Y)}
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
 	var tiles []image.Rectangle // in the bubble
 	bubble := record(cgtx, func(gtx C) D {
 		var dims D
 		dims, tiles = u.layoutAlbum(gtx, c, r, maxW)
 		return dims
 	})
-	x := shift
+	x := 0
 	if out {
 		x = w - bubble.size.X
 	}
@@ -151,9 +131,8 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 	if u.conv.flash != "" && r.has(u.conv.flash) {
 		u.drawFlash(gtx, band)
 	}
-	some := sel && u.pickedAny(ms)
-	if some {
-		fillRect(gtx, band, argb(0x5dbf6e, 0x26))
+	if sel && u.pickedAny(ms) {
+		fillRect(gtx, u.selBand(margin, w, h), selColor)
 	}
 	bubble.at(gtx, x, 0)
 	if c.IsGroup && r.first && !out {
@@ -169,23 +148,11 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 			u.albumTile(gtx, c, ms[i], tr.Add(image.Pt(x, 0)))
 		}
 	}
-	if selV > 0 {
-		t := op.Offset(image.Pt(-margin, 0)).Push(gtx.Ops)
-		if sel {
-			rg := gtx
-			rg.Constraints = layout.Exact(image.Pt(w+2*margin, h))
-			clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
-		}
-		box, col := icCheckBoxEmpty, p.TextSecondary
-		switch {
-		case u.pickedAll(ms):
-			box, col = icCheckBox, p.Green
-		case some:
-			box, col = icCheckBoxSome, p.Green
-		}
-		bt := op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(6))).Push(gtx.Ops)
-		withOpacity(gtx, selV, func() { drawIcon(gtx, box, 24, col) })
-		bt.Pop()
+	if sel {
+		t := op.Offset(image.Pt(-margin, -u.conv.band[0])).Push(gtx.Ops)
+		rg := gtx
+		rg.Constraints = layout.Exact(u.selBand(margin, w, h).Size())
+		clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 		t.Pop()
 	}
 	return D{Size: image.Pt(w, h)}
@@ -299,7 +266,7 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 		m := ms[i]
 		tr = tr.Add(image.Pt(0, y))
 		tiles[i] = tr.Add(image.Pt(pad, pad))
-		u.layoutImage(gtx, tr, m, u.messageImage(m, maxPx))
+		u.layoutImage(gtx, tr, m, u.gifImage(m, u.messageImage(m, maxPx), maxPx))
 		if i == 3 && len(ms) > 4 {
 			// The last tile is covered by how many it stands for.
 			more := len(ms) - 3
@@ -323,30 +290,5 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 	content.Add(gtx.Ops)
 	t.Pop()
 	dims := D{Size: image.Pt(w, h)}
-	if react := albumReactions(ms); react != "" {
-		dims = u.reactionPill(gtx, dims, react, out)
-	}
-	return dims, tiles
-}
-
-// reactionPill draws the reactions to an album at the bottom of its
-// bubble, as layoutMessage does for a message, and returns the row's size.
-func (u *UI) reactionPill(gtx C, dims D, react string, out bool) D {
-	p := u.pal
-	pill := record(gtx, func(gtx C) D {
-		gtx.Constraints.Min = image.Point{}
-		return u.card(gtx, 13, p.BubbleIn, func(gtx C) D {
-			return layout.Inset{Left: 6, Right: 6, Top: 2, Bottom: 3}.Layout(gtx, u.label(14, react, p.Text).Layout)
-		})
-	})
-	x := gtx.Dp(8)
-	if out {
-		x = dims.Size.X - pill.size.X - gtx.Dp(8)
-	}
-	ring := gtx.Dp(2)
-	py := dims.Size.Y - gtx.Dp(5)
-	fillRRect(gtx, image.Rect(x-ring, py-ring, x+pill.size.X+ring, py+pill.size.Y+ring), pill.size.Y/2+ring, p.ChatBg)
-	pill.at(gtx, x, py)
-	dims.Size.Y = py + pill.size.Y + ring
-	return dims
+	return u.reactionPill(gtx, dims, ms, out, false, animKey{}), tiles
 }

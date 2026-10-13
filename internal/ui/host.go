@@ -2,10 +2,12 @@ package ui
 
 import (
 	"bytes"
+	"cmp"
 	"image"
 	"image/png"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/accounts"
 	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/desktop"
+	"github.com/chomosuke9/wazzapclients/internal/emojiset"
 	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/notify"
@@ -45,6 +48,9 @@ type Options struct {
 	Relaunch []string
 	// NotifyDir keeps the pictures notifications show.
 	NotifyDir string
+	// EmojiDir keeps the emoji pictures that download (the animated and
+	// 3D emoji styles). "" doesn't download any: every style draws 2D.
+	EmojiDir string
 	// Accounts lists the accounts linked on this computer, and Open opens
 	// the backend of one's data directory; the backend given to Run is
 	// the open one's. With nil Accounts there is only that backend.
@@ -53,6 +59,9 @@ type Options struct {
 	// Version is the release this build is ("v1.2.3"), or "" for a
 	// development build, which doesn't update itself.
 	Version string
+	// KlipyKey is the build's KLIPY app key for GIF search (gifs.go), or
+	// "" when users must enter their own.
+	KlipyKey string
 }
 
 // Run runs the app until it quits. It opens a window and, while a tray
@@ -62,21 +71,24 @@ type Options struct {
 // notification or a second launch opens a new window.
 //
 // The goroutine calling Run is the UI goroutine for good: it handles the
-// window's events, the backend's and the requests from the tray and from
+// window's events, the backends' and the requests from the tray and from
 // notifications. A helper goroutine waits for each window event and hands
 // it over (see openWindow), so requests are served even while a window is
 // open but minimized, when Gio draws no frames.
+//
+// The accounts that aren't open run in the background as their modes say
+// (background.go), whether a window is open or not.
 func Run(b model.Backend, o Options) error {
-	b, _ = withAuto(b)
-	h := &host{
-		b:       b,
-		o:       o,
-		wake:    make(chan struct{}, 1),
-		reqs:    make(chan request, 16),
-		syncPct: -1,
-		drafts:  make(map[string]*chatDraft),
+	if o.EmojiDir != "" {
+		emojiStore = emojiset.New(o.EmojiDir)
+		// The 2D font, or its download; windows load it when it arrives
+		// (refreshEmoji).
+		if p := emojiStore.FontPath(); p != "" && LoadEmojiFont(p) != nil {
+			os.Remove(p) // broken: downloaded again next time
+		}
 	}
-	h.notes = newNotifier(b, h)
+	klipyAppKey, klipyAgent = o.KlipyKey, "WazzapClients/"+cmp.Or(o.Version, "dev")
+	h := newHost(b, o)
 	h.upd.h = h
 	if exe, err := os.Executable(); err == nil {
 		h.upd.exe = exe
@@ -97,6 +109,7 @@ func Run(b model.Backend, o Options) error {
 		h.notes.enabled = true
 		defer notify.Close()
 	}
+	setTooltip = desktop.SetTooltip
 	if err := desktop.TrayStart(desktop.Tray{
 		Name: appName,
 		Icon: icon.Tray,
@@ -106,12 +119,14 @@ func Run(b model.Backend, o Options) error {
 		h.tray = true
 		defer desktop.TrayStop()
 	}
-	defer func() { h.b.Close() }()
-	h.notes.setChats(b.Chats())
+	defer h.closeAll()
+	h.notes.setChats(h.b.Chats())
 	if !o.Hidden || !h.tray {
 		h.openWindow()
 	}
-	b.Start(h.poke)
+	h.b.Start(h.poke)
+	h.startBackground()
+	h.startAuto()
 	for {
 		select {
 		case e := <-h.events:
@@ -122,21 +137,77 @@ func Run(b model.Backend, o Options) error {
 				if err != nil {
 					return err
 				}
-				if h.quitting || !h.background() {
+				if h.quitting || !h.background() || h.updateReady() {
 					return nil
 				}
 			}
 		case <-h.wake:
 			h.poll(true)
+			h.pollBackground()
 		case r := <-h.reqs:
 			if h.handle(r) {
 				return nil
 			}
-		case <-h.notes.due:
-			h.notes.flush()
+		case <-h.notesDue:
+			h.flushNotes()
+		case opened := <-h.bgOpen:
+			h.bgOpened(opened)
+		case <-h.bgDue:
+			h.bgTick()
 		}
 	}
 }
+
+// newHost makes the host of b, the open account's backend.
+func newHost(b model.Backend, o Options) *host {
+	b, _ = withAuto(b)
+	loadPerf(b)
+	h := &host{
+		b:        b,
+		o:        o,
+		wake:     make(chan struct{}, 1),
+		reqs:     make(chan request, 16),
+		syncPct:  -1,
+		drafts:   make(map[string]*chatDraft),
+		bg:       make(map[string]*bgAccount),
+		bgOpen:   make(chan bgOpened, 8),
+		bgDue:    make(chan struct{}, 1),
+		closing:  make(map[string]chan struct{}),
+		notesDue: make(chan struct{}, 1),
+	}
+	dir := ""
+	if o.Accounts != nil {
+		dir = o.Accounts.Active
+	}
+	h.notes = h.newNotifier(b, dir)
+	h.openNotes(h.notes)
+	return h
+}
+
+// closeAll closes every account's backend as the app quits, together.
+func (h *host) closeAll() {
+	var wg sync.WaitGroup
+	stop := func(b model.Backend) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			b.Close()
+		}()
+	}
+	stop(h.b)
+	for _, bg := range h.bg {
+		if bg.b != nil {
+			stop(bg.b)
+		}
+	}
+	for _, c := range h.closing {
+		<-c
+	}
+	wg.Wait()
+}
+
+// setTooltip sets the tray icon's tooltip, once there is one (Run).
+var setTooltip = func(string) {}
 
 // host is the app outside its window: the backend, the notifier, the tray
 // icon, and the window while one is open.
@@ -187,6 +258,22 @@ type host struct {
 	// notice is shown in the next UI (a toast after switching accounts).
 	notice string
 	upd    updater
+	// later are a background account's notification actions (Reply, Mark
+	// as read) that wait for it to come online, once it opened for them.
+	later []notify.Activation
+	// openWin opens a window for show; nil opens a real one (tests
+	// replace it).
+	openWin func()
+
+	// The accounts that run in the background (background.go), by Dir.
+	bg       map[string]*bgAccount
+	bgOpen   chan bgOpened // their backends, opened on goroutines
+	bgDue    chan struct{} // bgTimer fired
+	bgTimer  *time.Timer
+	closing  map[string]chan struct{} // backends closing, by account Dir
+	notesDue chan struct{}            // notesTimer fired: notifications are due
+	// notesTimer fires when the notifiers' pending messages are due.
+	notesTimer *time.Timer
 }
 
 type request struct {
@@ -205,6 +292,7 @@ const (
 	reqAddAccount                // link a new account
 	reqRedraw                    // an update moved on: show it
 	reqRestart                   // an update is in place: start it and quit
+	reqAutoUpdate                // time for an automatic update check
 )
 
 // request queues r for the UI goroutine. It's called from other
@@ -224,15 +312,18 @@ func (h *host) poke() {
 	}
 }
 
-// background reports whether closing the window leaves the app running.
+// background reports whether closing the window leaves the app running:
+// for the open account, if it's logged in, and for the accounts in the
+// background.
 func (h *host) background() bool {
-	return h.tray && h.conn.State.LoggedIn() && prefOn(h.b, prefBackground)
+	return h.tray && (h.conn.State.LoggedIn() || len(h.bg) > 0) && prefOn(h.b, prefBackground)
 }
 
 // poll drains the backend's events: the notifier sees them all, and the
 // window's UI gets them on its next frame.
 func (h *host) poll(invalidate bool) {
 	evs := h.b.Poll()
+	online := false
 	for _, ev := range evs {
 		switch e := ev.(type) {
 		case model.ConnEvent:
@@ -249,6 +340,7 @@ func (h *host) poll(invalidate bool) {
 				h.show()
 			}
 			h.accountState(e)
+			online = e.State == model.StateOnline
 		case model.AccountEvent:
 			h.noteAccount(nil)
 		case model.SyncEvent:
@@ -259,6 +351,9 @@ func (h *host) poll(invalidate bool) {
 		}
 		h.notes.event(ev)
 	}
+	if online && len(h.later) > 0 {
+		h.actLater()
+	}
 	switch {
 	case len(evs) == 0:
 	case h.u != nil:
@@ -266,11 +361,25 @@ func (h *host) poll(invalidate bool) {
 		if invalidate {
 			h.win.Invalidate()
 		}
+	default:
+		h.quietTrim()
+	}
+}
+
+// quietTrim trims memory once the backends have been quiet a while, while
+// there is no window to do it (idleTrim).
+func (h *host) quietTrim() {
+	switch {
+	case h.u != nil:
+	case perf.trimAfter == 0:
+		if h.bgTrim != nil {
+			h.bgTrim.Stop()
+		}
 	case h.bgTrim == nil:
-		h.bgTrim = time.AfterFunc(idleTrim, memtrim.Trim)
+		h.bgTrim = time.AfterFunc(perf.trimAfter, memtrim.Trim)
 	default:
 		// Without a window, trim once the backend has been quiet a while.
-		h.bgTrim.Reset(idleTrim)
+		h.bgTrim.Reset(perf.trimAfter)
 	}
 }
 
@@ -294,23 +403,7 @@ func (h *host) handle(r request) bool {
 		h.quitting = true
 		h.win.Perform(system.ActionClose)
 	case reqActivate:
-		a := r.act
-		switch a.Action {
-		case notify.Reply:
-			if txt := strings.TrimSpace(a.Text); txt != "" {
-				if m := h.b.Send(a.ID, model.Draft{Text: txt}); m != nil && h.u != nil {
-					h.u.upsertMessage(m)
-				}
-				h.markRead(a.ID)
-				break
-			}
-			fallthrough // Reply with nothing typed opens the chat
-		case notify.Open:
-			h.openChat = a.ID
-			h.show()
-		case notify.MarkRead:
-			h.markRead(a.ID)
-		}
+		h.route(r.act)
 	case reqSwitch:
 		h.switchAccount(r.dir)
 	case reqAddAccount:
@@ -320,10 +413,65 @@ func (h *host) handle(r request) bool {
 			h.u.settings.stale = true
 			h.win.Invalidate()
 		}
+		return h.updateReady()
+	case reqAutoUpdate:
+		h.autoUpdate()
 	case reqRestart:
 		return h.restart()
 	}
 	return false
+}
+
+// route takes a notification's activation to its account. A background
+// account's (or a closed one's) opens first, and its Reply or Mark as
+// read waits until it's online.
+func (h *host) route(a notify.Activation) {
+	dir, chat, ok := splitNoteID(a.ID)
+	a.ID = chat
+	if l := h.o.Accounts; ok && l != nil && dir != l.Active {
+		if acct := l.Find(dir); acct == nil || !acct.Linked() {
+			return // gone since
+		}
+		h.switchAccount(dir)
+		if l.Active != dir {
+			return // it didn't open
+		}
+		if a.Action != notify.Open && h.conn.State != model.StateOnline {
+			h.later = append(h.later, a)
+			return
+		}
+	}
+	h.activate(a)
+}
+
+// actLater acts on the notification actions that waited for the open
+// account to come online.
+func (h *host) actLater() {
+	later := h.later
+	h.later = nil
+	for _, a := range later {
+		h.activate(a)
+	}
+}
+
+// activate acts on a notification of the open account.
+func (h *host) activate(a notify.Activation) {
+	switch a.Action {
+	case notify.Reply:
+		if txt := strings.TrimSpace(a.Text); txt != "" {
+			if m := h.b.Send(a.ID, model.Draft{Text: txt}); m != nil && h.u != nil {
+				h.u.upsertMessage(m)
+			}
+			h.markRead(a.ID)
+			return
+		}
+		fallthrough // Reply with nothing typed opens the chat
+	case notify.Open:
+		h.openChat = a.ID
+		h.show()
+	case notify.MarkRead:
+		h.markRead(a.ID)
+	}
 }
 
 // markRead marks a chat read from a notification.
@@ -342,6 +490,10 @@ func (h *host) markRead(id string) {
 // openChat in it.
 func (h *host) show() {
 	if h.win == nil {
+		if h.openWin != nil {
+			h.openWin()
+			return
+		}
 		h.openWindow()
 		return
 	}
@@ -386,6 +538,7 @@ func (h *host) openWindow() {
 	// memtrim). Every frame pushes the trim back. Leaving the window trims
 	// sooner, even while something on screen still animates.
 	h.idle = time.AfterFunc(idleTrim, memtrim.Trim)
+	resetTimer(h.idle, perf.trimAfter)
 	h.away = time.AfterFunc(awayTrim, memtrim.Trim)
 	h.away.Stop()
 }
@@ -433,9 +586,10 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 				u.stopOutgoingTyping()
 			}
 			if f {
+				u.applyTheme()
 				h.away.Stop()
 			} else {
-				h.away.Reset(awayTrim)
+				resetTimer(h.away, awayAfter())
 			}
 		}
 		switch e.Config.Mode {
@@ -453,7 +607,7 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 		gtx.Now = h.clock.next(gtx.Now)
 		u.Layout(gtx)
 		e.Frame(gtx.Ops)
-		h.idle.Reset(idleTrim)
+		resetTimer(h.idle, perf.trimAfter)
 	default:
 		if hwnd := windowHandle(e); hwnd != 0 && hwnd != h.hwnd {
 			h.hwnd = hwnd

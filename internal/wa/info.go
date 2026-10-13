@@ -41,6 +41,12 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 			info.Phone = b.lookup(ctx, jid).phone
 		}
 	}
+	if !info.IsGroup {
+		// A contact's timer is the chat's, which messages keep up to date.
+		if secs, ok := b.store.timer(ctx, chatID); ok {
+			info.Disappearing = secs
+		}
+	}
 	return info
 }
 
@@ -119,6 +125,7 @@ func (b *Backend) fetchInfo(jid types.JID) {
 		if raw := b.store.meta(ctx, "info:"+jid.String()); raw != "" && json.Unmarshal([]byte(raw), &old) == nil {
 			info.LimitSharing, info.LimitSharingSet = old.LimitSharing, old.LimitSharingSet
 		}
+		b.setTimer(ctx, jid.String(), groupTimer(g.GroupEphemeral))
 		_ = b.store.setMembers(ctx, g)
 		b.subMu.Lock()
 		b.subtitles[jid.String()] = b.groupSubtitle(ctx, g.Participants)
@@ -205,10 +212,11 @@ func (b *Backend) fillContactInfo(ctx context.Context, info *model.ChatInfo, jid
 			info.Business.Name = business
 		}
 	}
-	if list, err := cli.GetBlocklist(ctx); err == nil {
+	if list, err := cli.GetBlocklist(ctx, ""); err == nil {
 		info.Blocked = false // only once the list is in
-		for _, j := range list.JIDs {
-			if j.User == jid.User || (!pn.IsEmpty() && j.User == pn.User) {
+		for _, it := range list.Items {
+			if it.LID.User == jid.User || (!it.PN.IsEmpty() && it.PN.User == jid.User) ||
+				(!pn.IsEmpty() && (it.LID.User == pn.User || it.PN.User == pn.User)) {
 				info.Blocked = true
 			}
 		}
