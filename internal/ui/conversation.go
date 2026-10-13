@@ -474,6 +474,9 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		r := rows[i]
 		in := convInset(rows, i, msgRows)
 		in.Left, in.Right = dp(gtx, margin), dp(gtx, margin)
+		if r.kind == rowUnread {
+			in.Left, in.Right = 0, 0 // its band goes across the whole conversation
+		}
 		// A selected message's band reaches halfway into the space on
 		// either side, so the bands of neighbours that are both selected
 		// meet without a gap or an overlap.
@@ -491,7 +494,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 				case r.kind == rowEncryption:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
 				case r.kind == rowUnread:
-					return layout.N.Layout(gtx, func(gtx C) D { return u.unreadChip(gtx, u.conv.unread.n) })
+					return u.unreadChip(gtx, u.conv.unread.n)
 				case r.kind == rowSystem:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.layoutSystem(gtx, c, r.msg, maxBubble) })
 				case r.kind == rowTyping:
@@ -664,7 +667,9 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	unhide()
 	if !sel {
 		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-		hovered := u.hoverArea(gtx, m.ID, bubble.size)
+		// Round buttons beside the bubble (sidebuttons.go); announcements
+		// have their Forward instead.
+		hovered, side := u.sideHover(gtx, c, m, bubble.size, x, w, margin, !ann)
 		// A double click beside the bubble replies too, as in WhatsApp; a
 		// right click only on it opens its menu.
 		right, at, double := u.pressArea(gtx, m.ID, image.Rect(-margin-x, 0, w+margin-x, h))
@@ -702,12 +707,13 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		}
 		if ann && m.Kind != model.KindDeleted && m.Kind != model.KindUnsupported && m.Kind != model.KindWaiting && m.Kind != model.KindSticker {
 			// Announcements offer a forward button beside them, when there's room.
-			if bx := bubble.size.X + gtx.Dp(6); x+bx+gtx.Dp(34) <= w+margin {
+			if bx := bubble.size.X + gtx.Dp(sideBtnGap); x+bx+gtx.Dp(sideBtn) <= w+margin {
 				ft := op.Offset(image.Pt(bx, 0)).Push(gtx.Ops)
-				u.annForwardButton(gtx, m, cardH)
+				u.forwardButton(gtx, m, cardH)
 				ft.Pop()
 			}
 		}
+		u.layoutSideButtons(gtx, m, side, bubble.size, hovered)
 		t.Pop()
 	}
 	if sel {
@@ -1161,11 +1167,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	var fwd part
 	if m.Forwarded && m.Kind != model.KindDeleted {
 		fwd = record(cgtx, func(gtx C) D {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(iconW(icForward, 16, secondary)),
-				layout.Rigid(layout.Spacer{Width: 4}.Layout),
-				layout.Rigid(u.label(13, "Forwarded", secondary, labelOpts{italic: true, maxLines: 1}).Layout),
-			)
+			return u.forwardedLabel(gtx, m, secondary)
 		})
 		contentW = max(contentW, fwd.size.X+2*textInset)
 	}
@@ -1451,6 +1453,20 @@ func (u *UI) paintBubble(gtx C, w, h int, bg color.NRGBA, out, tail bool) {
 	}
 	path.Close()
 	paint.FillShape(gtx.Ops, bg, clip.Outline{Path: path.End()}.Op())
+}
+
+// forwardedLabel draws "Forwarded" above a forwarded message's content,
+// or "Forwarded many times" with a double arrow, like WhatsApp.
+func (u *UI) forwardedLabel(gtx C, m *model.Message, secondary color.NRGBA) D {
+	ic, txt := icForwardOne, "Forwarded"
+	if m.ForwardedMany {
+		ic, txt = icForward, "Forwarded many times"
+	}
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(iconW(ic, 16, secondary)),
+		layout.Rigid(layout.Spacer{Width: 4}.Layout),
+		layout.Rigid(u.label(13, txt, secondary, labelOpts{italic: true, maxLines: 1}).Layout),
+	)
 }
 
 // layoutQuote draws a quoted message: a colored bar, the author and a

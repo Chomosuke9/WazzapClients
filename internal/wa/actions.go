@@ -375,7 +375,9 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	}
 	var ci *waE2E.ContextInfo
 	if forwarded {
-		ci = &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(1)}
+		// Each forward adds one to the score, which says "Forwarded many
+		// times" from manyForwards on.
+		ci = &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(raw.fwdScore + 1)}
 	}
 	if reply != nil {
 		if ci == nil {

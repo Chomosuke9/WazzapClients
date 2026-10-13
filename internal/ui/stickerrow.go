@@ -138,6 +138,19 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			}
 			u.stickerCell(gtx, c, m, parts[i], image.Pt(x, 0), sel)
 		}
+		if !sel {
+			// The line's outermost sticker gets the side buttons
+			// (sidebuttons.go); the others have a neighbour where they go.
+			i := len(line) - 1
+			if out {
+				i = 0
+			}
+			x := x0 + i*(cell+gap)
+			st := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+			hovered, side := u.sideHover(gtx, c, line[i], parts[i].size, x, w, margin, true)
+			u.layoutSideButtons(gtx, line[i], side, parts[i].size, hovered)
+			st.Pop()
+		}
 		lt.Pop()
 		y += lh + lineGap
 	}

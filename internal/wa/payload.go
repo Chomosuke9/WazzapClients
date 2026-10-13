@@ -44,6 +44,8 @@ func (r *rawMsg) fill(raw, edit []byte) {
 	}
 	m.Forwarded = c.ctx.GetIsForwarded()
 	m.Disappears = c.ctx.GetExpiration() > 0
+	m.ForwardedMany = forwardedMany(c.ctx)
+	r.fwdScore = c.ctx.GetForwardingScore()
 	if !c.buttons.empty() {
 		r.buttons = c.buttons
 		c.buttons.apply(m)
@@ -104,6 +106,16 @@ type rawQuote struct {
 	text   string
 	media  model.Media
 	quoted bool // the payload carries the quoted message
+}
+
+// manyForwards is the forwarding score from which WhatsApp says
+// "Forwarded many times".
+const manyForwards = 5
+
+// forwardedMany reports whether a message's context marks it forwarded
+// many times.
+func forwardedMany(ci *waE2E.ContextInfo) bool {
+	return ci.GetIsForwarded() && ci.GetForwardingScore() >= manyForwards
 }
 
 // quoteOf reads the quote in a message's context, or returns nil.

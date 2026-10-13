@@ -141,6 +141,7 @@ const (
 	ctxZoom        // the Font size choices (scale.go)
 	ctxAcctMode    // an account's background modes (chatID is its Dir)
 	ctxInfoPhoto   // a group's picture in its info panel (groupedit.go)
+	ctxReact       // a message's reaction bar alone, from its React button (sidebuttons.go)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -369,6 +370,10 @@ func (u *UI) copyText(s string) {
 func (u *UI) layoutCtxMenu(gtx C) {
 	m := &u.ctx
 	if m.kind == ctxNone {
+		return
+	}
+	if m.kind == ctxReact {
+		u.layoutReactMenu(gtx)
 		return
 	}
 	if m.isOpen() {

@@ -658,6 +658,7 @@ type rawMsg struct {
 	buttons               *buttonsInfo
 	quote                 *rawQuote // made Quote by resolve
 	hasBlob               bool      // its payload holds what downloading its media takes
+	fwdScore              uint32    // its ContextInfo.ForwardingScore; forwarding it adds one
 	// stub and stubParams are a system message's (model.KindSystem),
 	// which resolve words.
 	stub       stubType

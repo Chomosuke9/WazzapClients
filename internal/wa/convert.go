@@ -452,6 +452,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	c.extra.apply(msg)
 	c.buttons.apply(msg)
 	msg.Forwarded = c.ctx.GetIsForwarded()
+	msg.ForwardedMany = forwardedMany(c.ctx)
 	msg.Receipt = model.Sent
 	if evt.SourceWebMsg != nil && msg.FromMe {
 		msg.Receipt = webReceipt(evt.SourceWebMsg)

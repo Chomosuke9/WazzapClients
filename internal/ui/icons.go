@@ -99,6 +99,7 @@ var (
 	icOpenInNew     = icon.OpenInNew
 	icUnsupported   = icon.DisabledByDefaultFill
 	icForward       = icon.Forward
+	icForwardOne    = icon.Reply.Mirrored() // "Forwarded"; the double arrow says "many times"
 	icNext          = icon.ArrowBack.Mirrored()
 	icCheckBox      = icon.CheckBox
 	icCheckBoxEmpty = icon.CheckBoxOutlineBlank
@@ -106,6 +107,7 @@ var (
 	icTrending      = icon.TrendingUp
 	icPinFill       = icon.KeepFill
 	icAddReaction   = icon.AddReaction
+	icReact         = icon.Mood // a hovered message's React button
 	icDownload      = icon.Download
 	icKeep          = icon.Bookmark     // Keep in chat
 	icKept          = icon.BookmarkFill // a kept message's meta

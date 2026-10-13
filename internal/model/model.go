@@ -147,6 +147,9 @@ type Message struct {
 	// timer, and Kept on one someone kept in the chat (Keep in chat).
 	Disappears, Kept bool
 	Forwarded        bool
+	// ForwardedMany marks a message forwarded five times or more
+	// ("Forwarded many times").
+	ForwardedMany bool
 	// Footer is the small print under a business message's text, and
 	// Buttons its buttons.
 	Footer  string

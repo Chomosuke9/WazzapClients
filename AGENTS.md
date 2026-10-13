@@ -365,7 +365,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
-                   opens at in unread.go; the ⌄ button that goes back to the newest message
+                   opens at in unread.go; the round React and Forward buttons beside a
+                   hovered message (React opens the reaction bar alone) in sidebuttons.go;
+                   the ⌄ button that goes back to the newest message
                    (with the unread count) and the day pinned at the top while a chat
                    scrolls in scrolldown.go; system messages ("Alice added Bob", missed
                    calls: grey chips down the middle) in system.go; group invite links (the dialog that joins

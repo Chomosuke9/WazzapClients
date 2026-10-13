@@ -347,6 +347,8 @@ func demo(now time.Time) []*demoChat {
 			grp("Mom", day(0, 9, 12), "Okay sweetie, drive safe"),
 			{Sender: "Dad", Forwarded: true, Time: day(0, 9, 20),
 				Text: "Reminder: family photo on Saturday at 4pm, wear something bright 📸"},
+			{Sender: "Mom", Forwarded: true, ForwardedMany: true, Time: day(0, 9, 22),
+				Text: "Good morning! Have a blessed day 🌸🙏"},
 			// Answers in demoVotes.
 			{Sender: "Mom", Media: model.MediaEventInvite, Text: "Sunday lunch at home", Time: day(0, 9, 25),
 				Event: &model.EventInfo{Name: "Sunday lunch at home", Start: sunday.Add(12 * time.Hour), End: sunday.Add(15 * time.Hour),

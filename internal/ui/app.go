@@ -1460,7 +1460,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 }
 
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
-// "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "outmenu" (your last message's),
+// "mute", "lists", "msgmenu", "reactbar" (a hovered message's React button's), "stickermenu" (a received sticker's), "outmenu" (your last message's),
 // "keptmenu" (a message kept in the chat), "report" (Report's question for the last message received), "emoji", "sticker", "gifs" (the GIF tab with demo results), "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "recording" (a voice message
 // being recorded) and "recordingpaused" (paused, to play back), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
@@ -1547,6 +1547,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "msgmenu":
 		if lastIn != nil {
 			u.openMessageMenu(lastIn)
+		}
+	case "reactbar":
+		if lastIn != nil {
+			u.openReactBar(lastIn)
 		}
 	case "stickermenu":
 		if sticker != nil {
