@@ -356,8 +356,11 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
                    line as fit, in stickerrow.go; a text of one to three emojis
                    alone, drawn big without a bubble like a sticker, in jumbo.go; the Emoji style
-                   (Settings > Chats: 2D, built in; 2D animated outside message text; 2D animated;
-                   3D: the others downloaded one emoji at a time as they show) in emojistyle.go; the New chat panel and the
+                   (Settings > Chats: 2D, built in; 2D animated, with an Animated emojis page of
+                   switches for where they play: message text, big emojis, quotes, reactions, the
+                   chat list, the picker and everywhere else, the parts that draw them marking
+                   themselves with `u.emojiIn`; 3D: the others downloaded one emoji at a time as
+                   they show) in emojistyle.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
                    settingsdetail.go; the window's zoom (Settings > General > Font size,

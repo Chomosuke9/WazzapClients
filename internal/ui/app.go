@@ -94,7 +94,8 @@ type UI struct {
 	// u.textEmoji and u.labelEmoji, bound once: a method value made for
 	// every label would be garbage every frame.
 	textHook, labelHook bitmapHook
-	players             players // animated stickers on screen
+	emojiPlace          emojiPlace // what the hooks are drawing (u.emojiIn)
+	players             players    // animated stickers on screen
 	bars                map[*widget.List]*scrollbar
 
 	page         page

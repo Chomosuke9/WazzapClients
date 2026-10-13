@@ -689,6 +689,7 @@ var quickReactions = [...]string{"👍", "❤️", "😂", "😮", "😢", "🙏
 // layoutReactionBar draws the emoji pill above a message menu, centered on
 // top (its bottom-center point).
 func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
+	defer u.emojiIn(emojiReactions)()
 	p := u.pal
 	// The bar keeps drawing after a click: the menu fades out with it.
 	for i, e := range quickReactions {

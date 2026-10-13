@@ -24,6 +24,7 @@ import (
 
 	"github.com/chomosuke9/wazzapclients/internal/emojiset"
 	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/sticker"
 )
 
@@ -74,12 +75,13 @@ func useEmojiStore(t *testing.T, style emojiStyleKind, files map[string][]byte) 
 		asked <- url
 		return nil, http.StatusNotFound, nil
 	}
-	old, oldStyle := emojiStore, emojiStyle()
+	old, oldStyle, oldStill := emojiStore, emojiStyle(), emojiStill
 	emojiStore = s
 	emojiStyleNow.Store(int32(style))
 	t.Cleanup(func() {
 		emojiStore = old
 		emojiStyleNow.Store(int32(oldStyle))
+		emojiStill = oldStill
 	})
 	return dir, asked
 }
@@ -220,11 +222,11 @@ func animatedWebP(t *testing.T, colors ...color.NRGBA) []byte {
 // the size it shows at, and goes when it hasn't shown for a while.
 func TestEmojiAnimation(t *testing.T) {
 	red, blue := color.NRGBA{R: 255, A: 255}, color.NRGBA{B: 255, A: 255}
-	_, asked := useEmojiStore(t, emojiAnimOutside, map[string][]byte{
+	_, asked := useEmojiStore(t, emojiAnimated, map[string][]byte{
 		"animated/1f600.webp": animatedWebP(t, red, blue),
 	})
-	if !animateOthers() || animateEmojis() {
-		t.Fatal("the style animates the wrong emojis")
+	if !animateIn(emojiText) || !animateIn(emojiOther) {
+		t.Fatal("2D animated doesn't play everywhere")
 	}
 	u := New(mock.New())
 	gtx := layout.Context{Ops: new(op.Ops), Now: testNow()}
@@ -319,20 +321,31 @@ func TestTextEmojiStill(t *testing.T) {
 	}
 }
 
-// TestLabelEmojiAnimation: outside messages, as in a label, emojis play
-// in both animated styles; in message text only in "2D animated".
-func TestLabelEmojiAnimation(t *testing.T) {
+// TestEmojiPlaces: 2D animated plays emojis only where the Animated
+// emojis page leaves them on. A label counts as its place's while it
+// draws (u.emojiIn), so a quote's stays still with quotes off.
+func TestEmojiPlaces(t *testing.T) {
 	useEmojiStore(t, emoji2D, map[string][]byte{
 		"animated/1f600.webp": animatedWebP(t, color.NRGBA{R: 255, A: 255}, color.NRGBA{B: 255, A: 255}),
 	})
 	u := New(mock.New())
-	u.setEmojiStyle(emojiAnimOutside)
-	if !animateOthers() || animateEmojis() {
-		t.Fatal("animated outside messages plays message text, or nothing else")
+	u.setEmojiStyle(emojiAnimated)
+	u.setEmojiStill(emojiText, false)
+	u.setEmojiStill(emojiQuotes, false)
+	if animateIn(emojiText) || animateIn(emojiQuotes) || !animateIn(emojiOther) || !animateIn(emojiList) {
+		t.Fatal("the switches don't say where emojis play")
+	}
+	if got := u.backend.Pref(prefEmojiStill); got != "text,quotes" {
+		t.Errorf("kept %q", got)
 	}
 	gtx := layout.Context{Ops: new(op.Ops), Now: testNow(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 		Constraints: layout.Constraints{Max: image.Pt(400, 100)}}
 	u.refreshEmoji(gtx)
+	asked := func() int {
+		u.emojiAnims.mu.Lock()
+		defer u.emojiAnims.mu.Unlock()
+		return len(u.emojiAnims.m)
+	}
 	played := func() bool {
 		u.emojiAnims.mu.Lock()
 		defer u.emojiAnims.mu.Unlock()
@@ -343,6 +356,16 @@ func TestLabelEmojiAnimation(t *testing.T) {
 		}
 		return false
 	}
+	for range 3 {
+		gtx.Ops.Reset()
+		u.layoutQuote(gtx, &model.Quote{Sender: "Ana", Text: "Hi 😀"}, u.pal.QuoteIn, u.pal.TextSecondary, 300, nil)
+	}
+	if n := asked(); n != 0 {
+		t.Fatalf("a quote's emoji played (%d animations) with quotes off", n)
+	}
+	if u.emojiPlace != emojiAnywhere {
+		t.Fatal("emojiIn didn't put the place back")
+	}
 	for end := time.Now().Add(10 * time.Second); !played(); time.Sleep(5 * time.Millisecond) {
 		gtx.Ops.Reset()
 		u.label(16, "Hi 😀", u.pal.Text).Layout(gtx)
@@ -350,9 +373,23 @@ func TestLabelEmojiAnimation(t *testing.T) {
 			t.Fatal("the label's emoji never played")
 		}
 	}
-	u.setEmojiStyle(emojiAnimated)
-	if !animateOthers() || !animateEmojis() {
-		t.Error("2D animated doesn't play everything")
+}
+
+// TestEmojiOutsideMessages: the old "2D, animated outside messages" style
+// becomes 2D animated with message text, quotes and the picker still.
+func TestEmojiOutsideMessages(t *testing.T) {
+	useEmojiStore(t, emoji2D, nil)
+	b := mock.New()
+	b.SetPref(prefEmojiStyle, "2d_anim_alone")
+	New(b)
+	if emojiStyle() != emojiAnimated || b.Pref(prefEmojiStyle) != "2d_anim" {
+		t.Fatalf("style %d, pref %q", emojiStyle(), b.Pref(prefEmojiStyle))
+	}
+	for _, p := range emojiPlaces {
+		want := p.place != emojiText && p.place != emojiQuotes && p.place != emojiPanel
+		if animateIn(p.place) != want {
+			t.Errorf("%s plays: %v, want %v", p.title, !want, want)
+		}
 	}
 }
 
@@ -381,17 +418,44 @@ func TestEmojiStyleSettings(t *testing.T) {
 	for _, r := range page[0].rows {
 		titles = append(titles, r.title)
 	}
-	if want := []string{"2D", "2D, animated outside messages", "2D animated", "3D"}; !slices.Equal(titles, want) {
+	if want := []string{"2D", "2D animated", "3D"}; !slices.Equal(titles, want) {
 		t.Fatalf("styles %q, want %q", titles, want)
 	}
 	if !page[0].rows[0].on {
 		t.Error("2D isn't the default")
 	}
-	page[0].rows[3].run()
+	page[0].rows[1].run()
+	u.settings.stale = true
+	page = u.settingsRows()
+	places := page[0].rows[len(page[0].rows)-1]
+	if places.title != "Animated emojis" || places.sub != "Everywhere" {
+		t.Fatalf("2D animated shows %q (%q) last", places.title, places.sub)
+	}
+	places.run()
+	if u.settingsTitle() != "Animated emojis" {
+		t.Fatalf("opened %q", u.settingsTitle())
+	}
+	sw := u.settingsRows()[0].rows
+	if len(sw) != len(emojiPlaces) || !sw[0].on {
+		t.Fatalf("%d switches, the first on: %v", len(sw), sw[0].on)
+	}
+	sw[0].run()
+	if animateIn(emojiText) || u.backend.Pref(prefEmojiStill) != "text" {
+		t.Error("turning off Message text didn't")
+	}
+	u.settingsBack()
+	if u.settingsTitle() != "Emoji style" {
+		t.Fatalf("back went to %q", u.settingsTitle())
+	}
+	page = u.settingsRows()
+	if sub := page[0].rows[len(page[0].rows)-1].sub; sub != "In 6 of 7 places" {
+		t.Errorf("the summary says %q", sub)
+	}
+	page[0].rows[2].run()
 	if emojiStyle() != emoji3D || u.backend.Pref(prefEmojiStyle) != "3d" {
 		t.Error("choosing 3D didn't set it")
 	}
-	clearRow := page[1].rows[0]
+	clearRow := page[len(page)-1].rows[0]
 	if clearRow.run == nil {
 		t.Fatalf("the downloaded pictures aren't counted: %q", clearRow.sub)
 	}
