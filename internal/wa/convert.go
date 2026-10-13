@@ -365,6 +365,14 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 				at = time.UnixMilli(ms)
 			}
 			return p, p.setEdit(p.target, pm.GetEditedMessage(), at)
+		case waE2E.ProtocolMessage_LIMIT_SHARING:
+			ls := pm.GetLimitSharing()
+			ts := ls.GetLimitSharingSettingTimestamp()
+			if ts == 0 {
+				ts = evt.Info.Timestamp.Unix()
+			}
+			b.setLimitSharing(ctx, chat.String(), ls.GetSharingLimited(), ts)
+			return p, false
 		case waE2E.ProtocolMessage_EPHEMERAL_SETTING:
 			p.target = ""
 			p.msg, ok = timerSystem(evt, chat, pm)

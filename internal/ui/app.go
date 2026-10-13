@@ -1584,9 +1584,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		if img != nil {
 			u.openViewer(img)
 		}
-	case "forward":
+	case "forward", "forwardpick":
 		if lastIn != nil {
 			u.openForward([]*model.Message{lastIn})
+		}
+		if name == "forwardpick" && len(u.chats) > 2 {
+			// Two chats picked, and the send bar up.
+			u.dialog.picked = []string{u.chats[0].ID, u.chats[2].ID}
+			u.dialog.bar.v = 1
 		}
 	case "reply":
 		if lastIn != nil {

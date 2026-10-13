@@ -59,7 +59,7 @@ func (u *UI) convMenuItems(c *model.Chat) []menuItem {
 		add(menuItem{key: "fav", ic: icHeart, label: "Add to favourites", run: func() { b.SetFavorite(id, true) }})
 	}
 	add(menuItem{key: "list", ic: icAddToList, label: "Add to list", run: func() { u.openListsMenu(c) }})
-	add(menuItem{key: "export", ic: icDownload, label: "Export chat", run: func() { b.ExportChat(id) }})
+	add(menuItem{key: "export", ic: icDownload, label: "Export chat", run: func() { u.exportChat(id) }})
 	add(menuItem{key: "close", ic: icCancel, label: "Close chat", run: u.closeChat})
 	add(menuItem{divider: true})
 	if !c.IsGroup && !c.Self {
