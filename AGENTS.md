@@ -104,9 +104,18 @@ Gotchas already found in the pinned version (v0.10.x):
   `labelEmoji`).
 - Gio's renderer kept pointing at the pictures of its busiest frame (a truncated
   slice), so they stayed in the heap after they were gone from the screen.
-  `patches/gio.patch` clears it. Each MB of animated emoji frames costs about 2 MB
-  besides (its GPU copy, in system memory with integrated graphics, and GC headroom),
-  so `emojiAnims.endFrame` trims memory after letting go of many.
+  `patches/gio.patch` clears it. Each MB of animated emoji frames costs about 1 MB
+  besides (its GPU copy, in system memory with integrated graphics), so
+  `emojiAnims.endFrame` trims memory after letting go of many.
+- Live heap raises the GC's target: at a GC percent of 200 every MB kept in the heap
+  lets 2 MB more of garbage pile up before a collection. Animated emoji sheets
+  (64 MB at most) took the app past 600 MB that way. Big pixel buffers kept a while
+  go outside the heap (`offheap.NewRGBA`, freed by a cleanup once the picture is
+  unreachable); never keep their `Pix` without the picture. Decoding an emoji
+  makes about 1.5 MB of garbage a frame inside `x/image/webp` (90 MB an emoji),
+  so each decoded sheet is kept on disk, compressed, in `<data>/emoji/sheets`
+  (`emojiset.WriteSheet`, at most 256 MB, the sheets read longest ago going first)
+  and read from there the next time (`ReadSheet`, offheap).
 - Gio gives every `paint.ImageOp` a GPU texture of its own (mipmapped) and frees it
   after a frame without it. Don't play precomputed frames as an ImageOp each: every
   frame change made and freed a texture, thousands a second for a message of
@@ -420,8 +429,9 @@ internal/webpanim/ animated WebP (animated stickers), decoded one frame at a tim
 internal/emojiset/ downloads the emojis into <data>/emoji: Noto Color Emoji, the 2D font, once;
                    Noto's 3D emojis (googlefonts/noto-emoji, 3dpng branch) and animated ones
                    (Google Fonts) one at a time, the first time each shows. A 404 is remembered
-                   (an empty .none file)
+                   (an empty .none file). Also keeps the animations' decoded sheets (sheets.go)
 internal/mapfile/  maps a file into memory copy-on-write (the downloaded emoji font)
+internal/offheap/  pictures whose pixels live outside the Go heap (animated emoji sheets)
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
@@ -606,6 +616,9 @@ go run ./cmd/memprobe -demo    # memory benchmark (Windows); -data <copy of the 
 # the window in dp (1706x1040 is about a maximized 2560x1600 window at 150%):
 go run ./cmd/memprobe -data <copy> -scroll 1200 -ballast 60 -cpuprofile cpu.pprof
 go run ./cmd/memprobe -demo -scroll 2000 -size 1706x1040 -chat
+# Animated emojis from the downloaded ones: -emoji scrolls the emoji picker (or, with
+# -chat, the chat -open names); -pref sets app preferences as Settings would:
+go run ./cmd/memprobe -demo -emoji "$APPDATA/WazzapClients/emoji" -scroll 1500 -size 1706x1040     -pref emoji_anims=64 -pref gc_percent=200 -pref zoom=200
 go vet ./... && go build ./...
 
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).

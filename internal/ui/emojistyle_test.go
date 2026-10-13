@@ -79,6 +79,7 @@ func useEmojiStore(t *testing.T, style emojiStyleKind, files map[string][]byte) 
 	emojiStore = s
 	emojiStyleNow.Store(int32(style))
 	t.Cleanup(func() {
+		sheetWrites.Wait() // before dir goes
 		emojiStore = old
 		emojiStyleNow.Store(int32(oldStyle))
 		emojiStill = oldStill
@@ -557,5 +558,87 @@ func TestEmojiAnimTrim(t *testing.T) {
 	drop("d", emojiTrimAfter)
 	if trimmed() {
 		t.Error("trimmed though Performance says never")
+	}
+}
+
+// TestEmojiAnimSheetCache: a decoded animation is kept on disk, and the
+// next window to show that emoji at that size reads it there instead of
+// decoding it, without waiting for a decoder.
+func TestEmojiAnimSheetCache(t *testing.T) {
+	red, blue, green := color.NRGBA{R: 255, A: 255}, color.NRGBA{B: 255, A: 255}, color.NRGBA{G: 255, A: 255}
+	dir, _ := useEmojiStore(t, emojiAnimated, map[string][]byte{
+		"animated/1f600.webp": animatedWebP(t, red, blue),
+	})
+	const side = 30
+	k := emojiAnimKey{"1f600", side}
+	gtx := layout.Context{Ops: new(op.Ops), Now: testNow()}
+	decoded := func(u *UI) *emojiAnim {
+		t.Helper()
+		for end := time.Now().Add(10 * time.Second); ; {
+			u.emojiAnims.mu.Lock()
+			a := u.emojiAnims.m[k]
+			done := a != nil && (a.sheet != nil || a.failed)
+			u.emojiAnims.mu.Unlock()
+			if done {
+				return a
+			}
+			if time.Now().After(end) {
+				t.Fatal("never decoded")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	u := New(mock.New())
+	u.drawEmojiAnim(gtx, "1f600", side, image.Pt(0, 0))
+	decoded(u)
+	for end := time.Now().Add(10 * time.Second); !emojiStore.HasSheet("1f600", side); {
+		if time.Now().After(end) {
+			t.Fatal("the decoded sheet wasn't kept on disk")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Were it decoded again, it would be green.
+	if err := os.WriteFile(filepath.Join(dir, "animated", "1f600.webp"), animatedWebP(t, green, green), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { perf = defaultPerf })
+	u = New(mock.New())
+	perf.emojiDec = 1
+	u.emojiAnims.decoding = 1 // every decoder busy
+	u.drawEmojiAnim(gtx, "1f600", side, image.Pt(0, 0))
+	a := decoded(u)
+	if a.failed || len(a.delays) != 2 {
+		t.Fatalf("read %d frames from disk (failed: %v)", len(a.delays), a.failed)
+	}
+	at := func(i int) color.RGBA { return a.sheet.RGBAAt(a.cell(i, side).X+side/2, a.cell(i, side).Y+side/2) }
+	if c0, c1 := at(0), at(1); c0.R < 250 || c1.B < 250 {
+		t.Errorf("frames are %v and %v, want red and blue from the sheet on disk", c0, c1)
+	}
+	if u.emojiAnims.decoding != 1 {
+		t.Errorf("%d decoding, want the busy one alone", u.emojiAnims.decoding)
+	}
+}
+
+// TestEmojiAnimRescale: a zoom lets go of the sheets at once, not after
+// emojiAnimKeep, so the new sizes have the whole budget.
+func TestEmojiAnimRescale(t *testing.T) {
+	var as emojiAnims
+	as.setScale(1)
+	as.m = map[emojiAnimKey]*emojiAnim{
+		{"a", 30}: {sheet: image.NewRGBA(image.Rect(0, 0, 1, 1)), cost: 100},
+		{"b", 30}: {cost: 50}, // still decoding
+	}
+	as.held = 150
+	as.setScale(1)
+	if len(as.m) != 2 || as.held != 150 {
+		t.Fatal("let go of sheets with the scale unchanged")
+	}
+	as.setScale(1.25)
+	if as.m[emojiAnimKey{"a", 30}] != nil || as.held != 50 || as.dropped != 100 {
+		t.Errorf("after a zoom: %d sheets, %d bytes held, %d dropped", len(as.m), as.held, as.dropped)
+	}
+	if as.m[emojiAnimKey{"b", 30}] == nil {
+		t.Error("let go of one still decoding")
 	}
 }

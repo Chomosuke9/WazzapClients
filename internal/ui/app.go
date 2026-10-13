@@ -456,6 +456,30 @@ func (u *UI) ScrollChat(dy int) bool {
 	return l.Position.BeforeEnd
 }
 
+// ScrollPicker opens the emoji picker if it isn't open, scrolls it by dy px
+// and reports whether it can scroll further that way (used by
+// cmd/memprobe).
+func (u *UI) ScrollPicker(dy int) bool {
+	if !u.picker.open {
+		u.picker.composerTab = tabEmoji
+		u.openPicker(pickComposer, nil)
+	}
+	l := &u.picker.list.List
+	l.Position.Offset += dy
+	if dy < 0 {
+		return l.Position.First > 0 || l.Position.Offset > 0
+	}
+	return l.Position.BeforeEnd
+}
+
+// AnimatedEmojiBytes returns the bytes of animated emoji frames held
+// (used by cmd/memprobe).
+func (u *UI) AnimatedEmojiBytes() int {
+	u.emojiAnims.mu.Lock()
+	defer u.emojiAnims.mu.Unlock()
+	return u.emojiAnims.held
+}
+
 // SetMe sets the user's own name and JID (used for screenshots).
 func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 
@@ -680,6 +704,7 @@ func (u *UI) Layout(gtx C) D {
 func (u *UI) layoutWindow(gtx C) D {
 	trimShapes()
 	u.refreshEmoji(gtx)
+	u.emojiAnims.setScale(gtx.Metric.PxPerSp)
 	u.applyEvents()
 	if a := u.deco.Update(gtx); a != 0 && u.window != nil {
 		u.window.Perform(a)

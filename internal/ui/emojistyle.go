@@ -24,6 +24,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/emojiset"
 	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/offheap"
 	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
@@ -536,6 +537,16 @@ func (u *UI) textEmojiKey(name string, side int) string {
 // made a texture, and freed one, every time a frame changed: thousands a
 // second for a message full of emojis, which grew the graphics driver's
 // memory by gigabytes. The sheet is uploaded once and stays while it shows.
+//
+// Sheets are outside the Go heap (offheap): in it, the GC's target let the
+// heap grow by as much again (twice as much at a target of 200) before it
+// collected, and with 64 MB of sheets the app went past 600 MB. They are
+// freed by the first GC after the UI and Gio let go of them.
+//
+// A decoded sheet is also kept on disk (emojiset's sheets), so an emoji
+// seen before at that size reads it there in a millisecond or so instead of
+// decoding about 50 frames again (a quarter of a second of a core and about
+// 90 MB of garbage); a read doesn't wait for a decoder.
 const (
 	emojiAnimKeep = 3 * time.Second
 	emojiSheetMax = 4096 // pixels across or down a sheet
@@ -575,6 +586,31 @@ type emojiAnims struct {
 
 	dropped  int       // bytes of sheets let go since the last trim
 	lastTrim time.Time // see endFrame
+	scale    float32   // the text scale (PxPerSp) the sheets were drawn at
+}
+
+// setScale lets go of every decoded sheet when the window's text scale
+// changed (the zoom, or Windows' display scale): emojis are drawn at other
+// sizes now, and the old sheets would hold the budget for emojiAnimKeep.
+// Those still decoding go as usual, which keeps held right.
+func (as *emojiAnims) setScale(s float32) {
+	if s == as.scale {
+		return
+	}
+	first := as.scale == 0
+	as.scale = s
+	if first {
+		return
+	}
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for k, a := range as.m {
+		if a.sheet != nil {
+			as.held -= a.cost
+			as.dropped += a.cost
+			delete(as.m, k)
+		}
+	}
 }
 
 // emojiTrimAfter is how many bytes of sheets endFrame lets go before it
@@ -606,7 +642,10 @@ func (u *UI) drawEmojiAnim(gtx C, name string, side int, at image.Point) bool {
 	a := as.m[k]
 	if a == nil {
 		cost := emojiAnimCost(side)
-		if as.decoding >= perf.emojiDec || as.held+cost > perf.emojiAnims {
+		// A sheet on disk reads in a millisecond or so: it doesn't wait
+		// for a decoder.
+		cached := emojiStore.HasSheet(name, side)
+		if (!cached && as.decoding >= perf.emojiDec) || as.held+cost > perf.emojiAnims {
 			as.mu.Unlock()
 			return false
 		}
@@ -617,8 +656,11 @@ func (u *UI) drawEmojiAnim(gtx C, name string, side int, at image.Point) bool {
 		a = &emojiAnim{cost: cost}
 		as.m[k] = a
 		as.held += cost
-		as.decoding++
-		go as.decode(k, a, u.emojiImgs.invalidate)
+		if !cached {
+			as.decoding++
+		}
+		sheetWrites.Add(1)
+		go as.decode(emojiStore, k, a, cached, u.emojiImgs.invalidate)
 	}
 	a.used = gtx.Now
 	sheet, delays, total := a.sheet, a.delays, a.total
@@ -671,34 +713,32 @@ func sheetGrid(n, side int) (cols, rows int) {
 	return cols, rows
 }
 
-func (as *emojiAnims) decode(k emojiAnimKey, a *emojiAnim, invalidate func()) {
-	var sheet *image.RGBA
-	var cols int
-	var delays []time.Duration
+// sheetWrites counts the decodes that may still write a sheet to disk.
+// Tests wait for them before their folder goes.
+var sheetWrites sync.WaitGroup
+
+// decode reads a's sheet from st when it's cached there (emojiset's
+// sheets), and otherwise decodes it and keeps it there for next time.
+func (as *emojiAnims) decode(st *emojiset.Store, k emojiAnimKey, a *emojiAnim, cached bool, invalidate func()) {
+	defer sheetWrites.Done()
+	var sh emojiset.Sheet
+	ok := cached
+	if cached {
+		sh, ok = st.ReadSheet(k.name, k.side)
+	}
+	if !ok {
+		// A damaged sheet decodes without waiting for a decoder.
+		sh = decodeSheet(st, k)
+	}
+	sheet, cols, delays := sh.Image, sh.Cols, sh.Delays
 	var total time.Duration
-	if an, err := webpanim.Parse(emojiStore.Read(emojiset.Animated, k.name)); err == nil {
-		var rows int
-		if cols, rows = sheetGrid(len(an.Frames), k.side); cols > 0 {
-			sheet = image.NewRGBA(image.Rect(0, 0, cols*k.side, rows*k.side))
-		}
-		for i := 0; sheet != nil && i < len(an.Frames); i++ {
-			canvas, d, err := an.Next()
-			if err != nil {
-				sheet = nil
-				break
-			}
-			at := image.Pt(i%cols*k.side, i/cols*k.side)
-			f := photo.Shrink(canvas, k.side, k.side)
-			for y := range k.side {
-				copy(sheet.Pix[sheet.PixOffset(at.X, at.Y+y):][:4*k.side], f.Pix[y*f.Stride:])
-			}
-			d = max(d, 20*time.Millisecond)
-			delays = append(delays, d)
-			total += d
-		}
+	for _, d := range delays {
+		total += d
 	}
 	as.mu.Lock()
-	as.decoding--
+	if !cached {
+		as.decoding--
+	}
 	if sheet == nil {
 		a.failed = true // stays, so it isn't decoded again
 		as.held -= a.cost
@@ -713,6 +753,37 @@ func (as *emojiAnims) decode(k emojiAnimKey, a *emojiAnim, invalidate func()) {
 	if invalidate != nil {
 		invalidate()
 	}
+	if sheet != nil && !ok {
+		st.WriteSheet(k.name, sh)
+	}
+}
+
+// decodeSheet decodes the animation of k.name into a sheet of its frames
+// k.side pixels square, or returns one without an Image.
+func decodeSheet(st *emojiset.Store, k emojiAnimKey) emojiset.Sheet {
+	an, err := webpanim.Parse(st.Read(emojiset.Animated, k.name))
+	if err != nil {
+		return emojiset.Sheet{}
+	}
+	cols, rows := sheetGrid(len(an.Frames), k.side)
+	if cols == 0 {
+		return emojiset.Sheet{}
+	}
+	sh := emojiset.Sheet{Side: k.side, Cols: cols, Delays: make([]time.Duration, 0, len(an.Frames)),
+		Image: offheap.NewRGBA(image.Rect(0, 0, cols*k.side, rows*k.side))}
+	for i := range an.Frames {
+		canvas, d, err := an.Next()
+		if err != nil {
+			return emojiset.Sheet{}
+		}
+		at := image.Pt(i%cols*k.side, i/cols*k.side)
+		f := photo.Shrink(canvas, k.side, k.side)
+		for y := range k.side {
+			copy(sh.Image.Pix[sh.Image.PixOffset(at.X, at.Y+y):][:4*k.side], f.Pix[y*f.Stride:])
+		}
+		sh.Delays = append(sh.Delays, max(d, 20*time.Millisecond))
+	}
+	return sh
 }
 
 // endFrame drops the animations that haven't shown for a while and asks
@@ -730,8 +801,8 @@ func (as *emojiAnims) endFrame(gtx C) {
 	// The window trims memory only after a while without frames, and
 	// animated emojis on screen keep frames coming: after the picker or
 	// a chat full of them closed, the process went on holding what their
-	// sheets took (about three times the sheets: their GPU copies and GC
-	// headroom) until it next had a quiet moment.
+	// sheets took (and their GPU copies) until it next had a quiet moment.
+	// The trim's GC is also what frees sheets (offheap) nothing holds.
 	if as.dropped >= emojiTrimAfter && perf.trimAfter != 0 && gtx.Now.Sub(as.lastTrim) >= emojiTrimEvery {
 		as.dropped, as.lastTrim = 0, gtx.Now
 		time.AfterFunc(trimDelay, trimMemory)

@@ -241,12 +241,12 @@ var perfKnobs = []*perfKnob{
 		about: "Frames of animated emojis kept in memory, for the 2D animated emoji styles. An emoji in a " +
 			"message takes about 150 to 350 KB, a big one sent alone about 1 to 2.5 MB. Emojis that don't fit " +
 			"show a still picture; those off screen for a few seconds let go of theirs. The app uses about " +
-			"three times this in all while they show: a copy for the graphics card, and room for collecting garbage.",
+			"twice this in all while they show: the frames, and a copy for the graphics card.",
 		opts: []perfOpt{{"", "16 MB (default)"}, {"4", "4 MB"}, {"8", "8 MB"}, {"32", "32 MB"}, {"64", "64 MB"}}},
 	{key: prefEmojiDec, title: "Emoji decoding", ic: icSpeed,
 		about: "How many animated emojis are decoded at once, each on a core of its own. Decoding one takes " +
-			"about a quarter of a second of a core, once each time it shows after a while away. More " +
-			"start playing sooner; fewer leave more of the CPU to everything else.",
+			"about a quarter of a second of a core, the first time it shows at a size; after that it's " +
+			"read from disk. More start playing sooner; fewer leave more of the CPU to everything else.",
 		opts: []perfOpt{{"", "2 at a time (default)"}, {"1", "1 at a time"}, {"4", "4 at a time"}}},
 	{key: prefEmojiFPS, title: "Emoji frame rate", ic: icPlayFill,
 		about: "How often animated emojis move on. While any shows, the window is drawn again this many " +

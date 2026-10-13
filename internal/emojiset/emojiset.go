@@ -1,8 +1,8 @@
 // Package emojiset downloads the emojis, which aren't bundled with the
 // app: Noto Color Emoji, the 2D font (10.7 MB), once, and Noto's 3D and
 // animated emojis one picture at a time, the first time each shows (the
-// 3D font alone is 148 MB). They are kept in a folder of the app's data.
-// No Gio here.
+// 3D font alone is 148 MB). They are kept in a folder of the app's data,
+// with the animations' frames as the UI shows them (sheets.go). No Gio here.
 package emojiset
 
 import (
@@ -141,6 +141,9 @@ type Store struct {
 	notify  func()
 	mem     map[key][]byte // recently read 3D pictures
 	memSize int
+
+	sheets     map[string]sheetFile // by file name; nil until loadSheets
+	sheetsSize int64
 
 	gen atomic.Uint64
 }
@@ -381,12 +384,12 @@ func (s *Store) download(k key) state {
 	return onDisk
 }
 
-// Size returns how many bytes the downloaded 3D and animated pictures take
-// on disk (not the font).
+// Size returns how many bytes the downloaded 3D and animated pictures
+// take on disk, with the animations' sheets (not the font).
 func (s *Store) Size() int64 {
 	var n int64
-	for _, k := range []Kind{ThreeD, Animated} {
-		filepath.WalkDir(filepath.Join(s.dir, k.dir()), func(_ string, d os.DirEntry, err error) error {
+	for _, d := range []string{ThreeD.dir(), Animated.dir(), sheetsDir} {
+		filepath.WalkDir(filepath.Join(s.dir, d), func(_ string, d os.DirEntry, err error) error {
 			if err == nil && !d.IsDir() {
 				if fi, err := d.Info(); err == nil {
 					n += fi.Size()
@@ -398,13 +401,14 @@ func (s *Store) Size() int64 {
 	return n
 }
 
-// Clear deletes every downloaded 3D and animated picture (not the font).
-// Those still shown download again.
+// Clear deletes every downloaded 3D and animated picture, and the
+// animations' sheets (not the font). Those still shown download again.
 func (s *Store) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, k := range []Kind{ThreeD, Animated} {
-		if err := os.RemoveAll(filepath.Join(s.dir, k.dir())); err != nil {
+	s.sheets = nil
+	for _, d := range []string{ThreeD.dir(), Animated.dir(), sheetsDir} {
+		if err := os.RemoveAll(filepath.Join(s.dir, d)); err != nil {
 			return err
 		}
 	}
