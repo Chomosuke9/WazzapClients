@@ -466,6 +466,17 @@ type Poll struct {
 	End time.Time
 }
 
+// NewEvent is an event to send.
+type NewEvent struct {
+	Name, Description string
+	// Start is when it begins; End is zero when it has no set end.
+	Start, End time.Time
+	// Place is where it is, as typed, or "".
+	Place string
+	// AllowGuests lets those invited bring others.
+	AllowGuests bool
+}
+
 // ChatList is a custom chat list ("Add to list").
 type ChatList struct {
 	ID, Name string
@@ -1152,6 +1163,8 @@ type Backend interface {
 	SendContacts(chatID string, contactIDs []string) *Message
 	// SendPoll sends a poll.
 	SendPoll(chatID string, p Poll) *Message
+	// SendEvent sends an event. Answers to it come in, but can't be sent.
+	SendEvent(chatID string, e NewEvent) *Message
 	// VotePoll votes for options of a poll (indexes into Poll.Options),
 	// in place of your earlier vote; none takes it back. A MessageEvent
 	// with the new count follows.

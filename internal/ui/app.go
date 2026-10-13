@@ -212,6 +212,7 @@ type UI struct {
 		video, search, menu widget.Clickable
 		community           widget.Clickable // the announcements' group picker
 		attach, emoji, send widget.Clickable
+		attachTurn          tween // the attach "+" turning into an "x" while its menu is open
 		// editorElsewhere is set while the send view shows: the
 		// composer's editor is its caption field.
 		editorElsewhere bool
@@ -1369,7 +1370,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "stickermenu" (a received sticker's), "emoji", "sticker", "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer), "delete", "select", "edit" (your last message in the composer to edit), "edits" (an edited message's Edit history), "msginfo" (your last message's Message info), "votes" (the
-// first poll's or event's votes), "attach", "poll", "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// first poll's or event's votes), "skintone" (the picker's tones under its tone button), "emojitones" (👍's tones, a right click at -at in the panel), "attach", "poll", "newevent" (the attach menu's Create event), "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
 // Font size "zoommenu"; or the New chat panel:
@@ -1454,6 +1455,13 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	case "emoji":
 		u.openPicker(pickComposer, nil)
+	case "skintone":
+		u.openPicker(pickComposer, nil)
+		u.picker.tone = 3
+		u.openToneMenu("", image.Point{})
+	case "emojitones":
+		u.openPicker(pickComposer, nil)
+		u.openToneMenu("👍", image.Pt(x, y))
 	case "sticker":
 		u.openPicker(pickComposer, nil)
 		u.picker.tab, u.picker.stickerSet = tabSticker, u.defaultStickerSet()
@@ -1542,6 +1550,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openAttachMenu()
 	case "poll":
 		u.openPoll()
+	case "newevent":
+		u.openNewEvent()
 	case "contacts":
 		u.openContactPicker()
 	case "invite":

@@ -2,6 +2,8 @@ package ui
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"image"
 	"image/png"
 	"os"
@@ -20,6 +22,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/auto"
+	"github.com/chomosuke9/wazzapclients/internal/camera"
 	"github.com/chomosuke9/wazzapclients/internal/filepick"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/osclip"
@@ -39,6 +42,8 @@ type attachState struct {
 	draft   string          // the composer's text before; the composer holds captions meanwhile
 	results chan pickResult // from the file dialog's goroutine, and pastes
 	picking bool            // a file dialog is open
+	// cameraStop stops waiting for the camera app's photo (takePhoto).
+	cameraStop context.CancelFunc
 
 	// quality is how photos are sent. est holds, per photo, what each
 	// quality makes of it, for the quality menu; estimating a photo
@@ -88,6 +93,7 @@ type pickResult struct {
 	chatID string
 	files  []model.Attachment
 	temp   bool // files the app wrote (pasted pictures)
+	camera bool // from the camera app (takePhoto)
 	err    error
 }
 
@@ -115,6 +121,9 @@ var (
 	attachAudio    = rgb(0xfa6533)
 	attachContact  = rgb(0x009de2)
 	attachPoll     = rgb(0xffbc38)
+	attachCamera   = rgb(0xff2e74)
+	attachEvent    = rgb(0xff2e74)
+	attachSticker  = rgb(0x02a698)
 )
 
 // openAttachMenu opens the attach menu above the pointer (the attach
@@ -126,9 +135,9 @@ func (u *UI) openAttachMenu() {
 	u.ctx = ctxMenu{kind: ctxAttach, chatID: u.selected.ID, at: u.mouse}
 }
 
-// attachMenuItems mirrors WhatsApp's attach menu. Camera, Event and New
-// sticker are left out: the app has no camera capture, event messages or
-// sticker maker.
+// attachMenuItems mirrors WhatsApp's attach menu. Camera takes the photo
+// with the system's camera app (takePhoto), and New sticker is /sticker's
+// maker.
 func (u *UI) attachMenuItems(c *model.Chat) []menuItem {
 	items := []menuItem{
 		{key: "doc", ic: icDocumentFill, col: attachDocument, label: "Document", run: func() {
@@ -139,13 +148,16 @@ func (u *UI) attachMenuItems(c *model.Chat) []menuItem {
 				{Name: "Photos and videos", Exts: append(append([]string(nil), photoExts...), videoExts...)},
 			})
 		}},
+		{key: "camera", ic: icCameraFill, col: attachCamera, label: "Camera", run: func() { u.takePhoto(c.ID) }},
 		{key: "audio", ic: icHeadphonesFill, col: attachAudio, label: "Audio", run: func() {
 			u.pickFiles(c.ID, "Choose audio", []filepick.Filter{{Name: "Audio", Exts: audioExts}})
 		}},
 	}
 	items = append(items,
 		menuItem{key: "contact", ic: icPerson, col: attachContact, label: "Contact", run: func() { u.openContactPicker() }},
-		menuItem{key: "poll", ic: pollIcon, col: attachPoll, label: "Poll", run: func() { u.openPoll() }})
+		menuItem{key: "poll", ic: pollIcon, col: attachPoll, label: "Poll", run: func() { u.openPoll() }},
+		menuItem{key: "event", ic: icEventFill, col: attachEvent, label: "Event", run: func() { u.openNewEvent() }},
+		menuItem{key: "newsticker", ic: icStickerFill, col: attachSticker, label: "New sticker", run: func() { u.makeSticker(c) }})
 	return items
 }
 
@@ -191,15 +203,56 @@ func (u *UI) pickFiles(chatID, title string, filters []filepick.Filter) {
 	}()
 }
 
+// takePhoto opens the system's camera app and, once it saves a photo or
+// video, opens the send view with it, ready to go to chatID. WhatsApp
+// Desktop draws its own viewfinder; capturing here would need each
+// system's capture API, which the camera app already wraps.
+func (u *UI) takePhoto(chatID string) {
+	a := &u.attach
+	if a.results == nil {
+		a.results = make(chan pickResult, 1)
+	}
+	if a.cameraStop != nil {
+		a.cameraStop() // a second Camera waits for the newest photo only
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	a.cameraStop = stop
+	notify, results := u.images.invalidate, a.results
+	u.toast("Take a photo in the Camera app. It opens here to send.")
+	go func() {
+		defer stop()
+		path, err := camera.Take(ctx)
+		if errors.Is(err, context.Canceled) {
+			return // a newer Camera took over
+		}
+		r := pickResult{chatID: chatID, camera: true, err: err}
+		if path != "" {
+			media := model.MediaImage
+			if hasExt(path, videoExts) || hasExt(path, []string{"mov", "webm"}) {
+				media = model.MediaVideo
+			}
+			r.files = []model.Attachment{{Path: path, Media: media}}
+		}
+		results <- r
+		if notify != nil {
+			notify()
+		}
+	}()
+}
+
 // updateAttach takes the files the dialog returned.
 func (u *UI) updateAttach() {
 	a := &u.attach
 	select {
 	case r := <-a.results:
-		if !r.temp {
+		if !r.temp && !r.camera {
 			a.picking = false
 		}
 		switch {
+		case r.camera && r.err != nil:
+			u.toast("No camera app found.")
+		case r.camera && len(r.files) == 0:
+			// Cancelled, or nothing was taken.
 		case r.err == filepick.ErrUnsupported:
 			u.toast("No file dialog found. Install zenity or kdialog to attach files.")
 		case r.err != nil:
@@ -810,38 +863,48 @@ func (u *UI) pollPanel(gtx C) D {
 		})
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx C) D {
-			return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
-				return layout.Inset{Left: 12, Right: 20}.Layout(gtx, func(gtx C) D {
-					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("poll:close"), icClose, 40, 24, p.IconStrong) }),
-						layout.Rigid(layout.Spacer{Width: 12}.Layout),
-						layout.Flexed(1, u.label(18, "Create poll", p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
-					)
-				})
-			})
-		}),
+		layout.Rigid(func(gtx C) D { return u.formHeader(gtx, "poll:close", "Create poll") }),
 		layout.Flexed(1, func(gtx C) D {
 			return u.scrollList(gtx, &pl.list, len(rows), func(gtx C, i int) D { return rows[i](gtx) })
 		}),
-		layout.Rigid(func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return layout.Inset{Top: 8, Bottom: 16, Right: 20}.Layout(gtx, func(gtx C) D {
-				return layout.E.Layout(gtx, func(gtx C) D {
-					c := u.btn("poll:send")
-					col := p.Green
-					if !ok {
-						col = mix(p.Green, p.Dialog, 0.6) // opaque: Gio blends in linear space
-					}
-					return clickable(gtx, c, func(gtx C) D {
-						sz := gtx.Dp(52)
-						fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, mix(col, p.Text, 0.1*u.hover(gtx, c)))
-						return centerIn(gtx, sz, iconW(icSend, 24, p.OnGreen))
-					})
-				})
-			})
-		}),
+		layout.Rigid(func(gtx C) D { return u.formSend(gtx, "poll:send", ok) }),
 	)
+}
+
+// formHeader is the title row of the poll and event dialogs, with the
+// close button before it.
+func (u *UI) formHeader(gtx C, closeKey, title string) D {
+	p := u.pal
+	return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
+		return layout.Inset{Left: 12, Right: 20}.Layout(gtx, func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn(closeKey), icClose, 40, 24, p.IconStrong) }),
+				layout.Rigid(layout.Spacer{Width: 12}.Layout),
+				layout.Flexed(1, u.label(18, title, p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+			)
+		})
+	})
+}
+
+// formSend is the round send button at the bottom right of the poll and
+// event dialogs, faded while the form isn't ready (ok).
+func (u *UI) formSend(gtx C, key string, ok bool) D {
+	p := u.pal
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	return layout.Inset{Top: 8, Bottom: 16, Right: 20}.Layout(gtx, func(gtx C) D {
+		return layout.E.Layout(gtx, func(gtx C) D {
+			c := u.btn(key)
+			col := p.Green
+			if !ok {
+				col = mix(p.Green, p.Dialog, 0.6) // opaque: Gio blends in linear space
+			}
+			return clickable(gtx, c, func(gtx C) D {
+				sz := gtx.Dp(52)
+				fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, mix(col, p.Text, 0.1*u.hover(gtx, c)))
+				return centerIn(gtx, sz, iconW(icSend, 24, p.OnGreen))
+			})
+		})
+	})
 }
 
 // pollCheck is a row of the poll dialog's settings that a click turns on

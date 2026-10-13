@@ -261,6 +261,18 @@ func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 	return b.copyOf(m)
 }
 
+func (b *Backend) SendEvent(chatID string, e model.NewEvent) *model.Message {
+	m := b.Send(chatID, model.Draft{Text: e.Name})
+	b.update(m, func(x *model.Message) {
+		x.Media = model.MediaEventInvite
+		x.Event = &model.EventInfo{Name: e.Name, Description: e.Description, Start: e.Start, End: e.End}
+		if e.Place != "" {
+			x.Event.Place = &model.Location{Name: e.Place}
+		}
+	})
+	return b.copyOf(m)
+}
+
 func (b *Backend) setChat(id string, f func(*model.Chat)) {
 	if c := b.chat(id); c != nil {
 		f(c)

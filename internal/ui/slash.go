@@ -420,6 +420,19 @@ func (u *UI) submitSlash(sp *slashPick) {
 	u.scrollMessages(layout.Position{})
 }
 
+// makeSticker is the attach menu's New sticker: /sticker without text or
+// a reply, which asks for a picture and sends it as a sticker. It runs
+// whether or not slash commands are turned on.
+func (u *UI) makeSticker(c *model.Chat) {
+	cmd := command.Lookup("sticker")
+	if cmd == nil {
+		return
+	}
+	ctx := &command.Context{Cmd: cmd, Input: "New sticker", Values: make([][]command.Value, len(cmd.Options)),
+		Chat: c, Backend: u.backend, Now: u.now(), Auto: u.auto, Host: slashHost{u: u, chat: c.ID}}
+	command.Execute(ctx)
+}
+
 // slashHost is what commands run in a chat get from the UI.
 type slashHost struct {
 	u    *UI

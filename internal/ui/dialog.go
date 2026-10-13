@@ -28,6 +28,7 @@ const (
 	dialogTheme   // a chat's theme (chatmenu.go); title is the chat's ID
 	dialogEdits   // an edited message's earlier texts (edit.go)
 	dialogPayload // a message's payload (/catch, snippets.go)
+	dialogEvent   // the attach menu's Create event (eventnew.go)
 )
 
 type dialogButton struct {
@@ -69,6 +70,7 @@ type dialogState struct {
 	bar      tween         // the send bar, shown once a chat is picked
 
 	poll   pollState
+	event  newEventState
 	invite inviteState
 
 	// Edit history: the message and its earlier texts.
@@ -184,6 +186,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.editsPanel)
 	case dialogPayload:
 		panel = record(gtx, u.snippetPanel)
+	case dialogEvent:
+		panel = record(gtx, u.newEventPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

@@ -46,6 +46,9 @@ var (
 	icDocumentFill   = icon.DescriptionFill
 	icPhotosFill     = icon.PhotoLibraryFill
 	icHeadphonesFill = icon.HeadphonesFill
+	icCameraFill     = icon.PhotoCameraFill
+	icEventFill      = icon.EventFill
+	icStickerFill    = icon.StickyNote2Fill
 	icLogout         = icon.Logout
 	icSwitchAccount  = icon.SwitchAccount
 	icBubble         = icon.ChatBubble

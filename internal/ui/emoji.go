@@ -99,6 +99,15 @@ type emojiPicker struct {
 	recent []string
 	loaded bool
 
+	// tone is the skin tone of the emojis it lists (0 for yellow), and
+	// tones the menu of tones over them (skintone.go). panelAt is where
+	// the panel is, in content coordinates, and toneAnchor the tone
+	// button's bottom right corner in the panel.
+	tone       int
+	tones      toneMenu
+	panelAt    image.Point
+	toneAnchor image.Point
+
 	stickerSet  model.StickerSet
 	stickers    [3][]*model.Message // per StickerSet
 	stickersOK  [3]bool             // stickers[i] is loaded
@@ -125,9 +134,11 @@ func (u *UI) openPicker(mode pickMode, target *model.Message) {
 	e.list.Position = layout.Position{}
 	e.catSel, e.underline, e.tabSel = switcher[int]{}, follower{}, switcher[pickTab]{} // no sliding from last time
 	e.stickerSel, e.stickerLine = switcher[int]{}, follower{}
+	e.tones = toneMenu{}
 	if !e.loaded {
 		e.loaded = true
 		e.recent = strings.Fields(u.backend.Pref("recent_emoji"))
+		e.tone = u.loadTone()
 	}
 	if mode != pickComposer {
 		u.requestFocus(&e.search)
@@ -166,16 +177,25 @@ func (u *UI) pickEmoji(ch string) {
 // pickerRow is one line of the emoji list: a heading or up to cols emoji.
 type pickerRow struct {
 	label string
-	items []string
-	cat   int // category the row belongs to
+	items []string // in the picker's skin tone
+	bases []string // items without it, for their menu of tones
+	cat   int      // category the row belongs to
 }
 
 func (u *UI) pickerRows(cols int) []pickerRow {
 	e := &u.picker
 	var rows []pickerRow
-	grid := func(chars []string, cat int) {
-		for i := 0; i < len(chars); i += cols {
-			rows = append(rows, pickerRow{items: chars[i:min(i+cols, len(chars))], cat: cat})
+	grid := func(bases []string, cat int) {
+		toned := bases
+		if e.tone > 0 {
+			toned = make([]string, len(bases))
+			for i, ch := range bases {
+				toned[i] = withTone(ch, e.tone)
+			}
+		}
+		for i := 0; i < len(bases); i += cols {
+			j := min(i+cols, len(bases))
+			rows = append(rows, pickerRow{items: toned[i:j], bases: bases[i:j], cat: cat})
 		}
 	}
 	if q := strings.ToLower(trimSpace(e.search.Text())); q != "" {
@@ -194,11 +214,18 @@ func (u *UI) pickerRows(cols int) []pickerRow {
 	for ci, c := range emojiCategories {
 		var chars []string
 		if c.recent {
-			chars = e.recent
-		} else {
-			for _, em := range emojis[c.start:c.end] {
-				chars = append(chars, em.char)
+			// As they were picked, in their tones.
+			for i := 0; i < len(e.recent); i += cols {
+				j := min(i+cols, len(e.recent))
+				if i == 0 {
+					rows = append(rows, pickerRow{label: c.name, cat: ci})
+				}
+				rows = append(rows, pickerRow{items: e.recent[i:j], bases: e.recent[i:j], cat: ci})
 			}
+			continue
+		}
+		for _, em := range emojis[c.start:c.end] {
+			chars = append(chars, em.char)
 		}
 		if len(chars) == 0 {
 			continue
@@ -268,6 +295,7 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	r := gtx.Dp(16)
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(3))).Inset(-gtx.Dp(2)), r+gtx.Dp(2), p.Shadow)
 	borderRRect(gtx, rect, r, p.Picker, p.PopupBorder)
+	e.panelAt = rect.Min
 	defer op.Offset(rect.Min).Push(gtx.Ops).Pop()
 	defer clip.UniformRRect(image.Rectangle{Max: rect.Size()}, r).Push(gtx.Ops).Pop()
 	pg := gtx
@@ -278,6 +306,7 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	switch e.tab {
 	case tabEmoji:
 		u.layoutEmojiTab(pg)
+		u.layoutToneMenu(pg)
 	case tabGIF:
 		u.pickerMessage(pg, "GIF search needs Tenor, which WazzapClients doesn't use.")
 	case tabSticker:
@@ -324,6 +353,7 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 			}
 		}
 	}
+	e.toneAnchor = image.Pt(w-gtx.Dp(15), gtx.Dp(57+6+46))
 	if len(rows) > 0 && e.list.Position.First < len(rows) && trimSpace(e.search.Text()) == "" {
 		e.active = rows[e.list.Position.First].cat
 	}
@@ -345,6 +375,11 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 					border = p.Green
 				}
 				rr := image.Rect(0, 0, gtx.Constraints.Max.X, hgt)
+				// The tone button sits after the search field.
+				tb := record(gtx, u.toneButton)
+				rr.Max.X -= tb.size.X + gtx.Dp(8)
+				tb.at(gtx, rr.Max.X+gtx.Dp(8), (hgt-tb.size.Y)/2)
+				gtx.Constraints.Max.X = rr.Max.X
 				fillRRect(gtx, rr, hgt/2, border)
 				fillRRect(gtx, rr.Inset(gtx.Dp(2)), hgt/2-gtx.Dp(2), p.Popup)
 				return vcenter(gtx, hgt, func(gtx C) D {
@@ -380,11 +415,11 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 				}
 				return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D {
 					var children []layout.FlexChild
-					for _, ch := range r.items {
-						ch := ch
+					for k, ch := range r.items {
+						ch, base := ch, r.bases[k]
 						children = append(children, layout.Rigid(func(gtx C) D {
 							cl := u.btn("emoji:" + ch)
-							return clickable(gtx, cl, func(gtx C) D {
+							dims := clickable(gtx, cl, func(gtx C) D {
 								if h := u.hover(gtx, cl); h > 0 {
 									fillRRect(gtx, image.Rect(0, 0, cellW, pitch), gtx.Dp(8), faded(p.PopupHover, h))
 								}
@@ -393,6 +428,11 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 								}
 								return centerIn2(gtx, cellW, pitch, u.label(29, ch, p.Text).Layout)
 							})
+							// A right click offers its tones.
+							if emojiTakesTone[base] && u.rightClick(gtx, "emoji:"+ch, dims.Size) {
+								u.openToneMenu(base, u.mouse.Sub(e.panelAt))
+							}
+							return dims
 						}))
 					}
 					return layout.Flex{}.Layout(gtx, children...)
