@@ -65,8 +65,11 @@ type dialogState struct {
 	picked   []string // chat IDs, in the order they were picked
 	search   widget.Editor
 	list     widget.List
-	chats    []*model.Chat // matching chats, a buffer reused every frame
-	bar      tween         // the send bar, shown once a chat is picked
+	rows     []fwdRow          // the list: headers, chats and contacts, a buffer reused every frame
+	people   []*model.Contact  // saved contacts with no chat, read once the picker opens
+	abouts   map[string]string // the contacts' abouts, by ID
+	read     bool              // people was read
+	bar      tween             // the send bar, shown once a chat is picked
 
 	poll   pollState
 	invite inviteState
@@ -374,29 +377,16 @@ func (u *UI) forwardPanel(gtx C) D {
 		u.closeDialog()
 	}
 	bar := easeOut(d.bar.step(gtx, len(d.picked) > 0, durGrow))
-	q := strings.ToLower(trimSpace(d.search.Text()))
-	chats := d.chats[:0] // reused every frame
-	for _, c := range u.chats {
-		if d.contacts && (c.IsGroup || c.Self || isChannelID(c.ID)) {
-			continue // only people can be shared
-		}
-		if d.share != "" && (c.ID == d.share || isChannelID(c.ID)) {
-			continue
-		}
-		if d.addTo != "" && indexOf(d.members, c.ID) >= 0 {
-			continue // already in the group
-		}
-		if q == "" || strings.Contains(strings.ToLower(c.Name), q) {
-			chats = append(chats, c)
-		}
+	if !d.read {
+		u.readForwardPeople(d)
 	}
-	d.chats = chats
-	for _, c := range chats {
-		if u.btn("fwd:" + c.ID).Clicked(gtx) {
-			if i := indexOf(d.picked, c.ID); i >= 0 {
+	rows := u.forwardRows(d)
+	for _, r := range rows {
+		if r.header == "" && u.btn("fwd:"+r.id).Clicked(gtx) {
+			if i := indexOf(d.picked, r.id); i >= 0 {
 				d.picked = append(d.picked[:i:i], d.picked[i+1:]...)
 			} else {
-				d.picked = append(d.picked, c.ID)
+				d.picked = append(d.picked, r.id)
 			}
 		}
 	}
@@ -431,15 +421,24 @@ func (u *UI) forwardPanel(gtx C) D {
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
-			return u.scrollList(gtx, &d.list, len(chats), func(gtx C, i int) D {
-				c := chats[i]
-				on := indexOf(d.picked, c.ID) >= 0
-				cl := u.btn("fwd:" + c.ID)
+			if len(rows) == 0 {
+				return layout.Inset{Top: 32}.Layout(gtx, func(gtx C) D {
+					return layout.N.Layout(gtx, u.label(15, "No chats or contacts found", p.TextSecondary).Layout)
+				})
+			}
+			return u.scrollList(gtx, &d.list, len(rows), func(gtx C, i int) D {
+				r := rows[i]
+				if r.header != "" {
+					return layout.Inset{Left: 24, Right: 20, Top: 14, Bottom: 8}.Layout(gtx,
+						u.label(15, r.header, p.TextSecondary, labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+				}
+				on := indexOf(d.picked, r.id) >= 0
+				cl := u.btn("fwd:" + r.id)
 				return clickable(gtx, cl, func(gtx C) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					bg := mix(p.Dialog, p.Hover, u.hover(gtx, cl))
 					return background(gtx, bg, 0, func(gtx C) D {
-						return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
+						return vcenter(gtx, gtx.Dp(68), func(gtx C) D {
 							return layout.Inset{Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
 								box, col := icCheckBoxEmpty, p.TextSecondary
 								if on {
@@ -448,9 +447,18 @@ func (u *UI) forwardPanel(gtx C) D {
 								return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 									layout.Rigid(iconW(box, 24, col)),
 									layout.Rigid(layout.Spacer{Width: 18}.Layout),
-									layout.Rigid(func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 44) }),
+									layout.Rigid(func(gtx C) D { return u.avatar(gtx, r.id, r.name, r.group, 44) }),
 									layout.Rigid(layout.Spacer{Width: 14}.Layout),
-									layout.Flexed(1, u.label(16, c.Name, p.Text, labelOpts{maxLines: 1}).Layout),
+									layout.Flexed(1, func(gtx C) D {
+										if r.about == "" {
+											return u.label(16, r.name, p.Text, labelOpts{maxLines: 1}).Layout(gtx)
+										}
+										return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+											layout.Rigid(u.label(16, r.name, p.Text, labelOpts{maxLines: 1}).Layout),
+											layout.Rigid(layout.Spacer{Height: 2}.Layout),
+											layout.Rigid(u.label(14, r.about, p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+										)
+									}),
 								)
 							})
 						})
@@ -472,13 +480,110 @@ func (u *UI) forwardPanel(gtx C) D {
 	)
 }
 
+// fwdRow is a row of the forward picker: a section's header, or a chat or
+// contact to pick.
+type fwdRow struct {
+	header          string
+	id, name, about string
+	group           bool
+}
+
+// readForwardPeople reads the saved contacts once: their abouts, and the
+// ones with no chat for the Contacts section.
+func (u *UI) readForwardPeople(d *dialogState) {
+	d.read = true
+	chats := make(map[string]bool, len(u.chats))
+	for _, c := range u.chats {
+		chats[c.ID] = true
+	}
+	d.abouts = map[string]string{}
+	for _, ct := range u.backend.Contacts() {
+		if ct.About != "" {
+			d.abouts[ct.ID] = ct.About
+		}
+		if !chats[ct.ID] {
+			d.people = append(d.people, ct)
+		}
+	}
+}
+
+// forwardRows lists the chats that match the search under "Recent chats",
+// then the saved contacts you have no chat with under "Contacts", each
+// person with their about, like WhatsApp.
+func (u *UI) forwardRows(d *dialogState) []fwdRow {
+	q := strings.ToLower(trimSpace(d.search.Text()))
+	digits, number := typedDigits(q)
+	keep := func(id string, group bool) bool {
+		switch {
+		case d.contacts && (group || isChannelID(id)):
+			return false // only people can be shared
+		case d.share != "" && (id == d.share || isChannelID(id)):
+			return false
+		case d.addTo != "" && (group || indexOf(d.members, id) >= 0):
+			return false // already in the group
+		}
+		return true
+	}
+	rows := d.rows[:0] // reused every frame
+	n := len(rows)
+	for _, c := range u.chats {
+		if !keep(c.ID, c.IsGroup) || (d.contacts && c.Self) {
+			continue
+		}
+		if q == "" || strings.Contains(strings.ToLower(c.Name), q) {
+			if len(rows) == n {
+				rows = append(rows, fwdRow{header: "Recent chats"})
+			}
+			r := fwdRow{id: c.ID, name: c.Name, group: c.IsGroup}
+			if !c.IsGroup {
+				r.about = d.abouts[c.ID]
+			}
+			rows = append(rows, r)
+		}
+	}
+	n = len(rows)
+	for _, ct := range d.people {
+		if !keep(ct.ID, false) {
+			continue
+		}
+		if q == "" || strings.Contains(strings.ToLower(ct.Name), q) ||
+			(number && strings.Contains(digitsOf(ct.Phone), digits)) {
+			if len(rows) == n {
+				rows = append(rows, fwdRow{header: "Contacts"})
+			}
+			rows = append(rows, fwdRow{id: ct.ID, name: ct.Name, about: ct.About})
+		}
+	}
+	d.rows = rows
+	return rows
+}
+
+// digitsOf returns the digits of a phone number.
+func digitsOf(phone string) string {
+	d, _ := typedDigits(phone)
+	return d
+}
+
+// forwardName is the name of a chat or contact in the forward picker.
+func (u *UI) forwardName(d *dialogState, id string) string {
+	if c := u.chatByID(id); c != nil {
+		return c.Name
+	}
+	for _, ct := range d.people {
+		if ct.ID == id {
+			return ct.Name
+		}
+	}
+	return ""
+}
+
 // forwardBar names the picked chats next to the send button.
 func (u *UI) forwardBar(gtx C, d *dialogState) D {
 	p := u.pal
 	var names []string
 	for _, id := range d.picked {
-		if c := u.chatByID(id); c != nil {
-			names = append(names, c.Name)
+		if n := u.forwardName(d, id); n != "" {
+			names = append(names, n)
 		}
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X

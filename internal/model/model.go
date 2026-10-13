@@ -492,6 +492,8 @@ type ChatInfo struct {
 	IsGroup bool
 	// About is a contact's "about" text or a group's description.
 	About string
+	// AboutSet is when a contact set their about text (zero when unknown).
+	AboutSet time.Time
 	// Phone is a contact's formatted phone number.
 	Phone string
 	// Members lists group participants: you first, then admins, then the rest.
@@ -506,6 +508,11 @@ type ChatInfo struct {
 	// members, and Approval that they approve who joins.
 	Announce, Locked    bool
 	AdminsAdd, Approval bool
+	// LimitSharing is WhatsApp's Advanced chat privacy: nobody in the chat
+	// may export it or have its media saved to their phone automatically.
+	// LimitSharingSet is when it last changed (zero when never seen).
+	LimitSharing    bool
+	LimitSharingSet time.Time
 
 	// The rest describes contacts only.
 
@@ -545,6 +552,7 @@ type Contact struct {
 	ID    string // the one-to-one chat ID
 	Name  string
 	Phone string // formatted, when known
+	About string // their about text, when known
 }
 
 // NewGroup is a group to create.

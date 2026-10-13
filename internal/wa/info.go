@@ -114,6 +114,11 @@ func (b *Backend) fetchInfo(jid types.JID) {
 			return
 		}
 		b.fillGroupInfo(ctx, info, g)
+		// Advanced chat privacy comes with messages, not the group's info.
+		var old model.ChatInfo
+		if raw := b.store.meta(ctx, "info:"+jid.String()); raw != "" && json.Unmarshal([]byte(raw), &old) == nil {
+			info.LimitSharing, info.LimitSharingSet = old.LimitSharing, old.LimitSharingSet
+		}
 		_ = b.store.setMembers(ctx, g)
 		b.subMu.Lock()
 		b.subtitles[jid.String()] = b.groupSubtitle(ctx, g.Participants)
@@ -158,6 +163,9 @@ func (b *Backend) fillContactInfo(ctx context.Context, info *model.ChatInfo, jid
 	} else {
 		isBusiness = business != ""
 		for _, u := range users {
+			if info.About != u.Status {
+				info.AboutSet = time.Time{} // until the status query says
+			}
 			info.About = u.Status
 			if u.VerifiedName != nil {
 				isBusiness = true
@@ -167,6 +175,13 @@ func (b *Backend) fillContactInfo(ctx context.Context, info *model.ChatInfo, jid
 			}
 		}
 	}
+	// GetUserInfo leaves out when the about was set.
+	if st, err := b.fetchStatuses(ctx, []types.JID{jid}); err != nil {
+		b.log.Debugf("about of %s: %v", jid, err)
+	} else if s, ok := st[jid]; ok {
+		info.About, info.AboutSet = s.text, s.at
+	}
+	b.setAbouts(ctx, map[string]string{jid.String(): info.About})
 	if !isBusiness {
 		info.Business = nil
 	} else {

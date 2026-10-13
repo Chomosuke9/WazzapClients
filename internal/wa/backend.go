@@ -73,6 +73,7 @@ type Backend struct {
 
 	infoMu      sync.Mutex
 	infoFetched map[string]bool // info panels refreshed this session
+	abouts      aboutCache      // contacts' about texts (about.go)
 
 	statusPriv   statusPrivacy
 	searchMu     sync.Mutex
@@ -1201,6 +1202,9 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			continue
 		}
 		cd := convData{jid: jid, isGroup: jid.Server == types.GroupServer}
+		if conv.LimitSharing != nil {
+			b.setLimitSharing(ctx, jid.String(), conv.GetLimitSharing(), conv.GetLimitSharingSettingTimestamp())
+		}
 		if cd.isGroup || isChannel(jid) {
 			cd.name = first(conv.GetName(), conv.GetDisplayName())
 		} else {

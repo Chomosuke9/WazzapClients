@@ -305,6 +305,9 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    votes and event answers they get (wz_votes) in polls.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
                    a group message's ticks wait for every member) in receipts.go;
+                   contacts' abouts (cached in wz_meta for the forward picker, with when
+                   each was set from a raw usync) and a chat's Advanced chat privacy
+                   (LIMIT_SHARING, kept with its info; it can't be set) in about.go;
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
                    and snippetmedia.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot)
