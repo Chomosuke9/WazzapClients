@@ -258,11 +258,7 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 	}
 	if m0.Forwarded {
 		fwd = record(cgtx, func(gtx C) D {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(iconW(icForward, 16, secondary)),
-				layout.Rigid(layout.Spacer{Width: 4}.Layout),
-				layout.Rigid(u.label(13, "Forwarded", secondary, labelOpts{italic: true, maxLines: 1}).Layout),
-			)
+			return u.forwardedLabel(gtx, m0, secondary)
 		})
 	}
 	if m0.Quote != nil {

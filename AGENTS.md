@@ -264,7 +264,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
-                   opens at in unread.go; group invite links (the dialog that joins
+                   opens at in unread.go; the round React and Forward buttons beside a
+                   hovered message (React opens the reaction bar alone) in sidebuttons.go;
+                   group invite links (the dialog that joins
                    one) in invite.go; a community's announcements (cards down the
                    middle headed by their sender, a forward button beside them, and
                    "Only community admins can send messages" for members) in announce.go;

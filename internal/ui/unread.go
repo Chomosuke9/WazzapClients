@@ -98,16 +98,28 @@ func (u *UI) unreadRow(c *model.Chat, m *model.Message) bool {
 	return d.id != "" && d.id == m.ID && d.chat == c.ID
 }
 
-// unreadChip draws the divider's "N unread messages".
+// unreadChip draws the divider's "N unread messages": a pill on a band
+// across the whole conversation, like WhatsApp's. Gio blends in linear
+// space, so the band's alpha (UnreadBand) is picked to look like
+// WhatsApp's CSS one over the chat background: white at 25% in light
+// mode, black at 20% in dark.
 func (u *UI) unreadChip(gtx C, n int) D {
 	p := u.pal
 	txt := itoa(n) + " unread messages"
 	if n == 1 {
 		txt = "1 unread message"
 	}
-	gtx.Constraints.Min = image.Point{}
-	return u.card(gtx, 18, p.DateChip, func(gtx C) D {
-		return layout.Inset{Left: 18, Right: 18, Top: 8, Bottom: 9}.Layout(gtx,
-			u.label(14.5, txt, p.Text, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+	cgtx := gtx
+	cgtx.Constraints.Min = image.Point{}
+	chip := record(cgtx, func(gtx C) D {
+		return u.card(gtx, 18, p.DateChip, func(gtx C) D {
+			return layout.Inset{Left: 18, Right: 18, Top: 8, Bottom: 9}.Layout(gtx,
+				u.label(14.5, txt, p.Text, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+		})
 	})
+	pad := gtx.Dp(6)
+	size := image.Pt(gtx.Constraints.Max.X, chip.size.Y+2*pad)
+	fillRect(gtx, image.Rectangle{Max: size}, p.UnreadBand)
+	chip.at(gtx, (size.X-chip.size.X)/2, pad)
+	return D{Size: size}
 }

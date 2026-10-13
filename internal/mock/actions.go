@@ -83,6 +83,7 @@ func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool, quot
 	m.ChatID, m.FromMe, m.Time, m.Receipt = chatID, true, b.now(), model.Sent
 	m.Sender, m.SenderID, m.Quote, m.Reaction, m.Starred, m.Pinned = "", "", quote, "", false, false
 	m.Forwarded = forwarded
+	m.ForwardedMany = forwarded && src.ForwardedMany
 	b.add(&m)
 	cp := m
 	b.emit(model.MessageEvent{Msg: &cp})

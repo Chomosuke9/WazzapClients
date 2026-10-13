@@ -645,6 +645,7 @@ type rawMsg struct {
 	buttons               *buttonsInfo
 	quote                 *rawQuote // made Quote by resolve
 	hasBlob               bool      // its payload holds what downloading its media takes
+	fwdScore              uint32    // its ContextInfo.ForwardingScore; forwarding it adds one
 }
 
 // msgColumns are what scanMessage reads.

@@ -104,6 +104,9 @@ type Message struct {
 	// Starred and Pinned mirror the message menu's Star and Pin.
 	Starred, Pinned bool
 	Forwarded       bool
+	// ForwardedMany marks a message forwarded five times or more
+	// ("Forwarded many times").
+	ForwardedMany bool
 	// Footer is the small print under a business message's text, and
 	// Buttons its buttons.
 	Footer  string

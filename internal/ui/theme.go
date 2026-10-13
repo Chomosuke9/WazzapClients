@@ -35,6 +35,7 @@ type Palette struct {
 	MentionPill                  color.NRGBA // behind mentions of you
 	Selection                    color.NRGBA // behind selected text
 	DateChip, DateChipText       color.NRGBA
+	UnreadBand                   color.NRGBA // behind "N unread messages" (unread.go)
 	Encryption, EncryptionText   color.NRGBA
 	Composer, ComposerHint       color.NRGBA
 	GroupAvatar, GroupAvatarIcon color.NRGBA
@@ -111,6 +112,7 @@ var darkPalette = Palette{
 	TextOut: rgb(0xfafafa), SecondaryOut: rgb(0xa6c2b4),
 	QuoteIn: rgb(0x1d1f1f), QuoteOut: rgb(0x1f4232),
 	DateChip: rgb(0x1d1f1e), DateChipText: rgb(0xa6a8a8),
+	UnreadBand: argb(0x000000, 0x4c),
 	Encryption: rgb(0x1d1f1e), EncryptionText: rgb(0xe3c77b),
 	Composer: rgb(0x242626), ComposerHint: rgb(0xabadac),
 	GroupAvatar: rgb(0x102540), GroupAvatarIcon: rgb(0x70adff),
@@ -163,6 +165,7 @@ var lightPalette = Palette{
 	TextOut: rgb(0x0a0a0a), SecondaryOut: rgb(0x587a64),
 	QuoteIn: rgb(0xf5f6f6), QuoteOut: rgb(0xd1f4cc),
 	DateChip: rgb(0xffffff), DateChipText: rgb(0x54656f),
+	UnreadBand: argb(0xffffff, 0x40),
 	Encryption: rgb(0xffeecd), EncryptionText: rgb(0x54656f),
 	Composer: rgb(0xffffff), ComposerHint: rgb(0x667781),
 	GroupAvatar: rgb(0xdbe7fb), GroupAvatarIcon: rgb(0x3778e5),

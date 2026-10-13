@@ -46,6 +46,6 @@ func dateChip(t, now time.Time) string {
 	case d < 7:
 		return t.Weekday().String()
 	default:
-		return t.Format("2 January 2006")
+		return t.Format("02/01/2006")
 	}
 }

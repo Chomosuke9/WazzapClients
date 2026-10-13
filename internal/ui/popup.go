@@ -139,6 +139,7 @@ const (
 	ctxGallerySort // the Media panel's sort order
 	ctxScheduled   // a scheduled message's (scheduled.go)
 	ctxZoom        // the Font size choices (scale.go)
+	ctxReact       // a message's reaction bar alone, from its React button (sidebuttons.go)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -323,6 +324,10 @@ func (u *UI) copyText(s string) {
 func (u *UI) layoutCtxMenu(gtx C) {
 	m := &u.ctx
 	if m.kind == ctxNone {
+		return
+	}
+	if m.kind == ctxReact {
+		u.layoutReactMenu(gtx)
 		return
 	}
 	if m.isOpen() {
