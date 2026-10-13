@@ -1289,6 +1289,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	}
 	if isImg {
 		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, u.gifImage(m, img, max(imgW, imgH)))
+		u.photoBadge(gtx, image.Rect(0, y, imgW, y+imgH), m)
 		func() {
 			t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 			defer t.Pop()
@@ -1536,7 +1537,7 @@ func (u *UI) messageImage(m *model.Message, maxPx int) *imgEntry {
 	if u.blurred() {
 		return u.blurredImage(m)
 	}
-	if m.Media == model.MediaImage || m.Media == model.MediaSticker || wideLink(m) {
+	if (m.Media == model.MediaImage && u.photoWanted(m)) || m.Media == model.MediaSticker || wideLink(m) {
 		full := u.images.get("m:"+m.ChatID+"/"+m.ID, maxPx, func() []byte { return b.MediaData(m.ChatID, m.ID) })
 		if full.state == imgReady {
 			return full
@@ -1547,6 +1548,13 @@ func (u *UI) messageImage(m *model.Message, maxPx int) *imgEntry {
 		return u.images.get("t:"+m.ChatID+"/"+m.ID, maxPx, func() []byte { return thumb })
 	}
 	return nil
+}
+
+// photoWanted reports whether a picture's bubble shows the picture itself,
+// downloading it if needed: always unless Settings > Storage turned photos
+// off, and then once it was downloaded (by opening it in the viewer).
+func (u *UI) photoWanted(m *model.Message) bool {
+	return u.autoPhotos || m.FromMe || u.fileReady(m)
 }
 
 // blurredImage is messageImage in privacy mode: the thumbnail, or the
@@ -1597,6 +1605,20 @@ func (u *UI) layoutImage(gtx C, r image.Rectangle, m *model.Message, img *imgEnt
 		d := record(gtx, u.label(11.5, fmt.Sprintf("%d:%02d", m.Duration/60, m.Duration%60), rgb(0xffffff)).Layout)
 		d.at(gtx, r.Min.X+gtx.Dp(8), r.Max.Y-d.size.Y-gtx.Dp(6))
 	}
+}
+
+// photoBadge marks a picture that isn't downloaded (Settings > Storage
+// turned photos off) with a download button; opening it downloads it.
+func (u *UI) photoBadge(gtx C, r image.Rectangle, m *model.Message) {
+	if m.Media != model.MediaImage || u.photoWanted(m) {
+		return
+	}
+	c := r.Min.Add(r.Size().Div(2))
+	fillCircle(gtx, c, gtx.Dp(26), argb(0x000000, 0x80))
+	isz := gtx.Dp(26)
+	t := op.Offset(c.Sub(image.Pt(isz/2, isz/2))).Push(gtx.Ops)
+	drawIcon(gtx, icDownload, 26, rgb(0xffffff))
+	t.Pop()
 }
 
 // playButton draws a round play button centered on c.

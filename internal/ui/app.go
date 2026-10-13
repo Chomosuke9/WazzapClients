@@ -49,6 +49,9 @@ type UI struct {
 	dark bool
 	// doodles draws the wallpaper's doodles behind conversations.
 	doodles bool
+	// autoPhotos downloads pictures as they show (Settings > Storage);
+	// otherwise their thumbnails show until they're opened.
+	autoPhotos bool
 	// zoom scales the whole window (scale.go).
 	zoom zoomState
 	// volume is the sound's volume, 0 to 1 (volume.go).
@@ -339,6 +342,7 @@ func New(b model.Backend) *UI {
 	u := &UI{th: newTheme(), now: timeNow, backend: b, auto: a, syncPct: -1, fetchLink: linkpreview.Fetch}
 	u.SetDark(true)
 	u.doodles = true
+	u.autoPhotos = true
 	u.zoom.pct = 100
 	u.volume = 1
 	u.voiceRate = 1
@@ -346,6 +350,7 @@ func New(b model.Backend) *UI {
 	if b != nil { // nil in some tests
 		u.applyTheme()
 		u.doodles = prefOn(b, prefDoodles)
+		u.autoPhotos = model.AutoDownload(b.Pref, model.MediaImage)
 		u.loadZoom()
 		u.loadVolume()
 		u.loadVoiceRate()
@@ -881,7 +886,8 @@ func (u *UI) layoutPlaceholder(gtx C) D {
 	switch u.page {
 	case pageStatus:
 		return u.emptyPane(gtx, func(gtx C, col color.NRGBA) D { return statusIcon(gtx, 56, col, true) },
-			"Share statuses", "Share photos, videos and text that disappear after 24 hours.", "")
+			"Share status updates", "Share photos, videos and text that disappear after 24 hours.",
+			"Your status updates are end-to-end encrypted")
 	case pageChannels:
 		return u.emptyPane(gtx, func(gtx C, col color.NRGBA) D { return channelsIcon(gtx, 58, col, u.pal.Panel, true) },
 			"Discover channels", "Entertainment, sports, news, lifestyle, people and more. Follow the channels that interest you", "")
@@ -1227,8 +1233,8 @@ func (u *UI) applyEvents() {
 			if a.Name != "" {
 				u.me = a.Name
 			}
-			if s := &u.settings; s.detail != 0 {
-				s.account, s.stale = a, true
+			if s := &u.settings; s.detail != 0 || s.account != nil {
+				s.account, s.stale, s.hitsFor = a, true, ""
 			}
 		case model.MediaEvent:
 			u.images.forget("m:" + e.ChatID + "/" + e.MsgID)

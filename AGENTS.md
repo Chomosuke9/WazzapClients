@@ -394,7 +394,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    they show) in emojistyle.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
-                   settingsdetail.go; the window's zoom (Settings > General > Font size,
+                   settingsdetail.go (the home's search finds settings on every page, in
+                   settings.go); Video & voice (device choices kept as prefs) and Storage
+                   (automatic downloads, `model.AutoDownload`) in settingsmedia.go; the window's zoom (Settings > General > Font size,
                    Ctrl with +, - and 0, and the bubble that shows it) in scale.go; privacy
                    mode (names and messages drawn as bars, pictures blurred, shown under
                    the pointer; the title bar's eye and Ctrl+Shift+P, once the Privacy mode
@@ -466,7 +468,8 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
                    or osascript elsewhere
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
                    (Windows; stubs elsewhere), and the system's light or dark theme (Settings >
-                   Chats > Theme > System default, read again when the window gets focus)
+                   Chats > Theme > System default, read again when the window gets focus),
+                   and the names of microphones and speakers (Windows)
 internal/update/   updates from GitHub releases (Settings > Help; automatic updates, on by
                    default, check every few hours and install without restarting, ui/update.go):
                    downloads a patch from the running version when the update-patches
@@ -644,7 +647,7 @@ go vet ./... && go build ./...
 # account, accounts (Settings > Account with demo accounts), accountmode and
 # accountcheck (the pages of an account always connected and of one checked),
 # privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help,
-# info, statusviewer, contact (a group member's contact info:
+# videovoice, microphone, storage, info, statusviewer, contact (a group member's contact info:
 # -contact <id>, default the demo business nova@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:

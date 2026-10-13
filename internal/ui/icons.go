@@ -118,6 +118,8 @@ var (
 	icPauseFill     = icon.PauseFill
 	icVolumeFill    = icon.VolumeUpFill
 	icVolumeOffFill = icon.VolumeOffFill
+	icVolume        = icon.VolumeUp
+	icStorage       = icon.DataUsage
 
 	// Settings > Performance.
 	icSpeed  = icon.Speed

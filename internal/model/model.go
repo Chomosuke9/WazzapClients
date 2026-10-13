@@ -1161,6 +1161,33 @@ const PrefKeepDeleted = "keep_deleted"
 // and screenshots of it aren't blocked.
 const PrefViewOnceReplay = "view_once_replay"
 
+// Pref keys of Settings > Storage's automatic downloads: whether media of
+// a kind downloads by itself.
+const (
+	PrefAutoPhotos    = "autodl_photos"    // on unless "off"; pictures download as they show
+	PrefAutoAudio     = "autodl_audio"     // on when "on"; as messages arrive
+	PrefAutoVideos    = "autodl_videos"    // on when "on"; as messages arrive
+	PrefAutoDocuments = "autodl_documents" // on when "on"; as messages arrive
+)
+
+// AutoDownload reports whether media of kind m downloads by itself, as
+// pref (Backend.Pref) says. Voice messages always do, as in WhatsApp.
+func AutoDownload(pref func(string) string, m Media) bool {
+	switch m {
+	case MediaImage:
+		return pref(PrefAutoPhotos) != "off"
+	case MediaVoice:
+		return true
+	case MediaAudio:
+		return pref(PrefAutoAudio) == "on"
+	case MediaVideo:
+		return pref(PrefAutoVideos) == "on"
+	case MediaDocument:
+		return pref(PrefAutoDocuments) == "on"
+	}
+	return false
+}
+
 // Backend is everything the UI needs from a WhatsApp connection.
 //
 // Methods are called from the UI goroutine and must not block for long.
@@ -1259,7 +1286,8 @@ type Backend interface {
 	// audio file or document, or "" while it downloads in the background;
 	// a MediaEvent announces the end.
 	MediaFile(m *Message) string
-	// HasMediaFile reports whether MediaFile has the file already.
+	// HasMediaFile reports whether MediaFile has the file already (or
+	// MediaData, for a picture or sticker).
 	HasMediaFile(m *Message) bool
 	// SendFile sends a file, with the draft's text as its caption (and its
 	// reply and mentions), and returns it in its pending state. The upload

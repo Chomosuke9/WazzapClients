@@ -200,7 +200,12 @@ func (b *Backend) MediaFile(m *model.Message) string {
 	return ""
 }
 
-func (b *Backend) HasMediaFile(m *model.Message) bool { return b.demoFile(m) != "" }
+func (b *Backend) HasMediaFile(m *model.Message) bool {
+	if m.Media == model.MediaImage || m.Media == model.MediaSticker {
+		return b.MediaData(m.ChatID, m.ID) != nil
+	}
+	return b.demoFile(m) != ""
+}
 
 func (b *Backend) demoFile(m *model.Message) string {
 	switch m.Media {
