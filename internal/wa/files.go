@@ -92,10 +92,30 @@ func (b *Backend) mediaFilePath(m *model.Message) string {
 	return b.mediaPath(m.ChatID, m.ID) + mediaExt(m)
 }
 
-// HasMediaFile implements model.Backend.
+// HasMediaFile implements model.Backend. A picture or sticker is where
+// MediaData keeps it.
 func (b *Backend) HasMediaFile(m *model.Message) bool {
-	_, err := os.Stat(b.mediaFilePath(m))
+	path := b.mediaFilePath(m)
+	if m.Media == model.MediaImage || m.Media == model.MediaSticker {
+		path = b.mediaPath(m.ChatID, m.ID)
+	}
+	_, err := os.Stat(path)
 	return err == nil
+}
+
+// autoDownload starts the download of a message that just arrived when
+// Settings > Storage downloads its kind of media by itself. Pictures are
+// left to MediaData, which downloads them as they show.
+func (b *Backend) autoDownload(m *model.Message) {
+	switch m.Media {
+	case model.MediaVoice, model.MediaAudio, model.MediaVideo, model.MediaDocument:
+	default:
+		return
+	}
+	if m.Kind == model.KindViewOnce || !model.AutoDownload(b.Pref, m.Media) {
+		return
+	}
+	b.MediaFile(m)
 }
 
 // OpenMedia implements model.Backend.

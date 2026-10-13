@@ -113,6 +113,8 @@ var (
 	icPauseFill     = icon.PauseFill
 	icVolumeFill    = icon.VolumeUpFill
 	icVolumeOffFill = icon.VolumeOffFill
+	icVolume        = icon.VolumeUp
+	icStorage       = icon.DataUsage
 
 	// Extra features and slash commands.
 	icExtension       = icon.Extension

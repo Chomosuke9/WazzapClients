@@ -300,6 +300,7 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 		tr = tr.Add(image.Pt(0, y))
 		tiles[i] = tr.Add(image.Pt(pad, pad))
 		u.layoutImage(gtx, tr, m, u.messageImage(m, maxPx))
+		u.photoBadge(gtx, tr, m)
 		if i == 3 && len(ms) > 4 {
 			// The last tile is covered by how many it stands for.
 			more := len(ms) - 3

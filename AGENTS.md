@@ -279,7 +279,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    line as fit, in stickerrow.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
-                   settingsdetail.go; the window's zoom (Settings > General > Font size,
+                   settingsdetail.go (the home's search finds settings on every page, in
+                   settings.go); Video & voice (device choices kept as prefs) and Storage
+                   (automatic downloads, `model.AutoDownload`) in settingsmedia.go; the window's zoom (Settings > General > Font size,
                    Ctrl with +, - and 0, and the bubble that shows it) in scale.go; privacy
                    mode (names and messages drawn as bars, pictures blurred, shown under
                    the pointer; the title bar's eye and Ctrl+Shift+P, once the Privacy mode
@@ -322,8 +324,8 @@ internal/memtrim/  gives memory back to the OS after 10 s without a frame (see u
 internal/notify/   system notifications: WinRT toasts on Windows (replaced per chat, removed
                    when read, Reply and Mark as read through a COM activator), notify-send
                    or osascript elsewhere
-internal/desktop/  tray icon, one instance per data directory, start at login, window icon
-                   (Windows; stubs elsewhere)
+internal/desktop/  tray icon, one instance per data directory, start at login, window icon,
+                   the names of microphones and speakers (Windows; stubs elsewhere)
 internal/update/   updates from GitHub releases when the user asks (Settings > Help): checks
                    the signed SHA256SUMS, swaps the executable (the running one moves to
                    .old on Windows) and the UI restarts it with -wait-pid (ui/update.go).
@@ -460,7 +462,7 @@ go vet ./... && go build ./...
 # Side by side with a WhatsApp screenshot (writes compare.png and ours.png).
 # -view: chats, archived, status, channels, communities, settings, general, profile,
 # account, privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help,
-# info, statusviewer, contact (a group member's contact info:
+# videovoice, microphone, storage, info, statusviewer, contact (a group member's contact info:
 # -contact <id>, default the demo business vivy@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:

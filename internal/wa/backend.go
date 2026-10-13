@@ -1032,6 +1032,9 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		}
 		b.emit(model.MessageEvent{Msg: m, New: isNew})
 		b.emitChat(chat)
+		if isNew {
+			b.autoDownload(m)
+		}
 	} else if isNew {
 		_ = b.store.addUnread(ctx, chat, false)
 	}
