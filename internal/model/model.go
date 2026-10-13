@@ -38,6 +38,25 @@ const (
 	// KindViewOnce is a view once photo, video or voice message: a pill
 	// that opens it (see Message.Opened and Message.OnPhone).
 	KindViewOnce
+	// KindSystem is a note about the chat rather than a message: "Alice
+	// added Bob", "Bob changed the group name", a missed call. It is drawn
+	// as a grey chip in the middle (Text, with Notice saying how).
+	KindSystem
+)
+
+// Notice is what a system message (KindSystem) is about, for the ones the
+// chat draws differently from a plain note.
+type Notice int
+
+const (
+	NoticePlain Notice = iota
+	// NoticeMissedCall shows a red phone and the call's time.
+	NoticeMissedCall
+	// NoticeSecurity is a contact's security code changing; clicking it
+	// shows the code.
+	NoticeSecurity
+	// NoticeTimer is disappearing messages turned on or off.
+	NoticeTimer
 )
 
 // ButtonKind is what a message button does.
@@ -47,6 +66,7 @@ const (
 	ButtonReply ButtonKind = iota // sends a quick reply
 	ButtonURL                     // opens a link
 	ButtonCopy                    // copies a code
+	ButtonList                    // opens a list to pick a reply from
 )
 
 // Button is one of the buttons under a business or bot message.
@@ -55,6 +75,19 @@ type Button struct {
 	Label string
 	// Value is the reply's ID, the link or the code to copy.
 	Value string
+	// Sections are a list button's choices.
+	Sections []ListSection
+}
+
+// ListSection is a titled group of a list button's choices.
+type ListSection struct {
+	Title string
+	Rows  []ListRow
+}
+
+// ListRow is one choice of a list button; picking it answers with its ID.
+type ListRow struct {
+	ID, Title, Description string
 }
 
 // Media identifies attachment types, for preview icons and labels.
@@ -100,7 +133,10 @@ type Message struct {
 	Time     time.Time
 	Receipt  Receipt
 	Quote    *Quote
-	Reaction string
+	// Reactions counts the reactions to the message by emoji, the most
+	// given first, and MyReaction is yours ("" for none).
+	Reactions  []ReactionCount
+	MyReaction string
 	// Starred and Pinned mirror the message menu's Star and Pin.
 	Starred, Pinned bool
 	Forwarded       bool
@@ -157,6 +193,8 @@ type Message struct {
 	// Backend.SendWhisper): the message is drawn as yours but marked as seen
 	// by those members alone. Empty on every ordinary message.
 	Whisper []string
+	// Notice is what a system message (KindSystem) is about.
+	Notice Notice
 }
 
 // Location is a place or position someone shared.
@@ -244,6 +282,30 @@ const (
 	RSVPNotGoing
 	RSVPMaybe
 )
+
+// ReactionCount is how many people reacted to a message with one emoji.
+type ReactionCount struct {
+	Emoji string
+	Count int
+}
+
+// ReactionTotal is how many people reacted to m.
+func (m *Message) ReactionTotal() int {
+	n := 0
+	for _, r := range m.Reactions {
+		n += r.Count
+	}
+	return n
+}
+
+// Reactor is one person's reaction to a message. ID is their JID (yours
+// when Me), and Name "You" when Me.
+type Reactor struct {
+	ID, Name string
+	Me       bool
+	Emoji    string
+	Time     time.Time
+}
 
 // Vote is one person's vote in a poll, or answer to an event.
 type Vote struct {
@@ -336,15 +398,21 @@ type Chat struct {
 	// General is a community's General chat, which shows a speech bubble
 	// while it has no picture.
 	General bool
+	// Left marks a group you're no longer a member of (you left or were
+	// removed): it can't be sent to, only deleted.
+	Left bool
 	// Unread counts unread messages; -1 means marked as unread.
 	Unread int
 	// Mentioned means one of the unread messages of a group mentions you
 	// (or everyone) or replies to you. It only counts while Unread > 0.
 	Mentioned bool
-	Time      time.Time // last activity, used for ordering
-	Last      *Message
-	Typing    []Typist // who is typing, first to start first; empty when nobody is
-	Presence  string   // header subtitle, e.g. "online"
+	// Disappearing is the disappearing-messages timer in seconds (0 =
+	// off); the chat list marks the avatar while it is on.
+	Disappearing uint32
+	Time         time.Time // last activity, used for ordering
+	Last         *Message
+	Typing       []Typist // who is typing, first to start first; empty when nobody is
+	Presence     string   // header subtitle, e.g. "online"
 }
 
 // Typist is someone typing in a chat.
@@ -430,8 +498,9 @@ type LinkImage struct {
 // Attachment is a file to send.
 type Attachment struct {
 	Path string
-	// Media is how it is sent: MediaImage, MediaVideo, MediaAudio or
-	// MediaDocument (any file, as is).
+	// Media is how it is sent: MediaImage, MediaVideo, MediaGIF (an MP4
+	// that plays muted and looping), MediaAudio or MediaDocument (any
+	// file, as is).
 	Media Media
 	// Quality is how a photo is scaled and compressed.
 	Quality Quality
@@ -439,6 +508,11 @@ type Attachment struct {
 	ViewOnce bool
 	// Album puts a photo or video in the album NewAlbum opened.
 	Album string
+	// Thumb is a GIF's still picture, a small JPEG, and W and H its size.
+	Thumb []byte
+	W, H  int
+	// Klipy marks a GIF found on KLIPY, which WhatsApp credits.
+	Klipy bool
 }
 
 // Quality is the size a photo is sent at.
@@ -745,6 +819,11 @@ type PresenceEvent struct {
 // SyncEvent reports initial history sync progress (0–100).
 type SyncEvent struct{ Percent int }
 
+// CaughtUpEvent reports that the backend, once connected, has received
+// everything WhatsApp kept for it while it was offline. It comes once per
+// connection.
+type CaughtUpEvent struct{}
+
 // AvatarEvent reports that the profile picture of ID became available.
 type AvatarEvent struct{ ID string }
 
@@ -762,6 +841,10 @@ type StatusEvent struct{}
 
 // ChannelsEvent reports that the followed or suggested channels changed.
 type ChannelsEvent struct{}
+
+// ListsEvent says the custom chat lists or the chats in them changed;
+// Backend.Lists has them.
+type ListsEvent struct{}
 
 // CommunitiesEvent reports that the community structure changed.
 type CommunitiesEvent struct{}
@@ -890,6 +973,8 @@ const (
 	GroupApproval
 	// GroupName renames the group to Text.
 	GroupName
+	// GroupPhoto sets the group's picture to Photo (nil removes it).
+	GroupPhoto
 )
 
 // GroupRequest is a change to a group you administer (Backend.ManageGroup).
@@ -904,6 +989,8 @@ type GroupRequest struct {
 	On      bool
 	Text    string
 	Invite  *GroupInvite
+	// Photo is a square JPEG, for GroupPhoto.
+	Photo []byte
 }
 
 // GroupInvite is an invitation to join a group, which WhatsApp hands out
@@ -990,6 +1077,7 @@ func (ReceiptEvent) isEvent()      {}
 func (TypingEvent) isEvent()       {}
 func (PresenceEvent) isEvent()     {}
 func (SyncEvent) isEvent()         {}
+func (CaughtUpEvent) isEvent()     {}
 func (AvatarEvent) isEvent()       {}
 func (MediaEvent) isEvent()        {}
 func (InfoEvent) isEvent()         {}
@@ -1002,6 +1090,7 @@ func (GroupCreatedEvent) isEvent() {}
 func (StickersEvent) isEvent()     {}
 func (DeletedEvent) isEvent()      {}
 func (SearchEvent) isEvent()       {}
+func (ListsEvent) isEvent()        {}
 func (GalleryEvent) isEvent()      {}
 func (MediaSummaryEvent) isEvent() {}
 func (SecurityCodeEvent) isEvent() {}
@@ -1097,6 +1186,8 @@ type Backend interface {
 	// SearchMessages looks in the background for up to limit messages of
 	// a chat whose SearchKey contains the query's, newest first. A
 	// SearchEvent brings the results; a new search cancels the last one.
+	// An empty chatID searches every chat but channels (the chat list's
+	// search), apart from the search of one chat.
 	SearchMessages(chatID, query string, limit int)
 	// PinnedMessage returns the chat's most recently pinned message, or nil.
 	PinnedMessage(chatID string) *Message
@@ -1116,9 +1207,10 @@ type Backend interface {
 	// Submission does not confirm delivery. No ordinary outgoing message is
 	// stored, broadcast, synced to self, or automatically retried.
 	SendWhisper(chatID string, targets []string, text string, mentions []string, reply *Message) <-chan error
-	// PressButton answers a message's quick-reply button (Buttons[i]) and
-	// returns the answer in its pending state, or nil.
-	PressButton(m *Message, i int) *Message
+	// PressButton answers a message's quick-reply button (Buttons[i]), or
+	// with the row of its list button whose ID is row, and returns the
+	// answer in its pending state, or nil.
+	PressButton(m *Message, i int, row string) *Message
 	// SendSticker sends a sticker that was received before, again, as a
 	// reply to reply if it isn't nil.
 	SendSticker(chatID string, sticker, reply *Message)
@@ -1134,6 +1226,9 @@ type Backend interface {
 	Forward(msgs []*Message, chatIDs []string)
 	// React sets (or, with "", removes) your reaction to a message.
 	React(m *Message, emoji string)
+	// Reactors lists who reacted to a message and with what: you first,
+	// then the newest first.
+	Reactors(m *Message) []Reactor
 	// Delete deletes a message for you, or for everyone (your own messages).
 	Delete(m *Message, forEveryone bool)
 	// Star stars or unstars a message.
@@ -1188,7 +1283,7 @@ type Backend interface {
 	// first.
 	Votes(m *Message) []Vote
 	// SendNewSticker sends a sticker made on this computer (a 512x512
-	// WebP), as a reply to reply if it isn't nil, and returns it in its
+	// WebP, animated or not), as a reply to reply if it isn't nil, and returns it in its
 	// pending state. The upload runs in the background.
 	SendNewSticker(chatID string, webp []byte, reply *Message) *Message
 
@@ -1202,6 +1297,8 @@ type Backend interface {
 	// Lists returns the custom chat lists.
 	Lists() []*ChatList
 	SetInList(chatID, listID string, in bool)
+	// CreateList makes a custom list holding chats. A ListsEvent follows.
+	CreateList(name string, chats []string)
 	// ClearChat deletes a chat's messages; DeleteChat removes the chat too.
 	ClearChat(chatID string)
 	DeleteChat(chatID string)
@@ -1259,6 +1356,11 @@ type Backend interface {
 	// or nil. A missing or stale picture is fetched in the background and
 	// announced with an AvatarEvent. Safe to call from any goroutine.
 	Avatar(id string) []byte
+	// ProfilePhoto downloads the full-size profile picture of a chat or
+	// user (Avatar is a small preview) and returns it, or nil when there
+	// is none or it can't be fetched. It blocks: call it off the UI
+	// goroutine.
+	ProfilePhoto(id string) []byte
 	// MediaData returns a downloaded image or sticker, or nil. Missing media
 	// is downloaded in the background and announced with a MediaEvent. Safe
 	// to call from any goroutine.
@@ -1309,6 +1411,19 @@ type Backend interface {
 	// Logout unlinks this device and returns to the QR screen.
 	Logout()
 	Close()
+}
+
+// Backgrounder is implemented by backends that can run as an account
+// that isn't open, beside the one in the window (the UI's background
+// accounts).
+type Backgrounder interface {
+	// SetBackground says whether the account runs in the background. It
+	// can be called before Start and at any time after. In the background
+	// the account shows as unavailable, as WhatsApp does without a window
+	// in front, so the phone still gets notifications; and once WhatsApp
+	// logs it out, it reports StateQRExpired instead of linking again,
+	// which only the window can show.
+	SetBackground(on bool)
 }
 
 // SearchKey is the form of a text that message search compares: case

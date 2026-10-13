@@ -21,6 +21,7 @@ import (
 	"github.com/polymorfa/hypermeow/proto/waCompanionReg"
 	"github.com/polymorfa/hypermeow/proto/waHistorySync"
 	"github.com/polymorfa/hypermeow/proto/waSyncAction"
+	"github.com/polymorfa/hypermeow/proto/waWeb"
 	"github.com/polymorfa/hypermeow/store"
 	"github.com/polymorfa/hypermeow/store/sqlstore"
 	"github.com/polymorfa/hypermeow/types"
@@ -76,7 +77,8 @@ type Backend struct {
 
 	statusPriv   statusPrivacy
 	searchMu     sync.Mutex
-	searchCancel context.CancelFunc // the running SearchMessages
+	searchCancel context.CancelFunc // the running SearchMessages of a chat
+	searchAll    context.CancelFunc // and of every chat (the chat list's)
 
 	galleryMu     sync.Mutex
 	galleryCancel context.CancelFunc // the running Gallery
@@ -89,6 +91,16 @@ type Backend struct {
 	// serverSkew is how many seconds the server's clock is ahead of ours,
 	// learned from send acks (sendAsyncPrep).
 	serverSkew atomic.Int64
+
+	// background is set while the account isn't the open one
+	// (SetBackground).
+	background atomic.Bool
+	// work is what runs after each connect (see handle); Close waits for
+	// it, since it reads the database. workMu guards closed, so nothing
+	// starts once Close waits.
+	workMu sync.Mutex
+	work   sync.WaitGroup
+	closed bool
 }
 
 func (b *Backend) now() time.Time {
@@ -104,7 +116,14 @@ func (b *Backend) sendTime() time.Time {
 	return b.now().Add(time.Duration(b.serverSkew.Load()) * time.Second)
 }
 
-var _ model.Backend = (*Backend)(nil)
+var (
+	_ model.Backend      = (*Backend)(nil)
+	_ model.Backgrounder = (*Backend)(nil)
+)
+
+// osInfo says, once for every backend of the process, how this client
+// shows up under "Linked devices" on the phone.
+var osInfo sync.Once
 
 // Open opens (or creates) the session database in dataDir.
 func Open(dataDir string, debug bool) (*Backend, error) {
@@ -148,9 +167,10 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 		return nil, fmt.Errorf("init message store: %w", err)
 	}
 
-	// How this client shows up under "Linked devices" on the phone.
-	store.SetOSInfo("WazzapClients", [3]uint32{0, 1, 0})
-	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
+	osInfo.Do(func() {
+		store.SetOSInfo("WazzapClients", [3]uint32{0, 1, 0})
+		store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
+	})
 
 	// Create the client now (without connecting) so stored chats can be
 	// shown, with names, before the connection is up.
@@ -200,11 +220,39 @@ func (b *Backend) Start(notify func()) {
 }
 
 func (b *Backend) run() {
-	if b.client().Store.ID == nil {
-		b.pair()
-	} else {
+	switch {
+	case b.client().Store.ID != nil:
 		b.connect()
+	case b.background.Load():
+		b.emit(model.ConnEvent{State: model.StateQRExpired}) // see SetBackground
+	default:
+		b.pair()
 	}
+}
+
+// SetBackground implements model.Backgrounder.
+func (b *Backend) SetBackground(on bool) {
+	if b.background.Swap(on) == on {
+		return
+	}
+	if cli := b.client(); cli != nil && cli.IsConnected() {
+		go b.sendPresence(cli)
+	}
+}
+
+// goWork runs f on a goroutine that Close waits for, unless the backend
+// is closing.
+func (b *Backend) goWork(f func()) {
+	b.workMu.Lock()
+	defer b.workMu.Unlock()
+	if b.closed {
+		return
+	}
+	b.work.Add(1)
+	go func() {
+		defer b.work.Done()
+		f()
+	}()
 }
 
 func (b *Backend) useDevice(device *store.Device) {
@@ -214,6 +262,7 @@ func (b *Backend) useDevice(device *store.Device) {
 	// full sync must emit them too.
 	cli.EmitAppStateEventsOnFullSync = true
 	cli.AddEventHandler(b.handle)
+	cli.RawNodeHandler = b.groupedReceipts
 	b.cliMu.Lock()
 	b.cli = cli
 	b.cliMu.Unlock()
@@ -362,11 +411,17 @@ func (b *Backend) Logout() {
 	}()
 }
 
+// Close disconnects and closes the database. What runs after a connect
+// stops first: it would read the closed database as empty.
 func (b *Backend) Close() {
+	b.workMu.Lock()
+	b.closed = true
+	b.workMu.Unlock()
+	b.cancel()
 	if cli := b.client(); cli != nil {
 		cli.Disconnect()
 	}
-	b.cancel()
+	b.work.Wait()
 	b.db.Close()
 	b.logf.Close()
 }
@@ -386,6 +441,10 @@ func (b *Backend) resetSession() {
 	b.names.clear()
 	b.emit(model.ChatsEvent{})
 	b.useDevice(b.container.NewDevice())
+	if b.background.Load() {
+		b.emit(model.ConnEvent{State: model.StateQRExpired}) // see SetBackground
+		return
+	}
 	b.pair()
 }
 
@@ -426,16 +485,31 @@ func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
 
 func (b *Backend) SearchMessages(chatID, query string, limit int) {
 	ctx, cancel := context.WithCancel(b.ctx)
-	b.searchMu.Lock()
-	if b.searchCancel != nil {
-		b.searchCancel()
+	running := &b.searchCancel
+	if chatID == "" {
+		running = &b.searchAll
 	}
-	b.searchCancel = cancel
+	b.searchMu.Lock()
+	if *running != nil {
+		(*running)()
+	}
+	*running = cancel
 	b.searchMu.Unlock()
 	go func() {
 		defer cancel()
 		var msgs []*model.Message
-		if key := model.SearchKey(query); key != "" {
+		if key := model.SearchKey(query); key != "" && chatID == "" {
+			raw, err := b.store.searchAllMessages(ctx, key, limit)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				b.log.Errorf("search messages: %v", err)
+			}
+			for _, r := range raw {
+				msgs = append(msgs, b.resolve(b.ctx, r, strings.HasSuffix(r.ChatID, "@"+types.GroupServer)))
+			}
+		} else if key != "" {
 			raw, err := b.store.searchMessages(ctx, chatID, key, limit)
 			if ctx.Err() != nil {
 				return
@@ -553,12 +627,13 @@ func (b *Backend) markRead(cli *whatsmeow.Client, jid types.JID, c *model.Chat) 
 // without read receipts, and you show offline.
 func (b *Backend) ghost() bool { return b.Pref(model.PrefGhost) == "on" }
 
-// sendPresence tells WhatsApp you're online, or, in ghost mode, offline.
-// Being "available" is what makes WhatsApp send typing notifications, so
-// ghost mode doesn't get them.
+// sendPresence tells WhatsApp you're online, or, in ghost mode or in the
+// background, offline. Being "available" is what makes WhatsApp send
+// typing notifications, so ghost mode doesn't get them; and it stops the
+// phone from notifying, which a background account mustn't do.
 func (b *Backend) sendPresence(cli *whatsmeow.Client) {
 	p := types.PresenceAvailable
-	if b.ghost() {
+	if b.ghost() || b.background.Load() {
 		p = types.PresenceUnavailable
 	}
 	if err := cli.SendPresence(b.ctx, p); err != nil {
@@ -612,12 +687,14 @@ func (b *Backend) handle(evt any) {
 			meID = cli.Store.ID.ToNonAD().String()
 		}
 		b.emit(model.ConnEvent{State: model.StateOnline, Me: cli.Store.PushName, MeID: meID})
-		go func() {
+		b.goWork(func() {
 			b.sendPresence(cli)
 			b.refreshGroupNames()
 			b.resyncAppStateOnce()
 			b.refreshChannels()
-		}()
+		})
+	case *events.OfflineSyncCompleted:
+		b.emit(model.CaughtUpEvent{})
 	case *events.Disconnected, *events.KeepAliveTimeout:
 		b.emit(model.ConnEvent{State: model.StateOffline})
 	case *events.KeepAliveRestored:
@@ -773,6 +850,10 @@ func (b *Backend) handle(evt any) {
 			b.store.updateMembers(ctx, e.JID.String(), e.Join, e.Leave)
 		}
 		b.recordMemberChanges(ctx, e)
+		if e.Ephemeral != nil {
+			b.setTimer(ctx, e.JID.String(), groupTimer(*e.Ephemeral))
+		}
+		b.onGroupSystem(ctx, e)
 		if e.Announce != nil || e.Locked != nil || e.Ephemeral != nil || e.MembershipApprovalMode != nil ||
 			len(e.Join)+len(e.Leave)+len(e.Promote)+len(e.Demote) > 0 {
 			// The info panel shows these: fetch it again when it's next asked for.
@@ -783,8 +864,17 @@ func (b *Backend) handle(evt any) {
 		}
 		for _, j := range e.Leave {
 			if b.isMe(j) {
-				// A group you left isn't one you share with anyone.
+				// A group you left isn't one you share with anyone, nor
+				// one you can send to.
 				b.store.clearMembers(ctx, e.JID.String())
+				b.store.setLeft(ctx, e.JID.String(), true)
+				b.emitChat(e.JID.String())
+			}
+		}
+		for _, j := range e.Join {
+			if b.isMe(j) {
+				b.store.setLeft(ctx, e.JID.String(), false)
+				b.emitChat(e.JID.String())
 			}
 		}
 		if e.Name != nil {
@@ -795,6 +885,10 @@ func (b *Backend) handle(evt any) {
 		if e.Link != nil || e.Unlink != nil {
 			b.onCommunityLink(ctx, e)
 		}
+	case *events.Picture:
+		b.onPictureSystem(ctx, e)
+	case *events.IdentityChange:
+		b.onIdentitySystem(ctx, e)
 	case *events.JoinedGroup:
 		jid := e.JID.String()
 		_ = b.store.ensureChat(ctx, b.db, jid, true, e.Name)
@@ -802,6 +896,7 @@ func (b *Backend) handle(evt any) {
 		// too: without their place in it, both would list as plain groups.
 		_ = b.store.setGroupShape(ctx, &e.GroupInfo)
 		_ = b.store.setMembers(ctx, &e.GroupInfo)
+		b.store.setLeft(ctx, jid, false)
 		if e.IsParent {
 			// A community's parent group isn't a chat.
 			b.emitAllChats()
@@ -809,6 +904,7 @@ func (b *Backend) handle(evt any) {
 			return
 		}
 		_ = b.store.setField(ctx, jid, "last_ts", time.Now().Unix())
+		b.onJoinedSystem(ctx, e)
 		b.emitChat(jid)
 		if !e.LinkedParentJID.IsEmpty() {
 			b.emit(model.CommunitiesEvent{})
@@ -897,7 +993,9 @@ func (b *Backend) requestAppStateRecovery(name appstate.WAPatchName) {
 // events were enabled never received their pins and mutes.
 func (b *Backend) resyncAppStateOnce() {
 	key := appStateResyncKey
-	if b.store.meta(b.ctx, key) != "" {
+	// A meta read fails once the backend closes, which reads as "not
+	// done yet".
+	if b.ctx.Err() != nil || b.store.meta(b.ctx, key) != "" {
 		return
 	}
 	cli := b.client()
@@ -905,6 +1003,9 @@ func (b *Backend) resyncAppStateOnce() {
 		// Remember each patch that synced, so that one which keeps failing
 		// doesn't refetch all the others on every connect.
 		done := key + ":" + string(name)
+		if b.ctx.Err() != nil {
+			return
+		}
 		if b.store.meta(b.ctx, done) != "" {
 			continue
 		}
@@ -925,6 +1026,7 @@ func (b *Backend) onMessage(e *events.Message) {
 		b.onStatus(e)
 		return
 	}
+	b.noteTimer(ctx, e)
 	p, ok := b.parse(ctx, e)
 	if !ok {
 		return
@@ -981,6 +1083,14 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		}
 		_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
 		b.emitAllMessages(chat)
+		if p.pin > 0 && info.ID != "" {
+			// "Alice pinned a message", under the pin's own ID.
+			b.putSystem(ctx, systemMsg(chat, info.ID, info.Timestamp, b.canonical(ctx, info.Sender), info.IsFromMe,
+				waWeb.WebMessageInfo_PINNED_MESSAGE_IN_CHAT))
+		}
+		return
+	case p.msg.Kind == model.KindSystem:
+		b.putSystem(ctx, p.msg)
 		return
 	case p.vote != nil:
 		if err := b.store.putVote(ctx, b.db, chat, p.target, *p.vote); err != nil {
@@ -991,7 +1101,9 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 			b.log.Warnf("edit event %s in %s: %v", p.target, chat, err)
 		}
 	case p.target != "":
-		_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
+		if p.reaction != nil {
+			_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
+		}
 	default:
 		name := ""
 		chatJID, _ := types.ParseJID(chat)
@@ -1134,11 +1246,16 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 			b.log.Warnf("store receipt: %v", err)
 		}
 	}
-	// A group message's ticks wait for every member.
+	b.setTicks(ctx, chat, ids, r, e.IsGroup)
+}
+
+// setTicks moves the ticks of your messages ids on after a receipt that
+// says r. A group message's ticks wait for every member.
+func (b *Backend) setTicks(ctx context.Context, chat string, ids []string, r model.Receipt, group bool) {
 	byReceipt := map[model.Receipt][]string{}
 	for _, id := range ids {
 		rr := r
-		if e.IsGroup {
+		if group {
 			if g, ok := b.groupReceipt(ctx, chat, id); ok {
 				rr = g
 			}
@@ -1173,6 +1290,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		receipts []personReceipt
 		// votes are the votes in polls and answers to events.
 		votes []historyVote
+		// reactions are those history sync lists on the messages they react to.
+		reactions []historyReaction
 	}
 	var convs []convData
 	var statuses []storedStatus
@@ -1226,9 +1345,16 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			unread:     unread,
 			mentioned:  conv.GetUnreadMentionCount() > 0,
 			lastTS:     int64(max(conv.GetConversationTimestamp(), conv.GetLastMsgTimestamp())),
+			ephemeral:  conv.GetEphemeralExpiration(),
 		}
 		for _, hm := range conv.GetMessages() {
 			if int64(hm.GetMessage().GetMessageTimestamp()) < cutoff.Unix() {
+				continue
+			}
+			if hm.GetMessage().GetMessageStubType() != 0 {
+				if m, ok := b.historyStub(ctx, jid, hm.GetMessage()); ok {
+					cd.msgs = append(cd.msgs, m)
+				}
 				continue
 			}
 			evt, err := cli.ParseWebMessage(raw, hm.GetMessage())
@@ -1265,6 +1391,13 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			if p.msg.Poll != nil || p.msg.Event != nil {
 				for _, v := range b.historyVotes(ctx, raw, hm.GetMessage()) {
 					cd.votes = append(cd.votes, historyVote{id: p.msg.ID, vote: v})
+				}
+			}
+			for _, r := range hm.GetMessage().GetReactions() {
+				who, ok := b.voterOfKey(ctx, jid, r.GetKey())
+				if ok && r.GetText() != "" {
+					cd.reactions = append(cd.reactions, historyReaction{id: p.msg.ID,
+						reaction: reaction{who: who, ts: r.GetSenderTimestampMS(), emoji: r.GetText()}})
 				}
 			}
 			cd.msgs = append(cd.msgs, p.msg)
@@ -1304,6 +1437,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				b.log.Warnf("history sync: vote on %s: %v", v.id, err)
 			}
 		}
+		for _, r := range cd.reactions {
+			if err := b.store.putReaction(ctx, tx, jid, r.id, r.reaction); err != nil {
+				b.log.Warnf("history sync: reaction to %s: %v", r.id, err)
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		b.log.Errorf("history sync: commit: %v", err)
@@ -1323,8 +1461,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				_ = b.store.putVote(ctx, b.db, chat, p.target, *p.vote)
 			case p.event != nil:
 				_ = b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload)
-			default:
-				_ = b.store.setReaction(ctx, chat, p.target, p.reaction)
+			case p.reaction != nil:
+				_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
 			}
 		}
 	}
@@ -1433,6 +1571,7 @@ func (b *Backend) refreshGroupNames() {
 		if g.Name != "" {
 			_ = b.store.setName(b.ctx, g.JID.String(), g.Name)
 		}
+		_ = b.store.setField(b.ctx, g.JID.String(), "ephemeral", int64(groupTimer(g.GroupEphemeral)))
 	}
 	b.markGeneralChats()
 	b.emitAllChats()

@@ -16,8 +16,8 @@ func TestSettingsSearch(t *testing.T) {
 	st.frame()
 	var found *settingsHit
 	for i, h := range u.settings.hits {
-		if h.title == "Wallpaper doodles" {
-			found = &u.settings.hits[i]
+		if h.title == "Wallpaper doodles" && found == nil {
+			found = &u.settings.hits[i] // Performance has it too, after
 		}
 	}
 	if found == nil || found.category != settingChats {
@@ -30,6 +30,13 @@ func TestSettingsSearch(t *testing.T) {
 	st.frame()
 	if len(u.settings.hits) == 0 || u.settings.hits[0].category != settingMedia {
 		t.Fatalf("hits for microphone: %+v", u.settings.hits)
+	}
+	for q, want := range map[string]int{"performance": settingPerformance, "accounts": settingAccount} {
+		u.settings.search.SetText(q)
+		st.frame()
+		if len(u.settings.hits) == 0 || u.settings.hits[0].category != want {
+			t.Fatalf("hits for %s: %+v", q, u.settings.hits)
+		}
 	}
 	u.settings.search.SetText("no such setting")
 	st.frame()

@@ -29,6 +29,8 @@ import (
 // the first stopping.
 // "privacy" turns privacy mode on and off, and "privacyhover" points at
 // the -at point with privacy mode on, then away.
+// "scroll" turns the mouse wheel up at the -at point, over the open chat,
+// then a message comes while it's scrolled up.
 // "viewer-click" clicks the thumbnail at -at to include its real origin.
 func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) (*image.RGBA, error) {
 	const frames = 6
@@ -107,6 +109,9 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 		vote(1)
 	case "hover":
 		point(x, y)
+	case "scroll":
+		point(x, y)
+		router.Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(float32(x), float32(y)), Scroll: f32.Pt(0, -600*scale)})
 	case "privacy":
 		u.SetPrivacy(true)
 	case "privacyhover":
@@ -151,6 +156,8 @@ func film(name, chat string, x, y, w, h int, scale float32, step time.Duration) 
 			point(w-2, h-2)
 		case "privacy":
 			u.SetPrivacy(false)
+		case "scroll":
+			b.Receive(chat, "Clara", "Anyone there?")
 		case "typing":
 			// They stop typing and their message comes right after,
 			// taking the bubble's place.

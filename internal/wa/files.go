@@ -288,6 +288,13 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 	case model.MediaVideo:
 		m.Kind = model.KindImage
 		m.Duration = mp4Seconds(a.Path)
+	case model.MediaGIF:
+		m.Kind, m.Thumb = model.KindImage, a.Thumb
+		m.Duration = mp4Seconds(a.Path)
+		up.w, up.h = a.W, a.H
+		if a.Klipy {
+			up.from = waE2E.VideoMessage_KLIPY
+		}
 	case model.MediaAudio:
 		m.Duration = audioSeconds(a.Path, m.FileType, st.Size())
 	case model.MediaDocument:
@@ -357,6 +364,7 @@ type upload struct {
 	png   bool
 	thumb []byte
 	w, h  int
+	from  waE2E.VideoMessage_Attribution // where a GIF was found
 }
 
 func (up *upload) prepareImage(q model.Quality) error {
@@ -406,6 +414,7 @@ func (up *upload) copyTo(path string) {
 var mediaTypes = map[model.Media]whatsmeow.MediaType{
 	model.MediaImage:    whatsmeow.MediaImage,
 	model.MediaVideo:    whatsmeow.MediaVideo,
+	model.MediaGIF:      whatsmeow.MediaVideo,
 	model.MediaAudio:    whatsmeow.MediaAudio,
 	model.MediaDocument: whatsmeow.MediaDocument,
 }
@@ -475,6 +484,21 @@ func fileMessage(m *model.Message, up upload, caption string, ci *waE2E.ContextI
 		}
 		if viewOnce {
 			e.ViewOnce = proto.Bool(true)
+		}
+		msg, inner = &waE2E.Message{VideoMessage: e}, e
+	case model.MediaGIF:
+		e := &waE2E.VideoMessage{
+			FileLength: size, Mimetype: proto.String(m.FileType), Seconds: proto.Uint32(uint32(m.Duration)),
+			GifPlayback: proto.Bool(true), JPEGThumbnail: m.Thumb, ContextInfo: ci,
+		}
+		if up.w > 0 && up.h > 0 {
+			e.Width, e.Height = proto.Uint32(uint32(up.w)), proto.Uint32(uint32(up.h))
+		}
+		if up.from != waE2E.VideoMessage_NONE {
+			e.GifAttribution = up.from.Enum()
+		}
+		if caption != "" {
+			e.Caption = proto.String(caption)
 		}
 		msg, inner = &waE2E.Message{VideoMessage: e}, e
 	case model.MediaAudio, model.MediaVoice:
@@ -584,7 +608,7 @@ func (b *Backend) SendContacts(chatID string, contactIDs []string) *model.Messag
 		}
 		msg = &waE2E.Message{ContactsArrayMessage: &waE2E.ContactsArrayMessage{DisplayName: proto.String(m.Text), Contacts: cards}}
 	}
-	return b.storeAndSend(jid, storedMsg{Message: m}, msg, nil)
+	return b.storeAndSend(jid, storedMsg{Message: m}, msg)
 }
 
 // vcard is the contact card WhatsApp sends: the waid parameter makes the
@@ -624,7 +648,7 @@ func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 	for _, o := range p.Options {
 		m.Poll.Options = append(m.Poll.Options, model.PollOption{Name: o})
 	}
-	return b.storeAndSend(jid, storedMsg{Message: m}, msg, nil)
+	return b.storeAndSend(jid, storedMsg{Message: m}, msg)
 }
 
 // mp4Seconds reads the length of an MP4 (or M4A, 3GP) file from its movie

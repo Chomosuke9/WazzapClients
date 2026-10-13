@@ -47,21 +47,23 @@ type settingsState struct {
 	// photo; the path (or "" when cancelled) comes back on picked.
 	picking bool
 	picked  chan string
+	mem     memStats // Performance > Advanced's Memory now
 }
 
 // settingsItems mirrors WhatsApp Desktop's settings menu. Profile isn't
-// listed: the row with your picture opens it. Extra features and Snippets
-// are this app's own.
+// listed: the row with your picture opens it. Performance, Extra features
+// and Snippets are this app's own.
 var settingsItems = [...]listItem{
 	{ic: icLaptop, title: "General", sub: "Startup and close"},
 	{ic: icAccount, title: "Profile", sub: "Name, profile picture, about"},
-	{ic: icKey, title: "Account", sub: "Security notifications, account info"},
+	{ic: icKey, title: "Account", sub: "Security notifications, account info, accounts"},
 	{ic: icLockOutline, title: "Privacy", sub: "Blocked contacts, disappearing messages"},
 	{title: "Chats", sub: "Theme, wallpaper, chat settings"},
 	{ic: icVideoLine, title: "Video & voice", sub: "Camera, microphone and speakers"},
 	{ic: icBell, title: "Notifications", sub: "Messages, groups, sounds"},
 	{ic: icStorage, title: "Storage", sub: "Automatic downloads"},
 	{ic: icKeyboard, title: "Keyboard shortcuts", sub: "Quick actions"},
+	{ic: icSpeed, title: "Performance", sub: "Animations, media, memory and CPU"},
 	{ic: icExtension, title: "Extra features", sub: "Slash commands and more, not in WhatsApp"},
 	{ic: icDocument, title: "Snippets", sub: "Saved messages and payloads"},
 	{ic: icHelp, title: "Help", sub: "Help centre, contact us, privacy policy"},
@@ -78,7 +80,8 @@ const (
 	settingNotifications
 	settingStorage
 	settingShortcuts
-	settingExtras // this app's own features (extras.go)
+	settingPerformance // perf.go
+	settingExtras      // this app's own features (extras.go)
 	settingSnippets
 	settingHelp
 	settingLogout

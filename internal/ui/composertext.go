@@ -43,7 +43,7 @@ func (u *UI) composerRich(txt string) bool {
 // command that can run in the open chat at the start of txt, or 0.
 func (u *UI) commandName(txt string) int {
 	c := u.selected
-	if !u.slash.on || !strings.HasPrefix(txt, "/") || c == nil || u.conv.editorElsewhere || u.postingStatus() {
+	if !u.slash.on || !strings.HasPrefix(txt, "/") || c == nil || u.postingStatus() {
 		return 0
 	}
 	n := strings.IndexFunc(txt, unicode.IsSpace)

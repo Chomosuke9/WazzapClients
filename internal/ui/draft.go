@@ -108,6 +108,10 @@ func (u *UI) draftFiles(chatID string, files []*attachFile) {
 		d = &chatDraft{}
 		u.drafts[chatID] = d
 	}
+	if len(d.files) == 0 && len(files) > 0 {
+		// The text becomes the first file's caption, as in the send view.
+		files[0].caption, d.text = d.text, ""
+	}
 	if n := maxAttach - len(d.files); len(files) > n {
 		removeTemps(files[n:])
 		files = files[:n]

@@ -21,21 +21,21 @@ import (
 func TestContactInfoBack(t *testing.T) {
 	u := New(mock.NewReference())
 	u.Start(func() {})
-	u.SelectID("test@g.us")
-	u.openInfo("test@g.us")
-	u.openContact("vivy@lid", "Vivy")
-	if u.info.chatID != "vivy@lid" || len(u.info.back) != 1 {
-		t.Fatalf("showing %q with %d pages back, want vivy@lid with 1", u.info.chatID, len(u.info.back))
+	u.SelectID("botlab@g.us")
+	u.openInfo("botlab@g.us")
+	u.openContact("nova@lid", "Nova")
+	if u.info.chatID != "nova@lid" || len(u.info.back) != 1 {
+		t.Fatalf("showing %q with %d pages back, want nova@lid with 1", u.info.chatID, len(u.info.back))
 	}
 	if u.info.data == nil || u.info.data.Business == nil {
 		t.Fatal("the business profile didn't load")
 	}
 	u.infoBack()
-	if u.info.chatID != "test@g.us" || len(u.info.back) != 0 || !u.info.open {
+	if u.info.chatID != "botlab@g.us" || len(u.info.back) != 0 || !u.info.open {
 		t.Fatalf("back shows %q (open %v), want the group's info", u.info.chatID, u.info.open)
 	}
-	u.openContact("vivy@lid", "Vivy")
-	u.SelectID("alif@lid")
+	u.openContact("nova@lid", "Nova")
+	u.SelectID("jordan@lid")
 	if u.info.open {
 		t.Error("the panel stayed open on another chat")
 	}
@@ -46,7 +46,7 @@ func TestContactInfoBack(t *testing.T) {
 func TestSenderOpensContact(t *testing.T) {
 	u := New(mock.NewReference())
 	u.Start(func() {})
-	u.SelectID("test@g.us")
+	u.SelectID("botlab@g.us")
 	now := testNow()
 	var ops op.Ops
 	var r input.Router
@@ -60,7 +60,7 @@ func TestSenderOpensContact(t *testing.T) {
 	for range 3 {
 		frame()
 	}
-	// The newest messages, at the bottom of the conversation, are Vivy's.
+	// The newest messages, at the bottom of the conversation, are Nova's.
 	for y := 640; y > 300; y -= 6 {
 		for x := 460; x < 640; x += 10 {
 			p := f32.Pt(float32(x), float32(y))
@@ -70,7 +70,7 @@ func TestSenderOpensContact(t *testing.T) {
 			frame()
 			frame()
 			if u.info.open {
-				if u.info.chatID != "vivy@lid" {
+				if u.info.chatID != "nova@lid" {
 					t.Fatalf("a click at %v opened %q's info", p, u.info.chatID)
 				}
 				return

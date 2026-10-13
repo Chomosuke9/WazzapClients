@@ -59,7 +59,7 @@ whatsmeow. You get the same app, pixel for pixel where it matters, in one small 
     <td><img src="docs/screenshots/gallery.png" alt="Media panel"></td>
   </tr>
   <tr>
-    <td><b>Emoji and stickers</b>, including animated ones, with search and recents.</td>
+    <td><b>Emoji and stickers</b>, including animated ones, with search and recents. Emojis can be 2D, animated or 3D. None are bundled: the 2D font downloads on first run, the others as they show.</td>
     <td><b>The Media panel:</b> photos, videos, docs and links from every chat, or from just one.</td>
   </tr>
   <tr>
@@ -157,7 +157,7 @@ stays off until both confirmations are completed; canceling either leaves it off
 | `/link` | Shows the group's invite link |
 | `/lockdown on\|off` | Lets only admins send messages, or everyone again |
 | `/description <text>` | Changes the group description |
-| `/sticker top text#bottom text` | Turns a photo into a sticker, meme text included |
+| `/sticker <top text>` | Turns a photo into a sticker, meme text included; a new line (Shift+Enter) starts the bottom text. A video, GIF or animated sticker becomes an animated sticker (its first 6 seconds, at the best frame rate and quality that fit in 1 MB) if [ffmpeg](https://ffmpeg.org) is installed |
 | `/purge <count>` | Deletes your last messages for everyone |
 | `/raffle <winners>` | Draws group members at random and announces them |
 | `/calc <sum>` | A calculator: `12 x 4500`, `15k x 3`, `15% x 80000` |
@@ -173,7 +173,9 @@ stays off until both confirmations are completed; canceling either leaves it off
 To use `/whisper`, enable **Slash commands** and its own switch under **Extra features >
 Ethically gray features**, acknowledge the warning, then pick one or more members and
 type the message, for example `/whisper @Budi @Siti Meet at 8`. The first non-mention
-starts the message body, where `@mentions` work as in any message. It supports text
+starts the message body, where `@mentions` work as in any message. To start the body
+with a mention, put it on a new line (Shift+Enter) after the members: `/whisper @Budi`,
+then `@Siti is here` below. It supports text
 only and respects admin-only groups and ghost mode. Recipients may still copy, quote,
 or forward what they receive.
 
@@ -225,7 +227,7 @@ photos exactly as they are.
 - 1️⃣ View once messages, opened once, with screenshots blocked while one is shown
 - 🔍 Font size from 80% to 200% (*Settings > General*, or Ctrl with +, - and 0)
 - 🅰️ Initials on a color for people without a profile picture, and clickable @mentions
-- ⬆️ Built-in updates from signed GitHub releases (*Settings > Help > Check for updates*)
+- ⬆️ Automatic updates from signed GitHub releases, downloading only what changed (*Settings > Help*)
 
 ## Download
 
@@ -235,7 +237,7 @@ Prebuilt packages for **Windows** (amd64) and **Linux** (amd64) are on the
 - `WazzapClients-Setup.exe` installs the app for your user only. It doesn't need admin rights.
 - `WazzapClients-windows-amd64.exe` is the same app without an installer.
 
-To update, use **Settings > Help > Check for updates**, which installs the new release in place.
+The app updates itself in the background and installs the new release when it restarts. To turn that off or update now, use **Settings > Help**.
 See [docs/releasing.md](docs/releasing.md) for how releases are made and signed.
 
 ## Try it without an account
@@ -276,7 +278,7 @@ internal/wa/       hypermeow backend and the SQLite message store
 internal/mock/     the demo backend
 internal/command/  slash commands
 internal/auto/     scheduled messages and AFK replies
-internal/sticker/  makes stickers, with its own small lossless WebP encoder
+internal/sticker/  makes stickers, with its own small lossless WebP encoder (animated ones with ffmpeg)
 internal/video/    plays video and audio with the OS's decoder
 internal/notify/   system notifications
 internal/desktop/  tray icon, start at login, single instance
@@ -293,7 +295,25 @@ found in the pinned Gio version, and the screenshot tooling used to match WhatsA
 Low memory use is the reason this project exists, so measure with `cmd/memprobe` before and
 after a change. Run `gofmt`, `go vet ./...` and `go build ./...` before you send it.
 
-## Disclaimer
+## License
 
-This is an unofficial client. It isn't affiliated with or endorsed by WhatsApp or Meta.
-Using a third-party client may break WhatsApp's Terms of Service, so use it at your own risk.
+WazzapClients' source code is licensed under the [Mozilla Public License 2.0](LICENSE).
+If you change one of its files and share the result, that file's source must stay open
+under the same license; code of your own in separate files can be under any license.
+
+The app links [libsignal-protocol-go](https://github.com/polymorfa/libsignal-protocol-go)
+(through hypermeow), which is licensed under the GNU GPL version 3, so the executables, as
+a whole, are distributed under the GPL version 3. The third-party software in them, and
+each one's license, is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which
+the installer copies next to the app and every release carries.
+
+## Trademarks and disclaimer
+
+WazzapClients is an unofficial client. It isn't affiliated with, endorsed by or sponsored
+by WhatsApp LLC or Meta Platforms, Inc. "WhatsApp" is a trademark of WhatsApp LLC, and
+"KLIPY" a trademark of its owner; both names are used here only to say what the app works
+with. The app doesn't use either one's logo, and forks shouldn't add them.
+
+Using a third-party client may break WhatsApp's Terms of Service and can get your account
+banned, so use it at your own risk. The software comes without any warranty (see sections
+6 and 7 of the license).

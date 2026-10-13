@@ -244,13 +244,9 @@ func readRow(row []byte, src image.Image, x, y int) {
 	n := len(row) / 4
 	switch s := src.(type) {
 	case *image.NYCbCrA:
-		readYCbCr(row, &s.YCbCr, x, y)
-		a := s.A[s.AOffset(x, y):]
-		for i := 0; i < n; i++ {
-			row[4*i+3] = a[i]
-		}
+		readYCbCr(row, &s.YCbCr, s.A[s.AOffset(x, y):], x, y)
 	case *image.YCbCr:
-		readYCbCr(row, s, x, y)
+		readYCbCr(row, s, nil, x, y)
 	case *image.NRGBA:
 		copy(row, s.Pix[s.PixOffset(x, y):])
 	default:
@@ -261,10 +257,52 @@ func readRow(row []byte, src image.Image, x, y int) {
 	}
 }
 
-func readYCbCr(row []byte, s *image.YCbCr, x, y int) {
-	for i := 0; i < len(row)/4; i++ {
-		yi, ci := s.YOffset(x+i, y), s.COffset(x+i, y)
-		row[4*i], row[4*i+1], row[4*i+2] = color.YCbCrToRGB(s.Y[yi], s.Cb[ci], s.Cr[ci])
-		row[4*i+3] = 0xff
+// readYCbCr reads len(row)/4 pixels of s starting at x, y, with alpha a
+// (nil for opaque). Transparent pixels are left black.
+func readYCbCr(row []byte, s *image.YCbCr, a []byte, x, y int) {
+	if s.SubsampleRatio != image.YCbCrSubsampleRatio420 {
+		for i := 0; i < len(row)/4; i++ {
+			yi, ci := s.YOffset(x+i, y), s.COffset(x+i, y)
+			row[4*i], row[4*i+1], row[4*i+2] = color.YCbCrToRGB(s.Y[yi], s.Cb[ci], s.Cr[ci])
+			row[4*i+3] = 0xff
+			if a != nil {
+				row[4*i+3] = a[i]
+			}
+		}
+		return
 	}
+	// VP8 is always 4:2:0. This is color.YCbCrToRGB with the offsets
+	// worked out once a row, not twice a pixel: per pixel, the call and
+	// the offsets took a fifth of an animated emoji's decoding.
+	ys := s.Y[s.YOffset(x, y):]
+	c0 := s.COffset(x, y)
+	cb, cr := s.Cb[c0:], s.Cr[c0:]
+	odd := x & 1 // the first pixel is the right one of its chroma pair
+	for i := 0; i < len(row)/4; i++ {
+		if a != nil {
+			// Most of an emoji's frame is transparent around it.
+			if row[4*i+3] = a[i]; a[i] == 0 {
+				row[4*i], row[4*i+1], row[4*i+2] = 0, 0, 0
+				continue
+			}
+		}
+		ci := (i + odd) >> 1
+		yy1 := int32(ys[i]) * 0x10101
+		cb1 := int32(cb[ci]) - 128
+		cr1 := int32(cr[ci]) - 128
+		row[4*i] = clamp16(yy1 + 91881*cr1)
+		row[4*i+1] = clamp16(yy1 - 22554*cb1 - 46802*cr1)
+		row[4*i+2] = clamp16(yy1 + 116130*cb1)
+		if a == nil {
+			row[4*i+3] = 0xff
+		}
+	}
+}
+
+// clamp16 is v>>16 clamped to a byte, as in color.YCbCrToRGB.
+func clamp16(v int32) uint8 {
+	if uint32(v)&0xff000000 == 0 {
+		return uint8(v >> 16)
+	}
+	return uint8(^(v >> 31))
 }

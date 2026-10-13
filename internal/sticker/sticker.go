@@ -1,5 +1,6 @@
 // Package sticker makes WhatsApp stickers: a picture fitted into a 512x512
-// transparent canvas, with meme text if you like, as a lossless WebP. It
+// transparent canvas, with meme text if you like, as a lossless WebP, or
+// a video, GIF or animated WebP as an animated one (anim.go). It
 // has its own WebP encoder (vp8l.go), since golang.org/x/image only
 // decodes WebP, and libwebp needs cgo or, translated to Go
 // (github.com/gen2brain/webp), adds megabytes to the executable and
@@ -35,8 +36,8 @@ const maxPixels = 24 << 20
 // ErrTooLarge means the picture is too big to decode.
 var ErrTooLarge = errors.New("sticker: the picture is too large")
 
-// ErrAnimated means the picture is an animated WebP, which can't be
-// decoded (see internal/webpanim).
+// ErrAnimated means the picture is an animated WebP, which FromImage
+// can't make a sticker of (Make can).
 var ErrAnimated = errors.New("sticker: the picture is animated")
 
 // FromImage makes a sticker of a JPEG, PNG, GIF (its first frame) or still
@@ -60,17 +61,9 @@ func FromImage(data []byte, text Text) ([]byte, error) {
 	if err := drawText(c, text, area); err != nil {
 		return nil, err
 	}
-	argb := unpremultiply(c)
-	// A photo may not fit losslessly: drop low bits of its colors until
-	// it does.
-	var out []byte
-	for quant := range uint(4) {
-		out = encodeWebP(argb, Size, Size, quant)
-		if len(out) <= MaxBytes {
-			return out, nil
-		}
-	}
-	return nil, errors.New("sticker: the picture doesn't fit in a sticker")
+	// A photo may not fit losslessly: encodeStill drops low bits of its
+	// colors until it does.
+	return encodeStill(c)
 }
 
 // animatedWebP reports whether data is a WebP with animation.
@@ -82,6 +75,14 @@ func animatedWebP(data []byte) bool {
 // canvas fits img into the middle of a transparent Size x Size canvas, and
 // returns it with the area the picture covers.
 func canvas(img image.Image) (*image.RGBA, image.Rectangle) {
+	c := image.NewRGBA(image.Rect(0, 0, Size, Size))
+	return c, fit(c, img)
+}
+
+// fit draws img into the middle of c, a Size x Size canvas, clearing the
+// rest, and returns the area it covers.
+func fit(c *image.RGBA, img image.Image) image.Rectangle {
+	clear(c.Pix)
 	b := img.Bounds()
 	w, h := Size, Size
 	if b.Dx() > b.Dy() {
@@ -90,15 +91,17 @@ func canvas(img image.Image) (*image.RGBA, image.Rectangle) {
 		w = max(1, Size*b.Dx()/b.Dy())
 	}
 	area := image.Rect(0, 0, w, h).Add(image.Pt((Size-w)/2, (Size-h)/2))
-	c := image.NewRGBA(image.Rect(0, 0, Size, Size))
-	if b.Dx() >= w && b.Dy() >= h {
+	switch {
+	case b.Dx() == w && b.Dy() == h:
+		draw.Draw(c, area, img, b.Min, draw.Src)
+	case b.Dx() >= w && b.Dy() >= h:
 		draw.Draw(c, area, photo.Shrink(img, w, h), image.Point{}, draw.Src)
-	} else {
+	default:
 		// Kernel scalers allocate w x (source height) x 32 bytes;
 		// ApproxBiLinear allocates nothing.
 		xdraw.ApproxBiLinear.Scale(c, area, img, b, draw.Src, nil)
 	}
-	return c, area
+	return area
 }
 
 // unpremultiply returns the pixels of img as non-premultiplied ARGB, as

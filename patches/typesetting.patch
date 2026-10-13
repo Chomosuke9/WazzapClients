@@ -1,3 +1,20 @@
+diff --git a/font/font.go b/font/font.go
+index 53069ab..bd77253 100644
+--- a/font/font.go
++++ b/font/font.go
+@@ -160,6 +160,12 @@ type Font struct {
+ 
+ 	STAT *STAT // optional
+ 
++	// BitmapHook, when set, can replace the picture of a glyph that has
++	// a bitmap (sbix, CBDT...): it returns a PNG to show instead, or false
++	// for the font's own. It may be called from several goroutines.
++	// (WazzapClients patch: the app's downloadable emoji styles.)
++	BitmapHook func(gid GID) ([]byte, bool)
++
+ 	COLR *tables.COLR1 // color glyphs, optional
+ 	CPAL CPAL          // color glyphs, optional
+ 
 diff --git a/font/glyphs.go b/font/glyphs.go
 index 7564af8..199a366 100644
 --- a/font/glyphs.go
@@ -206,7 +223,7 @@ index 9362a01..b7fbad0 100644
  
  type Glyph struct {
 diff --git a/font/renderer.go b/font/renderer.go
-index 2fa4f98..cab3b35 100644
+index 2fa4f98..3202621 100644
 --- a/font/renderer.go
 +++ b/font/renderer.go
 @@ -339,7 +339,7 @@ func (e errGlyphOutOfRange) Error() string {
@@ -218,6 +235,37 @@ index 2fa4f98..cab3b35 100644
  		return GlyphOutline{}, errGlyphOutOfRange(glyph)
  	}
  	points := f.getPointsForGlyph(glyph)
+@@ -480,7 +480,7 @@ func (f *Face) GlyphDataBitmap(gid GID) (GlyphBitmap, bool) {
+ 		if ok {
+ 			outB.Outline = &outline
+ 		}
+-		return outB, true
++		return f.hookBitmap(gid, outB), true
+ 	}
+ 
+ 	outB, err = f.bitmap.glyphData(g, f.xPpem, f.yPpem)
+@@ -489,8 +489,20 @@ func (f *Face) GlyphDataBitmap(gid GID) (GlyphBitmap, bool) {
+ 		if ok {
+ 			outB.Outline = &outline
+ 		}
+-		return outB, true
++		return f.hookBitmap(gid, outB), true
+ 	}
+ 
+ 	return GlyphBitmap{}, false
+ }
++
++// hookBitmap gives the font's BitmapHook a chance to replace a bitmap
++// glyph's picture (WazzapClients patch).
++func (f *Face) hookBitmap(gid GID, b GlyphBitmap) GlyphBitmap {
++	if f.BitmapHook == nil {
++		return b
++	}
++	if data, ok := f.BitmapHook(gid); ok {
++		b.Data, b.Format = data, PNG
++	}
++	return b
++}
 diff --git a/font/variations.go b/font/variations.go
 index 2d87701..7703457 100644
 --- a/font/variations.go

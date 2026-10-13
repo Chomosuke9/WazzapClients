@@ -33,6 +33,7 @@ const (
 	rowNote      // a slash command's note, which only you see (slash.go)
 	rowUnread    // "N unread messages", above the first of them (unread.go)
 	rowScheduled // a message you scheduled, after the newest (scheduled.go)
+	rowSystem    // a system message: "Alice added Bob" (system.go)
 )
 
 // convRow is one entry of the message list: a day separator, the
@@ -93,9 +94,17 @@ func (u *UI) rows(c *model.Chat) []convRow {
 		if newDay {
 			rows = append(rows, convRow{kind: rowDate, date: dateChip(m.Time, now)})
 		}
+		if m.Kind == model.KindSystem {
+			if m.Text != "" {
+				rows = append(rows, convRow{kind: rowSystem, msg: m})
+			}
+			// The message after it starts a run of its own.
+			prev = m
+			continue
+		}
 		// Announcements each have a card of their own. A run goes on, however
 		// long the sender waited, until someone else writes or the day changes.
-		first := ann || newDay || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID
+		first := ann || newDay || prev.Kind == model.KindSystem || prev.FromMe != m.FromMe || prev.SenderID != m.SenderID
 		if u.unreadRow(c, m) {
 			rows = append(rows, convRow{kind: rowUnread})
 			first = true
@@ -279,7 +288,10 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 									if cm != nil {
 										return u.avatarOf(gtx, cm.ID, avatarCommunity, 41)
 									}
-									return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 41)
+									d := u.avatar(gtx, c.ID, c.Name, c.IsGroup, 41)
+									r := d.Size.X / 2
+									u.timerBadge(gtx, c, image.Pt(r, r), r, p.Panel)
+									return d
 								}),
 								layout.Rigid(layout.Spacer{Width: 16}.Layout),
 								layout.Flexed(1, func(gtx C) D {
@@ -437,7 +449,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	}
 	if g := &u.conv.glide; g.active {
 		t := float32(1)
-		if !gtx.Now.IsZero() {
+		if !gtx.Now.IsZero() && perf.animations {
 			t = min(1, float32(gtx.Now.Sub(g.start))/float32(durScroll))
 		}
 		// BeforeEnd keeps the list from snapping back to the newest message.
@@ -458,37 +470,30 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		}
 		u.pruneLeaving(c.ID)
 	}()
-	return u.scrollList(gtx, &u.conv.list, len(rows), func(gtx C, i int) D {
+	dims := u.scrollList(gtx, &u.conv.list, len(rows), func(gtx C, i int) D {
 		r := rows[i]
-		in := layout.Inset{Left: dp(gtx, margin), Right: dp(gtx, margin)}
-		switch {
-		case r.kind == rowDate, r.kind == rowEncryption, r.kind == rowUnread:
-			in.Top, in.Bottom = 10, 6
-		case r.kind == rowTyping:
-			// The newest message keeps its bottom space, so the gap above
-			// the bubble doesn't jump as it grows in.
-			in.Top, in.Bottom = 2, 8
-		case r.first:
-			in.Top = 10
-		default:
-			in.Top = 2
-		}
-		if i == 0 {
-			in.Top += 10
-		}
-		if i == msgRows-1 {
-			in.Bottom += 8
+		in := convInset(rows, i, msgRows)
+		in.Left, in.Right = dp(gtx, margin), dp(gtx, margin)
+		// A selected message's band reaches halfway into the space on
+		// either side, so the bands of neighbours that are both selected
+		// meet without a gap or an overlap.
+		top := gtx.Dp(in.Top)
+		u.conv.band = [2]int{top - top/2, gtx.Dp(2)}
+		if i+1 < len(rows) {
+			u.conv.band[1] = gtx.Dp(in.Bottom) + gtx.Dp(convInset(rows, i+1, msgRows).Top)/2
 		}
 		row := func(gtx C) D {
 			return in.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				switch {
 				case r.kind == rowDate:
-					return layout.N.Layout(gtx, func(gtx C) D { return u.systemChip(gtx, r.date) })
+					return layout.N.Layout(gtx, func(gtx C) D { return u.layoutDayChip(gtx, i, in.Top, r.date) })
 				case r.kind == rowEncryption:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.encryptionNotice(gtx, maxBubble) })
 				case r.kind == rowUnread:
 					return layout.N.Layout(gtx, func(gtx C) D { return u.unreadChip(gtx, u.conv.unread.n) })
+				case r.kind == rowSystem:
+					return layout.N.Layout(gtx, func(gtx C) D { return u.layoutSystem(gtx, c, r.msg, maxBubble) })
 				case r.kind == rowTyping:
 					return u.layoutTyping(gtx, c.IsGroup, margin, typingV)
 				case r.kind == rowNote:
@@ -530,6 +535,39 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		u.conv.heights[i] = dims.Size.Y
 		return dims
 	})
+	u.layoutFloats(gtx, c, rows)
+	return dims
+}
+
+// convInset is the space above and below row i of the conversation.
+// msgRows is how many rows are messages (the typing row comes after).
+func convInset(rows []convRow, i, msgRows int) layout.Inset {
+	var in layout.Inset
+	switch r := rows[i]; {
+	case r.kind == rowDate, r.kind == rowEncryption, r.kind == rowUnread, r.kind == rowSystem:
+		in.Top, in.Bottom = 10, 6
+	case r.kind == rowTyping:
+		// The newest message keeps its bottom space, so the gap above
+		// the bubble doesn't jump as it grows in.
+		in.Top, in.Bottom = 2, 8
+	case r.first:
+		in.Top = 10
+	default:
+		in.Top = 2
+	}
+	if i == 0 {
+		in.Top += 10
+	}
+	if i == msgRows-1 {
+		in.Bottom += 8
+	}
+	return in
+}
+
+// selBand is the band a selected row of height h highlights, across the
+// whole width w and its margins (see u.conv.band).
+func (u *UI) selBand(margin, w, h int) image.Rectangle {
+	return image.Rect(-margin, -u.conv.band[0], w+margin, h+u.conv.band[1])
 }
 
 // layoutTyping draws the bubble with three bouncing dots that shows
@@ -549,7 +587,7 @@ func (u *UI) layoutTyping(gtx C, group bool, margin int, v float32) D {
 	// Each dot rises and falls in turn, then all rest: a wave.
 	const period, step, rise = 1300 * time.Millisecond, 160 * time.Millisecond, 520 * time.Millisecond
 	var t time.Duration
-	if !gtx.Now.IsZero() {
+	if !gtx.Now.IsZero() && perf.animations { // otherwise the dots rest
 		t = time.Duration(gtx.Now.UnixNano())
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(time.Second / 30)})
 	}
@@ -568,6 +606,9 @@ func (u *UI) layoutTyping(gtx C, group bool, margin int, v float32) D {
 	}
 	return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
 }
+
+// selColor highlights the selected messages' rows.
+var selColor = argb(0x5dbf6e, 0x26)
 
 // layoutMessageRow draws one message with its interactions: the hover
 // chevron and right-click menu, selection, and the flash after jumping to
@@ -589,20 +630,14 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			u.conv.picked[m.ID] = true
 		}
 	}
-	// Select mode moves incoming bubbles over for the checkboxes.
-	selV := easeOut(u.conv.selV)
-	shift := 0
-	if !m.FromMe && !ann {
-		shift = int(float32(max(0, gtx.Dp(44)-margin)) * selV)
-	}
 	cgtx := gtx
-	cgtx.Constraints = layout.Constraints{Max: image.Pt(w-shift, gtx.Constraints.Max.Y)}
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
 	// Privacy mode shows the message under the pointer, or being used.
 	reveal := u.hovered[m.ID] || u.btn("chev:"+m.ID).Hovered() || (u.ctx.isOpen() && u.ctx.msg == m) || u.textSel.id == m.ID
 	unhide := u.hiding(gtx, "msg:"+m.ID, reveal)
 	bubble := record(cgtx, func(gtx C) D { return u.layoutMessage(gtx, c, r, maxW) })
 	cardH := u.conv.cardH
-	x := shift
+	x := 0
 	switch {
 	case ann:
 		x = (w - bubble.size.X) / 2 // down the middle, whoever sent it
@@ -615,7 +650,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		u.drawFlash(gtx, band)
 	}
 	if sel && u.conv.picked[m.ID] {
-		fillRect(gtx, band, argb(0x5dbf6e, 0x26))
+		fillRect(gtx, u.selBand(margin, w, h), selColor)
 	}
 	bubble.at(gtx, x, 0)
 	if c.IsGroup && r.first && !m.FromMe && !ann {
@@ -649,7 +684,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		}
 		// The chevron covers part of the bubble's hover area, so it keeps
 		// itself visible while it is hovered. It fades and slides in.
-		show := (hovered || chev.Hovered() || (u.ctx.isOpen() && u.ctx.msg == m)) && m.Kind != model.KindSticker
+		show := (hovered || chev.Hovered() || (u.ctx.isOpen() && u.ctx.msg == m)) && m.Kind != model.KindSticker && u.jumbo(c, m) == nil
 		if cv := smooth(u.anims.fade(gtx, animKey{p: chev, tag: tagShow}, show, durHoverIn, durHoverOut)); cv > 0 {
 			bg := p.BubbleIn
 			if m.FromMe {
@@ -675,21 +710,12 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		}
 		t.Pop()
 	}
-	if selV > 0 {
-		// The whole row toggles; a checkbox sits in the left margin.
-		t := op.Offset(image.Pt(-margin, 0)).Push(gtx.Ops)
-		if sel {
-			rg := gtx
-			rg.Constraints = layout.Exact(image.Pt(w+2*margin, h))
-			clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
-		}
-		box, col := icCheckBoxEmpty, p.TextSecondary
-		if u.conv.picked[m.ID] {
-			box, col = icCheckBox, p.Green
-		}
-		bt := op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(6))).Push(gtx.Ops)
-		withOpacity(gtx, selV, func() { drawIcon(gtx, box, 24, col) })
-		bt.Pop()
+	if sel {
+		// The whole row toggles, with the space around it.
+		t := op.Offset(image.Pt(-margin, -u.conv.band[0])).Push(gtx.Ops)
+		rg := gtx
+		rg.Constraints = layout.Exact(u.selBand(margin, w, h).Size())
+		clickable(rg, u.btn(rowKey), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 		t.Pop()
 	}
 	return D{Size: image.Pt(w, h)}
@@ -702,6 +728,11 @@ func (u *UI) drawFlash(gtx C, band image.Rectangle) {
 	left := u.conv.flashUntil.Sub(u.now())
 	if left <= 0 {
 		u.conv.flash = ""
+		return
+	}
+	if !perf.animations {
+		fillRect(gtx, band, argb(0x5dbf6e, 0x30))
+		gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil})
 		return
 	}
 	a := min(1, float32(flashTime-left)/float32(in), float32(left)/float32(out))
@@ -853,14 +884,15 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 	m := r.msg
 	// A reaction that changes while the chat is open pops in.
 	pop := animKey{id: m.ID, tag: tagPop}
-	if old, ok := u.conv.reactions[m.ID]; !ok || old != m.Reaction {
-		if ok && m.Reaction != "" {
+	key := reactionKey(m)
+	if old, ok := u.conv.reactions[m.ID]; !ok || old != key {
+		if ok && key != "" {
 			u.anims.start(pop)
 		}
 		if u.conv.reactions == nil {
 			u.conv.reactions = make(map[string]string)
 		}
-		u.conv.reactions[m.ID] = m.Reaction
+		u.conv.reactions[m.ID] = key
 	}
 	var dims D
 	switch {
@@ -868,44 +900,13 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 		dims = u.layoutAnnSticker(gtx, m, maxW)
 	case m.Kind == model.KindSticker:
 		dims = u.layoutStickerMessage(gtx, c, m, r.first, maxW)
+	case u.jumbo(c, m) != nil:
+		dims = u.layoutJumboMessage(gtx, c, m, u.jumbo(c, m), r.first, maxW)
 	default:
 		dims = u.layoutBubble(gtx, c, m, r.first, maxW)
 	}
 	u.conv.cardH = dims.Size.Y
-	if m.Reaction == "" {
-		return dims
-	}
-	p := u.pal
-	bg := p.BubbleIn
-	pill := record(gtx, func(gtx C) D {
-		gtx.Constraints.Min = image.Point{}
-		return u.card(gtx, 13, bg, func(gtx C) D {
-			return layout.Inset{Left: 6, Right: 6, Top: 2, Bottom: 3}.Layout(gtx, u.label(14, m.Reaction, p.Text).Layout)
-		})
-	})
-	x := gtx.Dp(8)
-	if m.FromMe {
-		x = dims.Size.X - pill.size.X - gtx.Dp(8)
-	}
-	ring := gtx.Dp(2)
-	py := dims.Size.Y - gtx.Dp(5)
-	if u.announcementsOf(c) != nil {
-		py = dims.Size.Y + gtx.Dp(3) // under the card, not on it
-	}
-	fx := fxStack{}
-	if u.anims.running(pop) {
-		v := u.anims.fade(gtx, pop, true, 380*time.Millisecond, 0)
-		if v >= 1 {
-			u.anims.stop(pop)
-		}
-		mid := image.Pt(x+pill.size.X/2, py+pill.size.Y/2)
-		fx = pushFx(gtx, min(1, 3*v), scaleAt(mid, lerp(0.3, 1, easeOutBack(v))))
-	}
-	fillRRect(gtx, image.Rect(x-ring, py-ring, x+pill.size.X+ring, py+pill.size.Y+ring), pill.size.Y/2+ring, p.ChatBg)
-	pill.at(gtx, x, py)
-	fx.Pop()
-	dims.Size.Y = py + pill.size.Y + ring
-	return dims
+	return u.reactionPill(gtx, dims, []*model.Message{m}, m.FromMe, u.announcementsOf(c) != nil, pop)
 }
 
 // layoutBubble draws one message bubble, sized to its content.
@@ -1276,7 +1277,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		meta.at(gtx, contentW-meta.size.X-gtx.Dp(8), y-meta.size.Y-gtx.Dp(5))
 	}
 	if isImg {
-		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, img)
+		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, u.gifImage(m, img, max(imgW, imgH)))
 		u.photoBadge(gtx, image.Rect(0, y, imgW, y+imgH), m)
 		func() {
 			t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
@@ -1340,6 +1341,8 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 				ic = icOpenInNew
 			case model.ButtonCopy:
 				ic = icCopy
+			case model.ButtonList:
+				ic = icList
 			case model.ButtonReply:
 			default:
 				ic = nil // the card buttons are words alone
@@ -1445,6 +1448,7 @@ func (u *UI) paintBubble(gtx C, w, h int, bg color.NRGBA, out, tail bool) {
 // layoutQuote draws a quoted message: a colored bar, the author and a
 // snippet, plus the quoted picture's thumbnail when it's loaded (qm).
 func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width int, qm *model.Message) D {
+	defer u.emojiIn(emojiQuotes)()
 	p := u.pal
 	name := q.Sender
 	if name == "" {
@@ -1568,7 +1572,7 @@ func (u *UI) layoutImage(gtx C, r image.Rectangle, m *model.Message, img *imgEnt
 			t.Pop()
 		}
 	}()
-	if m.Media != model.MediaVideo && m.Media != model.MediaGIF {
+	if m.Media != model.MediaVideo && m.Media != model.MediaGIF || img != nil && img.live {
 		return
 	}
 	playButton(gtx, r.Min.Add(r.Size().Div(2)), gtx.Dp(26), argb(0x000000, 0x80))
@@ -1743,7 +1747,7 @@ func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
 		return
 	}
 	pic, size := img.op, img.size
-	if img.animated && !u.blurred() {
+	if img.animated && !u.blurred() && u.autoplays(m) {
 		b, chat, id := u.backend, m.ChatID, m.ID
 		if f, ok := u.stickerFrame("m:"+chat+"/"+id, sz*2, func() []byte { return b.MediaData(chat, id) }); ok {
 			pic, size = f, f.Size()

@@ -19,7 +19,7 @@ type parsed struct {
 	msg storedMsg
 
 	target   string // message ID a reaction/revoke/edit/pin applies to
-	reaction string
+	reaction *reaction
 	revoke   bool
 	// revokedBy is the group admin who deleted someone else's message
 	// (revoke), or "" when its sender did.
@@ -319,7 +319,12 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	p.msg.Message = &model.Message{ChatID: chat.String()}
 
 	if r := m.GetReactionMessage(); r != nil {
-		p.target, p.reaction = r.GetKey().GetID(), r.GetText()
+		ts := r.GetSenderTimestampMS()
+		if ts <= 0 {
+			ts = evt.Info.Timestamp.UnixMilli()
+		}
+		p.target = r.GetKey().GetID()
+		p.reaction = &reaction{who: b.reactorOf(ctx, evt.Info.Sender, evt.Info.IsFromMe), ts: ts, emoji: r.GetText()}
 		return p, p.target != ""
 	}
 	if m.GetPollUpdateMessage() != nil || m.GetEncEventResponseMessage() != nil {
@@ -352,6 +357,10 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 				at = time.UnixMilli(ms)
 			}
 			return p, p.setEdit(p.target, pm.GetEditedMessage(), at)
+		case waE2E.ProtocolMessage_EPHEMERAL_SETTING:
+			p.target = ""
+			p.msg, ok = timerSystem(evt, chat, pm)
+			return p, ok
 		default:
 			return p, false
 		}
