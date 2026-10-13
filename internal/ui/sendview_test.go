@@ -248,7 +248,9 @@ func TestSendViewCaptionsAndSend(t *testing.T) {
 	}
 }
 
-func TestSendViewCloseRestoresDraft(t *testing.T) {
+// TestSendViewKeepsText: the composer's text becomes the first caption,
+// and closing the send view unsent leaves the caption in the composer.
+func TestSendViewKeepsText(t *testing.T) {
 	u := New(mock.New())
 	u.Start(func() {})
 	u.SelectID("rina")
@@ -257,7 +259,7 @@ func TestSendViewCloseRestoresDraft(t *testing.T) {
 	p := filepath.Join(dir, "a.pdf")
 	os.WriteFile(p, []byte("%PDF"), 0o600)
 	u.attachPaths([]string{p})
-	if got := u.conv.composer.Text(); got != "" {
+	if got := u.conv.composer.Text(); got != "half a message" {
 		t.Fatalf("the caption starts as %q", got)
 	}
 	u.conv.composer.SetText("a caption")
@@ -265,7 +267,7 @@ func TestSendViewCloseRestoresDraft(t *testing.T) {
 	if len(u.attach.files) != 0 {
 		t.Fatal("Escape didn't close the send view")
 	}
-	if got := u.conv.composer.Text(); got != "half a message" {
+	if got := u.conv.composer.Text(); got != "a caption" {
 		t.Errorf("the composer came back with %q", got)
 	}
 }

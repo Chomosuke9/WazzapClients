@@ -9,6 +9,7 @@
 //	go run ./cmd/memprobe -demo -heapprofile heap.pprof
 //	go run ./cmd/memprobe -demo -passes 3 -cpuprofile cpu.pprof
 //	go run ./cmd/memprobe -data <copy> -scroll 1200 -cpuprofile cpu.pprof
+//	go run ./cmd/memprobe -demo -emoji "$APPDATA/WazzapClients/emoji" -scroll 1500 -pref emoji_anims=64
 //
 // Point -data at a copy of the data directory while the app is running.
 package main
@@ -22,6 +23,7 @@ import (
 	rdebug "runtime/debug"
 	"runtime/pprof"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -86,7 +88,26 @@ func main() {
 	scrollChat := flag.Bool("chat", false, "with -scroll, scroll the first chat's messages instead of the chat list")
 	size := flag.String("size", "1200x780", "window size in dp, WxH")
 	ballastMB := flag.Int("ballast", 0, "keep this many MB of extra live heap, as a long session's backend does")
+	emojiFont := flag.String("emojifont", "internal/ui/testdata/NotoColorEmoji.ttf", "the emoji font (the app downloads it; run from the repository's root)")
+	emojiDir := flag.String("emoji", "", "draw 2D animated emojis from this directory (<data>/emoji), downloading none; with -scroll (and not -chat), scroll the emoji picker")
+	flag.StringVar(&openChat, "open", "", "with -scroll -chat, the ID of the chat to scroll instead of the first")
+	var prefs []string
+	flag.Func("pref", "set an app preference, key=value, as Settings would (repeatable): emoji_anims=64, gc_percent=200", func(v string) error {
+		if !strings.Contains(v, "=") {
+			return fmt.Errorf("want key=value")
+		}
+		prefs = append(prefs, v)
+		return nil
+	})
 	flag.Parse()
+	if err := ui.LoadEmojiFont(*emojiFont); err != nil {
+		log.Fatal(err)
+	}
+	if *emojiDir != "" {
+		if err := ui.PreviewEmojis(*emojiDir, "2d_anim"); err != nil {
+			log.Fatal(err)
+		}
+	}
 	var sw, sh float32
 	if _, err := fmt.Sscanf(*size, "%gx%g", &sw, &sh); err != nil {
 		log.Fatalf("-size: %v", err)
@@ -106,6 +127,10 @@ func main() {
 		backend = &offline{Backend: b}
 	default:
 		log.Fatal("need -data or -demo")
+	}
+	for _, p := range prefs {
+		k, v, _ := strings.Cut(p, "=")
+		backend.SetPref(k, v)
 	}
 	ballast = makeBallast(*ballastMB)
 	report("start")
@@ -152,7 +177,7 @@ func main() {
 					if frame == 60 {
 						startProfile()
 					}
-					scrollFrame(u, frame, *scroll, *scrollChat, &times)
+					scrollFrame(u, frame, *scroll, *scrollChat, *emojiDir != "", &times)
 					continue
 				}
 				switch {
@@ -222,24 +247,39 @@ func makeBallast(mb int) []*ballastNode {
 	return b
 }
 
+// openChat is the chat -scroll -chat scrolls, or "" for the first.
+var openChat string
+
 // scrollDir is the chat list's scroll direction in -scroll mode.
 var scrollDir = 1
 
-// scrollFrame drives -scroll: it scrolls the chat list 12 px a frame (a
-// brisk wheel scroll at 60 Hz), turning around at either end, and
-// reports after n frames.
-func scrollFrame(u *ui.UI, frame, n int, chat bool, times *frameTimes) {
+// scrollFrame drives -scroll: it scrolls the chat list (or the chat, or
+// with -emoji the emoji picker) 12 px a frame (a brisk wheel scroll at
+// 60 Hz), turning around at either end, and reports after n frames, and
+// every tenth of them with -emoji.
+func scrollFrame(u *ui.UI, frame, n int, chat, emojis bool, times *frameTimes) {
 	switch {
 	case frame == 30:
 		report("first paint")
-		u.Select(0)
+		if openChat != "" {
+			u.SelectID(openChat)
+		} else {
+			u.Select(0)
+		}
 	case frame > 60 && frame <= 60+n:
 		scroll := u.ScrollChatList
-		if chat {
+		switch {
+		case emojis && !chat:
+			scroll = u.ScrollPicker
+		case chat:
 			scroll = u.ScrollChat
 		}
 		if !scroll(12 * scrollDir) {
 			scrollDir = -scrollDir
+		}
+		if emojis && (frame-60)%max(n/10, 1) == 0 {
+			report(fmt.Sprintf("frame %d", frame-60))
+			fmt.Printf("             animated emoji frames %d MB\n", u.AnimatedEmojiBytes()>>20)
 		}
 	case frame > 60+n:
 		times.report(1)

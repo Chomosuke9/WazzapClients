@@ -124,7 +124,7 @@ func (sp *slashPick) rows() int {
 func (u *UI) slashQuery() *slashPick {
 	s := &u.slash
 	c := u.selected
-	if !s.on || c == nil || u.postingStatus() || u.conv.editorElsewhere || u.conv.edit.msg != nil || isChannelID(c.ID) {
+	if !s.on || c == nil || u.postingStatus() || u.conv.edit.msg != nil || isChannelID(c.ID) {
 		return nil
 	}
 	ed := &u.conv.composer
@@ -608,8 +608,9 @@ func (h slashHost) Confirm(title, body, action string, danger bool, run func()) 
 
 func (h slashHost) PickImage(done func(path string)) {
 	h.u.slashDo(func() func() {
-		paths, err := filepick.Open("Choose a picture for the sticker", false,
-			filepick.Filter{Name: "Pictures", Exts: []string{"jpg", "jpeg", "png", "webp", "gif"}})
+		paths, err := filepick.Open("Choose a picture or video for the sticker", false,
+			filepick.Filter{Name: "Pictures and videos", Exts: []string{"jpg", "jpeg", "png", "webp", "gif",
+				"mp4", "mov", "m4v", "webm", "mkv", "avi"}})
 		path := ""
 		if err == nil && len(paths) > 0 {
 			path = paths[0]
@@ -672,13 +673,23 @@ func (u *UI) slashHint(sp *slashPick) string {
 		if !o.Required {
 			p = "[" + p + "]"
 		}
-		if i > 0 && in.Cmd.Options[i-1].Until != "" {
-			// What separates it from the option before: "#[bottom]".
-			p = in.Cmd.Options[i-1].Until + p
+		if prev := in.Cmd.Options[max(i-1, 0)]; i > 0 && prev.Until != "" && prev.Kind == command.Text {
+			// What separates it from the text before (a Member option's
+			// values end without one, at the first word that isn't an
+			// @mention): "(new line) [bottom]".
+			p = untilHint(prev.Until) + p
 		}
 		parts = append(parts, p)
 	}
 	return strings.Join(parts, " ")
+}
+
+// untilHint is how slashHint shows an option's separator.
+func untilHint(sep string) string {
+	if sep == "\n" {
+		return "(new line) "
+	}
+	return sep
 }
 
 // paintSlashHint draws slashHint after the composer's text, when the

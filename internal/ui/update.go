@@ -9,13 +9,21 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/update"
 )
 
-// updateStep is where an update stands. Nothing happens until the user
-// asks: the Help page's "Check for updates" row checks, and once a newer
-// release is found, the same row downloads it and restarts the app.
+// updateStep is where an update stands. The Help page's "Check for
+// updates" row checks, and once a newer release is found, the same row
+// downloads it and restarts the app.
+//
+// With Automatic updates on (prefAutoUpdate, an app preference, on by
+// default) the app checks by itself a minute after it starts and every
+// few hours after (autoUpdate). It downloads a newer release and puts it
+// in place without restarting: the next start runs it, the Help row
+// offers to restart now, and the app restarts by itself, in the
+// background, once no window is open (updateReady).
 type updateStep int
 
 const (
@@ -26,6 +34,17 @@ const (
 	updDownloading
 	updRestarting
 	updFailed // err; rel is set when the download failed
+	updReady  // rel is in place (an automatic update): it runs once restarted
+)
+
+// prefAutoUpdate turns automatic updates off when "off".
+const prefAutoUpdate = "autoupdate"
+
+// Automatic updates check autoUpdateDelay after the app starts, then
+// every autoUpdateEvery.
+const (
+	autoUpdateDelay = time.Minute
+	autoUpdateEvery = 4 * time.Hour
 )
 
 // updater runs updates for the host, so one goes on when the window is
@@ -40,6 +59,7 @@ type updater struct {
 	rel         *update.Release
 	done, total int64
 	err         error
+	announced   bool // the window has toasted that rel is ready
 }
 
 // canUpdate reports whether this build updates itself: a release (not a
@@ -80,12 +100,98 @@ func (up *updater) check() {
 	}()
 }
 
+// startAuto asks for an automatic check now and then, for as long as the
+// app runs. Each tick goes through the UI goroutine (autoUpdate), which
+// reads the preference; a tick dropped with the request queue full waits
+// for the next.
+func (h *host) startAuto() {
+	if !h.canUpdate() {
+		return
+	}
+	go func() {
+		time.Sleep(autoUpdateDelay)
+		for {
+			h.request(request{kind: reqAutoUpdate})
+			time.Sleep(autoUpdateEvery)
+		}
+	}()
+}
+
+// autoUpdate checks for a newer release and, when there's one, downloads
+// it and puts it in place, unless the user turned automatic updates off
+// or an update is under way.
+func (h *host) autoUpdate() {
+	up := &h.upd
+	if !h.canUpdate() || !prefOn(h.b, prefAutoUpdate) {
+		return
+	}
+	up.mu.Lock()
+	prev := up.step
+	busy := prev != updIdle && prev != updLatest && prev != updFailed
+	if !busy {
+		up.step = updChecking
+	}
+	up.mu.Unlock()
+	if busy {
+		return
+	}
+	go func() {
+		rel, err := update.Check(context.Background(), h.o.Version)
+		if err != nil {
+			// Offline, most likely: a check of its own says nothing.
+			up.set(func() { up.step = prev })
+			return
+		}
+		if rel == nil {
+			up.set(func() { up.step, up.rel, up.err = updLatest, nil, nil })
+			return
+		}
+		up.set(func() { up.rel, up.step, up.done, up.total, up.err = rel, updDownloading, 0, rel.Size(), nil })
+		err = rel.Download(context.Background(), up.exe, h.o.Version, func(done, total int64) {
+			up.set(func() { up.done, up.total = done, total })
+		})
+		if err == nil {
+			err = update.Apply(up.exe)
+		}
+		if err != nil {
+			os.Remove(update.Staged(up.exe))
+			up.set(func() { up.step, up.err = updFailed, err })
+			return
+		}
+		up.set(func() { up.step = updReady })
+	}()
+}
+
+// updateReady runs on the UI goroutine when an update moved on: with one
+// in place, it restarts the app if no window is open, or else toasts once.
+// It reports whether the app is quitting.
+func (h *host) updateReady() bool {
+	up := &h.upd
+	up.mu.Lock()
+	ready, rel := up.step == updReady, up.rel
+	announce := ready && h.u != nil && !up.announced
+	if announce {
+		up.announced = true
+	}
+	up.mu.Unlock()
+	if !ready {
+		return false
+	}
+	if h.win == nil {
+		return h.restart()
+	}
+	if announce {
+		h.u.toast(rel.Version + " is ready. Restart from Settings > Help, or it runs next time.")
+	}
+	return false
+}
+
 // install downloads the release found, puts it in place and restarts.
 func (up *updater) install() {
 	rel := up.rel
 	up.set(func() { up.step, up.done, up.total, up.err = updDownloading, 0, rel.Size(), nil })
 	go func() {
-		err := rel.Download(context.Background(), update.Staged(up.exe), up.h.o.Version, func(done, total int64) {
+		err := rel.Download(context.Background(), up.exe, up.h.o.Version, func(done, total int64) {
 			up.set(func() { up.done, up.total = done, total })
 		})
 		if err == nil {
@@ -103,9 +209,13 @@ func (up *updater) install() {
 }
 
 // restart starts the updated executable and quits. The new process waits
-// for this one to exit, which lets go of the single-instance lock.
+// for this one to exit, which lets go of the single-instance lock. Without
+// a window open it starts in the background too.
 func (h *host) restart() bool {
 	args := append(append([]string(nil), h.o.Relaunch...), "-wait-pid", strconv.Itoa(os.Getpid()))
+	if h.win == nil {
+		args = append(args, "-background")
+	}
 	if err := exec.Command(h.upd.exe, args...).Start(); err != nil {
 		h.upd.set(func() { h.upd.step, h.upd.err = updFailed, err })
 		return false
@@ -150,8 +260,20 @@ func (u *UI) updateRows() []settingRow {
 		if rel != nil {
 			r.title, r.run = "Couldn't update to "+rel.Version, up.install
 		}
+	case updReady:
+		r.title, r.sub = "Restart to update to "+rel.Version, "It's downloaded and runs next time "+appName+" starts"
+		r.run = func() {
+			up.set(func() { up.step = updRestarting })
+			// The restart must not be dropped, and the UI goroutine can't
+			// wait for its own queue.
+			go func() { h.reqs <- request{kind: reqRestart} }()
+		}
 	}
 	rows = append(rows, r)
+	auto := prefOn(u.backend, prefAutoUpdate)
+	rows = append(rows, settingRow{key: prefAutoUpdate, kind: setToggle, on: auto, title: "Automatic updates",
+		sub: "Download new versions in the background and install them when " + appName + " restarts",
+		run: func() { setPref(u.backend, prefAutoUpdate, !auto) }})
 	if rel != nil && step != updLatest {
 		page := rel.Page
 		rows = append(rows, settingRow{key: "whatsnew", ic: icInfo, title: "What's new in " + rel.Version,

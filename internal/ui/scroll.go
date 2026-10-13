@@ -18,8 +18,8 @@ import (
 // to where the notches point. Its speed builds up and dies down without
 // jumps, and a notch that comes while it moves only moves where it heads,
 // so a spinning wheel glides instead of lurching at each notch. Touchpads
-// already scroll smoothly and move the list at once. Touch drags still go
-// to the list.
+// already scroll smoothly and move the list at once, as notches do with
+// Smooth scrolling off (perf.go). Touch drags still go to the list.
 
 // wheelSettle is how long the spring takes to cover 95% of a notch.
 const wheelSettle = 150 * time.Millisecond
@@ -112,7 +112,7 @@ func (u *UI) wheelList(gtx C, l *layout.List, lay layout.Widget) D {
 			w = &wheelScroll{last: gtx.Now.Add(-wheelLead), at: l.Position}
 			u.wheels[l] = w
 		}
-		if wheelNotch(e.Scroll.Y) {
+		if wheelNotch(e.Scroll.Y) && perf.smoothScroll {
 			w.left += e.Scroll.Y
 		} else {
 			w.frac += e.Scroll.Y

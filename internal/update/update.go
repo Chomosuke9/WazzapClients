@@ -1,7 +1,16 @@
 // Package update replaces the app's executable with the latest GitHub
-// release, when the user asks for it: Check looks for a newer release,
+// release: Check looks for a newer release,
 // Download fetches its executable next to the running one and checks it
 // against the release's signed SHA256SUMS, and Apply swaps the two.
+//
+// Patches (bsdiff, made by cmd/mkpatch) from the few releases before each
+// one live on a prerelease of their own, PatchTag, so a release's page
+// lists only what people download. Each is named after the versions it
+// goes from and to, and the release's SHA256SUMS lists it. When there's
+// one from the running version to the latest release, Download
+// rebuilds the new executable from the running one and the patch, a small
+// fraction of the executable's size, and checks the result against the
+// same checksum. Any trouble with the patch falls back to the whole file.
 //
 // Releases sign SHA256SUMS with an ed25519 key (cmd/signrelease) whose
 // public half is publicKey. A checksum from the same release only proves
@@ -66,6 +75,7 @@ type Release struct {
 	Version string // its tag, e.g. "v0.10.0"
 	Page    string // its page on GitHub
 	exe     asset
+	patch   asset // from the running version, if the release has one
 	sums    asset
 	sig     asset
 }
@@ -83,6 +93,17 @@ func AssetName() string {
 		ext = ".exe"
 	}
 	return fmt.Sprintf("WazzapClients-%s-%s%s", runtime.GOOS, runtime.GOARCH, ext)
+}
+
+// PatchTag is the tag of the prerelease that keeps the update patches.
+// It isn't a version, and GitHub's latest release leaves prereleases out,
+// so it's never offered as an update.
+const PatchTag = "update-patches"
+
+// patchName is the name of the patch that turns from's executable for
+// this system into to's.
+func patchName(from, to string) string {
+	return AssetName() + ".from-" + from + ".to-" + to + ".bsdiff"
 }
 
 var client = &http.Client{Timeout: 10 * time.Minute}
@@ -104,18 +125,29 @@ func get(ctx context.Context, url, version string) (*http.Response, error) {
 	return resp, nil
 }
 
-// apiURL is the latest release's API address (a variable for tests). The
-// latest release leaves out drafts and prereleases.
-var apiURL = "https://api.github.com/repos/" + Repo + "/releases/latest"
+// apiURL is the latest release's API address and patchesURL the patch
+// release's (variables for tests). The latest release leaves out drafts
+// and prereleases.
+var (
+	apiURL     = "https://api.github.com/repos/" + Repo + "/releases/latest"
+	patchesURL = "https://api.github.com/repos/" + Repo + "/releases/tags/" + PatchTag
+)
 
-// Check returns the latest release when it's newer than current (a
-// version like "v0.9.0"), and nil when current is up to date.
-func Check(ctx context.Context, current string) (*Release, error) {
-	cur, ok := parseVersion(current)
-	if !ok {
-		return nil, ErrDevBuild
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+// ghRelease is what Check reads of a release from GitHub's API.
+type ghRelease struct {
+	Tag    string `json:"tag_name"`
+	Page   string `json:"html_url"`
+	Assets []struct {
+		Name string `json:"name"`
+		URL  string `json:"browser_download_url"`
+		Size int64  `json:"size"`
+	} `json:"assets"`
+}
+
+// getRelease reads the release at url, an API address. It returns nil
+// when there's none.
+func getRelease(ctx context.Context, url, current string) (*ghRelease, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -127,21 +159,27 @@ func Check(ctx context.Context, current string) (*Release, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil // nothing published yet
+		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub: %s", resp.Status)
 	}
-	var rel struct {
-		Tag    string `json:"tag_name"`
-		Page   string `json:"html_url"`
-		Assets []struct {
-			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
-			Size int64  `json:"size"`
-		} `json:"assets"`
-	}
+	var rel ghRelease
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
+		return nil, err
+	}
+	return &rel, nil
+}
+
+// Check returns the latest release when it's newer than current (a
+// version like "v0.9.0"), and nil when current is up to date.
+func Check(ctx context.Context, current string) (*Release, error) {
+	cur, ok := parseVersion(current)
+	if !ok {
+		return nil, ErrDevBuild
+	}
+	rel, err := getRelease(ctx, apiURL, current)
+	if err != nil || rel == nil { // nil: nothing published yet
 		return nil, err
 	}
 	v, ok := parseVersion(rel.Tag)
@@ -160,17 +198,34 @@ func Check(ctx context.Context, current string) (*Release, error) {
 			r.sig = x
 		}
 	}
+	if r.exe.url != "" {
+		// Without the patch release (or with no patch from current), the
+		// whole executable downloads.
+		if p, err := getRelease(ctx, patchesURL, current); err == nil && p != nil {
+			for _, a := range p.Assets {
+				if a.Name == patchName(current, rel.Tag) {
+					r.patch = asset{name: a.Name, url: a.URL, size: a.Size}
+				}
+			}
+		}
+	}
 	return r, nil
 }
 
-// Size is the download's size in bytes, or 0 when the release has no
-// build for this system.
-func (r *Release) Size() int64 { return r.exe.size }
+// Size is the download's size in bytes: the patch's when the release has
+// one from the running version, or 0 when it has no build for this system.
+func (r *Release) Size() int64 {
+	if r.patch.url != "" && r.exe.url != "" {
+		return r.patch.size
+	}
+	return r.exe.size
+}
 
-// Download fetches the release's executable for this system to staged
-// (see Staged) and checks it against the signed checksums. progress, if
-// not nil, is called as bytes arrive. On error nothing stays behind.
-func (r *Release) Download(ctx context.Context, staged, current string, progress func(done, total int64)) (err error) {
+// Download fetches the release's executable for this system to
+// Staged(exe), where exe is the running executable, and checks it against
+// the signed checksums. progress, if not nil, is called as bytes arrive.
+// On error nothing stays behind.
+func (r *Release) Download(ctx context.Context, exe, current string, progress func(done, total int64)) error {
 	if r.exe.url == "" {
 		return ErrNoBuild
 	}
@@ -185,11 +240,92 @@ func (r *Release) Download(ctx context.Context, staged, current string, progress
 	if err != nil {
 		return err
 	}
-	want, err := verifySums(sums, sig, r.exe.name)
+	if err := verifySig(sums, sig); err != nil {
+		return err
+	}
+	want, err := sumOf(sums, r.exe.name)
 	if err != nil {
 		return err
 	}
+	staged := Staged(exe)
+	if r.patch.url != "" {
+		err := r.patchTo(ctx, exe, staged, current, sums, want, progress)
+		if err == nil || ctx.Err() != nil {
+			return err
+		}
+		// A patch that's damaged or missing from SHA256SUMS, or a running
+		// executable that isn't the release's (changed by hand, or by an
+		// antivirus): the whole executable still installs.
+	}
+	return r.fetchTo(ctx, staged, current, want, progress)
+}
 
+// patchTo rebuilds the release's executable at staged from the running
+// one, exe, and the patch.
+func (r *Release) patchTo(ctx context.Context, exe, staged, current string, sums, want []byte, progress func(done, total int64)) error {
+	wantPatch, err := sumOf(sums, r.patch.name)
+	if err != nil {
+		return err
+	}
+	resp, err := get(ctx, r.patch.url, current)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	total := resp.ContentLength
+	if total <= 0 {
+		total = r.patch.size
+	}
+	var patch bytes.Buffer
+	pw := &progressWriter{total: total, fn: progress}
+	n, err := io.Copy(io.MultiWriter(&patch, pw), io.LimitReader(resp.Body, maxExe+1))
+	if err != nil {
+		return err
+	}
+	if n > maxExe {
+		return errors.New("the patch is too big")
+	}
+	if sum := sha256.Sum256(patch.Bytes()); !bytes.Equal(sum[:], wantPatch) {
+		return errors.New("the patch is damaged (checksum mismatch)")
+	}
+	old, err := os.Open(exe)
+	if err != nil {
+		return err
+	}
+	defer old.Close()
+	st, err := old.Stat()
+	if err != nil {
+		return err
+	}
+	return writeStaged(staged, want, func(w io.Writer) error {
+		return bspatch(w, old, st.Size(), patch.Bytes())
+	})
+}
+
+// fetchTo downloads the release's whole executable to staged.
+func (r *Release) fetchTo(ctx context.Context, staged, current string, want []byte, progress func(done, total int64)) error {
+	resp, err := get(ctx, r.exe.url, current)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	total := resp.ContentLength
+	if total <= 0 {
+		total = r.exe.size
+	}
+	pw := &progressWriter{total: total, fn: progress}
+	return writeStaged(staged, want, func(w io.Writer) error {
+		n, err := io.Copy(io.MultiWriter(w, pw), io.LimitReader(resp.Body, maxExe+1))
+		if err == nil && n > maxExe {
+			err = errors.New("the download is too big")
+		}
+		return err
+	})
+}
+
+// writeStaged writes the new executable to staged with write and checks
+// it against want. On error it removes the file.
+func writeStaged(staged string, want []byte, write func(io.Writer) error) (err error) {
 	// Write next to the running executable: Apply renames, and a rename
 	// can't cross volumes. Creating the file also finds out early when
 	// the folder isn't writable.
@@ -205,23 +341,13 @@ func (r *Release) Download(ctx context.Context, staged, current string, progress
 			os.Remove(staged)
 		}
 	}()
-	resp, err := get(ctx, r.exe.url, current)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	total := resp.ContentLength
-	if total <= 0 {
-		total = r.exe.size
-	}
 	h := sha256.New()
-	pw := &progressWriter{total: total, fn: progress}
-	n, err := io.Copy(io.MultiWriter(f, h, pw), io.LimitReader(resp.Body, maxExe+1))
-	if err != nil {
+	bw := bufio.NewWriterSize(io.MultiWriter(f, h), 64<<10)
+	if err := write(bw); err != nil {
 		return err
 	}
-	if n > maxExe {
-		return errors.New("the download is too big")
+	if err := bw.Flush(); err != nil {
+		return err
 	}
 	if !bytes.Equal(h.Sum(nil), want) {
 		return errors.New("the download is damaged (checksum mismatch)")
@@ -254,13 +380,18 @@ func fetchSmall(ctx context.Context, url, current string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 }
 
-// verifySums checks sig over sums and returns the SHA-256 that sums
-// lists for name.
-func verifySums(sums, sig []byte, name string) ([]byte, error) {
+// verifySig checks sig over sums.
+func verifySig(sums, sig []byte) error {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sig)))
 	if err != nil || len(publicKey) != ed25519.PublicKeySize || !ed25519.Verify(publicKey, sums, raw) {
-		return nil, ErrSignature
+		return ErrSignature
 	}
+	return nil
+}
+
+// sumOf returns the SHA-256 that sums (checked with verifySig) lists for
+// name.
+func sumOf(sums []byte, name string) ([]byte, error) {
 	sc := bufio.NewScanner(bytes.NewReader(sums))
 	for sc.Scan() {
 		// sha256sum writes "<hex>  <name>", or "<hex> *<name>" in binary mode.

@@ -46,7 +46,7 @@ func (b *Backend) rawMessage(chat, id string) (*waE2E.Message, error) {
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
-	if len(data) == 0 || kind == int(model.KindDeleted) {
+	if len(data) == 0 || kind == int(model.KindDeleted) || kind == int(model.KindSystem) {
 		return nil, errNoPayload
 	}
 	if kind == int(model.KindViewOnce) && b.Pref(model.PrefViewOnceReplay) != "on" {

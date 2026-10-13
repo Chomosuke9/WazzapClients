@@ -90,7 +90,7 @@ func TestUnreadDivider(t *testing.T) {
 	// The newest 3 incoming messages are below it.
 	in := 0
 	for _, r := range rows[at+1:] {
-		if r.msg != nil && !r.msg.FromMe {
+		if r.kind == rowMessage && !r.msg.FromMe {
 			in++
 		}
 	}

@@ -111,7 +111,7 @@ func (u *UI) toneButton(gtx C) D {
 			fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, faded(p.PopupHover, h))
 		}
 		ch := withTone("✋", e.tone)
-		if !u.layoutEmojiImage(gtx, ch, gtx.Sp(22), image.Pt(sz, sz)) {
+		if !u.layoutEmojiImage(gtx, ch, gtx.Sp(22), image.Pt(sz, sz), animateIn(emojiPanel)) {
 			centerIn(gtx, sz, u.label(22, ch, p.Text).Layout)
 		}
 		return D{Size: image.Pt(sz, sz)}
@@ -192,7 +192,7 @@ func (u *UI) layoutToneMenu(gtx C) {
 				fillCircle(gtx, image.Pt(cell/2, cell/2), cell/2, faded(p.PopupHover, a))
 			}
 			ch := withTone(sample, i)
-			if !u.layoutEmojiImage(gtx, ch, gtx.Sp(26), image.Pt(cell, cell)) {
+			if !u.layoutEmojiImage(gtx, ch, gtx.Sp(26), image.Pt(cell, cell), animateIn(emojiPanel)) {
 				centerIn(gtx, cell, u.label(26, ch, p.Text).Layout)
 			}
 			return D{Size: image.Pt(cell, cell)}

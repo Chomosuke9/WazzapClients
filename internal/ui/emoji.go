@@ -13,7 +13,6 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
-	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
@@ -92,12 +91,15 @@ type emojiPicker struct {
 	mode   pickMode
 	target *model.Message // message to react to
 	tab    pickTab
-	search widget.Editor
-	list   widget.List
-	scrim  widget.Clickable
-	active int // highlighted category
-	recent []string
-	loaded bool
+	// composerTab is the tab the composer's panel opens at: the emoji or
+	// sticker tab, whichever was used last. Its button shows it.
+	composerTab pickTab
+	search      widget.Editor
+	list        widget.List
+	scrim       widget.Clickable
+	active      int // highlighted category
+	recent      []string
+	loaded      bool
 
 	// tone is the skin tone of the emojis it lists (0 for yellow), and
 	// tones the menu of tones over them (skintone.go). panelAt is where
@@ -128,6 +130,9 @@ const recentEmojiMax = 36
 func (u *UI) openPicker(mode pickMode, target *model.Message) {
 	e := &u.picker
 	e.open, e.mode, e.target, e.tab = true, mode, target, tabEmoji
+	if mode == pickComposer {
+		e.tab = e.composerTab
+	}
 	e.search.SetText("")
 	e.search.SingleLine = true
 	e.list.Axis = layout.Vertical
@@ -135,6 +140,9 @@ func (u *UI) openPicker(mode pickMode, target *model.Message) {
 	e.catSel, e.underline, e.tabSel = switcher[int]{}, follower{}, switcher[pickTab]{} // no sliding from last time
 	e.stickerSel, e.stickerLine = switcher[int]{}, follower{}
 	e.tones = toneMenu{}
+	if e.tab == tabSticker {
+		e.stickerSet = u.defaultStickerSet()
+	}
 	if !e.loaded {
 		e.loaded = true
 		e.recent = strings.Fields(u.backend.Pref("recent_emoji"))
@@ -245,7 +253,8 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 			u.closePicker()
 		}
 		for {
-			ev, ok := gtx.Event(key.Filter{Focus: &e.search, Name: key.NameEscape})
+			ev, ok := gtx.Event(key.Filter{Focus: &e.search, Name: key.NameEscape},
+				key.Filter{Focus: &u.gifs.search, Name: key.NameEscape})
 			if !ok {
 				break
 			}
@@ -308,7 +317,7 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 		u.layoutEmojiTab(pg)
 		u.layoutToneMenu(pg)
 	case tabGIF:
-		u.pickerMessage(pg, "GIF search needs Tenor, which WazzapClients doesn't use.")
+		u.layoutGIFTab(pg)
 	case tabSticker:
 		u.layoutStickerTab(pg)
 	}
@@ -368,35 +377,15 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 		}),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 15, Right: 15, Top: 6, Bottom: 6}.Layout(gtx, func(gtx C) D {
-				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				hgt := gtx.Dp(46)
-				border := p.PopupBorder
-				if gtx.Focused(&e.search) {
-					border = p.Green
-				}
-				rr := image.Rect(0, 0, gtx.Constraints.Max.X, hgt)
 				// The tone button sits after the search field.
+				w := gtx.Constraints.Max.X
 				tb := record(gtx, u.toneButton)
-				rr.Max.X -= tb.size.X + gtx.Dp(8)
-				tb.at(gtx, rr.Max.X+gtx.Dp(8), (hgt-tb.size.Y)/2)
-				gtx.Constraints.Max.X = rr.Max.X
-				fillRRect(gtx, rr, hgt/2, border)
-				fillRRect(gtx, rr.Inset(gtx.Dp(2)), hgt/2-gtx.Dp(2), p.Popup)
-				return vcenter(gtx, hgt, func(gtx C) D {
-					return layout.Inset{Left: 18, Right: 16}.Layout(gtx, func(gtx C) D {
-						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(iconW(icSearch, 22, p.TextSecondary)),
-							layout.Rigid(layout.Spacer{Width: 16}.Layout),
-							layout.Flexed(1, func(gtx C) D {
-								ed := material.Editor(u.th, &e.search, "Search emoji")
-								ed.TextSize = 15.5
-								ed.Color = p.Text
-								ed.HintColor = p.TextSecondary
-								return ed.Layout(gtx)
-							}),
-						)
-					})
-				})
+				hgt := gtx.Dp(46)
+				sg := gtx
+				sg.Constraints.Max.X = w - tb.size.X - gtx.Dp(8)
+				dims := u.pickerSearch(sg, &e.search, "Search emoji")
+				tb.at(gtx, w-tb.size.X, (hgt-tb.size.Y)/2)
+				return D{Size: image.Pt(w, dims.Size.Y)}
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
@@ -423,7 +412,7 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 								if h := u.hover(gtx, cl); h > 0 {
 									fillRRect(gtx, image.Rect(0, 0, cellW, pitch), gtx.Dp(8), faded(p.PopupHover, h))
 								}
-								if u.layoutEmojiImage(gtx, ch, gtx.Sp(29), image.Pt(cellW, pitch)) {
+								if u.layoutEmojiImage(gtx, ch, gtx.Sp(29), image.Pt(cellW, pitch), animateIn(emojiPanel)) {
 									return D{Size: image.Pt(cellW, pitch)}
 								}
 								return centerIn2(gtx, cellW, pitch, u.label(29, ch, p.Text).Layout)
@@ -449,6 +438,9 @@ func (u *UI) pickerTabs(gtx C) {
 	for i := range 3 {
 		if u.btn("ptab:" + itoa(i+1)).Clicked(gtx) {
 			e.tab = pickTab(i)
+			if e.tab != tabGIF {
+				e.composerTab = e.tab
+			}
 			if e.tab == tabSticker {
 				e.stickerSet = u.defaultStickerSet()
 				e.list.Position = layout.Position{}

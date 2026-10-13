@@ -188,6 +188,10 @@ func (u *UI) sendComposer() {
 	if txt == "" {
 		return
 	}
+	if u.slash.on && strings.HasPrefix(txt, "//") {
+		// "//kick" sends "/kick" as text instead of running it.
+		txt = txt[1:]
+	}
 	d := u.draftFrom(txt)
 	d.Reply = u.conv.reply
 	if r := u.composerPreview(d.Text); r != nil {
@@ -290,7 +294,7 @@ func (u *UI) mentionQuery() *mentionState {
 				return nil
 			}
 			// A mention picked already, with the caret after it, isn't a
-			// query: "@Vivy " would still find Vivy, and Enter would pick
+			// query: "@Nova " would still find Nova, and Enter would pick
 			// her again instead of sending.
 			for _, mr := range u.conv.mentions {
 				at := []rune("@" + mr.name)
@@ -657,8 +661,8 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		c.mentionGhost = nil
 	}
 	sp := u.slashQuery()
-	if !u.slashShown(sp) || ms != nil {
-		sp = nil // the mention picker takes its place
+	if !u.slashShown(sp) || ms != nil || c.editorElsewhere {
+		sp = nil // the mention picker takes its place, or the send view has the editor
 	}
 	if sp != nil {
 		u.slash.ghost = sp
@@ -783,14 +787,18 @@ func (u *UI) layoutComposerBox(gtx C) D {
 								if u.picker.open && u.picker.mode == pickComposer {
 									col = p.Green
 								}
-								return u.iconButton(gtx, &u.conv.emoji, icEmoji, 40, 26, col)
+								ic := icEmoji
+								if u.picker.composerTab == tabSticker {
+									ic = icStickerSmiley
+								}
+								return u.iconButton(gtx, &u.conv.emoji, ic, 40, 26, col)
 							}),
 							layout.Rigid(layout.Spacer{Width: 10}.Layout),
 							layout.Flexed(1, func(gtx C) D {
 								if c.editorElsewhere {
 									// The send view has the editor; this is
 									// only seen while it slides.
-									txt, col := u.attach.draft, p.Text
+									txt, col := c.composer.Text(), p.Text
 									if txt == "" {
 										txt, col = "Type a message", p.ComposerHint
 									}

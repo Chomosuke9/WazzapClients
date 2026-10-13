@@ -94,6 +94,10 @@ type TextStyle struct {
 	// Hidden lays the text out without painting it. spanFn still gets
 	// each span's place (privacy mode draws bars there).
 	Hidden bool
+	// Bitmap, if set, may draw a bitmap glyph (a color emoji) itself, in
+	// place of its picture at r, and report true; else the font's picture
+	// is painted.
+	Bitmap func(gtx layout.Context, g text.Glyph, r image.Rectangle) bool
 
 	*text.Shaper
 }
@@ -141,6 +145,7 @@ func (t TextStyle) iterateSpan(gtx layout.Context, maxWidth int, span SpanStyle,
 		viewport: image.Rectangle{Max: gtx.Constraints.Max},
 		maxLines: 1,
 		color:    span.Color,
+		bitmap:   t.Bitmap,
 	}
 	if t.Carets != nil {
 		ti.carets = []Caret{{}}
