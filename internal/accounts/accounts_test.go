@@ -3,7 +3,9 @@ package accounts
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestAccounts(t *testing.T) {
@@ -68,5 +70,46 @@ func TestAccounts(t *testing.T) {
 	}
 	if l.Active != "" {
 		t.Errorf("Active = %q after removing the open account, want the root", l.Active)
+	}
+}
+
+func TestBackgroundMode(t *testing.T) {
+	root := t.TempDir()
+	l := Load(root)
+	l.Current().ID = "1@s.whatsapp.net"
+	dir, _ := l.Add()
+	a := l.Find(dir)
+	a.ID, a.Name, a.Background = "2@s.whatsapp.net", "Work", 15
+	at := time.Date(2026, 10, 9, 10, 32, 0, 0, time.UTC)
+	a.Checked = at
+	l.Find("").Background = Always
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(root, "accounts.json"))
+	if !strings.Contains(string(data), `"background": 15`) || strings.Count(string(data), `"checked"`) != 1 {
+		t.Errorf("saved:\n%s", data)
+	}
+
+	l = Load(root)
+	if a := l.Find(dir); a.Background != 15 || !a.Checked.Equal(at) || !a.InBackground() || a.Label() != "Work" {
+		t.Errorf("reloaded: %+v", a)
+	}
+	if a := l.Find(""); a.Background != Always || !a.InBackground() || a.Label() != "" {
+		t.Errorf("reloaded root: %+v", a)
+	}
+	if Off.Every() != 0 || Always.Every() != 0 || Mode(15).Every() != 15*time.Minute {
+		t.Error("Every")
+	}
+	for m, want := range map[Mode]string{Off: "Only while open", Always: "Always connected", 5: "Check every 5 minutes", 60: "Check every hour"} {
+		if m.String() != want {
+			t.Errorf("%d: %q, want %q", m, m.String(), want)
+		}
+	}
+	// A new account isn't linked yet: it can't run in the background.
+	dir, _ = l.Add()
+	l.Find(dir).Background = Always
+	if l.Find(dir).InBackground() {
+		t.Error("an account that isn't linked runs in the background")
 	}
 }

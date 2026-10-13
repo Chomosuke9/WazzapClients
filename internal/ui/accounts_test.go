@@ -23,24 +23,37 @@ func newAccountsHost(t *testing.T) *host {
 	}
 	l := accounts.Load(root)
 	b, _ := open(root)
-	h := &host{b: b, o: Options{Accounts: l, Open: open}, reqs: make(chan request, 16), syncPct: -1}
-	h.notes = newNotifier(b, h)
-	b.Start(h.poke)
+	h := newHost(b, Options{Accounts: l, Open: open})
+	h.b.Start(h.poke)
 	h.poll(false)
 	return h
 }
 
-// settle drains the backend's events and serves what the host asked of
-// itself, until nothing is left.
+// settle drains the backends' events and serves what the host asked of
+// itself, until nothing is left. Backends being opened are waited for.
 func (h *host) settle() {
 	for range 10 {
+		for h.opening() {
+			h.bgOpened(<-h.bgOpen)
+		}
 		h.poll(false)
+		h.pollBackground()
 		select {
 		case r := <-h.reqs:
 			h.handle(r)
 		default:
 		}
 	}
+}
+
+// opening reports whether a background account's backend is being opened.
+func (h *host) opening() bool {
+	for _, bg := range h.bg {
+		if bg.opening {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAccountSwitch(t *testing.T) {

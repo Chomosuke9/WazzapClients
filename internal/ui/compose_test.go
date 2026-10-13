@@ -116,20 +116,20 @@ func TestMentionPickerNames(t *testing.T) {
 		{ID: "me", Name: "You", Me: true},
 		{ID: "hasan@lid", Name: "Hasan", Contact: "Hasan", Phone: "+62 811-0000-1111"},
 		{ID: "budi@lid", Name: "Budi Santoso", Contact: "Budi Santoso", Phone: "+62 812-3456-7890"},
-		{ID: "naufal@lid", Name: "+62 857-1111-2222", Push: "naufalll", Phone: "+62 857-1111-2222"},
+		{ID: "milo@lid", Name: "+62 857-1111-2222", Push: "milooo", Phone: "+62 857-1111-2222"},
 	}}, "work"
 	u.conv.hitsOK = false
 
 	st.typeText("@0857")
 	ms := u.mentionQuery()
-	if ms == nil || len(ms.members) != 1 || ms.members[0].ID != "naufal@lid" {
-		t.Fatalf("@0857 found %+v, want only naufal", ms)
+	if ms == nil || len(ms.members) != 1 || ms.members[0].ID != "milo@lid" {
+		t.Fatalf("@0857 found %+v, want only milo", ms)
 	}
 	st.press(key.NameReturn)
-	if st.text() != "@naufalll " {
+	if st.text() != "@milooo " {
 		t.Fatalf("picked %q, want the push name", st.text())
 	}
-	if d := u.draftFrom(trimSpace(st.text())); d.Text != "@naufal" || len(d.Mentions) != 1 || d.Mentions[0] != "naufal@lid" {
+	if d := u.draftFrom(trimSpace(st.text())); d.Text != "@milo" || len(d.Mentions) != 1 || d.Mentions[0] != "milo@lid" {
 		t.Fatalf("draft %q mentions %v", d.Text, d.Mentions)
 	}
 
@@ -142,8 +142,8 @@ func TestMentionPickerNames(t *testing.T) {
 	// The slash commands' member picker finds and shows them the same way.
 	st.typeText("/kick @2222")
 	sp := u.slashQuery()
-	if sp == nil || len(sp.vals) != 1 || sp.vals[0].id != "naufal@lid" ||
-		sp.vals[0].title != "~naufalll" || sp.vals[0].sub != "+62 857-1111-2222" {
+	if sp == nil || len(sp.vals) != 1 || sp.vals[0].id != "milo@lid" ||
+		sp.vals[0].title != "~milooo" || sp.vals[0].sub != "+62 857-1111-2222" {
 		t.Fatalf("/kick @2222 offers %+v", sp)
 	}
 }

@@ -56,8 +56,10 @@ func (u *UI) pressButton(m *model.Message, i int) {
 	case model.ButtonCopy:
 		u.pendingCopy = b.Value
 		u.toast("Code copied")
+	case model.ButtonList:
+		u.openListPick(m, i)
 	default:
-		if r := u.backend.PressButton(m, i); r != nil {
+		if r := u.backend.PressButton(m, i, ""); r != nil {
 			u.upsertMessage(r)
 			u.scrollMessages(layout.Position{})
 		}

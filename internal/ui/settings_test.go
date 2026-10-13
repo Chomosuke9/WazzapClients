@@ -183,3 +183,25 @@ func TestZoom(t *testing.T) {
 		t.Errorf("picking 150%% left the zoom at %d", u.zoom.pct)
 	}
 }
+
+// TestSettingsConfirmButtons checks that the settings' confirmations show
+// one Cancel (confirm adds it) next to their action.
+func TestSettingsConfirmButtons(t *testing.T) {
+	u := New(mock.New())
+	for _, c := range []struct{ view, row, action string }{
+		{"profile", "rmphoto", "Remove"},
+		{"blocked", "blocked:spam1", "Unblock"},
+	} {
+		u.ShowPage(c.view)
+		u.settings.stale = true
+		settingRowByKey(t, u, c.row).run()
+		var labels []string
+		for _, b := range u.dialog.buttons {
+			labels = append(labels, b.label)
+		}
+		if len(labels) != 2 || labels[0] != c.action || labels[1] != "Cancel" {
+			t.Errorf("%s: buttons %q, want [%s Cancel]", c.row, labels, c.action)
+		}
+		u.closeDialog()
+	}
+}

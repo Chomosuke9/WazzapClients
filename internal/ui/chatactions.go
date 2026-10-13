@@ -84,13 +84,21 @@ func (u *UI) confirmExitGroup(id, name string) {
 
 func (u *UI) confirmDeleteChat(id string) {
 	u.confirm("Delete this chat?", "Messages will be removed from this device and your other linked devices.",
-		dialogButton{label: "Delete chat", primary: true, danger: true, run: func() {
-			if u.selected != nil && u.selected.ID == id {
-				u.closeChat()
-			}
-			u.dropDraft(id)
-			u.backend.DeleteChat(id)
-		}})
+		dialogButton{label: "Delete chat", primary: true, danger: true, run: func() { u.deleteChat(id) }})
+}
+
+// confirmDeleteGroup offers to delete a group you're no longer a member of.
+func (u *UI) confirmDeleteGroup(id, name string) {
+	u.confirm("Delete \""+name+"\"?", "Messages will be removed from this device and your other linked devices.",
+		dialogButton{label: "Delete group", primary: true, danger: true, run: func() { u.deleteChat(id) }})
+}
+
+func (u *UI) deleteChat(id string) {
+	if u.selected != nil && u.selected.ID == id {
+		u.closeChat()
+	}
+	u.dropDraft(id)
+	u.backend.DeleteChat(id)
 }
 
 // reportUnsupported answers the Report actions: reports go to Meta, which

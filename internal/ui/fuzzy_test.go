@@ -13,7 +13,7 @@ func TestNameScore(t *testing.T) {
 	}{
 		{"Budi Santoso", "budi santoso", matchExact},
 		{"Budi Santoso", "BU", matchStart},
-		{"~naufalll", "nauf", matchStart},
+		{"~milooo", "milo", matchStart},
 		{"Budi Santoso", "san", matchWord},
 		{"Budi Santoso", "santoso bu", matchWords},
 		{"Budi Santoso", "anto", matchInside},
@@ -67,7 +67,7 @@ func TestMemberTitle(t *testing.T) {
 		title, sub string
 	}{
 		{model.Member{Name: "Budi", Contact: "Budi", Push: "budz", Phone: "+62 812-3456-7890"}, "Budi", ""},
-		{model.Member{Name: "+62 857-1111-2222", Push: "naufalll", Phone: "+62 857-1111-2222"}, "~naufalll", "+62 857-1111-2222"},
+		{model.Member{Name: "+62 857-1111-2222", Push: "milooo", Phone: "+62 857-1111-2222"}, "~milooo", "+62 857-1111-2222"},
 		{model.Member{Name: "+62 857-1111-2222", Phone: "+62 857-1111-2222"}, "+62 857-1111-2222", ""},
 		{model.Member{Name: "~Hidden", Push: "Hidden"}, "~Hidden", ""},
 		{model.Member{Name: "Old backend"}, "Old backend", ""},

@@ -20,11 +20,15 @@ import (
 // reactions, stars...), and kind, media and text, kept for queries.
 
 // fill completes a message loaded from its columns with what its payloads
-// hold. A deleted message has none, and an unsupported one shows nothing
-// of it.
+// hold. A deleted message has none, an unsupported one shows nothing of
+// it, and a system message's is its stub (system.go).
 func (r *rawMsg) fill(raw, edit []byte) {
 	m := r.Message
 	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported {
+		return
+	}
+	if m.Kind == model.KindSystem {
+		r.stub, r.stubParams, _ = readStub(raw)
 		return
 	}
 	c, pm := describeRaw(raw)

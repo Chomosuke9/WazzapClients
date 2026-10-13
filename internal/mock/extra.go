@@ -114,7 +114,7 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 		}
 		chat = &model.Chat{ID: chatID, Name: name}
 	}
-	info := &model.ChatInfo{ID: chatID, Name: chat.Name, IsGroup: chat.IsGroup}
+	info := &model.ChatInfo{ID: chatID, Name: chat.Name, IsGroup: chat.IsGroup, Disappearing: chat.Disappearing}
 	if !chat.IsGroup {
 		info.Phone = "+62 812-5550-" + itoa4(len(chat.Name)*37)
 		info.About = "Hey there! I am using WhatsApp."
@@ -295,57 +295,57 @@ func demoExtras(at func(daysAgo, h, m int) time.Time) extras {
 	}
 }
 
-// referenceExtras mirrors the reference account's Status, Channels and
-// Communities screens and the "test" group's info panel.
+// referenceExtras fills the reference account's Status, Channels and
+// Communities screens and the Bot Playground group's info panel.
 func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 	date := func(y int, mo time.Month, d int) time.Time { return time.Date(y, mo, d, 12, 0, 0, 0, time.Local) }
 	return extras{
 		statuses: []*model.StatusThread{
 			{ID: "me", Mine: true, Updates: []*model.StatusUpdate{status("me-1", at(1, 16, 55), false, 0x1f2a30, 0x8a8f7a)}},
-			{ID: "zain@lid", Name: "Zain Attamim", Updates: []*model.StatusUpdate{
+			{ID: "maya@lid", Name: "Maya Putri", Updates: []*model.StatusUpdate{
 				status("z1", at(0, 6, 30), false, 0xf5f0d8, 0x2f8a6b), status("z2", at(0, 6, 40), false, 0xf0e6c0, 0x3f9a7b),
 				status("z3", at(0, 6, 45), false, 0xf8f3e0, 0x2c7d5f)}},
-			{ID: "ini@lid", Name: "inilidya°~~", Updates: []*model.StatusUpdate{status("i1", at(0, 6, 11), false, 0x5a5048, 0xcfc6bd)}},
-			{ID: "bibit@lid", Name: "Bibit.id", Updates: []*model.StatusUpdate{
+			{ID: "luna@lid", Name: "luna°~~", Updates: []*model.StatusUpdate{status("i1", at(0, 6, 11), false, 0x5a5048, 0xcfc6bd)}},
+			{ID: "greenleaf@lid", Name: "Greenleaf Invest", Updates: []*model.StatusUpdate{
 				status("b1", at(1, 10, 2), true, 0x0f3b2a, 0x1d6b48), status("b2", at(1, 10, 12), false, 0x0c3324, 0x2a7a55)}},
-			{ID: "beolite@lid", Name: "Beolite", Updates: []*model.StatusUpdate{textStatus("be1", at(1, 23, 29), true, "✨", 0xffa8327f)}},
-			{ID: "qoni@lid", Name: "Qoni", Updates: []*model.StatusUpdate{status("q1", at(1, 22, 9), true, 0x6f6a66, 0xe7e2dc)}},
+			{ID: "orbit@lid", Name: "Orbit", Updates: []*model.StatusUpdate{textStatus("be1", at(1, 23, 29), true, "✨", 0xffa8327f)}},
+			{ID: "tara@lid", Name: "Tara", Updates: []*model.StatusUpdate{status("q1", at(1, 22, 9), true, 0x6f6a66, 0xe7e2dc)}},
 		},
 		channels: []*model.Channel{
-			{ID: "alaura@newsletter", Name: "Alaura", Following: true, Time: at(1, 19, 0),
+			{ID: "pastel@newsletter", Name: "Pastel Stickers", Following: true, Time: at(1, 19, 0),
 				Last: &model.Message{Media: model.MediaSticker, Kind: model.KindSticker, Time: at(1, 19, 0)}},
-			{ID: "luar@newsletter", Name: "Luarkampus - Info Beasiswa Indonesia", Following: true, Unread: 2, Time: at(1, 18, 0),
-				Last: &model.Message{Text: "🎓 ASEAN AUSTRALIA CENTRE SHORT COURSE 2026 – FULLY FUNDED", Time: at(1, 18, 0)}},
-			{ID: "bibit@newsletter", Name: "Bibit.id", Following: true, Time: at(1, 10, 12),
-				Last: &model.Message{Media: model.MediaImage, Kind: model.KindImage, Text: "Data yield Obligasi Negara FR & PBS di pasar sekunder", Time: at(1, 10, 12)}},
-			{ID: "sains@newsletter", Name: "sains c", Following: true, Time: date(2026, 9, 5),
+			{ID: "scholar@newsletter", Name: "Campus Scholarships - Study Abroad Info", Following: true, Unread: 2, Time: at(1, 18, 0),
+				Last: &model.Message{Text: "🎓 SUMMER SHORT COURSE 2026 – FULLY FUNDED", Time: at(1, 18, 0)}},
+			{ID: "greenleaf@newsletter", Name: "Greenleaf Invest", Following: true, Time: at(1, 10, 12),
+				Last: &model.Message{Media: model.MediaImage, Kind: model.KindImage, Text: "This week's bond yields in the secondary market", Time: at(1, 10, 12)}},
+			{ID: "science@newsletter", Name: "science bits", Following: true, Time: date(2026, 9, 5),
 				Last: &model.Message{Media: model.MediaSticker, Kind: model.KindSticker, Time: date(2026, 9, 5)}},
-			{ID: "wazzap@newsletter", Name: "WazzapAgents", Following: true, Time: date(2026, 3, 17),
-				Last: &model.Message{FromMe: true, Text: `You created this channel, "WazzapAgents"`, Time: date(2026, 3, 17)}},
+			{ID: "novabot@newsletter", Name: "Nova Bot", Following: true, Time: date(2026, 3, 17),
+				Last: &model.Message{FromMe: true, Text: `You created this channel, "Nova Bot"`, Time: date(2026, 3, 17)}},
 		},
 		suggested: []*model.Channel{
-			{ID: "kabar@newsletter", Name: "KabarBursa.com", Followers: 17000},
-			{ID: "stockbit@newsletter", Name: "Stockbit", Verified: true, Followers: 736000},
-			{ID: "jepang@newsletter", Name: "Belajar Bahasa Jepang 🇯🇵", Followers: 1400000},
-			{ID: "bri@newsletter", Name: "BRI Danareksa Sekuritas", Followers: 31000},
-			{ID: "bmkg@newsletter", Name: "BMKG", Verified: true, Followers: 7000000},
+			{ID: "pulse@newsletter", Name: "Market Pulse", Followers: 17000},
+			{ID: "tickerly@newsletter", Name: "Tickerly", Verified: true, Followers: 736000},
+			{ID: "japanese@newsletter", Name: "Learn Japanese 🇯🇵", Followers: 1400000},
+			{ID: "harbor@newsletter", Name: "Harbor Securities", Followers: 31000},
+			{ID: "weather@newsletter", Name: "Weather Alerts", Verified: true, Followers: 7000000},
 		},
 		communities: []*model.Community{
-			{ID: "fpam@g.us", Name: "Forum Penghitaman Anime Massal", Announcements: "fpam-ann@g.us",
-				Groups: []string{"pam@g.us", "melers@g.us", "fpam-3@g.us"}},
-			{ID: "wa@g.us", Name: "WazzapAgents", Announcements: "wa-ann@g.us",
-				Groups: []string{"chitchat@g.us", "support@g.us"}},
-			{ID: "zytro-c@g.us", Name: "ZYTRO API - UPDATE", Announcements: "zytro-ann@g.us",
-				Groups: []string{"zytro@g.us"}},
+			{ID: "anime@g.us", Name: "Anime Watch Party", Announcements: "anime-ann@g.us",
+				Groups: []string{"botsonly@g.us", "sketch@g.us", "anime-3@g.us"}},
+			{ID: "novabot@g.us", Name: "Nova Bot", Announcements: "nova-ann@g.us",
+				Groups: []string{"lounge@g.us", "support@g.us"}},
+			{ID: "acme@g.us", Name: "Acme API Updates", Announcements: "apinews-ann@g.us",
+				Groups: []string{"apinews@g.us"}},
 		},
 		summaries: map[string]model.MediaSummaryEvent{
-			"test@g.us": {ChatID: "test@g.us", Count: 276, Media: []*model.Message{
+			"botlab@g.us": {ChatID: "botlab@g.us", Count: 276, Media: []*model.Message{
 				{ID: "m1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xd8d4cf, ImageB: 0x2b2b2b},
 				{ID: "m2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xdadde3},
 				{ID: "m3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x1b2330, ImageB: 0x2d3a4d},
 				{ID: "m4", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4f4f4, ImageB: 0xdadde3},
 			}},
-			"vivy@lid": {ChatID: "vivy@lid", Count: 133, Media: []*model.Message{
+			"nova@lid": {ChatID: "nova@lid", Count: 133, Media: []*model.Message{
 				{ID: "v1", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0x1b2330, ImageB: 0x2d3a4d},
 				{ID: "v2", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4e4dc, ImageB: 0x8a3a3a},
 				{ID: "v3", Kind: model.KindImage, Media: model.MediaImage, ImageA: 0xf4e4dc, ImageB: 0x3a6a8a},
@@ -353,37 +353,37 @@ func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 			}},
 		},
 		infos: map[string]*model.ChatInfo{
-			// Only admins post announcements: you run WazzapAgents, not the forum.
-			"fpam-ann@g.us": {
-				ID: "fpam-ann@g.us", Name: "Forum Penghitaman Anime Massal", IsGroup: true, Announce: true, Locked: true,
+			// Only admins post announcements: you run Nova Bot, not the anime community.
+			"anime-ann@g.us": {
+				ID: "anime-ann@g.us", Name: "Anime Watch Party", IsGroup: true, Announce: true, Locked: true,
 				Members: []model.Member{
 					{ID: "me@lid", Name: "You", Me: true},
-					{ID: "alip@lid", Name: "~AlipReall65", Push: "AlipReall65", Admin: true},
+					{ID: "mangafan@lid", Name: "~MangaFan42", Push: "MangaFan42", Admin: true},
 				},
 			},
-			"wa-ann@g.us": {
-				ID: "wa-ann@g.us", Name: "WazzapAgents", IsGroup: true, Announce: true, Locked: true,
+			"nova-ann@g.us": {
+				ID: "nova-ann@g.us", Name: "Nova Bot", IsGroup: true, Announce: true, Locked: true,
 				Members: []model.Member{
 					{ID: "me@lid", Name: "You", Admin: true, Me: true},
-					{ID: "vivy@lid", Name: "Vivy", Admin: true},
+					{ID: "nova@lid", Name: "Nova", Admin: true},
 				},
 			},
-			"test@g.us": {
-				ID: "test@g.us", Name: "test", IsGroup: true,
-				About: "This group is dedicated for testing WhatsApp bot, specifically WazzapAgents",
+			"botlab@g.us": {
+				ID: "botlab@g.us", Name: "Bot Playground", IsGroup: true,
+				About: "A group for trying out chat bots, Nova in particular",
 				Members: []model.Member{
 					{ID: "me@lid", Name: "You", Admin: true, Me: true},
-					{ID: "agus@lid", Name: "Agus Kebab", Admin: true},
-					{ID: "vivy@lid", Name: "Vivy", Admin: true},
+					{ID: "dimas@lid", Name: "Dimas Arya", Admin: true},
+					{ID: "nova@lid", Name: "Nova", Admin: true},
 				},
 				Created: time.Date(2024, 8, 2, 8, 28, 0, 0, time.Local), CreatedBy: "you",
 			},
-			"vivy@lid": {
-				ID: "vivy@lid", Name: "Vivy", Phone: "+62 881-0261-81996",
+			"nova@lid": {
+				ID: "nova@lid", Name: "Nova", Phone: "+62 812-5550-0199",
 				Business: &model.Business{
-					Name: "Vivy", Category: "Other business",
-					Description: "This bot is 100% free, feel free to use it however you like. Join the community below for information and updates.\n\nAlso for some reason, I decided to ignore all private chats incoming.",
-					Email:       "vivy@example.com",
+					Name: "Nova", Category: "Other business",
+					Description: "This bot is free to use, however you like. Join the community below for news and updates.\n\nPrivate chats aren't answered.",
+					Email:       "nova@example.com",
 					Websites:    []string{"https://chat.whatsapp.com/ExampleInviteCode"},
 					Hours: []model.BusinessHours{
 						{Day: time.Sunday, Mode: "open_24h"}, {Day: time.Monday, Mode: "open_24h"},
@@ -393,11 +393,11 @@ func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 					},
 				},
 				Common: []model.CommonGroup{
-					{ID: "puja@g.us", Name: "Puja Qiqi Ajaib", Members: "Agus, Andrian, inilidya°~~, Mei, Radofa, Satria, Vivy, You"},
-					{ID: "chitchat@g.us", Name: "ChitChat", Community: "WazzapAgents", CommunityID: "wa@g.us", Members: "Andrian, Athar, Beolite, Fajri, Feet, Jantan, Kamil, Vivy, You"},
-					{ID: "pam@g.us", Name: "PAM : Chat Bot Only", Community: "Forum Penghitaman Anime Massal", CommunityID: "fpam@g.us", Members: "Vivy, +62 877-5228-7085, +62 831-2861-8005, You"},
-					{ID: "lab@g.us", Name: "Grup 5 Lab Komputer", Members: "Vivy, Wiliam, Yazid, +62 859-2103-5371, You"},
-					{ID: "test@g.us", Name: "test", Members: "Agus, Vivy, You"},
+					{ID: "bookclub@g.us", Name: "Book Club", Members: "Dimas, Rio, luna°~~, Mei, Sinta, Nova, You"},
+					{ID: "lounge@g.us", Name: "Lounge", Community: "Nova Bot", CommunityID: "novabot@g.us", Members: "Ari, Bayu, Orbit, Fajri, Kai, Nova, You"},
+					{ID: "botsonly@g.us", Name: "Bots Only", Community: "Anime Watch Party", CommunityID: "anime@g.us", Members: "Nova, +62 812-5550-0141, +62 812-5550-0187, You"},
+					{ID: "study@g.us", Name: "Study Group 5", Members: "Nova, Leo, Yusuf, +62 812-5550-0163, You"},
+					{ID: "botlab@g.us", Name: "Bot Playground", Members: "Dimas, Nova, You"},
 				},
 			},
 		},

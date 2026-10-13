@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -266,13 +268,13 @@ func TestExtrasOffByDefault(t *testing.T) {
 }
 
 // TestSlashStickerHint checks the composer's hint for /sticker's two
-// texts, which # separates.
+// texts, which a new line separates.
 func TestSlashStickerHint(t *testing.T) {
 	st := newSlashTest(t, "rina")
 	for _, c := range []struct{ text, hint string }{
-		{"/sticker ", "[top] #[bottom]"},
-		{"/sticker when it works", "#[bottom]"},
-		{"/sticker when it works#", ""},
+		{"/sticker ", "[top] (new line) [bottom]"},
+		{"/sticker when it works", "(new line) [bottom]"},
+		{"/sticker when it works\n", ""},
 	} {
 		st.typeText(c.text)
 		sp := st.u.slashQuery()
@@ -311,5 +313,41 @@ func TestNoteBeforeMessages(t *testing.T) {
 	u.msgsVer++
 	if hasNote() {
 		t.Error("a note older than the loaded page is shown")
+	}
+}
+
+// "//" sends a command's text as a message, with one slash.
+func TestSlashDoubleSlash(t *testing.T) {
+	st := newSlashTest(t, "work")
+	st.typeText("//kick @Budi")
+	if sp := st.u.slashQuery(); sp != nil {
+		t.Fatalf("//kick reads as a command: %+v", sp)
+	}
+	st.press(key.NameReturn)
+	if last := st.b.Messages("work", 1)[0]; last.Text != "/kick @Budi" || !last.FromMe {
+		t.Fatalf("sent %q, want /kick @Budi", last.Text)
+	}
+}
+
+// TestSlashInCaption: commands run from the send view's caption too, and
+// the files stay to be sent.
+func TestSlashInCaption(t *testing.T) {
+	st := newSlashTest(t, "work")
+	p := filepath.Join(t.TempDir(), "a.pdf")
+	os.WriteFile(p, []byte("%PDF"), 0o600)
+	st.u.attachPaths([]string{p})
+	for range 30 {
+		st.frame() // the send view slides in
+	}
+	st.typeText("/link ")
+	if st.u.slashQuery() == nil {
+		t.Fatal("no command picker in the caption")
+	}
+	st.press(key.NameReturn)
+	if len(st.u.slash.notes["work"]) == 0 {
+		t.Error("/link didn't run from the caption")
+	}
+	if len(st.u.attach.files) != 1 || st.text() != "" {
+		t.Errorf("after the command, %d files and caption %q", len(st.u.attach.files), st.text())
 	}
 }

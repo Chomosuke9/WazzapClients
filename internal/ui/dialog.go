@@ -28,6 +28,7 @@ const (
 	dialogTheme   // a chat's theme (chatmenu.go); title is the chat's ID
 	dialogEdits   // an edited message's earlier texts (edit.go)
 	dialogPayload // a message's payload (/catch, snippets.go)
+	dialogList    // a bot's list of choices (listpick.go)
 )
 
 type dialogButton struct {
@@ -62,14 +63,19 @@ type dialogState struct {
 	addTo    string   // the group to add the picked people to
 	members  []string // addTo's members, left out of the list
 	fwd      []*model.Message
+	// newList makes the picker New list's (lists.go): a name for the
+	// list above the chats that go in it.
+	newList  bool
+	listName widget.Editor
 	picked   []string // chat IDs, in the order they were picked
 	search   widget.Editor
 	list     widget.List
 	chats    []*model.Chat // matching chats, a buffer reused every frame
 	bar      tween         // the send bar, shown once a chat is picked
 
-	poll   pollState
-	invite inviteState
+	poll     pollState
+	listPick listPick
+	invite   inviteState
 
 	// Edit history: the message and its earlier texts.
 	editOf   *model.Message
@@ -184,6 +190,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.editsPanel)
 	case dialogPayload:
 		panel = record(gtx, u.snippetPanel)
+	case dialogList:
+		panel = record(gtx, u.listPickPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
@@ -349,7 +357,10 @@ func (u *UI) forwardPanel(gtx C) D {
 	if u.btn("fwd:close").Clicked(gtx) {
 		u.closeDialog()
 	}
-	if u.btn("fwd:send").Clicked(gtx) && len(d.picked) > 0 && d.isOpen() {
+	sent := u.btn("fwd:send").Clicked(gtx) && d.isOpen()
+	if sent && d.newList {
+		u.createList(d)
+	} else if sent && len(d.picked) > 0 {
 		if d.addTo != "" {
 			u.addMembers(d.addTo, d.picked)
 		} else if d.share != "" {
@@ -373,7 +384,11 @@ func (u *UI) forwardPanel(gtx C) D {
 		}
 		u.closeDialog()
 	}
-	bar := easeOut(d.bar.step(gtx, len(d.picked) > 0, durGrow))
+	ready := len(d.picked) > 0
+	if d.newList {
+		ready = trimSpace(d.listName.Text()) != ""
+	}
+	bar := easeOut(d.bar.step(gtx, ready, durGrow))
 	q := strings.ToLower(trimSpace(d.search.Text()))
 	chats := d.chats[:0] // reused every frame
 	for _, c := range u.chats {
@@ -385,6 +400,9 @@ func (u *UI) forwardPanel(gtx C) D {
 		}
 		if d.addTo != "" && indexOf(d.members, c.ID) >= 0 {
 			continue // already in the group
+		}
+		if d.newList && !listPickable(c) {
+			continue
 		}
 		if q == "" || strings.Contains(strings.ToLower(c.Name), q) {
 			chats = append(chats, c)
@@ -402,6 +420,8 @@ func (u *UI) forwardPanel(gtx C) D {
 	}
 	title := "Forward message to"
 	switch {
+	case d.newList:
+		title = "New list"
 	case d.addTo != "":
 		title = "Add member"
 	case d.share != "":
@@ -424,6 +444,20 @@ func (u *UI) forwardPanel(gtx C) D {
 					)
 				})
 			})
+		}),
+		layout.Rigid(func(gtx C) D {
+			if !d.newList {
+				return D{}
+			}
+			return layout.Inset{Left: 4, Right: 4, Bottom: 14}.Layout(gtx, func(gtx C) D {
+				return u.pollField(gtx, &d.listName, "List name")
+			})
+		}),
+		layout.Rigid(func(gtx C) D {
+			if !d.newList {
+				return D{}
+			}
+			return u.sectionLabel(gtx, "Included", layout.Inset{Left: 24, Right: 24, Bottom: 8}, labelOpts{})
 		}),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 16, Right: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
@@ -481,6 +515,13 @@ func (u *UI) forwardBar(gtx C, d *dialogState) D {
 			names = append(names, c.Name)
 		}
 	}
+	send := icSend
+	if d.newList {
+		send = icTick
+		if len(names) == 0 {
+			names = append(names, "No chats yet")
+		}
+	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return background(gtx, p.Panel, 0, func(gtx C) D {
 		return vcenter(gtx, gtx.Dp(72), func(gtx C) D {
@@ -493,7 +534,7 @@ func (u *UI) forwardBar(gtx C, d *dialogState) D {
 						return clickable(gtx, c, func(gtx C) D {
 							sz := gtx.Dp(52)
 							fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, mix(p.Green, p.Text, 0.1*u.hover(gtx, c)))
-							return centerIn(gtx, sz, iconW(icSend, 24, p.OnGreen))
+							return centerIn(gtx, sz, iconW(send, 24, p.OnGreen))
 						})
 					}),
 				)

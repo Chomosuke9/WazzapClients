@@ -35,7 +35,7 @@ func (u *UI) convMenuItems(c *model.Chat) []menuItem {
 		return items
 	}
 	if c.IsGroup {
-		if u.canAddMembers(c) {
+		if u.canAddMembers(c) && !c.Left {
 			add(menuItem{key: "add", ic: icPersonAdd, label: "Add member", run: func() { u.openAddMembers(c) }})
 		}
 		add(menuItem{key: "info", ic: icInfo, label: "Group info", run: func() { u.openInfo(id) }})
@@ -49,7 +49,9 @@ func (u *UI) convMenuItems(c *model.Chat) []menuItem {
 	} else {
 		add(menuItem{key: "mute", ic: icMuted, label: "Mute notifications", run: func() { u.openMuteMenu(c) }})
 	}
-	add(menuItem{key: "timer", glyph: disappearingIcon, label: "Disappearing messages", run: func() { u.openTimerMenu(c) }})
+	if !c.Left {
+		add(menuItem{key: "timer", glyph: disappearingIcon, label: "Disappearing messages", run: func() { u.openTimerMenu(c) }})
+	}
 	add(menuItem{key: "theme", ic: icPalette, label: "Chat theme", run: func() { u.openChatTheme(c) }})
 	if c.Favorite {
 		add(menuItem{key: "fav", ic: icHeart, label: "Remove from favourites", run: func() { b.SetFavorite(id, false) }})
@@ -65,7 +67,9 @@ func (u *UI) convMenuItems(c *model.Chat) []menuItem {
 		add(menuItem{key: "block", ic: icBlock, label: "Block", run: func() { u.confirmBlock(id, c.Name) }})
 	}
 	add(menuItem{key: "clear", ic: icClear, label: "Clear chat", run: func() { u.confirmClearChat(id) }})
-	if c.IsGroup {
+	if c.IsGroup && c.Left {
+		add(menuItem{key: "delete", ic: icDelete, label: "Delete group", run: func() { u.confirmDeleteGroup(id, c.Name) }})
+	} else if c.IsGroup {
 		add(menuItem{key: "exit", ic: icLogout, label: "Exit group", run: func() { u.confirmExitGroup(id, c.Name) }})
 	} else {
 		add(menuItem{key: "delete", ic: icDelete, label: "Delete chat", run: func() { u.confirmDeleteChat(id) }})
@@ -139,15 +143,6 @@ func (u *UI) timerItems(c *model.Chat) []menuItem {
 			run: func() { u.backend.SetDisappearing(c.ID, d) }})
 	}
 	return items
-}
-
-// chatTimer is a chat's disappearing messages timer in seconds, 0 when
-// it's off (or not known).
-func (u *UI) chatTimer(id string) uint32 {
-	if info := u.timerInfo(id); info != nil {
-		return info.Disappearing
-	}
-	return 0
 }
 
 // timerInfo is the chat's info for its timer: the open panel's, or the

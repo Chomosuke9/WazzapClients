@@ -195,7 +195,7 @@ func (u *UI) searchResult(gtx C, c *model.Chat, m *model.Message, q string) D {
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(u.label(13.5, listTime(m.Time, u.now()), p.TextSecondary, labelOpts{maxLines: 1}).Layout),
 						layout.Rigid(layout.Spacer{Height: 4}.Layout),
-						layout.Rigid(func(gtx C) D { return u.searchResultText(gtx, c, m, q) }),
+						layout.Rigid(func(gtx C) D { return u.searchResultText(gtx, c, m, q, 2) }),
 					)
 				})
 			})
@@ -208,9 +208,9 @@ func (u *UI) searchResult(gtx C, c *model.Chat, m *model.Message, q string) D {
 }
 
 // searchResultText is a result's receipt or media glyph and its text, at
-// most two lines, starting a little before the first match when that is
+// most lines lines, starting a little before the first match when that is
 // far into the message.
-func (u *UI) searchResultText(gtx C, c *model.Chat, m *model.Message, q string) D {
+func (u *UI) searchResultText(gtx C, c *model.Chat, m *model.Message, q string, lines int) D {
 	p := u.pal
 	const size = unit.Sp(15.5)
 	var row []layout.FlexChild
@@ -271,7 +271,7 @@ func (u *UI) searchResultText(gtx C, c *model.Chat, m *model.Message, q string) 
 		u.search.carets = carets
 		st.Styles, st.Carets = spans(p.Green), nil
 		green := record(gtx, func(gtx C) D { return st.Layout(gtx, nil) })
-		h := min(body.size.Y, gtx.Sp(2*lineH))
+		h := min(body.size.Y, gtx.Sp(unit.Sp(lines)*lineH))
 		defer clip.Rect{Max: image.Pt(body.size.X, h)}.Push(gtx.Ops).Pop()
 		body.at(gtx, 0, 0)
 		for _, r := range matchRects(carets, ranges) {

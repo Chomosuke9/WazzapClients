@@ -1,5 +1,6 @@
 // Copied from gioui.org/x/styledtext v0.10.3 (SPDX-License-Identifier: Unlicense OR MIT)
-// with one change: bitmap glyphs (color emoji) are painted.
+// with one change: bitmap glyphs (color emoji) are painted, or drawn by
+// TextStyle.Bitmap.
 
 package styledtext
 
@@ -57,6 +58,8 @@ type textIterator struct {
 	// color paints the outline glyphs. It is set again for every batch:
 	// a batch's color emoji leave their image as the current material.
 	color color.NRGBA
+	// bitmap is TextStyle.Bitmap.
+	bitmap func(gtx layout.Context, g text.Glyph, r image.Rectangle) bool
 }
 
 // processGlyph checks whether the glyph is visible within the iterator's configured
@@ -160,11 +163,47 @@ func (it *textIterator) paintGlyph(gtx layout.Context, shaper *text.Shaper, glyp
 		paint.PaintOp{}.Add(gtx.Ops)
 		outline.Pop()
 		// Color emoji are bitmap glyphs, painted separately (as widget.Label does).
-		if call := shaper.Bitmaps(line); call != (op.CallOp{}) {
-			call.Add(gtx.Ops)
-		}
+		it.paintBitmaps(gtx, shaper, line)
 		t.Pop()
 		line = line[:0]
 	}
 	return line, visibleOrBefore
+}
+
+// paintBitmaps paints the bitmap glyphs of a line, offering each to
+// it.bitmap first. Those it doesn't draw are painted by the shaper, in
+// runs: Shaper.Bitmaps places glyphs from the first one's X.
+func (it *textIterator) paintBitmaps(gtx layout.Context, shaper *text.Shaper, line []text.Glyph) {
+	if len(line) == 0 {
+		return
+	}
+	flush := func(run []text.Glyph) {
+		if len(run) == 0 {
+			return
+		}
+		call := shaper.Bitmaps(run)
+		if call == (op.CallOp{}) {
+			return
+		}
+		// A whole pixel: a clip under a fractional offset becomes a path.
+		t := op.Offset(image.Pt((run[0].X - line[0].X).Round(), 0)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		t.Pop()
+	}
+	if it.bitmap == nil {
+		flush(line)
+		return
+	}
+	start := 0
+	for i, g := range line {
+		// Where Shaper.Bitmaps would put the glyph's picture.
+		at := image.Pt((g.X - line[0].X + g.Offset.X).Round(), (g.Offset.Y + g.Bounds.Min.Y).Round())
+		size := image.Pt((g.Bounds.Max.X - g.Bounds.Min.X).Round(), (g.Bounds.Max.Y - g.Bounds.Min.Y).Round())
+		if size.X <= 0 || size.Y <= 0 || !it.bitmap(gtx, g, image.Rectangle{Min: at, Max: at.Add(size)}) {
+			continue
+		}
+		flush(line[start:i])
+		start = i + 1
+	}
+	flush(line[start:])
 }
