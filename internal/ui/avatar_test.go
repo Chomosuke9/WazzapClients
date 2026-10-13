@@ -12,7 +12,7 @@ func TestAvatarInitial(t *testing.T) {
 		"+62 812-3456": "",
 		"😀 Fun":        "",
 		"":             "",
-		"⁨~Vivy⁩":      "V",
+		"⁨~Nova⁩":      "N",
 	} {
 		if got := avatarInitial(name); got != want {
 			t.Errorf("avatarInitial(%q) = %q, want %q", name, got, want)

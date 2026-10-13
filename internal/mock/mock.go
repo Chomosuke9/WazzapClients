@@ -41,7 +41,12 @@ type Backend struct {
 	// votes are the votes in polls and answers to events, by chat and
 	// message ID, newest first.
 	votes map[string][]model.Vote
+	// reactors are who reacted to messages, by chat and message ID.
+	reactors map[string][]model.Reactor
 	extras
+
+	// Running as a background account (see background.go).
+	bg bgState
 }
 
 // Clock is the time new demo backends read. They date their chats by it
@@ -64,7 +69,7 @@ func New() *Backend {
 		}
 		c := model.Chat{
 			ID: d.ID, Name: d.Name, IsGroup: d.IsGroup, Pinned: d.Pinned, Favorite: d.Favorite,
-			Muted: d.Muted, Archived: d.Archived, Self: d.Self, Unread: d.Unread, Mentioned: d.Mentioned, Presence: d.Presence, Typing: demoTypists(d.Typing),
+			Muted: d.Muted, Archived: d.Archived, Self: d.Self, Unread: d.Unread, Mentioned: d.Mentioned, Disappearing: d.Disappearing, Presence: d.Presence, Typing: demoTypists(d.Typing),
 		}
 		if n := len(d.Messages); n > 0 {
 			c.Last = d.Messages[n-1]
@@ -80,11 +85,18 @@ func New() *Backend {
 	})
 	b.addChannelPosts()
 	b.demoVotes()
-	sent := b.find(&model.Message{ChatID: "rina", ID: "rina-8"}).Time
-	b.versions = map[string][]model.Version{"rina/rina-8": {
-		{Text: "Let's go there on Saturday", Time: sent},
-		{Text: "Let's go there on Saturday morning", Time: sent.Add(time.Minute)},
-	}}
+	b.demoReactions()
+	b.seedReactors()
+	// Rina's edited message says what it said before each edit.
+	for _, m := range b.msgs["rina"] {
+		if !m.Edited.IsZero() {
+			b.versions = map[string][]model.Version{m.ChatID + "/" + m.ID: {
+				{Text: "Let's go there on Saturday", Time: m.Time},
+				{Text: "Let's go there on Saturday morning", Time: m.Time.Add(time.Minute)},
+			}}
+			break
+		}
+	}
 	b.lists = []*model.ChatList{{ID: "l1", Name: "Family", Chats: []string{"family", "mom"}}, {ID: "l2", Name: "Work"}}
 	return b
 }
@@ -106,11 +118,14 @@ func (b *Backend) addChannelPosts() {
 
 func (b *Backend) Start(notify func()) {
 	b.notify = notify
+	b.bg.starts++
+	b.bg.closed = false
 	me := b.meName
 	if me == "" {
 		me = "Me Myself"
 	}
 	b.emit(model.ConnEvent{State: model.StateOnline, Me: me, MeID: "me@lid"})
+	b.deliverOffline()
 }
 
 func (b *Backend) ReportTyping(chatID string) {}
@@ -194,7 +209,15 @@ func (b *Backend) MessagesFrom(chatID, id string, limit int) []*model.Message {
 func (b *Backend) SearchMessages(chatID, query string, limit int) {
 	key := model.SearchKey(query)
 	var out []*model.Message
-	m := b.msgs[chatID]
+	var m []*model.Message
+	if chatID == "" {
+		for _, c := range b.chats {
+			m = append(m, b.msgs[c.ID]...)
+		}
+		slices.SortStableFunc(m, func(a, b *model.Message) int { return a.Time.Compare(b.Time) })
+	} else {
+		m = b.msgs[chatID]
+	}
 	for i := len(m) - 1; i >= 0 && len(out) < limit && key != ""; i-- {
 		if m[i].Kind != model.KindDeleted && strings.Contains(model.SearchKey(m[i].Text), key) {
 			out = append(out, m[i])
@@ -245,7 +268,6 @@ func (b *Backend) Logout() {
 	b.emit(model.ConnEvent{State: model.StateQR, QR: "demo"})
 }
 func (b *Backend) Retry() {}
-func (b *Backend) Close() {}
 
 type demoChat struct {
 	ID, Name, Presence, Typing       string
@@ -253,6 +275,7 @@ type demoChat struct {
 	Archived, Self                   bool
 	Unread                           int
 	Mentioned                        bool
+	Disappearing                     uint32 // seconds
 	Messages                         []*model.Message
 }
 
@@ -273,6 +296,10 @@ func demo(now time.Time) []*demoChat {
 	grp := func(sender string, t time.Time, s string) *model.Message {
 		return &model.Message{Sender: sender, SenderID: strings.ToLower(sender), Text: s, Time: t}
 	}
+	// sys is a system message, worded as the backend words them.
+	sys := func(t time.Time, s string, n model.Notice) *model.Message {
+		return &model.Message{Kind: model.KindSystem, Text: s, Time: t, Notice: n, Receipt: model.Read}
+	}
 
 	rina := &demoChat{
 		ID: "rina", Name: "Rina Kartika", Pinned: true, Favorite: true, Unread: 2,
@@ -290,7 +317,7 @@ func demo(now time.Time) []*demoChat {
 			txt(true, day(1, 19, 20), "Rent a car I think, it's cheaper for 4 people and we can go to Tegallalang early in the morning before it gets crowded"),
 			{FromMe: false, Kind: model.KindImage, Text: "Found this spot near the villa", Time: day(0, 8, 41), ImageA: 0x3a7bd5, ImageB: 0x00d2ff},
 			{FromMe: false, Kind: model.KindViewOnce, Media: model.MediaImage, Time: day(0, 8, 42), ImageA: 0xff9a8b, ImageB: 0xff6a88},
-			{FromMe: true, Text: "Wow that looks amazing", Time: day(0, 8, 45), Receipt: model.Read, Reaction: "❤️",
+			{FromMe: true, Text: "Wow that looks amazing", Time: day(0, 8, 45), Receipt: model.Read, Reactions: reacts("❤️"),
 				Quote: &model.Quote{Sender: "Rina Kartika", Text: "📷 Found this spot near the villa"}},
 			// Edited twice (see demoVersions).
 			{FromMe: true, Text: "Let's go there on Saturday morning, before it gets hot", Time: day(0, 8, 46),
@@ -334,6 +361,7 @@ func demo(now time.Time) []*demoChat {
 		ID: "work", Name: "Product Team", IsGroup: true, Unread: 3,
 		Presence: "Andre, Bima, Clara, Dewi, You", Typing: "Clara",
 		Messages: []*model.Message{
+			sys(day(0, 9, 0), "Andre added you", 0),
 			grp("Andre", day(0, 9, 2), "Standup in 5"),
 			grp("Andre", day(0, 9, 4), "Webhook payload from yesterday's failed upload:\n```json\n"+demoPayload+"\n```"),
 			grp("Dewi", day(0, 9, 12), "⁨\u2063@all⁩ demo for the client moves to 3pm"),
@@ -342,6 +370,7 @@ func demo(now time.Time) []*demoChat {
 			{Sender: "Bima", SenderID: "bima", Kind: model.KindSticker, Media: model.MediaSticker, Time: day(0, 9, 31),
 				Quote: &model.Quote{Sender: "Clara", Text: "Release candidate is up on staging. ⁨\u2063@Me Myself⁩ can you check the release notes? ⁨@Bima⁩ too"}},
 			grp("Bima", day(0, 9, 34), "Nice, I'll run the smoke tests"),
+			sys(day(0, 9, 35), "Dewi changed the group description", 0),
 			{Sender: "Clara", SenderID: "clara", Media: model.MediaDocument, Text: "Release notes v2.4.pdf", Time: day(0, 9, 36), Pinned: true,
 				FileName: "Release notes v2.4.pdf", FileSize: 1_284_000, FileType: "application/pdf", Pages: 3},
 			{Sender: "Andre", Media: model.MediaVoice, Duration: 42, Time: day(0, 9, 40),
@@ -360,7 +389,8 @@ func demo(now time.Time) []*demoChat {
 	chats := []*demoChat{
 		rina, family, work,
 		{ID: "budi", Name: "Budi Santoso", Presence: "last seen today at 08:12", Messages: []*model.Message{
-			txt(false, day(0, 8, 2), "Bro, are we still on for futsal tonight?"), {FromMe: true, Text: "Yep, 8 o'clock", Time: day(0, 8, 10), Receipt: model.Read, Reaction: "👍"},
+			sys(day(0, 7, 58), "Missed voice call", model.NoticeMissedCall),
+			txt(false, day(0, 8, 2), "Bro, are we still on for futsal tonight?"), {FromMe: true, Text: "Yep, 8 o'clock", Time: day(0, 8, 10), Receipt: model.Read, Reactions: reacts("👍")},
 			// Deleted for everyone, kept by Keep deleted messages.
 			{Text: "Bring 50k for the court, Andi says he's not paying again 🙄", Time: day(0, 8, 14), Revoked: day(0, 8, 15)},
 			txt(false, day(0, 8, 15), "Sorry, wrong chat. See you at 8!"),
@@ -371,6 +401,15 @@ func demo(now time.Time) []*demoChat {
 					{Kind: model.ButtonReply, Label: "On my way", Value: "otw"},
 					{Kind: model.ButtonCopy, Label: "Copy code", Value: "KS-4821"},
 					{Kind: model.ButtonURL, Label: "Track order", Value: "https://example.com/track/4821"},
+					{Kind: model.ButtonList, Label: "Order again", Sections: []model.ListSection{
+						{Title: "Coffee", Rows: []model.ListRow{
+							{ID: "latte", Title: "Iced latte", Description: "Same as last time"},
+							{ID: "americano", Title: "Americano", Description: "Hot, no sugar"},
+						}},
+						{Title: "Food", Rows: []model.ListRow{
+							{ID: "croissant", Title: "Croissant"},
+						}},
+					}},
 				}},
 			{Kind: model.KindUnsupported, Time: day(0, 7, 56)},
 			{Text: "Eh, `/setting` isn't a command I know 😅\n\n> Say it in plain words, like \"turn off greetings\"\n> or \"add a rule\".\n\n**Menu** today:\n- Iced latte\n- ~Croissant~ _sold out_\n1. Pick up at the counter\n2. Show code `KS-4821`\n\n【注文】ご来店ありがとうございます！ *太字* 谢谢\n\n```\nQuiz for you - 1/3\n```",
@@ -393,7 +432,7 @@ func demo(now time.Time) []*demoChat {
 			{Media: model.MediaContact, Text: "Pak Joko (Plumber)", Time: day(2, 10, 3), Contacts: []model.ContactCard{
 				{Name: "Pak Joko (Plumber)", Phones: []model.ContactPhone{{Number: "+62 812-9876-5432", WAID: "6281298765432"}}}}},
 		}},
-		{ID: "dewi", Name: "Dewi Lestari", Presence: "online", Messages: []*model.Message{
+		{ID: "dewi", Name: "Dewi Lestari", Presence: "online", Disappearing: 7 * 24 * 3600, Messages: []*model.Message{
 			{FromMe: true, Text: "See you at the conference!", Time: day(3, 14, 22), Receipt: model.Read},
 			{Media: model.MediaLocation, Text: "Bali Nusa Dua Convention Center", Time: day(3, 14, 40),
 				Location: &model.Location{Name: "Bali Nusa Dua Convention Center", Address: "Kawasan Pariwisata Nusa Dua, Bali",
@@ -424,7 +463,7 @@ func demo(now time.Time) []*demoChat {
 		{ID: "alumni-ann", Name: "Announcements", IsGroup: true, Muted: true, Unread: 2, Messages: []*model.Message{
 			grp("Fajar", day(3, 10, 0), "Welcome to the CS Alumni Hub! News that matters to every group in the community lands here."),
 			{Sender: "Fajar", Kind: model.KindImage, Media: model.MediaImage, Text: "Reunion venue shortlist: vote in the 2019 group",
-				Time: day(1, 18, 30), ImageA: 0x1d976c, ImageB: 0x93f9b9, Reaction: "🎉"},
+				Time: day(1, 18, 30), ImageA: 0x1d976c, ImageB: 0x93f9b9, Reactions: reacts("🎉")},
 			grp("Fajar", day(0, 8, 30), "Reunion registration closes on the 30th. Don't forget to fill in the form!"),
 		}},
 		{ID: "jobs", Name: "Alumni Jobs Board", IsGroup: true, Muted: true, Unread: 5, Presence: "Fajar, Kevin, Sari, You", Messages: []*model.Message{

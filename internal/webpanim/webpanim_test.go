@@ -1,8 +1,10 @@
 package webpanim
 
 import (
+	"bytes"
 	"encoding/binary"
 	"image"
+	"image/color"
 	"testing"
 	"time"
 )
@@ -59,5 +61,54 @@ func TestParse(t *testing.T) {
 	f = a.Frames[1]
 	if f.Delay != 100*time.Millisecond || !f.blend || !f.dispose || !f.lossless {
 		t.Fatalf("frame 1: %+v", f)
+	}
+}
+
+// TestReadYCbCr: the 4:2:0 fast path reads what color.YCbCrToRGB does,
+// from any starting pixel, odd or even, of a picture that doesn't start
+// at 0,0.
+func TestReadYCbCr(t *testing.T) {
+	m := image.NewYCbCr(image.Rect(3, 5, 40, 30), image.YCbCrSubsampleRatio420)
+	seed := uint32(1)
+	for _, p := range [][]byte{m.Y, m.Cb, m.Cr} {
+		for i := range p {
+			seed = seed*1664525 + 1013904223
+			p[i] = byte(seed >> 24)
+		}
+	}
+	for y := m.Rect.Min.Y; y < m.Rect.Max.Y; y++ {
+		for x := m.Rect.Min.X; x < m.Rect.Max.X; x++ {
+			row := make([]byte, 4*(m.Rect.Max.X-x))
+			readYCbCr(row, m, nil, x, y)
+			for i := 0; i < len(row)/4; i++ {
+				c := m.YCbCrAt(x+i, y)
+				r, g, b := color.YCbCrToRGB(c.Y, c.Cb, c.Cr)
+				if row[4*i] != r || row[4*i+1] != g || row[4*i+2] != b || row[4*i+3] != 0xff {
+					t.Fatalf("from %d,%d, pixel %d is %v, want %v", x, y, i, row[4*i:4*i+4], []byte{r, g, b, 0xff})
+				}
+			}
+		}
+	}
+	// With alpha, transparent pixels are black and the others keep their
+	// color.
+	ma := &image.NYCbCrA{YCbCr: *m, A: make([]byte, len(m.Y)), AStride: m.YStride}
+	for i := range ma.A {
+		ma.A[i] = byte(i % 3 * 127)
+	}
+	b := m.Rect
+	row := make([]byte, 4*b.Dx())
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		readRow(row, ma, b.Min.X, y)
+		for i := 0; i < b.Dx(); i++ {
+			c := ma.NYCbCrAAt(b.Min.X+i, y)
+			want := []byte{0, 0, 0, 0}
+			if c.A != 0 {
+				r, g, bl := color.YCbCrToRGB(c.Y, c.Cb, c.Cr)
+				want = []byte{r, g, bl, c.A}
+			}
+			if !bytes.Equal(row[4*i:4*i+4], want) {
+				t.Fatalf("pixel %d,%d is %v, want %v", b.Min.X+i, y, row[4*i:4*i+4], want)
+			}
+		}
 	}
 }

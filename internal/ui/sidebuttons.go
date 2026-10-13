@@ -14,7 +14,8 @@ import (
 
 // Hovering a message shows round buttons beside its bubble, on the side
 // away from the bubble's edge of the screen, like WhatsApp: React, which
-// opens the reaction bar, and for media, links and documents Forward.
+// opens the reaction bar, and for media, links, documents and big emojis
+// Forward.
 // An announcement's Forward is always there instead.
 
 const (
@@ -65,7 +66,7 @@ func (u *UI) sideButtonsFor(gtx C, c *model.Chat, m *model.Message, before bool,
 		before: before,
 		react: !isChannelID(c.ID) && u.sendBlocked(c) == "" &&
 			!(m.FromMe && (m.Receipt == model.Pending || m.Receipt == model.Failed)),
-		forward: m.Kind != model.KindViewOnce && (forwardsBeside(m) || hasLinkCard(m)),
+		forward: m.Kind != model.KindViewOnce && (forwardsBeside(m) || hasLinkCard(m) || u.jumbo(c, m) != nil),
 	}
 	if sb.width(gtx) > room {
 		sb.forward = false

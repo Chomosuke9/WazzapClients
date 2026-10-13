@@ -46,8 +46,8 @@ type Host interface {
 	Copy(text string)
 	// Confirm asks before running something that can't be undone.
 	Confirm(title, body, action string, danger bool, run func())
-	// PickImage asks for a picture, and calls done with its path ("" when
-	// cancelled).
+	// PickImage asks for a picture or video, and calls done with its path
+	// ("" when cancelled).
 	PickImage(done func(path string))
 	// Sent shows a message you just sent.
 	Sent(m *model.Message)

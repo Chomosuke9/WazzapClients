@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -227,7 +228,7 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		}
 		return b.storeAndSendAfter(jid, sm, msg, nil, prep)
 	}
-	return b.storeAndSend(jid, sm, msg, nil)
+	return b.storeAndSend(jid, sm, msg)
 }
 
 // quote makes a message sent to chatID a reply to r: it fills in ci and
@@ -252,14 +253,14 @@ func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) 
 // storeAndSend stores an outgoing message as pending, sends it in the
 // background and returns it.
 //
-// If the server rejects msg and fallback is given, fallback is sent instead.
-func (b *Backend) storeAndSend(jid types.JID, sm storedMsg, msg, fallback *waE2E.Message) *model.Message {
-	return b.storeAndSendAfter(jid, sm, msg, fallback, nil)
+// If the server rejects msg, the fallbacks are sent in turn instead.
+func (b *Backend) storeAndSend(jid types.JID, sm storedMsg, msg *waE2E.Message, fallbacks ...*waE2E.Message) *model.Message {
+	return b.storeAndSendAfter(jid, sm, msg, fallbacks, nil)
 }
 
 // storeAndSendAfter is storeAndSend that first runs prep, if not nil, on
 // the sending goroutine: an upload that fills in msg.
-func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg, fallback *waE2E.Message, prep func(context.Context)) *model.Message {
+func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg *waE2E.Message, fallbacks []*waE2E.Message, prep func(context.Context)) *model.Message {
 	sm.rawPayload = marshal(msg)
 	ctx, chatID, m := b.ctx, sm.ChatID, sm.Message
 	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
@@ -269,7 +270,7 @@ func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg, fallback *
 		b.log.Errorf("store outgoing message: %v", err)
 	}
 	b.emitChat(chatID)
-	b.sendAsyncPrep(chatID, jid, m.ID, msg, fallback, prep)
+	b.sendAsyncPrep(chatID, jid, m.ID, msg, fallbacks, prep)
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		return b.resolve(ctx, r, jid.Server == types.GroupServer)
 	}
@@ -279,17 +280,17 @@ func (b *Backend) storeAndSendAfter(jid types.JID, sm storedMsg, msg, fallback *
 
 // sendAsync sends msg in the background and marks it sent when done.
 func (b *Backend) sendAsync(chatID string, jid types.JID, id string, msg *waE2E.Message) {
-	b.sendAsyncOr(chatID, jid, id, msg, nil)
+	b.sendAsyncOr(chatID, jid, id, msg)
 }
 
-// sendAsyncOr is sendAsync that sends fallback instead when the server
-// rejects msg.
-func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg, fallback *waE2E.Message) {
-	b.sendAsyncPrep(chatID, jid, id, msg, fallback, nil)
+// sendAsyncOr is sendAsync that sends the fallbacks in turn instead when
+// the server rejects msg.
+func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg *waE2E.Message, fallbacks ...*waE2E.Message) {
+	b.sendAsyncPrep(chatID, jid, id, msg, fallbacks, nil)
 }
 
 // sendAsyncPrep is sendAsyncOr that runs prep, if not nil, before sending.
-func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fallback *waE2E.Message, prep func(context.Context)) {
+func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg *waE2E.Message, fallbacks []*waE2E.Message, prep func(context.Context)) {
 	cli := b.client()
 	go func() {
 		if prep != nil {
@@ -302,7 +303,10 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg, fa
 		resp, err := b.sendMessage(b.ctx, cli, jid, msg, whatsmeow.SendRequestExtra{ID: id})
 		// SendMessage can add a message secret and other protocol metadata.
 		_ = b.store.setRawPayload(b.ctx, chatID, id, msg)
-		if err != nil && fallback != nil {
+		for _, fallback := range fallbacks {
+			if err == nil {
+				break
+			}
 			b.log.Warnf("send to %s: %v; sending the fallback", chatID, err)
 			resp, err = b.sendMessage(b.ctx, cli, jid, fallback, whatsmeow.SendRequestExtra{ID: id})
 			if err == nil {
@@ -460,7 +464,7 @@ func (b *Backend) React(m *model.Message, emoji string) {
 	if cli == nil || err != nil {
 		return
 	}
-	_ = b.store.setReaction(b.ctx, m.ChatID, m.ID, emoji)
+	_ = b.store.putReaction(b.ctx, b.db, m.ChatID, m.ID, reaction{who: meVoter, ts: b.sendTime().UnixMilli(), emoji: emoji})
 	b.emitMessage(m.ChatID, m.ID)
 	msg := cli.BuildReaction(jid, b.senderOf(m), m.ID, emoji)
 	go func() {
@@ -750,14 +754,17 @@ func itoa(n int) string {
 }
 
 // lastKey returns the timestamp and key of a chat's newest message, which
-// archive, read and delete patches refer to.
+// archive, read and delete patches refer to. System messages don't count:
+// the ones made from live changes have IDs of the app's own.
 func (b *Backend) lastKey(chatID string) (time.Time, *waCommon.MessageKey) {
-	rc, ok := b.store.chat(b.ctx, chatID)
-	if !ok || rc.last == nil {
+	row := b.db.QueryRowContext(b.ctx, `SELECT `+msgColumns+` FROM wz_messages WHERE chat = ? AND kind != ?
+		ORDER BY ts DESC, rowid DESC LIMIT 1`, chatID, int(model.KindSystem))
+	last, err := scanMessage(row)
+	if err != nil {
 		return time.Time{}, nil
 	}
-	_, key := b.messageKey(rc.last.Message)
-	return rc.last.Time, key
+	_, key := b.messageKey(last.Message)
+	return last.Time, key
 }
 
 // chatAction applies a chat setting locally, shows it, and syncs it.
@@ -850,6 +857,57 @@ func (b *Backend) SetInList(chatID, listID string, in bool) {
 		b.sendAppState(appstate.BuildLabelChat(jid, listID, in))
 	}
 	b.emitChat(chatID)
+	b.emit(model.ListsEvent{})
+}
+
+// CreateList implements model.Backend. The list syncs to the phone as a
+// custom label, numbered after the highest label known.
+func (b *Backend) CreateList(name string, chats []string) {
+	cli := b.connected()
+	if cli == nil {
+		return
+	}
+	ctx := b.ctx
+	id, order, err := b.store.nextList(ctx)
+	if err != nil {
+		b.log.Warnf("new list: %v", err)
+		return
+	}
+	if err := b.store.putList(ctx, id, name, true, false, order); err != nil {
+		b.log.Warnf("store list %s: %v", id, err)
+		return
+	}
+	var jids []types.JID
+	for _, c := range chats {
+		j, err := types.ParseJID(c)
+		if err != nil {
+			continue
+		}
+		_ = b.store.setInList(ctx, id, c, true)
+		jids = append(jids, j)
+	}
+	b.emit(model.ListsEvent{})
+	go func() {
+		listType := waSyncAction.LabelEditAction_CUSTOM
+		b.sendAppStateNow(cli, appstate.PatchInfo{
+			Type: appstate.WAPatchRegular,
+			Mutations: []appstate.MutationInfo{{
+				Index:   []string{appstate.IndexLabelEdit, id},
+				Version: 3,
+				Value: &waSyncAction.SyncActionValue{LabelEditAction: &waSyncAction.LabelEditAction{
+					Name:       proto.String(name),
+					Color:      proto.Int32(int32(order % 20)),
+					Deleted:    proto.Bool(false),
+					OrderIndex: proto.Int32(int32(order)),
+					IsActive:   proto.Bool(true),
+					Type:       &listType,
+				}},
+			}},
+		})
+		for _, j := range jids {
+			b.sendAppStateNow(cli, appstate.BuildLabelChat(j, id, true))
+		}
+	}()
 }
 
 // ClearChat implements model.Backend.
@@ -947,18 +1005,21 @@ func (s *msgStore) deleteMessage(ctx context.Context, chat, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_receipts WHERE chat = ?1 AND id = ?2;
-		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2`, chat, id)
+		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2;
+		DELETE FROM wz_reactions WHERE chat = ?1 AND id = ?2`, chat, id)
 	return err
 }
 
-// dropOrphanEdits deletes the versions and receipts of chat ?1's messages
-// that are gone.
+// dropOrphanEdits deletes the versions, receipts, votes and reactions of
+// chat ?1's messages that are gone.
 const dropOrphanEdits = `DELETE FROM wz_edits WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_edits.chat AND m.id = wz_edits.id);
 	DELETE FROM wz_receipts WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_receipts.chat AND m.id = wz_receipts.id);
 	DELETE FROM wz_votes WHERE chat = ?1 AND NOT EXISTS
-	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_votes.chat AND m.id = wz_votes.id)`
+	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_votes.chat AND m.id = wz_votes.id);
+	DELETE FROM wz_reactions WHERE chat = ?1 AND NOT EXISTS
+	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_reactions.chat AND m.id = wz_reactions.id)`
 
 // clearChat deletes the chat's unstarred messages sent at or before upTo
 // (unix seconds), or all of them when upTo is 0.
@@ -984,6 +1045,15 @@ func (s *msgStore) putList(ctx context.Context, id, name string, custom, deleted
 		ON CONFLICT (id) DO UPDATE SET name = excluded.name, custom = excluded.custom, ord = excluded.ord,
 			deleted = excluded.deleted`, id, name, boolInt(custom), order, boolInt(deleted))
 	return err
+}
+
+// nextList returns the ID and place of a new list: one more than the
+// highest numbered label and the last list's place.
+func (s *msgStore) nextList(ctx context.Context) (id string, order int, err error) {
+	var maxID, maxOrd int
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0), COALESCE(MAX(ord), 0)
+		FROM wz_lists`).Scan(&maxID, &maxOrd)
+	return strconv.Itoa(maxID + 1), maxOrd + 1, err
 }
 
 func (s *msgStore) setInList(ctx context.Context, list, chat string, in bool) error {
@@ -1031,6 +1101,7 @@ func (b *Backend) onLabelEdit(id string, a *waSyncAction.LabelEditAction) {
 	if err := b.store.putList(ctx, id, a.GetName(), custom, a.GetDeleted(), int(a.GetOrderIndex())); err != nil {
 		b.log.Warnf("store list %s: %v", id, err)
 	}
+	b.emit(model.ListsEvent{})
 }
 
 func (b *Backend) onLabelChat(j types.JID, list string, labeled, quiet bool) {
@@ -1042,6 +1113,7 @@ func (b *Backend) onLabelChat(j types.JID, list string, labeled, quiet bool) {
 	}
 	if !quiet {
 		b.emitChat(chat)
+		b.emit(model.ListsEvent{})
 	}
 }
 

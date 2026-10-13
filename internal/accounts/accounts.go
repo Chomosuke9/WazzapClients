@@ -2,7 +2,8 @@
 // computer. Each account has its own data directory: the first one is the
 // data directory itself, so an install that had a single account keeps
 // its data where it was, and the ones added later live in accounts/<n>.
-// Only one account is open (connected) at a time.
+// One account is open (in the window) at a time; the others are closed
+// or, as their Mode says, run in the background.
 package accounts
 
 import (
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"time"
 )
 
 const (
@@ -30,10 +32,64 @@ type Account struct {
 	ID    string `json:"id,omitempty"`
 	Name  string `json:"name,omitempty"`
 	Phone string `json:"phone,omitempty"` // international format, with a leading +
+	// Background is how the account runs while another one is open.
+	Background Mode `json:"background,omitempty"`
+	// Checked is when the account last caught up with WhatsApp: a check
+	// in the background finished, or it stopped being the open one.
+	Checked time.Time `json:"checked,omitzero"`
 }
 
 // Linked reports whether the account was linked.
 func (a *Account) Linked() bool { return a.ID != "" }
+
+// Label names the account in notifications and lists: its name, or its
+// number.
+func (a *Account) Label() string {
+	if a.Name != "" {
+		return a.Name
+	}
+	return a.Phone
+}
+
+// Mode is how an account runs while another one is open: not at all
+// (Off, the default), connected all the time (Always), or connecting
+// every so many minutes to take the messages WhatsApp kept for it (a
+// positive Mode, one of Checks).
+type Mode int
+
+const (
+	Off    Mode = 0
+	Always Mode = -1
+)
+
+// Checks are the intervals a Mode can check at, in minutes.
+var Checks = []Mode{5, 15, 30, 60}
+
+// Every is how often an account in this mode checks for messages, or 0
+// if it doesn't check.
+func (m Mode) Every() time.Duration {
+	if m <= 0 {
+		return 0
+	}
+	return time.Duration(m) * time.Minute
+}
+
+// String describes the mode in settings.
+func (m Mode) String() string {
+	switch {
+	case m == Off:
+		return "Only while open"
+	case m == Always:
+		return "Always connected"
+	case m == 60:
+		return "Check every hour"
+	}
+	return "Check every " + strconv.Itoa(int(m)) + " minutes"
+}
+
+// InBackground reports whether the account runs while another one is
+// open: it's linked and its mode isn't Off.
+func (a *Account) InBackground() bool { return a.Linked() && a.Background != Off }
 
 // List is the accounts of a root data directory.
 type List struct {

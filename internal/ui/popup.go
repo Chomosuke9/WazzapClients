@@ -139,6 +139,8 @@ const (
 	ctxGallerySort // the Media panel's sort order
 	ctxScheduled   // a scheduled message's (scheduled.go)
 	ctxZoom        // the Font size choices (scale.go)
+	ctxAcctMode    // an account's background modes (chatID is its Dir)
+	ctxInfoPhoto   // a group's picture in its info panel (groupedit.go)
 	ctxReact       // a message's reaction bar alone, from its React button (sidebuttons.go)
 )
 
@@ -224,7 +226,10 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 	add(menuItem{key: "lists", ic: icAddToList, label: "Add to list", arrow: true})
 	add(menuItem{divider: true})
 	add(menuItem{key: "clear", ic: icClear, label: "Clear chat", run: func() { u.confirmClearChat(id) }})
-	if c.IsGroup {
+	if c.IsGroup && c.Left {
+		name := c.Name
+		add(menuItem{key: "delete", ic: icDelete, label: "Delete group", run: func() { u.confirmDeleteGroup(id, name) }})
+	} else if c.IsGroup {
 		name := c.Name
 		add(menuItem{key: "exit", ic: icLogout, label: "Exit group", run: func() { u.confirmExitGroup(id, name) }})
 	} else {
@@ -400,6 +405,14 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			items = u.statusMenuItems()
 		case ctxZoom:
 			items = u.zoomMenuItems()
+		case ctxAcctMode:
+			if u.acctMenu.open {
+				items = u.acctModeItems(m.chatID)
+			}
+		case ctxInfoPhoto:
+			if u.info.open {
+				items = u.infoPhotoItems(m.chatID)
+			}
 		}
 		if items == nil {
 			u.ctx = ctxMenu{} // its chat went away
@@ -513,9 +526,8 @@ func (u *UI) listItems(c *model.Chat) []menuItem {
 			}
 		}})
 	}
-	if len(items) == 0 {
-		items = append(items, menuItem{label: "No lists yet. Create lists on your phone."})
-	}
+	id := c.ID
+	items = append(items, menuItem{key: "newlist", ic: icAdd, label: "New list", run: func() { u.closeMenu(); u.openNewList([]string{id}) }})
 	return items
 }
 
@@ -687,11 +699,12 @@ var quickReactions = [...]string{"👍", "❤️", "😂", "😮", "😢", "🙏
 // layoutReactionBar draws the emoji pill above a message menu, centered on
 // top (its bottom-center point).
 func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
+	defer u.emojiIn(emojiReactions)()
 	p := u.pal
 	// The bar keeps drawing after a click: the menu fades out with it.
 	for i, e := range quickReactions {
 		if u.btn("react:" + itoa(i+1)).Clicked(gtx) {
-			if m.Reaction == e {
+			if m.MyReaction == e {
 				e = ""
 			}
 			u.backend.React(m, e)
@@ -723,7 +736,7 @@ func (u *UI) layoutReactionBar(gtx C, m *model.Message, top image.Point) {
 				})
 			}
 			for i, e := range quickReactions {
-				children = append(children, cell("react:"+itoa(i+1), u.label(22, e, p.Text).Layout, m.Reaction == e))
+				children = append(children, cell("react:"+itoa(i+1), u.label(22, e, p.Text).Layout, m.MyReaction == e))
 				children = append(children, layout.Rigid(layout.Spacer{Width: 3}.Layout))
 			}
 			children = append(children, cell("react:more", iconW(icAdd, 24, p.Icon), false))

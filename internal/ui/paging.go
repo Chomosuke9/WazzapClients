@@ -9,8 +9,9 @@ import (
 )
 
 // The open chat's messages load a page at a time as the list nears an end
-// of the loaded ones. At most maxLoaded stay loaded: a page loaded at one
-// end drops messages from the other, far off screen.
+// of the loaded ones. At most perf.loadedMsgs (maxLoaded by default) stay
+// loaded: a page loaded at one end drops messages from the other, far off
+// screen.
 const (
 	messagePage = 100
 	maxLoaded   = 400
@@ -61,7 +62,7 @@ func (u *UI) pageMessages(c *model.Chat) {
 		var older []*model.Message
 		older, u.conv.olderMore = more(u.backend.MessagesBefore(c.ID, u.msgs[0].ID, messagePage+1), messagePage, true)
 		msgs := append(older, u.msgs...)
-		if drop := len(msgs) - maxLoaded; drop > 0 {
+		if drop := len(msgs) - perf.loadedMsgs; drop > 0 {
 			msgs = slices.Clone(msgs[:len(msgs)-drop]) // let the dropped ones go
 			u.conv.newerMore = true
 		}
@@ -75,7 +76,7 @@ func (u *UI) pageMessages(c *model.Chat) {
 		}
 		newer, u.conv.newerMore = more(newer[1:], messagePage, false)
 		msgs := append(u.msgs[:len(u.msgs):len(u.msgs)], newer...)
-		if drop := len(msgs) - maxLoaded; drop > 0 {
+		if drop := len(msgs) - perf.loadedMsgs; drop > 0 {
 			msgs = slices.Clone(msgs[drop:])
 			u.conv.olderMore = true
 		}

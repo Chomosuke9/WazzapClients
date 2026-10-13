@@ -82,6 +82,7 @@ func (u *UI) loadVideo(vv *videoView, m *model.Message) {
 	}
 	p.SetMuted(vv.muted)
 	p.SetVolume(float64(u.volume))
+	p.SetLoop(m.Media == model.MediaGIF)
 	vv.player = p
 }
 

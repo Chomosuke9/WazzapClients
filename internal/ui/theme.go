@@ -1,7 +1,6 @@
 package ui
 
 import (
-	_ "embed"
 	"image/color"
 
 	"gioui.org/font"
@@ -207,12 +206,6 @@ func hashIndex(s string, n int) int {
 	return int(h % uint32(n))
 }
 
-// NotoColorEmoji is a bitmap (CBDT) color emoji font. Gio can't draw the COLR
-// glyphs of Windows' Segoe UI Emoji in color, so it's bundled.
-//
-//go:embed fonts/NotoColorEmoji.ttf
-var notoColorEmoji []byte
-
 // Typeface prefers Segoe UI (what WhatsApp Desktop uses on Windows), color
 // emoji from Noto, then common system UI fonts and the bundled Go fonts.
 //
@@ -223,10 +216,13 @@ var notoColorEmoji []byte
 // two of them.
 const typeface font.Typeface = "Segoe UI, " + emojiTypeface + ", Segoe UI Symbol, MS Gothic, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
 
+// newShaper returns a shaper of the bundled fonts and the system's.
+func newShaper() *text.Shaper { return text.NewShaper(text.WithCollection(bundledFonts())) }
+
 func newTheme() *material.Theme {
 	th := material.NewTheme()
 	// System fonts are enabled by default and cover other scripts.
-	th.Shaper = text.NewShaper(text.WithCollection(bundledFonts()))
+	th.Shaper = newShaper()
 	th.Face = typeface
 	th.TextSize = 14
 	return th

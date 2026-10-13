@@ -6,6 +6,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/text"
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -31,12 +32,20 @@ func (u *UI) announcementsOf(c *model.Chat) *model.Community {
 	return nil
 }
 
+// blockedLeft is what sendBlocked returns for a group you're no longer a
+// member of.
+const blockedLeft = "left"
+
 // sendBlocked returns who may post in c when you may not ("admins" or
-// "community admins"), or "" when you can send. A community's
-// announcements count as admins-only until their members load.
+// "community admins", or blockedLeft when you aren't a member), or ""
+// when you can send. A community's announcements count as admins-only
+// until their members load.
 func (u *UI) sendBlocked(c *model.Chat) string {
 	if !c.IsGroup {
 		return ""
+	}
+	if c.Left {
+		return blockedLeft
 	}
 	info := u.chatMembers(c.ID)
 	known := info != nil && len(info.Members) > 0
@@ -52,7 +61,7 @@ func (u *UI) sendBlocked(c *model.Chat) string {
 }
 
 // layoutSendBlocked takes the composer's place in a chat where only
-// admins can send messages.
+// admins can send messages, or in a group you're no longer a member of.
 func (u *UI) layoutSendBlocked(gtx C, who string) D {
 	p := u.pal
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -60,6 +69,10 @@ func (u *UI) layoutSendBlocked(gtx C, who string) D {
 		gtx.Constraints.Min.Y = gtx.Dp(64)
 		return layout.Center.Layout(gtx, func(gtx C) D {
 			return layout.Inset{Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
+				if who == blockedLeft {
+					return u.label(15, "You can't send messages to this group because you're no longer a member.",
+						p.TextSecondary, labelOpts{maxLines: 2, align: text.Middle}).Layout(gtx)
+				}
 				return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
 					layout.Rigid(u.label(15, "Only ", p.TextSecondary, labelOpts{maxLines: 1}).Layout),
 					layout.Rigid(u.label(15, who, p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),

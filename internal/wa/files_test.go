@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/polymorfa/hypermeow/proto/waE2E"
+
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
@@ -76,5 +78,20 @@ func TestMediaExt(t *testing.T) {
 		if got := mediaExt(&c.m); got != c.want {
 			t.Errorf("mediaExt(%+v) = %q, want %q", c.m, got, c.want)
 		}
+	}
+}
+
+// A GIF goes as a video with gifPlayback, credited to KLIPY when found
+// there, and reads back as a GIF.
+func TestGIFMessage(t *testing.T) {
+	m := &model.Message{Media: model.MediaGIF, FileType: "video/mp4", FileSize: 1000, Duration: 2, Thumb: []byte{0xff, 0xd8}}
+	msg, _ := fileMessage(m, upload{w: 498, h: 280, from: waE2E.VideoMessage_KLIPY}, "", nil, false)
+	v := msg.GetVideoMessage()
+	if v == nil || !v.GetGifPlayback() || v.GetGifAttribution() != waE2E.VideoMessage_KLIPY ||
+		v.GetWidth() != 498 || v.GetHeight() != 280 || len(v.GetJPEGThumbnail()) != 2 {
+		t.Fatalf("message %v", msg)
+	}
+	if c := describe(msg); c.media != model.MediaGIF || c.kind != model.KindImage {
+		t.Errorf("reads back as %v %v", c.kind, c.media)
 	}
 }
