@@ -116,6 +116,12 @@ Gotchas already found in the pinned version (v0.10.x):
   a 12 MP photo to a screen). Downscale with `photo.Shrink` (`internal/photo`). Go's JPEG decoder
   keeps all of a progressive JPEG's coefficients (~7.5 bytes/pixel), so big pictures
   decode one at a time (`acquireDecode`).
+- Animated stickers (`/sticker` of a video, GIF or animated WebP) are encoded by the
+  system's ffmpeg, found on PATH and never bundled: lossy VP8, all that fits an
+  animation in WhatsApp's 500 KB, needs libwebp (cgo). ffmpeg decodes videos and GIFs
+  as PAM frames, which carry their size (ffmpeg turns phone videos upright); animated
+  WebP is decoded here, since ffmpeg before 8.0 can't. Text is drawn on every frame in
+  Go. Its `-compression_level 6` took 14 times as long as 4 for 2% less.
 - `golang.org/x/image/webp` can't read animated WebP. Animated stickers go through
   `internal/webpanim`; `stickerFrame` (`player.go`) plays the ones on screen.
   GIFs are MP4s: `gifFrame` (`gifplayer.go`) plays the ones on screen in their bubbles,
@@ -387,7 +393,9 @@ internal/auto/     scheduled messages (/schedule) and AFK replies (/afk): wraps 
                    (/ghost) it refuses your own sends, but not its own
 internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the embedded Anton
                    font (OFL), and its own lossless WebP (VP8L) encoder: x/image only decodes
-                   WebP, and libwebp needs cgo or, translated to Go, adds megabytes
+                   WebP, and libwebp needs cgo or, translated to Go, adds megabytes. Videos,
+                   GIFs and animated WebP become animated stickers through the system's
+                   ffmpeg (anim.go), when there is one
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution;
                    what a stored message shows, read from its payload (raw_payload, which
                    /catch shows, and edit_payload), in payload.go;

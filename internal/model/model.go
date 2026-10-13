@@ -1255,7 +1255,7 @@ type Backend interface {
 	// first.
 	Votes(m *Message) []Vote
 	// SendNewSticker sends a sticker made on this computer (a 512x512
-	// WebP), as a reply to reply if it isn't nil, and returns it in its
+	// WebP, animated or not), as a reply to reply if it isn't nil, and returns it in its
 	// pending state. The upload runs in the background.
 	SendNewSticker(chatID string, webp []byte, reply *Message) *Message
 

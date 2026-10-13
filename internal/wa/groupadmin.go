@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
 
 // participantChanges maps member actions to hypermeow's.
@@ -240,6 +241,9 @@ func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Messag
 	// The upload fills in where it is.
 	e := &waE2E.StickerMessage{Mimetype: proto.String("image/webp"), Width: proto.Uint32(512), Height: proto.Uint32(512),
 		FileLength: proto.Uint64(uint64(len(webp))), ContextInfo: ci}
+	if webpanim.IsAnimated(webp) {
+		e.IsAnimated = proto.Bool(true)
+	}
 	msg := &waE2E.Message{StickerMessage: e}
 	sm := storedMsg{Message: m, rawPayload: marshal(msg)}
 	// Keep the picture, so it shows at once and without a download.
