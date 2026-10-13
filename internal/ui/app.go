@@ -34,6 +34,7 @@ const (
 	filterUnread
 	filterFavorites
 	filterGroups
+	filterList // a custom list's chip (sidebar.listID)
 )
 
 var filterNames = [...]string{"All", "Unread", "Favourites", "Groups"}
@@ -132,9 +133,13 @@ type UI struct {
 	voice  voiceState  // the audio message playing
 	attach attachState // files picked to send
 
-	menu       menuState
-	filterMenu filterMenuState
-	split      splitState // the list column's width, or hidden (split.go)
+	menu  menuState
+	split splitState // the list column's width, or hidden (split.go)
+
+	// lock is App lock (applock.go), shared with the host's other UIs,
+	// and lockDlg its dialog.
+	lock    *appLock
+	lockDlg lockDialog
 
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
 	ctx                     ctxMenu
@@ -190,11 +195,12 @@ type UI struct {
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
-		more                widget.Clickable // collapsed filter chips
-		hiddenFilters       []int
 		search              widget.Editor
 		chips               [len(filterNames)]widget.Clickable
 		filter              int
+		listID              string   // the list filtered on, with filterList
+		chipRow             chipRow  // the chips' scroll and the lists (chips.go)
+		pick                chatPick // select mode (selectchats.go)
 		showArchived        bool
 		list                widget.List
 		rows                map[string]*widget.Clickable
@@ -314,6 +320,7 @@ func New(b model.Backend) *UI {
 	u.zoom.pct = 100
 	u.volume = 1
 	u.split.anim.snap(true)
+	u.lock = newAppLock(b)
 	if b != nil { // nil in some tests
 		u.SetDark(b.Pref(prefTheme) != "light")
 		u.doodles = prefOn(b, prefDoodles)
@@ -665,6 +672,17 @@ func (u *UI) layoutWindow(gtx C) D {
 		u.layoutToast(gtx)
 		return D{Size: sz}
 	}
+	u.autoLock(gtx)
+	if l := u.lock; l.locked && !u.lockSet() {
+		l.locked = false // turned off, or logged out from the lock screen
+	} else if l.locked {
+		u.applyFocus(gtx)
+		u.layoutLockScreen(gtx)
+		u.layoutDialog(gtx)
+		u.layoutToast(gtx)
+		u.trackMouse(gtx)
+		return D{Size: sz}
+	}
 	u.applyFocus(gtx)
 	u.expireMutes(gtx)
 	u.flushClipboard(gtx)
@@ -677,7 +695,6 @@ func (u *UI) layoutWindow(gtx C) D {
 	}
 	u.layoutMenu(gtx)
 	u.layoutAccountMenu(gtx)
-	u.layoutFilterMenu(gtx)
 	u.layoutStatusViewer(gtx)
 	u.layoutStatusText(gtx)
 	u.layoutGallery(gtx)
@@ -709,8 +726,6 @@ func (u *UI) layoutMain(gtx C) D {
 	rgtx.Constraints = layout.Exact(image.Pt(railW, sz.Y))
 	u.layoutRail(rgtx)
 	u.menu.anchor = image.Pt(railW+listW-gtx.Dp(20), gtx.Dp(58))
-	// Chips row origin: panel border + header + search.
-	u.filterMenu.origin = image.Pt(railW+1+gtx.Dp(21), 1+gtx.Dp(68+43+11+34+6))
 
 	// The panels sit in a rounded, bordered card, like WhatsApp's. It runs
 	// past the window's right and bottom edges, so only its top and left
@@ -879,17 +894,11 @@ func (u *UI) update(gtx C) {
 		}
 	}
 	u.updateMenu(gtx)
-	u.updateFilterMenu(gtx)
 	u.galleryUpdate(gtx)
 	if u.sidebar.menu.Clicked(gtx) {
 		u.menu.open = !u.menu.open
 	}
-	for i := range u.sidebar.chips {
-		if u.sidebar.chips[i].Clicked(gtx) {
-			u.sidebar.filter = i
-			u.sidebar.list.Position = layout.Position{}
-		}
-	}
+	u.updateChips(gtx)
 	if u.rail.archived.Clicked(gtx) {
 		u.sidebar.showArchived = u.page != pageChats || !u.sidebar.showArchived
 		u.setPage(pageChats)
@@ -955,11 +964,14 @@ func (u *UI) update(gtx C) {
 	}
 	for id, click := range u.sidebar.rows {
 		if click.Clicked(gtx) {
-			if c := u.chatByID(id); c != nil {
+			if u.sidebar.pick.on {
+				u.pickRow(id)
+			} else if c := u.chatByID(id); c != nil {
 				u.open(c)
 			}
 		}
 	}
+	u.pickActions(gtx)
 	if ms := u.mentionQuery(); ms == nil {
 		u.conv.mentionDismissed = ""
 	}
@@ -988,6 +1000,7 @@ func (u *UI) update(gtx C) {
 		}
 		switch ev.(type) {
 		case widget.ChangeEvent:
+			u.touchLock()
 			if u.conv.composer.Text() != before {
 				u.reportComposerTyping()
 			}
@@ -1076,6 +1089,8 @@ func (u *UI) escape() {
 		u.msgInfo.open = false
 	case u.newChat.open():
 		u.newChatBack()
+	case u.sidebar.pick.on && u.page == pageChats:
+		u.endChatSelect()
 	case u.conv.selecting:
 		u.endSelect()
 	case u.conv.edit.msg != nil:
@@ -1107,8 +1122,10 @@ func (u *UI) applyEvents() {
 			u.conn, u.me, u.meID = e, me, meID
 		case model.ChatsEvent:
 			u.setChats(e.Chats)
+			u.sidebar.chipRow.stale = true
 		case model.ChatEvent:
 			u.upsertChat(e.Chat)
+			u.sidebar.chipRow.stale = true
 		case model.MessageEvent:
 			u.upsertMessage(e.Msg)
 			u.searchChatChanged(e.Msg.ChatID)
@@ -1378,7 +1395,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
 // picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", a mention
 // in /schedule's message "slashschedule", the notes of commands run "slashrun", or ghost mode
-// turned on with /ghost "ghost".
+// turned on with /ghost "ghost". The chat list's Select chats "selectchats"; App lock's
+// dialog "applock" (setting it up) or "applockon", and its lock screen "lockscreen".
 // "graywarning" opens the acknowledgment for Keep deleted messages.
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
@@ -1430,6 +1448,25 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.menu.open = true
 		}
 		u.acctMenu.open = name != "menu"
+	case "selectchats":
+		// Select chats, with the second and third chats picked.
+		u.startChatSelect()
+		u.sidebar.pick.anim.snap(true)
+		for _, c := range u.chats[1:min(3, len(u.chats))] {
+			u.pickRow(c.ID)
+		}
+	case "applock", "applockon", "lockscreen":
+		// App lock's dialog, setting it up or once it's on, and the lock
+		// screen.
+		if name != "applock" {
+			u.backend.SetPref(prefAppLock, hashPassword("demo-password"))
+		}
+		if name == "lockscreen" {
+			u.lockNow()
+			u.lock.anim.snap(true)
+		} else {
+			u.openAppLock()
+		}
 	case "chatmenu":
 		if len(u.chats) > 1 {
 			u.openChatMenu(u.chats[1])

@@ -28,6 +28,7 @@ const (
 	dialogTheme   // a chat's theme (chatmenu.go); title is the chat's ID
 	dialogEdits   // an edited message's earlier texts (edit.go)
 	dialogPayload // a message's payload (/catch, snippets.go)
+	dialogAppLock // App lock's password and auto-lock (applock.go)
 )
 
 type dialogButton struct {
@@ -184,6 +185,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.editsPanel)
 	case dialogPayload:
 		panel = record(gtx, u.snippetPanel)
+	case dialogAppLock:
+		panel = record(gtx, u.appLockPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
