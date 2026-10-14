@@ -28,6 +28,7 @@ func (u *UI) layoutSidebar(gtx C) D {
 		menuID = u.ctx.chatID
 	}
 	u.sidebar.menuSel.step(gtx, menuID, durSwitch)
+	u.sidebar.pick.anim.step(gtx, u.sidebar.pick.on, durGrow)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(u.layoutSidebarHeader),
 		layout.Rigid(u.layoutSearch),
@@ -42,6 +43,9 @@ func (u *UI) layoutSidebar(gtx C) D {
 func (u *UI) layoutSidebarHeader(gtx C) D {
 	p := u.pal
 	h := gtx.Dp(68)
+	if u.sidebar.pick.on {
+		return u.layoutPickBar(gtx)
+	}
 	if u.sidebar.showArchived {
 		return vcenter(gtx, h, func(gtx C) D {
 			return layout.Inset{Left: 10, Right: 16}.Layout(gtx, func(gtx C) D {
@@ -109,82 +113,6 @@ func (u *UI) chip(gtx C, c *widget.Clickable, active float32, w layout.Widget) D
 		borderRRect(gtx, image.Rectangle{Max: dims.Size}, dims.Size.Y/2, bg, border)
 		call.Add(gtx.Ops)
 		return dims
-	})
-}
-
-// layoutChips draws the filter chips. Chips that don't fit collapse into a
-// round "more" chip with a drop-down, like WhatsApp does in narrow windows.
-func (u *UI) layoutChips(gtx C) D {
-	p := u.pal
-	return layout.Inset{Left: 21, Right: 21, Bottom: 10}.Layout(gtx, func(gtx C) D {
-		gap := gtx.Dp(8)
-		more := gtx.Dp(38)
-		cgtx := gtx
-		cgtx.Constraints.Min = image.Point{}
-		sel := &u.sidebar.chipSel
-		items := u.chipItems()
-		sel.step(gtx, u.activeChip(items), durSwitch)
-		parts := make([]part, len(items))
-		for i, it := range items {
-			active := sel.of(i)
-			fg := mix(p.ChipText, p.ChipActiveText, active)
-			parts[i] = record(cgtx, func(gtx C) D {
-				return u.chip(gtx, u.btn("chip:"+itoa(i)), active, func(gtx C) D {
-					if it.add {
-						// A round "+", as wide as it is tall.
-						gtx.Constraints.Min.X = more
-						return layout.Center.Layout(gtx, iconW(icAdd, 22, p.ChipText))
-					}
-					return layout.Inset{Left: 12, Right: 12}.Layout(gtx,
-						u.label(15, it.name, fg, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
-				})
-			})
-		}
-		avail := gtx.Constraints.Max.X
-		// Show as many chips as fit; keep room for the more-chip if any are left.
-		shown, x := 0, 0
-		for i, pt := range parts {
-			need := pt.size.X
-			if i < len(parts)-1 {
-				need += gap + more
-			}
-			if x+need > avail && i >= 2 {
-				break
-			}
-			x += pt.size.X + gap
-			shown++
-		}
-		u.sidebar.hiddenFilters = u.sidebar.hiddenFilters[:0]
-		for i := shown; i < len(parts); i++ {
-			u.sidebar.hiddenFilters = append(u.sidebar.hiddenFilters, i)
-		}
-		x = 0
-		h := 0
-		for i := 0; i < shown; i++ {
-			parts[i].at(gtx, x, 0)
-			x += parts[i].size.X + gap
-			h = max(h, parts[i].size.Y)
-		}
-		if shown < len(parts) {
-			var hiddenActive float32
-			for i := shown; i < len(parts); i++ {
-				hiddenActive = max(hiddenActive, sel.of(i))
-			}
-			t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-			d := u.chip(cgtx, &u.sidebar.more, hiddenActive, func(gtx C) D {
-				gtx.Constraints.Min.X = more
-				return layout.Center.Layout(gtx, func(gtx C) D {
-					d := iconW(icDropDown, 22, p.ChipText)(gtx)
-					withOpacity(gtx, hiddenActive, func() { iconW(icDropDown, 22, p.ChipActiveText)(gtx) })
-					return d
-				})
-			})
-			t.Pop()
-			u.filterMenu.anchor = image.Pt(x, 0)
-			x += d.Size.X
-			h = max(h, d.Size.Y)
-		}
-		return D{Size: image.Pt(min(x, avail), h)}
 	})
 }
 
@@ -377,6 +305,18 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 		// as hovered while the chevron is.
 		hovered: chev.Hovered(),
 	}
+	// Select mode moves the avatar over for a checkbox.
+	pick := &u.sidebar.pick
+	selV := easeOut(pick.anim.v)
+	if selV > 0 {
+		o.avatarW = unit.Dp(12 + 36*selV)
+	}
+	if pick.on {
+		o.sel = 0
+		if pick.picked[c.ID] {
+			o.sel = 1
+		}
+	}
 	shown := c
 	if cm := u.inCommunity[c.ID]; cm != nil {
 		if c.ID == cm.Announcements {
@@ -389,6 +329,12 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 		}
 	}
 	dims := u.chatRow(gtx, shown, o)
+	if selV > 0 {
+		u.pickBox(gtx, c.ID, dims.Size.Y, selV)
+	}
+	if pick.on {
+		return dims
+	}
 	if u.rightClick(gtx, "chat:"+c.ID, dims.Size) {
 		u.openChatMenu(c)
 	}
@@ -707,8 +653,13 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 	case last == nil:
 		children = append(children, layout.Flexed(1, layout.Spacer{}.Layout))
 	default:
+		// An unread chat's preview is in the text's color, like WhatsApp's.
+		fg := p.TextSecondary
+		if c.Unread != 0 {
+			fg = p.Text
+		}
 		if c.IsGroup && !last.FromMe && last.Sender != "" && last.Kind != model.KindSystem {
-			children = append(children, layout.Rigid(u.label(size, shortName(last.Sender)+": ", p.TextSecondary).Layout))
+			children = append(children, layout.Rigid(u.label(size, shortName(last.Sender)+": ", fg).Layout))
 		}
 		if last.FromMe && last.Kind != model.KindDeleted && last.Kind != model.KindSystem {
 			ic, col := receiptIcon(last.Receipt, p, false)
@@ -726,6 +677,9 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		case last.Kind == model.KindUnsupported:
 			children = append(children, small(icUnsupported, p.TextSecondary, 17, 4))
 			txt, italic = "This message couldn't load", true
+		case last.Kind == model.KindWaiting:
+			children = append(children, small(icClock, p.TextSecondary, 17, 4))
+			txt, italic = "Waiting for this message. This may take a while.", true
 		case last.Kind == model.KindSystem && last.Notice == model.NoticeMissedCall:
 			children = append(children, small(icCall, p.Danger, 18, 4))
 		case last.Kind == model.KindViewOnce:
@@ -740,7 +694,7 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 			children = append(children, small(mediaIcon(last.Media), col, 18, 4))
 			txt = mediaLabel(last)
 		}
-		children = append(children, layout.Flexed(1, u.label(size, previewText(txt), p.TextSecondary, labelOpts{maxLines: 1, italic: italic}).Layout))
+		children = append(children, layout.Flexed(1, u.label(size, previewText(txt), fg, labelOpts{maxLines: 1, italic: italic}).Layout))
 	}
 	return children
 }

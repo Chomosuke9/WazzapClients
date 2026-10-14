@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS wz_messages (
 	-- The JIDs a /whisper went to, newline-joined; '' on every other
 	-- message. It marks the local-only record a whisper leaves behind.
 	whisper      TEXT NOT NULL DEFAULT '',
+	kept         INTEGER NOT NULL DEFAULT 0, -- 1 while kept in a disappearing chat (Keep in chat)
 	-- The message itself, last so that reading the columns above skips it:
 	-- the waE2E message it came or went as (none for a view once message
 	-- whose media never came; a system message's waWeb stub, system.go),
@@ -181,6 +182,8 @@ var migrations = []string{
 	`ALTER TABLE wz_chats ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0`,
 	// 1 for a group you left or were removed from (model.Chat.Left).
 	`ALTER TABLE wz_chats ADD COLUMN not_member INTEGER NOT NULL DEFAULT 0`,
+	// Keep in chat, on a disappearing message.
+	`ALTER TABLE wz_messages ADD COLUMN kept INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -429,17 +432,18 @@ type storedMsg struct {
 // deleted.
 func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error {
 	_, err := x.ExecContext(ctx, `
-		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, whisper, raw_payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, whisper, kept, raw_payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
 			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
 			text = CASE WHEN wz_messages.edited != 0 OR wz_messages.edit_payload IS NOT NULL
 				THEN wz_messages.text ELSE excluded.text END,
 			receipt = MAX(wz_messages.receipt, excluded.receipt),
+			kept = MAX(wz_messages.kept, excluded.kept),
 			raw_payload = COALESCE(wz_messages.raw_payload, excluded.raw_payload)
 		WHERE wz_messages.kind != ?`,
 		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
-		m.Text, int(m.Receipt), m.whisper, m.rawPayload, int(model.KindDeleted))
+		m.Text, int(m.Receipt), m.whisper, boolInt(m.Kept), m.rawPayload, int(model.KindDeleted))
 	if err != nil {
 		return err
 	}
@@ -654,6 +658,7 @@ type rawMsg struct {
 	buttons               *buttonsInfo
 	quote                 *rawQuote // made Quote by resolve
 	hasBlob               bool      // its payload holds what downloading its media takes
+	fwdScore              uint32    // its ContextInfo.ForwardingScore; forwarding it adds one
 	// stub and stubParams are a system message's (model.KindSystem),
 	// which resolve words.
 	stub       stubType
@@ -662,7 +667,7 @@ type rawMsg struct {
 
 // msgColumns are what scanMessage reads.
 const msgColumns = `chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, reaction, starred, pinned,
-	edited, revoked, revoked_by, opened, whisper, raw_payload, edit_payload`
+	edited, revoked, revoked_by, opened, whisper, kept, raw_payload, edit_payload`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -674,11 +679,12 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		ts, pinned              int64
 		edited, revoked         int64
 		fromMe, starred, opened bool
+		kept                    bool
 		raw, edit               []byte
 		react                   string
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &fromMe, &ts, &kind, &media, &m.Text, &receipt,
-		&react, &starred, &pinned, &edited, &revoked, &r.revokedBy, &opened, &r.whisper, &raw, &edit)
+		&react, &starred, &pinned, &edited, &revoked, &r.revokedBy, &opened, &r.whisper, &kept, &raw, &edit)
 	if err != nil {
 		return r, err
 	}
@@ -687,7 +693,7 @@ func scanMessage(sc scanner) (rawMsg, error) {
 	m.Kind = model.Kind(kind)
 	m.Media = model.Media(media)
 	m.Receipt = model.Receipt(receipt)
-	m.Starred, m.Pinned = starred, pinned != 0
+	m.Starred, m.Pinned, m.Kept = starred, pinned != 0, kept
 	fillReactions(&m, react)
 	if edited != 0 {
 		m.Edited = time.UnixMilli(edited)

@@ -347,6 +347,8 @@ func demo(now time.Time) []*demoChat {
 			grp("Mom", day(0, 9, 12), "Okay sweetie, drive safe"),
 			{Sender: "Dad", Forwarded: true, Time: day(0, 9, 20),
 				Text: "Reminder: family photo on Saturday at 4pm, wear something bright 📸"},
+			{Sender: "Mom", Forwarded: true, ForwardedMany: true, Time: day(0, 9, 22),
+				Text: "Good morning! Have a blessed day 🌸🙏"},
 			// Answers in demoVotes.
 			{Sender: "Mom", Media: model.MediaEventInvite, Text: "Sunday lunch at home", Time: day(0, 9, 25),
 				Event: &model.EventInfo{Name: "Sunday lunch at home", Start: sunday.Add(12 * time.Hour), End: sunday.Add(15 * time.Hour),
@@ -389,9 +391,13 @@ func demo(now time.Time) []*demoChat {
 		{ID: "budi", Name: "Budi Santoso", Presence: "last seen today at 08:12", Messages: []*model.Message{
 			sys(day(0, 7, 58), "Missed voice call", model.NoticeMissedCall),
 			txt(false, day(0, 8, 2), "Bro, are we still on for futsal tonight?"), {FromMe: true, Text: "Yep, 8 o'clock", Time: day(0, 8, 10), Receipt: model.Read, Reactions: reacts("👍")},
+			// Not decrypted yet: "Waiting for this message".
+			{Kind: model.KindWaiting, Time: day(0, 8, 12)},
 			// Deleted for everyone, kept by Keep deleted messages.
 			{Text: "Bring 50k for the court, Andi says he's not paying again 🙄", Time: day(0, 8, 14), Revoked: day(0, 8, 15)},
-			txt(false, day(0, 8, 15), "Sorry, wrong chat. See you at 8!"),
+			// Disappearing messages, the first kept in the chat.
+			{Text: "Court 3 this time, the one by the parking lot", Time: day(0, 8, 15), Disappears: true, Kept: true},
+			{Text: "Sorry, wrong chat. See you at 8!", Time: day(0, 8, 15), Disappears: true},
 		}},
 		{ID: "shop", Name: "Sunset Coffee", Presence: "Business account", Messages: []*model.Message{
 			{Text: "*Order #4821 is ready* ☕\nYour iced latte is waiting at the counter.", Footer: "Sunset Coffee · 12 Braga St.",

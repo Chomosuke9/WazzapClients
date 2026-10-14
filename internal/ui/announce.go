@@ -157,16 +157,16 @@ func (u *UI) layoutAnnSticker(gtx C, m *model.Message, w int) D {
 	return D{Size: image.Pt(w, y)}
 }
 
-// annForwardButton draws the forward button beside an announcement,
+// forwardButton draws the round Forward button beside a message (always
+// beside an announcement, on hover beside media; sidebuttons.go),
 // centered on its card's height h.
-func (u *UI) annForwardButton(gtx C, m *model.Message, h int) {
-	c := u.btn("annfwd:" + m.ID)
+func (u *UI) forwardButton(gtx C, m *model.Message, h int) {
+	c := u.btn("sfwd:" + m.ID)
 	if c.Clicked(gtx) {
 		u.openForward([]*model.Message{m})
 	}
-	sz := gtx.Dp(34)
-	defer op.Offset(image.Pt(0, (h-sz)/2)).Push(gtx.Ops).Pop()
-	u.iconButton(gtx, c, icForward, 34, 24, u.pal.IconStrong)
+	defer op.Offset(image.Pt(0, (h-gtx.Dp(sideBtn))/2)).Push(gtx.Ops).Pop()
+	u.sideButton(gtx, c, icForwardOne)
 }
 
 // communityMenuItems lists the community's announcements and groups, to

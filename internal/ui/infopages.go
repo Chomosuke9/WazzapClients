@@ -319,6 +319,35 @@ func memberChangeText(c model.MemberChange) string {
 	return name
 }
 
+// openChatPrivacy explains Advanced chat privacy. hypermeow has no way to
+// change it (WhatsApp sends it as a LIMIT_SHARING protocol message, and
+// for groups a group setting), so it only shows whether it's on.
+func (u *UI) openChatPrivacy(info *model.ChatInfo) {
+	state := "It's off in this chat."
+	if info.LimitSharing {
+		state = "It's on in this chat: nobody can export it, and media isn't saved to phones automatically."
+	}
+	u.inform("Advanced chat privacy", "When it's on, people in this chat can't export it, "+
+		"have its media saved to their phone automatically, or use its messages for AI features. "+
+		state+" This app can't change it yet. Turn it on or off from WhatsApp on your phone.")
+}
+
+// exportChat exports a chat, unless Advanced chat privacy keeps it in.
+func (u *UI) exportChat(id string) {
+	if info := u.timerInfo(id); info != nil && info.LimitSharing {
+		u.inform("Can't export chat", "Advanced chat privacy is on in this chat, so nobody can export it.")
+		return
+	}
+	u.backend.ExportChat(id)
+}
+
+func onOff(on bool) string {
+	if on {
+		return "On"
+	}
+	return "Off"
+}
+
 // infoItem is a row of the info panel's settings.
 func (u *UI) infoItem(key string, it listItem) layout.Widget {
 	return func(gtx C) D { return u.layoutListItem(gtx, u.btn("info:"+key), it, infoGeom) }
@@ -351,8 +380,7 @@ func (u *UI) infoChatActions(gtx C, c *model.Chat, info *model.ChatInfo) {
 		u.openTimerMenu(chat)
 	}
 	if clicked("privacy") {
-		u.inform("Advanced chat privacy", "This app can't change advanced chat privacy yet. "+
-			"Turn it on or off from WhatsApp on your phone.")
+		u.openChatPrivacy(info)
 	}
 	if clicked("community") {
 		u.inform("Add group to a community", "This app can't add groups to communities yet. "+

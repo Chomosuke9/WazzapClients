@@ -242,7 +242,7 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		item("theme", listItem{ic: icPalette, title: "Chat theme"}),
 		item("encryption", listItem{ic: icLockOutline, title: "Encryption", sub: "Messages are end-to-end encrypted. Click to learn more."}),
 		item("disappearing", listItem{glyph: disappearingIcon, title: "Disappearing messages", sub: disappearing}),
-		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: "Off"}),
+		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: onOff(info.LimitSharing)}),
 	)
 	admin := u.isAdminIn(info)
 	if admin {

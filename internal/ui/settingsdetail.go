@@ -111,6 +111,9 @@ var settingsViews = map[string]struct {
 	"snippets":     {settingSnippets, ""},
 	"gray":         {settingExtras, "gray"},
 	"help":         {settingHelp, ""},
+	"videovoice":   {settingMedia, ""},
+	"microphone":   {settingMedia, "mic"},
+	"storage":      {settingStorage, ""},
 }
 
 // openSettings opens a settings category (an index of settingsItems).
@@ -199,6 +202,12 @@ func (u *UI) settingsTitle() string {
 		return "Emoji style"
 	case "emojianim":
 		return "Animated emojis"
+	case "camera":
+		return "Camera"
+	case "mic":
+		return "Microphone"
+	case "speaker":
+		return "Speakers"
 	}
 	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
 		if a := u.accountByDir(dir); a != nil {
@@ -247,13 +256,24 @@ func (u *UI) settingsPage() []settingsSection {
 			{key: "light", kind: setRadio, title: "Light", on: t == "light", run: func() { u.setTheme("light") }},
 			{key: "dark", kind: setRadio, title: "Dark", on: t == "dark", run: func() { u.setTheme("dark") }},
 		}}}
+	case "camera", "mic", "speaker":
+		return u.deviceChoices(s.sub)
 	}
+	return u.categoryPage(s.detail - 1)
+}
+
+// categoryPage lists the settings of category k's own page.
+func (u *UI) categoryPage(k int) []settingsSection {
 	b := u.backend
 	pref := func(key, title, sub string) settingRow {
 		on := prefOn(b, key)
 		return settingRow{key: key, kind: setToggle, title: title, sub: sub, on: on, run: func() { setPref(b, key, !on) }}
 	}
-	switch s.detail - 1 {
+	switch k {
+	case settingMedia:
+		return u.mediaSettings()
+	case settingStorage:
+		return u.storageSettings()
 	case settingNotifications:
 		return []settingsSection{
 			{title: "Messages", rows: []settingRow{
@@ -815,7 +835,7 @@ func shortcutSettings(enterSend bool) []settingsSection {
 	}
 }
 
-// Links of the Help and feedback page.
+// Links of the Help page.
 const (
 	helpCentreURL = "https://faq.whatsapp.com/"
 	issuesURL     = "https://github.com/Chomosuke9/WazzapClients/issues"

@@ -84,6 +84,7 @@ func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool, quot
 	m.ChatID, m.FromMe, m.Time, m.Receipt = chatID, true, b.now(), model.Sent
 	m.Sender, m.SenderID, m.Quote, m.Reactions, m.MyReaction, m.Starred, m.Pinned = "", "", quote, nil, "", false, false
 	m.Forwarded = forwarded
+	m.ForwardedMany = forwarded && src.ForwardedMany
 	b.add(&m)
 	cp := m
 	b.emit(model.MessageEvent{Msg: &cp})
@@ -171,6 +172,10 @@ func (b *Backend) PinMessage(m *model.Message, pinned bool) {
 	b.emit(model.DeletedEvent{ChatID: m.ChatID})
 }
 
+func (b *Backend) KeepInChat(m *model.Message, keep bool) {
+	b.update(m, func(x *model.Message) { x.Kept = keep })
+}
+
 func (b *Backend) SaveMedia(*model.Message) {
 	b.emit(model.NoticeEvent{Text: "Demo mode doesn't save files."})
 }
@@ -195,7 +200,12 @@ func (b *Backend) MediaFile(m *model.Message) string {
 	return ""
 }
 
-func (b *Backend) HasMediaFile(m *model.Message) bool { return b.demoFile(m) != "" }
+func (b *Backend) HasMediaFile(m *model.Message) bool {
+	if m.Media == model.MediaImage || m.Media == model.MediaSticker {
+		return b.MediaData(m.ChatID, m.ID) != nil
+	}
+	return b.demoFile(m) != ""
+}
 
 func (b *Backend) demoFile(m *model.Message) string {
 	switch m.Media {
@@ -227,6 +237,8 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 			if x.Text == "" {
 				x.Text = x.FileName
 			}
+		case model.MediaVoice:
+			x.Duration, x.Waveform = a.Seconds, a.Waveform
 		}
 	})
 	return b.copyOf(m)
@@ -267,6 +279,18 @@ func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 		}
 		for _, o := range p.Options {
 			x.Poll.Options = append(x.Poll.Options, model.PollOption{Name: o})
+		}
+	})
+	return b.copyOf(m)
+}
+
+func (b *Backend) SendEvent(chatID string, e model.NewEvent) *model.Message {
+	m := b.Send(chatID, model.Draft{Text: e.Name})
+	b.update(m, func(x *model.Message) {
+		x.Media = model.MediaEventInvite
+		x.Event = &model.EventInfo{Name: e.Name, Description: e.Description, Start: e.Start, End: e.End}
+		if e.Place != "" {
+			x.Event.Place = &model.Location{Name: e.Place}
 		}
 	})
 	return b.copyOf(m)

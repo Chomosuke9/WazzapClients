@@ -106,3 +106,24 @@ func (u *UI) deleteChat(id string) {
 func (u *UI) reportUnsupported() {
 	u.toast("Reporting isn't supported in this app yet. Report from your phone.")
 }
+
+// confirmReport answers a message's Report with WhatsApp's question. The
+// report itself only goes from the phone (hypermeow has no call for it),
+// so the dialog says so and offers what this app can do: block the
+// sender (a group member, or the contact).
+func (u *UI) confirmReport(c *model.Chat, m *model.Message) {
+	const title = "Report this message to WhatsApp?"
+	body := "WhatsApp would get this message, and its sender won't be notified. " +
+		"This app can't send reports yet: report it from your phone."
+	who, name := c.ID, c.Name
+	if c.IsGroup {
+		who, name = m.SenderID, plainText(m.Sender)
+	}
+	if who == "" || c.Self {
+		u.inform(title, body)
+		return
+	}
+	name = shortName(name)
+	u.confirm(title, body+" You can block "+name+" here.",
+		dialogButton{label: "Block " + name, danger: true, run: func() { u.backend.SetBlocked(who, true) }})
+}

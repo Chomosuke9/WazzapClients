@@ -28,7 +28,7 @@ type shown struct {
 	Pages                       int
 	Waveform                    []byte
 	Album                       string
-	Forwarded                   bool
+	Forwarded, ForwardedMany    bool
 	Footer                      string
 	Buttons                     []model.Button
 	Location                    *model.Location
@@ -44,7 +44,7 @@ type shown struct {
 func shownOf(m *model.Message) shown {
 	s := shown{Kind: m.Kind, Media: m.Media, Text: m.Text, Duration: m.Duration, Thumb: m.Thumb, Link: m.Link,
 		FileName: m.FileName, FileType: m.FileType, FileSize: m.FileSize, Pages: m.Pages, Waveform: m.Waveform,
-		Album: m.Album, Forwarded: m.Forwarded, Footer: m.Footer, Buttons: m.Buttons, Location: m.Location,
+		Album: m.Album, Forwarded: m.Forwarded, ForwardedMany: m.ForwardedMany, Footer: m.Footer, Buttons: m.Buttons, Location: m.Location,
 		Contacts: m.Contacts, OnPhone: m.OnPhone}
 	if p := m.Poll; p != nil {
 		s.PollMax = p.Max
@@ -73,6 +73,8 @@ func TestPayloadReadsBackAsParsed(t *testing.T) {
 	inAlbum(album, types.NewJID("123", types.GroupServer), "ALBUM")
 	for id, msg := range map[string]*waE2E.Message{
 		"text": {Conversation: proto.String("hello")},
+		"viral": {ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("share this"),
+			ContextInfo: &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(7)}}},
 		"mention": {ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("hi @789"),
 			ContextInfo: &waE2E.ContextInfo{MentionedJID: []string{"789@lid"}}}},
 		"link": {ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("see https://example.com"),
@@ -128,6 +130,12 @@ func TestPayloadReadsBackAsParsed(t *testing.T) {
 		if _, blob, _ := b.store.mediaBlob(b.ctx, chat, id); !bytes.Equal(blob, wantBlob) {
 			t.Errorf("%s: media blob of %d bytes, want %d", id, len(blob), len(wantBlob))
 		}
+	}
+	if r, _ := b.store.message(b.ctx, chat, "viral"); !r.ForwardedMany || r.fwdScore != 7 {
+		t.Errorf("viral: forwarded many times %v, score %d", r.ForwardedMany, r.fwdScore)
+	}
+	if r, _ := b.store.message(b.ctx, chat, "photo"); r.ForwardedMany {
+		t.Error("a message forwarded once is forwarded many times")
 	}
 	if r, _ := b.store.message(b.ctx, chat, "mention"); r.mentions != "789@lid" {
 		t.Errorf("mentions %q", r.mentions)

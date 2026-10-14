@@ -250,6 +250,13 @@ Gotchas already found in the pinned version (v0.10.x):
   `fillViewOnce` gives the placeholder that media. While one is shown the window is kept
   out of screenshots (`desktop.BlockCapture`, `SetWindowDisplayAffinity` posted to the
   window's thread through the drop target's subclass).
+- Any other `events.UndecryptableMessage` (unless its sender marked it `decrypt-fail="hide"`)
+  is stored as a `KindWaiting` placeholder, "Waiting for this message". hypermeow sends a
+  retry receipt, and the decrypted copy that comes back under the same ID replaces it in
+  `putMessage` (and counts as new then); one that shows nothing drops it (`dropWaiting`).
+- Keep in chat is a `KeepInChatMessage` (kept in `wz_messages.kept`; history sync says it
+  in `WebMessageInfo.keepInChat`). WhatsApp reports go only from the phone: hypermeow has
+  no call for them, so Report asks and offers to block (`confirmReport`).
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
@@ -313,7 +320,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    album.go), contact/group info panel (a person's
                    or business's sections in contactinfo.go), and the
                    overlays: context menus (popup.go), dialogs and toasts (dialog.go), emoji
-                   picker (emoji.go, data in the generated emojidata.go; its GIF tab, which
+                   picker (emoji.go, data in the generated emojidata.go; skin tones, a tone button and
+                   a right click's menu, in skintone.go, the emojis that take one in emojitones.go; its GIF tab, which
                    searches KLIPY, in gifs.go: an extra feature, but on by default, with a key of the user's own
                    or the build's; Trending, Recent (KLIPY keeps it by customer ID) and
                    Favourites, kept as slugs; its animated WebP previews play through
@@ -330,16 +338,23 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    over the composer, in linkpreview.go; drafts (what a chat's composer
                    and send view held when another chat opened, and the list's "Draft:")
                    in draft.go;
-                   document cards and the voice/audio player in files.go; polls (voting by
+                   document cards and the voice/audio player in files.go; recording a voice
+                   message (the composer's mic: the recording bar, pause and play back, send)
+                   in voicerec.go; polls (voting by
                    clicking an option), maps, shared contacts and events as cards in bubbles
                    in cards.go, and a poll's votes or an event's answers (the Message info
                    panel's other mode) in votes.go; selecting message
                    text in textsel.go; searching a chat's messages (the panel that takes the info
                    panel's place) and a group's members in chatsearch.go; the chat list's
                    search (chats, archived ones too, contacts and every chat's messages) in
-                   listsearch.go; custom lists as filter chips and New list in lists.go; the composer's
+                   listsearch.go; custom lists as filter chips and New list in lists.go, the chip row,
+                   which scrolls sideways, in chips.go; Select chats (the ⋮ menu: checkboxes
+                   and a bar of bulk actions) in selectchats.go; App lock (a salted PBKDF2
+                   hash in the prefs, the lock screen, auto-lock; shared by the host's UIs)
+                   in applock.go; the composer's
                    formatting toolbar in formatbar.go; the attach
-                   menu, file tray and poll dialog in attach.go; slash commands (their
+                   menu (Camera through internal/camera, New sticker as /sticker), file tray and poll
+                   dialog in attach.go, and its Create event dialog in eventnew.go; slash commands (their
                    picker over the composer and the notes only you see) in slash.go; scheduled
                    messages as bubbles after a chat's newest (send now, edit, cancel) and
                    the AFK bar above the chat list in scheduled.go; saved messages (Settings >
@@ -356,7 +371,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
-                   opens at in unread.go; the ⌄ button that goes back to the newest message
+                   opens at in unread.go; the round React and Forward buttons beside a
+                   hovered message (React opens the reaction bar alone) in sidebuttons.go;
+                   the ⌄ button that goes back to the newest message
                    (with the unread count) and the day pinned at the top while a chat
                    scrolls in scrolldown.go; system messages ("Alice added Bob", missed
                    calls: grey chips down the middle) in system.go; group invite links (the dialog that joins
@@ -383,7 +400,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    they show) in emojistyle.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
-                   settingsdetail.go; the window's zoom (Settings > General > Font size,
+                   settingsdetail.go (the home's search finds settings on every page, in
+                   settings.go); Video & voice (device choices kept as prefs) and Storage
+                   (automatic downloads, `model.AutoDownload`) in settingsmedia.go; the window's zoom (Settings > General > Font size,
                    Ctrl with +, - and 0, and the bubble that shows it) in scale.go; privacy
                    mode (names and messages drawn as bars, pictures blurred, shown under
                    the pointer; the title bar's eye and Ctrl+Shift+P, once the Privacy mode
@@ -417,6 +436,9 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    payload and worded when read, in system.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
                    a group message's ticks wait for every member) in receipts.go;
+                   contacts' abouts (cached in wz_meta for the forward picker, with when
+                   each was set from a raw usync) and a chat's Advanced chat privacy
+                   (LIMIT_SHARING, kept with its info; it can't be set) in about.go;
                    a chat's disappearing-messages timer (wz_chats.ephemeral, for the
                    avatars' timer badge) in timer.go;
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
@@ -435,11 +457,17 @@ internal/offheap/  pictures whose pixels live outside the Go heap (animated emoj
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
                    other systems return ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
+internal/record/   records voice messages: the microphone (winmm's waveIn through syscall on
+                   Windows; parec or arecord elsewhere) streams 16 kHz PCM into a temporary
+                   WAV, keeping only its loudness in memory; the system's ffmpeg (on PATH)
+                   encodes it to OGG Opus to send. -demo records a made-up voice (Demo)
 internal/klipy/    searches KLIPY's GIFs (trending, search, the share count) and downloads
                    their media, for the picker's GIF tab
 internal/linkpreview/ reads a page's Open Graph tags (or title) for the preview of a link you
                    send; Settings > Privacy > Disable link previews turns it off
 internal/osclip/   files and pictures on the system clipboard (Gio's carries only text)
+internal/camera/   the attach menu's Camera: opens the system's camera app and waits for the
+                   photo it saves (no capture of our own; that would need each OS's capture API)
 internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or
                    osascript elsewhere), run on its own goroutine
 internal/memtrim/  gives memory back to the OS after 10 s without a frame (see ui.Run)
@@ -448,7 +476,8 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
                    or osascript elsewhere
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
                    (Windows; stubs elsewhere), and the system's light or dark theme (Settings >
-                   Chats > Theme > System default, read again when the window gets focus)
+                   Chats > Theme > System default, read again when the window gets focus),
+                   and the names of microphones and speakers (Windows)
 internal/update/   updates from GitHub releases (Settings > Help; automatic updates, on by
                    default, check every few hours and install without restarting, ui/update.go):
                    downloads a patch from the running version when the update-patches
@@ -626,15 +655,15 @@ go vet ./... && go build ./...
 # account, accounts (Settings > Account with demo accounts), accountmode and
 # accountcheck (the pages of an account always connected and of one checked),
 # privacy, lastseen, blocked, chatsettings, notifications, shortcuts, extras, help,
-# info, statusviewer, contact (a group member's contact info:
+# videovoice, microphone, storage, info, statusviewer, contact (a group member's contact info:
 # -contact <id>, default the demo business nova@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
-# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, reply, replyphoto, linkpreview, invite,
-# delete, select, edit, edits, reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, zoombubble, zoommenu, privacy (also
+# group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, invite,
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;

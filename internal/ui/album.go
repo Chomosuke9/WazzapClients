@@ -225,11 +225,7 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 	}
 	if m0.Forwarded {
 		fwd = record(cgtx, func(gtx C) D {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(iconW(icForward, 16, secondary)),
-				layout.Rigid(layout.Spacer{Width: 4}.Layout),
-				layout.Rigid(u.label(13, "Forwarded", secondary, labelOpts{italic: true, maxLines: 1}).Layout),
-			)
+			return u.forwardedLabel(gtx, m0, secondary)
 		})
 	}
 	if m0.Quote != nil {
@@ -267,6 +263,7 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 		tr = tr.Add(image.Pt(0, y))
 		tiles[i] = tr.Add(image.Pt(pad, pad))
 		u.layoutImage(gtx, tr, m, u.gifImage(m, u.messageImage(m, maxPx), maxPx))
+		u.photoBadge(gtx, tr, m)
 		if i == 3 && len(ms) > 4 {
 			// The last tile is covered by how many it stands for.
 			more := len(ms) - 3

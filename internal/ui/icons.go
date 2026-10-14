@@ -47,6 +47,9 @@ var (
 	icDocumentFill   = icon.DescriptionFill
 	icPhotosFill     = icon.PhotoLibraryFill
 	icHeadphonesFill = icon.HeadphonesFill
+	icCameraFill     = icon.PhotoCameraFill
+	icEventFill      = icon.EventFill
+	icStickerFill    = icon.StickyNote2Fill
 	icLogout         = icon.Logout
 	icSwitchAccount  = icon.SwitchAccount
 	icBubble         = icon.ChatBubble
@@ -99,6 +102,7 @@ var (
 	icOpenInNew     = icon.OpenInNew
 	icUnsupported   = icon.DisabledByDefaultFill
 	icForward       = icon.Forward
+	icForwardOne    = icon.Reply.Mirrored() // "Forwarded"; the double arrow says "many times"
 	icNext          = icon.ArrowBack.Mirrored()
 	icCheckBox      = icon.CheckBox
 	icCheckBoxEmpty = icon.CheckBoxOutlineBlank
@@ -106,7 +110,10 @@ var (
 	icTrending      = icon.TrendingUp
 	icPinFill       = icon.KeepFill
 	icAddReaction   = icon.AddReaction
+	icReact         = icon.Mood // a hovered message's React button
 	icDownload      = icon.Download
+	icKeep          = icon.Bookmark     // Keep in chat
+	icKept          = icon.BookmarkFill // a kept message's meta
 	icZoomIn        = icon.ZoomIn
 	icZoomOut       = icon.ZoomOut
 	icChevronLeft   = icon.ChevronLeft
@@ -114,6 +121,8 @@ var (
 	icPauseFill     = icon.PauseFill
 	icVolumeFill    = icon.VolumeUpFill
 	icVolumeOffFill = icon.VolumeOffFill
+	icVolume        = icon.VolumeUp
+	icStorage       = icon.DataUsage
 
 	// Settings > Performance.
 	icSpeed  = icon.Speed

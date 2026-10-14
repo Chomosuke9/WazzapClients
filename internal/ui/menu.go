@@ -11,8 +11,8 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
-// menuState is the chat list's ⋮ drop-down, WhatsApp Desktop's minus
-// Select chats and App lock, plus Switch account.
+// menuState is the chat list's ⋮ drop-down, WhatsApp Desktop's plus Switch
+// account.
 type menuState struct {
 	open       bool
 	anim       tween
@@ -20,6 +20,9 @@ type menuState struct {
 	scrim      widget.Clickable
 	newGroup   widget.Clickable
 	starred    widget.Clickable
+	selChats   widget.Clickable
+	appLock    widget.Clickable
+	lockNow    widget.Clickable
 	readAll    widget.Clickable
 	switchAcct widget.Clickable // opens the account switcher beside the menu
 	logout     widget.Clickable
@@ -34,6 +37,17 @@ func (u *UI) updateMenu(gtx C) {
 	if m.starred.Clicked(gtx) {
 		u.openStarred()
 		m.open = false
+	}
+	if m.selChats.Clicked(gtx) {
+		u.startChatSelect()
+		m.open = false
+	}
+	if m.appLock.Clicked(gtx) {
+		u.openAppLock()
+		m.open = false
+	}
+	if m.lockNow.Clicked(gtx) && u.lockSet() {
+		u.lockNow()
 	}
 	if m.readAll.Clicked(gtx) {
 		u.markAllRead()
@@ -99,9 +113,14 @@ func (u *UI) layoutMenu(gtx C) {
 	items := []menuEntry{
 		{click: &m.newGroup, label: "New group", ic: icGroupAdd},
 		{click: &m.starred, label: "Starred messages", ic: icStar},
+		{click: &m.selChats, label: "Select chats", ic: icCheckBox},
 		{click: &m.readAll, label: "Mark all as read", ic: icChats},
-		{divider: true},
+		{click: &m.appLock, label: "App lock", ic: icLockOutline},
 	}
+	if u.lockSet() {
+		items = append(items, menuEntry{click: &m.lockNow, label: "Lock app", ic: icLock})
+	}
+	items = append(items, menuEntry{divider: true})
 	switchY := -1 // the Switch account row's top, below the menu's padding
 	if len(u.accounts) > 0 {
 		switchY = (len(items)-1)*gtx.Dp(menuRowH) + gtx.Dp(menuDividerH)
@@ -164,93 +183,6 @@ func (u *UI) layoutMenu(gtx C) {
 	}
 	defer op.Offset(pos).Push(gtx.Ops).Pop()
 	defer pushPopup(gtx, v, image.Pt(dims.Size.X, 0)).Pop()
-	r := gtx.Dp(12)
-	rect := image.Rectangle{Max: dims.Size}
-	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r, p.Shadow)
-	fillRRect(gtx, rect, r, p.Menu)
-	defer clip.UniformRRect(rect, r).Push(gtx.Ops).Pop()
-	call.Add(gtx.Ops)
-}
-
-// filterMenuState is the drop-down of filter chips that didn't fit.
-type filterMenuState struct {
-	open   bool
-	anim   tween
-	origin image.Point // chips row, in content coordinates
-	anchor image.Point // more-chip, relative to origin
-	scrim  widget.Clickable
-}
-
-func (u *UI) updateFilterMenu(gtx C) {
-	f := &u.filterMenu
-	if u.sidebar.more.Clicked(gtx) {
-		f.open = !f.open
-	}
-	if f.scrim.Clicked(gtx) {
-		f.open = false
-	}
-	for i, it := range u.chipItems() {
-		if u.btn("filtermenu:" + itoa(i)).Clicked(gtx) {
-			u.pickChip(it)
-			f.open = false
-		}
-	}
-}
-
-func (u *UI) layoutFilterMenu(gtx C) {
-	f := &u.filterMenu
-	open := f.open && len(u.sidebar.hiddenFilters) > 0
-	v := f.anim.step(gtx, open, popDur(open))
-	if v == 0 {
-		return
-	}
-	p := u.pal
-	if open {
-		sgtx := gtx
-		sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
-		f.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
-	} else {
-		var done func()
-		gtx, done = fadeOut(gtx)
-		defer done()
-	}
-
-	w := gtx.Dp(180)
-	rec := op.Record(gtx.Ops)
-	mgtx := gtx
-	mgtx.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, gtx.Constraints.Max.Y)}
-	dims := layout.UniformInset(8).Layout(mgtx, func(gtx C) D {
-		var children []layout.FlexChild
-		items := u.chipItems()
-		on := u.activeChip(items)
-		for _, i := range u.sidebar.hiddenFilters {
-			if i >= len(items) {
-				continue
-			}
-			it := items[i]
-			children = append(children, layout.Rigid(func(gtx C) D {
-				c := u.btn("filtermenu:" + itoa(i))
-				return clickable(gtx, c, func(gtx C) D {
-					gtx.Constraints.Min.X = gtx.Constraints.Max.X
-					h := u.hover(gtx, c)
-					if on == i {
-						h = 1
-					}
-					bg := mix(p.Menu, p.MenuHover, h)
-					return background(gtx, bg, 8, func(gtx C) D {
-						return vcenter(gtx, gtx.Dp(40), func(gtx C) D {
-							return layout.Inset{Left: 12, Right: 12}.Layout(gtx, u.label(15, it.name, p.Text).Layout)
-						})
-					})
-				})
-			}))
-		}
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
-	})
-	call := rec.Stop()
-	pos := f.origin.Add(f.anchor)
-	defer op.Offset(pos).Push(gtx.Ops).Pop()
-	defer pushPopup(gtx, v, image.Point{}).Pop()
 	r := gtx.Dp(12)
 	rect := image.Rectangle{Max: dims.Size}
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r, p.Shadow)

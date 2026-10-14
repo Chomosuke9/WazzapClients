@@ -31,7 +31,7 @@ import (
 // account: they carry over when another account opens.
 var appPrefs = append([]string{prefTheme, prefDoodles, prefEnterSend, prefBackground, prefListWidth, prefListHidden, prefZoom,
 	prefPrivacy, prefPrivacyToggle, prefNoCapture, prefVolume, prefVoiceRate, prefEmojiStyle, prefEmojiStill,
-	prefKlipy, prefKlipyKey, prefKlipyID, prefKlipyFavs, prefAutoUpdate}, perfPrefs...)
+	prefKlipy, prefKlipyKey, prefKlipyID, prefKlipyFavs, prefAutoUpdate, prefEmojiTone, prefAppLock, prefAppLockAfter}, perfPrefs...)
 
 // accountRow is an account in the switcher.
 type accountRow struct {

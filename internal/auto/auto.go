@@ -561,6 +561,14 @@ func (a *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 	return a.Backend.SendPoll(chatID, p)
 }
 
+func (a *Backend) SendEvent(chatID string, e model.NewEvent) *model.Message {
+	if a.refused() {
+		return nil
+	}
+	a.sent()
+	return a.Backend.SendEvent(chatID, e)
+}
+
 func (a *Backend) Forward(msgs []*model.Message, chatIDs []string) {
 	if a.refused() {
 		return
@@ -606,6 +614,12 @@ func (a *Backend) Delete(m *model.Message, forEveryone bool) {
 func (a *Backend) PinMessage(m *model.Message, pinned bool) {
 	if !a.refused() {
 		a.Backend.PinMessage(m, pinned)
+	}
+}
+
+func (a *Backend) KeepInChat(m *model.Message, keep bool) {
+	if !a.refused() {
+		a.Backend.KeepInChat(m, keep)
 	}
 }
 

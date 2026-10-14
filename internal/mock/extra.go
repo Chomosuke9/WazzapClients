@@ -117,7 +117,7 @@ func (b *Backend) Info(chatID string) *model.ChatInfo {
 	info := &model.ChatInfo{ID: chatID, Name: chat.Name, IsGroup: chat.IsGroup, Disappearing: chat.Disappearing}
 	if !chat.IsGroup {
 		info.Phone = "+62 812-5550-" + itoa4(len(chat.Name)*37)
-		info.About = "Hey there! I am using WhatsApp."
+		info.About, info.AboutSet = demoAbout(chatID), b.now().AddDate(0, -7, -12)
 		info.Common = b.commonGroups(chatID)
 		return info
 	}

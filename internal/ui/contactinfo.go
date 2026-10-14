@@ -44,6 +44,15 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 		}
 		rows = append(rows, func(gtx C) D { return layout.Spacer{Height: 8}.Layout(gtx) })
 	}
+	// A person's about, with when they set it, comes before their media.
+	if info.Business == nil && info.About != "" {
+		rows = append(rows, u.infoDivider(0, 0), u.infoSection("About", false),
+			u.infoText(info.About, p.Text, 17, 0, 0, infoPadX))
+		if !info.AboutSet.IsZero() {
+			rows = append(rows, u.infoText(dateChip(info.AboutSet.Local(), u.now()), p.TextSecondary, 14, 0, 0, infoPadX))
+		}
+		rows = append(rows, func(gtx C) D { return layout.Spacer{Height: 14}.Layout(gtx) })
+	}
 	rows = append(rows, u.infoDivider(0, 8),
 		func(gtx C) D { return u.infoMedia(gtx, info) },
 		u.infoDivider(12.2, 6),
@@ -58,19 +67,16 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 		item("starred", listItem{ic: icStar, title: "Starred messages"}),
 		u.infoNotifRow(c, ""),
 		item("disappearing", listItem{glyph: disappearingIcon, title: "Disappearing messages", sub: disappearing}),
-		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: "Off"}),
+		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: onOff(info.LimitSharing)}),
 		item("theme", listItem{ic: icPalette, title: "Chat theme"}),
 		item("encryption", listItem{ic: icLockOutline, title: "Encryption", sub: "Messages are end-to-end encrypted. Click to verify."}),
 		u.infoDivider(12, 0),
 	)
+	settings := len(rows)
 
-	// About and phone number.
-	rows = append(rows, u.infoSection("About and phone number", true))
-	if info.Business == nil && info.About != "" {
-		rows = append(rows, u.infoText(info.About, p.Text, 17, 6, 4, infoPadX))
-	}
-	if info.Phone != "" {
-		rows = append(rows, u.infoText(info.Phone, p.Text, 17, 6, 10, infoPadX))
+	// A person's phone number is under their name; a business's isn't.
+	if info.Business != nil && info.Phone != "" {
+		rows = append(rows, u.infoSection("Phone number", true), u.infoText(info.Phone, p.Text, 17, 6, 10, infoPadX))
 	}
 
 	if n := len(info.Common); n > 0 {
@@ -89,12 +95,16 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 	b := u.backend
 	id, name := c.ID, info.Name
 	chat := u.chatByID(id)
-	rows = append(rows, u.infoDivider(12, 8))
+	if len(rows) > settings {
+		rows = append(rows, u.infoDivider(12, 8))
+	} else {
+		rows = append(rows, func(gtx C) D { return layout.Spacer{Height: 8}.Layout(gtx) })
+	}
 	if chat != nil {
 		rows = append(rows,
 			u.infoFavRow(chat),
 			action("list", listItem{ic: icAddToList, title: "Add to list"}, func() { u.openListsMenu(chat) }),
-			action("export", listItem{ic: icDownload, title: "Export chat"}, func() { b.ExportChat(id) }),
+			action("export", listItem{ic: icDownload, title: "Export chat"}, func() { u.exportChat(id) }),
 			action("clear", listItem{ic: icClear, title: "Clear chat", danger: true}, func() { u.confirmClearChat(id) }),
 		)
 	}

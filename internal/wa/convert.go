@@ -25,6 +25,7 @@ type parsed struct {
 	// (revoke), or "" when its sender did.
 	revokedBy string
 	pin       int       // 1 pinned, -1 unpinned
+	keep      int       // 1 kept in the chat, -1 unkept
 	vote      *vote     // a vote in a poll or an answer to an event
 	event     *eventDef // an edit of an event
 
@@ -337,6 +338,13 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		}
 		return p, p.target != ""
 	}
+	if k := m.GetKeepInChatMessage(); k != nil {
+		p.target, p.keep = k.GetKey().GetID(), 1
+		if k.GetKeepType() == waE2E.KeepType_UNDO_KEEP_FOR_ALL {
+			p.keep = -1
+		}
+		return p, p.target != "" && k.GetKeepType() != waE2E.KeepType_UNKNOWN_KEEP_TYPE
+	}
 	if pm := m.GetProtocolMessage(); pm != nil {
 		p.target = pm.GetKey().GetID()
 		switch pm.GetType() {
@@ -357,6 +365,14 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 				at = time.UnixMilli(ms)
 			}
 			return p, p.setEdit(p.target, pm.GetEditedMessage(), at)
+		case waE2E.ProtocolMessage_LIMIT_SHARING:
+			ls := pm.GetLimitSharing()
+			ts := ls.GetLimitSharingSettingTimestamp()
+			if ts == 0 {
+				ts = evt.Info.Timestamp.Unix()
+			}
+			b.setLimitSharing(ctx, chat.String(), ls.GetSharingLimited(), ts)
+			return p, false
 		case waE2E.ProtocolMessage_EPHEMERAL_SETTING:
 			p.target = ""
 			p.msg, ok = timerSystem(evt, chat, pm)
@@ -436,6 +452,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	c.extra.apply(msg)
 	c.buttons.apply(msg)
 	msg.Forwarded = c.ctx.GetIsForwarded()
+	msg.ForwardedMany = forwardedMany(c.ctx)
 	msg.Receipt = model.Sent
 	if evt.SourceWebMsg != nil && msg.FromMe {
 		msg.Receipt = webReceipt(evt.SourceWebMsg)

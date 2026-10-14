@@ -3,6 +3,7 @@ package wa
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -92,10 +93,30 @@ func (b *Backend) mediaFilePath(m *model.Message) string {
 	return b.mediaPath(m.ChatID, m.ID) + mediaExt(m)
 }
 
-// HasMediaFile implements model.Backend.
+// HasMediaFile implements model.Backend. A picture or sticker is where
+// MediaData keeps it.
 func (b *Backend) HasMediaFile(m *model.Message) bool {
-	_, err := os.Stat(b.mediaFilePath(m))
+	path := b.mediaFilePath(m)
+	if m.Media == model.MediaImage || m.Media == model.MediaSticker {
+		path = b.mediaPath(m.ChatID, m.ID)
+	}
+	_, err := os.Stat(path)
 	return err == nil
+}
+
+// autoDownload starts the download of a message that just arrived when
+// Settings > Storage downloads its kind of media by itself. Pictures are
+// left to MediaData, which downloads them as they show.
+func (b *Backend) autoDownload(m *model.Message) {
+	switch m.Media {
+	case model.MediaVoice, model.MediaAudio, model.MediaVideo, model.MediaDocument:
+	default:
+		return
+	}
+	if m.Kind == model.KindViewOnce || !model.AutoDownload(b.Pref, m.Media) {
+		return
+	}
+	b.MediaFile(m)
 }
 
 // OpenMedia implements model.Backend.
@@ -277,6 +298,15 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		}
 	case model.MediaAudio:
 		m.Duration = audioSeconds(a.Path, m.FileType, st.Size())
+	case model.MediaVoice:
+		// A recording, small: read now, so its file can go once sent.
+		m.Duration, m.Waveform, m.FileType = a.Seconds, a.Waveform, "audio/ogg; codecs=opus"
+		data, err := os.ReadFile(a.Path)
+		if err != nil {
+			b.emit(model.NoticeEvent{Text: "Couldn't read the voice message."})
+			return nil
+		}
+		up.data = data
 	case model.MediaDocument:
 		if m.Text == "" {
 			m.Text = name
@@ -291,9 +321,12 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		inAlbum(msg, jid, m.Album)
 	}
 	// Keep a copy so your own media shows (and opens) without a download.
-	if up.data != nil {
+	switch {
+	case up.data != nil && a.Media == model.MediaVoice:
+		up.keep(b.mediaFilePath(payloadView(m, msg)))
+	case up.data != nil:
 		up.keep(b.mediaPath(chatID, m.ID))
-	} else if st.Size() <= maxLocalCopy {
+	case st.Size() <= maxLocalCopy:
 		up.copyTo(b.mediaFilePath(payloadView(m, msg)))
 	}
 	ctx := b.ctx
@@ -396,6 +429,7 @@ var mediaTypes = map[model.Media]whatsmeow.MediaType{
 	model.MediaVideo:    whatsmeow.MediaVideo,
 	model.MediaGIF:      whatsmeow.MediaVideo,
 	model.MediaAudio:    whatsmeow.MediaAudio,
+	model.MediaVoice:    whatsmeow.MediaAudio,
 	model.MediaDocument: whatsmeow.MediaDocument,
 }
 
@@ -485,6 +519,9 @@ func fileMessage(m *model.Message, up upload, caption string, ci *waE2E.ContextI
 		e := &waE2E.AudioMessage{
 			PTT: proto.Bool(m.Media == model.MediaVoice), FileLength: size, Mimetype: proto.String(m.FileType),
 			Seconds: proto.Uint32(uint32(m.Duration)), ContextInfo: ci,
+		}
+		if len(m.Waveform) > 0 {
+			e.Waveform = m.Waveform
 		}
 		msg, inner = &waE2E.Message{AudioMessage: e}, e
 	default:
@@ -629,6 +666,35 @@ func (b *Backend) SendPoll(chatID string, p model.Poll) *model.Message {
 		m.Poll.Options = append(m.Poll.Options, model.PollOption{Name: o})
 	}
 	return b.storeAndSend(jid, storedMsg{Message: m}, msg)
+}
+
+// SendEvent implements model.Backend. Like a poll, an event carries a
+// message secret, which encrypts the answers to it.
+func (b *Backend) SendEvent(chatID string, e model.NewEvent) *model.Message {
+	jid, err := types.ParseJID(chatID)
+	cli := b.client()
+	if err != nil || cli == nil {
+		return nil
+	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil
+	}
+	ev := &waE2E.EventMessage{Name: proto.String(e.Name), StartTime: proto.Int64(e.Start.Unix()),
+		IsCanceled: proto.Bool(false), ExtraGuestsAllowed: proto.Bool(e.AllowGuests)}
+	if e.Description != "" {
+		ev.Description = proto.String(e.Description)
+	}
+	if !e.End.IsZero() {
+		ev.EndTime = proto.Int64(e.End.Unix())
+	}
+	if e.Place != "" {
+		ev.Location = &waE2E.LocationMessage{Name: proto.String(e.Place)}
+	}
+	msg := &waE2E.Message{EventMessage: ev, MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: secret}}
+	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Media: model.MediaEventInvite,
+		Text: e.Name, Time: b.sendTime(), Receipt: model.Pending}
+	return b.storeAndSend(jid, storedMsg{Message: m}, msg, nil)
 }
 
 // mp4Seconds reads the length of an MP4 (or M4A, 3GP) file from its movie

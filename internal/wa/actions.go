@@ -375,7 +375,9 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	}
 	var ci *waE2E.ContextInfo
 	if forwarded {
-		ci = &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(1)}
+		// Each forward adds one to the score, which says "Forwarded many
+		// times" from manyForwards on.
+		ci = &waE2E.ContextInfo{IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(raw.fwdScore + 1)}
 	}
 	if reply != nil {
 		if ci == nil {
@@ -616,6 +618,37 @@ func (b *Backend) PinMessage(m *model.Message, pinned bool) {
 		if _, err := b.sendMessage(ctx, cli, jid, msg); err != nil {
 			b.log.Warnf("pin in %s: %v", m.ChatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't pin the message."})
+		}
+	}()
+}
+
+// KeepInChat implements model.Backend.
+func (b *Backend) KeepInChat(m *model.Message, keep bool) {
+	cli := b.connected()
+	if cli == nil {
+		return
+	}
+	ctx := b.ctx
+	jid, key := b.messageKey(m)
+	typ := waE2E.KeepType_KEEP_FOR_ALL
+	if !keep {
+		typ = waE2E.KeepType_UNDO_KEEP_FOR_ALL
+	}
+	msg := &waE2E.Message{KeepInChatMessage: &waE2E.KeepInChatMessage{
+		Key: key, KeepType: typ.Enum(), TimestampMS: proto.Int64(time.Now().UnixMilli()),
+	}}
+	_ = b.store.setMessageFlag(ctx, m.ChatID, m.ID, "kept", keep)
+	b.emitMessage(m.ChatID, m.ID)
+	go func() {
+		if _, err := b.sendMessage(ctx, cli, jid, msg); err != nil {
+			b.log.Warnf("keep in %s: %v", m.ChatID, err)
+			_ = b.store.setMessageFlag(ctx, m.ChatID, m.ID, "kept", !keep)
+			b.emitMessage(m.ChatID, m.ID)
+			text := "Couldn't keep the message."
+			if !keep {
+				text = "Couldn't unkeep the message."
+			}
+			b.emit(model.NoticeEvent{Text: text})
 		}
 	}()
 }

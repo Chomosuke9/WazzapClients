@@ -85,6 +85,7 @@ func (b *Backend) Contacts() []*model.Contact {
 		}
 		return out[i].ID < out[j].ID
 	})
+	b.fillAbouts(ctx, out)
 	return out
 }
 

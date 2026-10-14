@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/polymorfa/hypermeow/proto/waCommon"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 	"github.com/polymorfa/hypermeow/types/events"
@@ -40,10 +41,10 @@ func TestViewOnce(t *testing.T) {
 	if m := stored("V1"); m.Kind != model.KindViewOnce || !m.OnPhone || m.Opened {
 		t.Fatalf("unavailable: kind %v on phone %v opened %v", m.Kind, m.OnPhone, m.Opened)
 	}
-	// Other undecryptable messages are left to their retry.
+	// Other undecryptable messages wait for their retry (TestWaiting).
 	b.handle(&events.UndecryptableMessage{Info: info("U1", at)})
-	if _, ok := b.store.message(ctx, chat, "U1"); ok {
-		t.Error("a message that failed to decrypt was stored")
+	if m := stored("U1"); m.Kind != model.KindWaiting {
+		t.Errorf("a message that failed to decrypt is kind %v", m.Kind)
 	}
 
 	// One that came with its envelope but no key opens on the phone too.
@@ -85,5 +86,79 @@ func TestViewOnce(t *testing.T) {
 	// Nor does it show in the Media panel.
 	if n, pics := b.store.mediaSummary(ctx, chat, 10); n != 0 || len(pics) != 0 {
 		t.Errorf("media summary has %d, %d pictures", n, len(pics))
+	}
+}
+
+// TestWaiting checks that a message that couldn't be decrypted shows as
+// "Waiting for this message" until it comes again, decrypted, and takes
+// its place; and that what its sender hides gets no placeholder.
+func TestWaiting(t *testing.T) {
+	b := testBackend(t)
+	ctx := b.ctx
+	peer := types.NewJID("555", types.HiddenUserServer)
+	chat := peer.String()
+	info := types.MessageInfo{MessageSource: types.MessageSource{Chat: peer, Sender: peer}, ID: "W1",
+		Timestamp: time.Unix(1_700_000_000, 0), Type: "text"}
+
+	b.handle(&events.UndecryptableMessage{Info: info, DecryptFailMode: events.DecryptFailHide})
+	if _, ok := b.store.message(ctx, chat, "W1"); ok {
+		t.Fatal("a hidden failure got a placeholder")
+	}
+	b.handle(&events.UndecryptableMessage{Info: info})
+	r, ok := b.store.message(ctx, chat, "W1")
+	if !ok || r.Kind != model.KindWaiting {
+		t.Fatalf("waiting: stored %v, kind %v", ok, r.Kind)
+	}
+	if c, _ := b.store.chat(ctx, chat); c.Unread != 0 {
+		t.Errorf("the placeholder counts %d unread", c.Unread)
+	}
+
+	b.onMessage(&events.Message{Info: info, Message: &waE2E.Message{Conversation: proto.String("here at last")}})
+	r, _ = b.store.message(ctx, chat, "W1")
+	if r.Kind != model.KindText || r.Text != "here at last" {
+		t.Errorf("after the retry: kind %v text %q", r.Kind, r.Text)
+	}
+	if c, _ := b.store.chat(ctx, chat); c.Unread != 1 {
+		t.Errorf("the message that came counts %d unread, want 1", c.Unread)
+	}
+
+	// A placeholder for what turns out to show nothing goes away.
+	info.ID = "W2"
+	b.handle(&events.UndecryptableMessage{Info: info})
+	b.onMessage(&events.Message{Info: info, Message: &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{
+		Key: &waCommon.MessageKey{ID: proto.String("W1")}, Text: proto.String("+")}}})
+	if _, ok := b.store.message(ctx, chat, "W2"); ok {
+		t.Error("a reaction's placeholder stayed")
+	}
+}
+
+// TestKeepInChat checks that Keep in chat from someone else marks the
+// message kept, Unkeep clears it, and a disappearing message says so.
+func TestKeepInChat(t *testing.T) {
+	b := testBackend(t)
+	ctx := b.ctx
+	peer := types.NewJID("555", types.HiddenUserServer)
+	chat := peer.String()
+	info := func(id string) types.MessageInfo {
+		return types.MessageInfo{MessageSource: types.MessageSource{Chat: peer, Sender: peer}, ID: id,
+			Timestamp: time.Unix(1_700_000_000, 0), Type: "text"}
+	}
+	b.onMessage(&events.Message{Info: info("M1"), Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+		Text: proto.String("gone in a day"), ContextInfo: &waE2E.ContextInfo{Expiration: proto.Uint32(86400)}}}})
+	keep := func(id string, typ waE2E.KeepType) {
+		b.onMessage(&events.Message{Info: info(id), Message: &waE2E.Message{KeepInChatMessage: &waE2E.KeepInChatMessage{
+			Key: &waCommon.MessageKey{ID: proto.String("M1")}, KeepType: typ.Enum()}}})
+	}
+	keep("K1", waE2E.KeepType_KEEP_FOR_ALL)
+	r, _ := b.store.message(ctx, chat, "M1")
+	if !r.Disappears || !r.Kept {
+		t.Fatalf("kept: disappears %v kept %v", r.Disappears, r.Kept)
+	}
+	keep("K2", waE2E.KeepType_UNDO_KEEP_FOR_ALL)
+	if r, _ := b.store.message(ctx, chat, "M1"); r.Kept {
+		t.Error("unkeep left it kept")
+	}
+	if _, ok := b.store.message(ctx, chat, "K1"); ok {
+		t.Error("the keep was stored as a message")
 	}
 }
