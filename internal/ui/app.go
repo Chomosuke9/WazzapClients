@@ -1497,7 +1497,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // ShowOverlay opens a menu, picker or dialog for screenshots: "chatmenu",
 // "mute", "lists", "msgmenu", "reactbar" (a hovered message's React button's), "stickermenu" (a received sticker's), "outmenu" (your last message's),
 // "keptmenu" (a message kept in the chat), "report" (Report's question for the last message received), "emoji", "sticker", "gifs" (the GIF tab with demo results), "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
-// over the composer), "delete", "select", "edit" (your last message in the composer to edit), "recording" (a voice message
+// over the composer) and "linkloading" (the card while it loads), "delete", "select", "edit" (your last message in the composer to edit), "recording" (a voice message
 // being recorded) and "recordingpaused" (paused, to play back), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
 // first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "skintone" (the picker's tones under its tone button), "emojitones" (👍's tones, a right click at -at in the panel), "attach", "poll", "newevent" (the attach menu's Create event), "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
@@ -1684,6 +1684,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.conv.link.url = link
 		u.conv.link.got = &linkResult{url: link, prev: &linkpreview.Preview{Title: "Villa Kayu · Ubud, Bali",
 			Description: "A private pool villa among the rice fields, 10 minutes from Ubud center."}}
+	case "linkloading":
+		const link = "https://villakayu.example/ubud"
+		u.conv.composer.SetText("This is the one " + link)
+		u.conv.link.url, u.conv.link.fetching = link, link
 	case "delete":
 		if lastOut != nil {
 			u.confirmDelete([]*model.Message{lastOut})

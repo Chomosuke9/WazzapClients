@@ -685,7 +685,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		c.replyGhost = nil
 	}
 	// The preview of a link in the text, like the reply's.
-	link := u.composerPreview(c.composer.Text())
+	link := u.composerCard(c.composer.Text())
 	if link != nil {
 		c.link.ghost = link
 	}

@@ -136,3 +136,75 @@ func TestComposerLink(t *testing.T) {
 		t.Fatalf("fetched with previews off: %q", fetches())
 	}
 }
+
+// TestComposerLinkLoading: while a link's page is fetched a loading card
+// shows over the composer, the preview takes its place once it comes, and
+// closing the loading card stops the fetch.
+func TestComposerLinkLoading(t *testing.T) {
+	u := New(mock.New())
+	release := make(chan struct{})
+	canceled := make(chan struct{}, 1)
+	u.fetchLink = func(ctx context.Context, link string) (*linkpreview.Preview, error) {
+		select {
+		case <-release:
+			return &linkpreview.Preview{Title: "Example"}, nil
+		case <-ctx.Done():
+			canceled <- struct{}{}
+			return nil, ctx.Err()
+		}
+	}
+	u.Start(func() {})
+	u.SelectID("budi")
+	now := testNow()
+	var ops op.Ops
+	var r input.Router
+	frame := func(d time.Duration) {
+		now = now.Add(d)
+		ops.Reset()
+		u.Layout(layout.Context{Ops: &ops, Now: now, Source: r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1100, 700))})
+		r.Frame(&ops)
+	}
+
+	u.conv.composer.SetText("see https://example.com")
+	frame(0)
+	frame(linkFetchDelay)
+	frame(time.Second)
+	card := u.composerCard(u.conv.composer.Text())
+	if card == nil || card.prev != nil || u.conv.link.ghost != card {
+		t.Fatalf("loading: card %+v, drawn %+v", card, u.conv.link.ghost)
+	}
+	if u.composerPreview(u.conv.composer.Text()) != nil {
+		t.Fatal("the loading card would be sent")
+	}
+	close(release)
+	for range 200 {
+		frame(10 * time.Millisecond)
+		if u.conv.link.fetching == "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if card := u.composerCard(u.conv.composer.Text()); card == nil || card.prev == nil {
+		t.Fatalf("after the fetch: card %+v", card)
+	}
+
+	// Closing the loading card cancels its fetch.
+	release = make(chan struct{})
+	u.conv.composer.SetText("and https://example.org")
+	frame(0)
+	frame(linkFetchDelay)
+	if u.composerCard(u.conv.composer.Text()) == nil {
+		t.Fatal("no loading card for the second link")
+	}
+	u.btn("composerlink:close").Click()
+	frame(0)
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("closing the loading card didn't stop the fetch")
+	}
+	if card := u.composerCard(u.conv.composer.Text()); card != nil {
+		t.Fatalf("closed, but still shows %+v", card)
+	}
+}

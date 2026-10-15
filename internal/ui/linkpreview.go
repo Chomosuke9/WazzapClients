@@ -13,6 +13,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/unit"
+	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/linkpreview"
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -144,6 +145,7 @@ type composerLink struct {
 	failed    string // a link whose page has no preview
 	dismissed string // a link whose preview was closed
 	got       *linkResult
+	loading   linkResult // the card shown while url's page is fetched (no prev)
 	results   chan linkResult
 	anim      tween
 	ghost     *linkResult // drawn while the card shrinks away
@@ -232,18 +234,40 @@ func (u *UI) composerPreview(text string) *linkResult {
 	return nil
 }
 
-// layoutComposerLink is a link's preview above the composer's input, with
-// a button that closes it.
+// composerCard returns the card to show over the composer for text: the
+// link's preview, or a loading card while its page is fetched, or nil.
+func (u *UI) composerCard(text string) *linkResult {
+	if r := u.composerPreview(text); r != nil {
+		return r
+	}
+	l := &u.conv.link
+	if l.fetching != "" && l.fetching == l.url && l.url != l.dismissed && strings.Contains(text, l.url) {
+		l.loading = linkResult{url: l.url}
+		return &l.loading
+	}
+	return nil
+}
+
+// layoutComposerLink is a link's preview above the composer's input, or
+// a card saying it loads, with a button that closes it.
 func (u *UI) layoutComposerLink(gtx C, r *linkResult) D {
 	p := u.pal
+	l := &u.conv.link
 	if u.btn("composerlink:close").Clicked(gtx) {
-		u.conv.link.dismissed = r.url
+		l.dismissed = r.url
+		if l.fetching == r.url && l.cancel != nil {
+			l.cancel()
+			l.fetching, l.cancel = "", nil
+		}
 	}
-	m := &model.Message{ID: "composer:" + r.url, Link: &model.LinkPreview{URL: r.url, Title: r.prev.Title,
-		Description: r.prev.Description}, Thumb: r.prev.Thumb}
 	return layout.Inset{Left: 8, Right: 8, Top: 8}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 			layout.Flexed(1, func(gtx C) D {
+				if r.prev == nil {
+					return u.layoutLinkLoading(gtx, r.url)
+				}
+				m := &model.Message{ID: "composer:" + r.url, Link: &model.LinkPreview{URL: r.url, Title: r.prev.Title,
+					Description: r.prev.Description}, Thumb: r.prev.Thumb}
 				return u.layoutLinkCard(gtx, m, gtx.Constraints.Max.X, composerCardRadius, p.QuoteIn, p.Text, p.TextSecondary)
 			}),
 			layout.Rigid(layout.Spacer{Width: 8}.Layout),
@@ -252,4 +276,33 @@ func (u *UI) layoutComposerLink(gtx C, r *linkResult) D {
 			}),
 		)
 	})
+}
+
+// layoutLinkLoading is the card over the composer while a link's page is
+// fetched: a spinner, "Loading preview…" and the link's domain.
+func (u *UI) layoutLinkLoading(gtx C, link string) D {
+	p := u.pal
+	w := gtx.Constraints.Max.X
+	sz := gtx.Dp(22)
+	padX, padY := gtx.Dp(14), gtx.Dp(10)
+	tgtx := gtx
+	tgtx.Constraints = layout.Constraints{Max: image.Pt(max(0, w-sz-3*padX), 1<<20)}
+	txt := record(tgtx, func(gtx C) D {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(u.label(14, "Loading preview…", p.Text, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
+			layout.Rigid(layout.Spacer{Height: 2}.Layout),
+			layout.Rigid(u.label(13, linkDomain(link), p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+		)
+	})
+	h := max(sz, txt.size.Y) + 2*padY
+	fillRRect(gtx, image.Rect(0, 0, w, h), gtx.Dp(composerCardRadius), p.QuoteIn)
+	t := op.Offset(image.Pt(padX, (h-sz)/2)).Push(gtx.Ops)
+	lg := gtx
+	lg.Constraints = layout.Exact(image.Pt(sz, sz))
+	ld := material.Loader(u.th)
+	ld.Color = p.Green
+	ld.Layout(lg)
+	t.Pop()
+	txt.at(gtx, sz+2*padX, (h-txt.size.Y)/2)
+	return D{Size: image.Pt(w, h)}
 }
