@@ -65,19 +65,24 @@ func TestParseAppLink(t *testing.T) {
 		"https://api.whatsapp.com/send?phone=15551234567":     {phone: "15551234567"},
 		"https://api.whatsapp.com/send/?phone=15551234567":    {phone: "15551234567"},
 		"https://chat.whatsapp.com/FrLhsO1aBMEBhOFBtpLwxl":    {code: "FrLhsO1aBMEBhOFBtpLwxl"},
-		"whatsapp://send?text=no+number":                      nil,
-		"whatsapp://chat?code=bad/../code":                    nil,
-		"https://wa.me/message/ABCDEF":                        {resolve: "ABCDEF", kind: model.LinkBusiness},
-		"https://api.whatsapp.com/message/ABCDEF":             {resolve: "ABCDEF", kind: model.LinkBusiness},
-		"https://wa.me/qr/QRCODE12":                           {resolve: "QRCODE12", kind: model.LinkContact},
-		"https://whatsapp.com/channel/0029VaExample":          {resolve: "0029VaExample", kind: model.LinkChannel},
-		"https://www.whatsapp.com/channel/0029VaExample/":     {resolve: "0029VaExample", kind: model.LinkChannel},
-		"whatsapp://channel/0029VaExample":                    {resolve: "0029VaExample", kind: model.LinkChannel},
-		"https://wa.me/channel/0029VaExample":                 nil,
-		"https://wa.me/qr/bad-code!":                          nil,
-		"https://wa.me/c/6281234567890":                       nil,
-		"https://wa.me.evil.example/6281234567890":            nil,
-		"https://example.com/send?phone=6281234567890":        nil,
+		"whatsapp://send?text=no+number":                      {text: "no number", share: true},
+		"https://api.whatsapp.com/send/?text=https%3A%2F%2Fwww.reddit.com%2Fr%2Fx&type=custom_url&app_absent=0": {
+			text: "https://www.reddit.com/r/x", share: true},
+		"https://wa.me/?text=hello":                       {text: "hello", share: true},
+		"whatsapp://send?phone=12&text=hello":             nil,
+		"whatsapp://send":                                 nil,
+		"whatsapp://chat?code=bad/../code":                nil,
+		"https://wa.me/message/ABCDEF":                    {resolve: "ABCDEF", kind: model.LinkBusiness},
+		"https://api.whatsapp.com/message/ABCDEF":         {resolve: "ABCDEF", kind: model.LinkBusiness},
+		"https://wa.me/qr/QRCODE12":                       {resolve: "QRCODE12", kind: model.LinkContact},
+		"https://whatsapp.com/channel/0029VaExample":      {resolve: "0029VaExample", kind: model.LinkChannel},
+		"https://www.whatsapp.com/channel/0029VaExample/": {resolve: "0029VaExample", kind: model.LinkChannel},
+		"whatsapp://channel/0029VaExample":                {resolve: "0029VaExample", kind: model.LinkChannel},
+		"https://wa.me/channel/0029VaExample":             nil,
+		"https://wa.me/qr/bad-code!":                      nil,
+		"https://wa.me/c/6281234567890":                   nil,
+		"https://wa.me.evil.example/6281234567890":        nil,
+		"https://example.com/send?phone=6281234567890":    nil,
 	} {
 		got, ok := parseAppLink(link)
 		switch {
@@ -218,5 +223,40 @@ func TestResolveLinks(t *testing.T) {
 	open("https://wa.me/qr/Unknown1")
 	if u.selected.ID != "bola@newsletter" {
 		t.Errorf("an unknown link opened %v", u.selected)
+	}
+}
+
+// TestShareLink checks that a share link (text, no number) asks for the
+// chat, and that the chat picked opens with the text in its composer.
+func TestShareLink(t *testing.T) {
+	u := New(mock.New())
+	u.Start(func() {})
+	u.applyEvents()
+	const link = "https://api.whatsapp.com/send/?text=https%3A%2F%2Fwww.reddit.com%2Fr%2Fx&type=custom_url&app_absent=0"
+	if !u.openAppLink(link) {
+		t.Fatal("the share link wasn't taken")
+	}
+	if u.dialog.kind != dialogForward || u.dialog.shareText != "https://www.reddit.com/r/x" {
+		t.Fatalf("dialog %v with %q", u.dialog.kind, u.dialog.shareText)
+	}
+	var ops op.Ops
+	var r input.Router
+	frame := func() {
+		ops.Reset()
+		u.Layout(layout.Context{Ops: &ops, Now: testNow(), Source: r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1100, 700))})
+		r.Frame(&ops)
+	}
+	frame()
+	u.btn("fwd:budi").Click()
+	frame()
+	if u.selected == nil || u.selected.ID != "budi" {
+		t.Fatalf("picked budi, open %v", u.selected)
+	}
+	if got := u.conv.composer.Text(); got != "https://www.reddit.com/r/x" {
+		t.Errorf("composer %q", got)
+	}
+	if u.dialog.isOpen() {
+		t.Error("the picker is still open")
 	}
 }

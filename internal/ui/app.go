@@ -1513,7 +1513,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // /ghost "ghost". The chat list's Select chats "selectchats"; App lock's dialog "applock"
 // (setting it up) or "applockon", and its lock screen "lockscreen".
 // "linkbar" shows the bar that asks to open WhatsApp links here, and
-// "channellink" a channel's link, to follow.
+// "channellink" a channel's link, to follow, and "sharelink" a share
+// link's chat picker.
 // "graywarning" opens the acknowledgment for Keep deleted messages.
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
@@ -1577,6 +1578,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	case "linkbar":
 		u.linkBar.demo = true
+	case "sharelink":
+		u.openAppLink("https://api.whatsapp.com/send/?text=Look+at+this+https%3A%2F%2Fexample.com")
 	case "channellink":
 		// The demo backend's code of a suggested channel's link.
 		u.openAppLink("https://whatsapp.com/channel/DemoChannelBola")

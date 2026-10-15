@@ -15,7 +15,8 @@ import (
 // WhatsApp's links open in the app, as in WhatsApp Desktop: a chat with a
 // phone number (https://wa.me/<number>?text=…, api.whatsapp.com/send and
 // whatsapp://send?phone=…, which websites send the browser on to), with
-// the link's text in its composer; a group invite
+// the link's text in its composer; a share link, the same without a
+// number, which asks for the chat first; a group invite
 // (https://chat.whatsapp.com/<code>, whatsapp://chat?code=…); and the
 // links only the server resolves (Backend.ResolveLink): a channel
 // (https://whatsapp.com/channel/<code>), a business's message link, which
@@ -27,6 +28,7 @@ import (
 // appLink is what a WhatsApp link opens.
 type appLink struct {
 	phone, text string // a chat (digits with the country code), and text for its composer
+	share       bool   // text only: the user picks the chat
 	code        string // a group invite's
 	// resolve is the code of a link ResolveLink looks up, of kind.
 	resolve string
@@ -103,6 +105,10 @@ func parseAppLink(link string) (appLink, bool) {
 	default:
 		return appLink{}, false
 	}
+	if trimSpace(l.phone) == "" && trimSpace(l.text) != "" {
+		// "Share on WhatsApp" buttons: api.whatsapp.com/send?text=….
+		return appLink{text: l.text, share: true}, true
+	}
 	// Websites write the number every which way: "+62 812-…", "62812…".
 	if l.phone = phoneDigits(l.phone); l.phone == "" {
 		return appLink{}, false
@@ -133,6 +139,8 @@ func (u *UI) openAppLink(link string) bool {
 		return false
 	case l.code != "":
 		u.openInvite(l.code)
+	case l.share:
+		u.openShareText(l.text)
 	case l.resolve != "":
 		u.resolving = l.resolve
 		if l.kind == model.LinkChannel {
@@ -146,6 +154,14 @@ func (u *UI) openAppLink(link string) bool {
 		u.cardPhoneText = l.text
 	}
 	return true
+}
+
+// openShareText asks which chat a share link's text goes to.
+func (u *UI) openShareText(text string) {
+	u.dialog = dialogState{kind: dialogForward, shareText: text}
+	u.dialog.search.SingleLine = true
+	u.dialog.list.Axis = layout.Vertical
+	u.requestFocus(&u.dialog.search)
 }
 
 // linkResolved answers ResolveLink: it opens the chat, or the channel, or
@@ -237,7 +253,9 @@ const prefLinkBar = "link_bar" // "off" once the bar was closed
 
 // linkBar is the bar's: whether whatsapp: links open here, as read from
 // the registry when checked, which focusing the window clears (the user
-// may have chosen the app in Windows' settings meanwhile).
+// may have chosen the app in Windows' settings meanwhile). Like a
+// browser's, it asks until the user has chosen the app in Windows'
+// settings, even if the links already open here.
 type linkBar struct {
 	checked, handled bool
 	demo             bool // drawn for cmd/screenshot (ShowOverlay "linkbar")
@@ -257,8 +275,9 @@ func (u *UI) linksHere() bool {
 	return u.linkBar.handled
 }
 
-// claimLinks registers the app for whatsapp: links and, unless that made
-// it their handler, opens Windows' settings for the user to choose it.
+// claimLinks registers the app for whatsapp: links and, unless the user
+// chose it already, opens its page of Windows' Default apps, where they
+// choose it for WHATSAPP.
 func (u *UI) claimLinks() {
 	if err := desktop.RegisterLinks(u.host.o.Relaunch); err != nil {
 		u.toast("Couldn't register " + appName + " for WhatsApp links.")
@@ -266,11 +285,11 @@ func (u *UI) claimLinks() {
 	}
 	u.linkBar.checked = false
 	if u.linksHere() {
-		u.toast("WhatsApp links now open in " + appName + ".")
+		u.toast("WhatsApp links already open in " + appName + ".")
 		return
 	}
 	desktop.OpenLinkSettings()
-	u.toast("In Windows' settings, choose " + appName + " for WHATSAPP.")
+	u.toast("Under WHATSAPP, choose " + appName + ", then come back.")
 }
 
 // layoutLinkBar draws the bar above the chat list.

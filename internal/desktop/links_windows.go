@@ -4,7 +4,6 @@ package desktop
 
 import (
 	"os"
-	"strings"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -17,11 +16,12 @@ import (
 //
 // The app registers itself the way Windows wants a browser or mail app
 // to: a ProgID that opens the link, and Capabilities listed under
-// RegisteredApplications, so Settings > Default apps offers it for
-// WHATSAPP. Windows keeps the user's choice in a key apps can't write, so
-// when another app (WhatsApp's own) has the scheme, the user picks this
-// one there (OpenLinkSettings). The scheme's own key is written too, which
-// is all Windows reads while nobody has chosen.
+// RegisteredApplications, so Settings > Default apps has a page for it
+// that lists WHATSAPP. Windows keeps the user's choice in a key apps can't
+// write, so the user picks the app there (OpenLinkSettings), as they do a
+// browser. The scheme's own key is written too, which is all Windows reads
+// while nobody has chosen, but the app counts as the links' handler
+// (LinksHandled) only once the user has chosen it.
 
 const (
 	linkScheme = "whatsapp"
@@ -63,6 +63,7 @@ func RegisterLinks(args []string) error {
 	if err := setValues(linkCaps, map[string]string{
 		"ApplicationName":        "WazzapClients",
 		"ApplicationDescription": "Open WhatsApp links in WazzapClients",
+		"ApplicationIcon":        icon,
 	}); err != nil {
 		return err
 	}
@@ -101,9 +102,9 @@ func LinksRegistered() bool {
 	return readValue(classes+linkProgID+`\shell\open\command`, "") != ""
 }
 
-// LinksHandled reports whether whatsapp: links open in this app: the
-// user chose it in Windows' settings, or chose nothing and the scheme's
-// key starts this executable.
+// LinksHandled reports whether the user chose this app for whatsapp:
+// links in Windows' settings. Until then Windows shows "Choose a default"
+// for them, and another app installed later may take them.
 func LinksHandled() bool {
 	// Windows 11 24H2 keeps the choice in UserChoiceLatest.
 	for _, key := range []string{"UserChoiceLatest", "UserChoice"} {
@@ -111,11 +112,7 @@ func LinksHandled() bool {
 			return id == linkProgID
 		}
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(readValue(classes+linkScheme+`\shell\open\command`, "")), strings.ToLower(exe))
+	return false
 }
 
 // OpenLinkSettings opens the app's page of Settings > Default apps, where
