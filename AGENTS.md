@@ -82,7 +82,9 @@ Gotchas already found in the pinned version (v0.10.x):
   top (see `layoutChatRow`), and use `hoverArea`/`rightClick`, which pass events through.
 - Popups that must draw above later siblings (the emoji picker) use `op.Defer`, which
   keeps the local transform. Context menus instead open at `u.mouse`, the last pointer
-  position in content coordinates.
+  position in content coordinates. Inside a popup drawn under a transform (the emoji
+  picker over the composer) `u.mouse` is in the wrong coordinates: track the pointer
+  there yourself, as the picker's `panelMouse` does for its tone menu.
 - `widget.Editor` paints all its text, and its caret, in one color and one font. When the
   composer's text has formatting or @mentions, the editor paints it transparent and
   `paintComposerText` (`composertext.go`) draws the text and caret itself. Bold and italic
@@ -363,7 +365,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    formatting toolbar in formatbar.go; the attach
                    menu (Camera through internal/camera, New sticker as /sticker), file tray and poll
                    dialog in attach.go, and its Create event dialog in eventnew.go; slash commands (their
-                   picker over the composer and the notes only you see) in slash.go; scheduled
+                   picker over the composer and the notes only you see) in slash.go; emoji
+                   shortcodes (":mo" offers matching emojis over the composer, a typed
+                   ":moai:" becomes 🗿, Discord style) in shortcode.go; scheduled
                    messages as bubbles after a chat's newest (send now, edit, cancel) and
                    the AFK bar above the chat list in scheduled.go; saved messages (Settings >
                    Snippets, the snippets /snippet send offers in the slash picker, their {variables}
@@ -680,7 +684,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
-# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;

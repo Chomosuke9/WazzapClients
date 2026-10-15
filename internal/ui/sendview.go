@@ -570,6 +570,8 @@ func (u *UI) layoutCaption(gtx C, f *attachFile, bottom int, open bool) int {
 		picker = func(gtx C) D { return u.layoutMentionPicker(gtx, ms) }
 	} else if sp := u.slashQuery(); u.slashShown(sp) {
 		picker = func(gtx C) D { return u.layoutSlashPicker(gtx, sp) }
+	} else if cs := u.shortcodeQuery(); cs != nil {
+		picker = func(gtx C) D { return u.layoutShortcodePicker(gtx, cs) }
 	}
 	if picker != nil && open {
 		m := op.Record(gtx.Ops)

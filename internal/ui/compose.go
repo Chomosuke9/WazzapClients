@@ -671,6 +671,18 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	if spv == 0 {
 		u.slash.ghost = nil
 	}
+	cs := u.shortcodeQuery()
+	if c.editorElsewhere {
+		cs = nil
+	}
+	u.updateShortcodeSel(cs)
+	if cs != nil {
+		u.codes.ghost = cs
+	}
+	csv := easeOut(u.codes.anim.step(gtx, cs != nil, popDur(cs != nil)))
+	if csv == 0 {
+		u.codes.ghost = nil
+	}
 	// The bar above the input quotes the message being answered, or the
 	// one being edited.
 	reply, editing := c.reply, c.edit.msg != nil
@@ -697,7 +709,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 	sv := easeOut(c.sendAnim.step(gtx, hasText, durSwitch))
 	return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 12}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		var picker, slashPicker part
+		var picker, slashPicker, codePicker part
 		if ghost := c.mentionGhost; ghost != nil {
 			picker = record(gtx, func(gtx C) D {
 				if ms == nil {
@@ -716,6 +728,16 @@ func (u *UI) layoutComposerBox(gtx C) D {
 					defer done()
 				}
 				return u.layoutSlashPicker(gtx, ghost)
+			})
+		}
+		if ghost := u.codes.ghost; ghost != nil {
+			codePicker = record(gtx, func(gtx C) D {
+				if cs == nil {
+					var done func()
+					gtx, done = fadeOut(gtx)
+					defer done()
+				}
+				return u.layoutShortcodePicker(gtx, ghost)
 			})
 		}
 		m := op.Record(gtx.Ops)
@@ -856,7 +878,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		for _, pk := range []struct {
 			p part
 			v float32
-		}{{picker, mv}, {slashPicker, spv}} {
+		}{{picker, mv}, {slashPicker, spv}, {codePicker, csv}} {
 			if pk.p.size.Y > 0 {
 				fx := pushFx(gtx, pk.v, moveBy(0, float32(gtx.Dp(10))*(1-pk.v)))
 				pk.p.at(gtx, 0, -pk.p.size.Y-gtx.Dp(8))

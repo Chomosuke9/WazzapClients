@@ -206,6 +206,7 @@ type UI struct {
 
 	newChat newChatState // the New chat panel over the chat list
 	slash   slashState   // slash commands and their notes (slash.go)
+	codes   shortcodes   // :emoji: names typed in the composer (shortcode.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
 	adminMention, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
 	// captureBlocked keeps the window out of screenshots (viewonce.go).
@@ -1080,6 +1081,7 @@ func (u *UI) update(gtx C) {
 	u.ctrlEnterKeys(gtx)
 	u.slashKeys(gtx)
 	u.mentionKeys(gtx)
+	u.shortcodeKeys(gtx)
 	for {
 		before := u.conv.composer.Text()
 		ev, ok := u.conv.composer.Update(gtx)
@@ -1090,6 +1092,7 @@ func (u *UI) update(gtx C) {
 		case widget.ChangeEvent:
 			u.touchLock()
 			if u.conv.composer.Text() != before {
+				u.completeShortcode(before)
 				u.reportComposerTyping()
 			}
 		case widget.SubmitEvent:
@@ -1164,6 +1167,8 @@ func (u *UI) escape() {
 		u.conv.mentionDismissed = string([]rune(u.conv.composer.Text())[ms.start:ms.end])
 	case u.slashShown(u.slashQuery()):
 		u.slash.dismissed, u.slash.problem = u.conv.composer.Text(), ""
+	case u.shortcodeQuery() != nil:
+		u.dismissShortcode()
 	case len(u.attach.files) > 0:
 		// The send view: stop typing, put the tool down, drop the
 		// selection, then close.
@@ -1972,6 +1977,12 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			}
 			ed.Insert("see you soon")
 		}
+	case "shortcode":
+		// The emoji shortcode picker (shortcode.go).
+		ed := &u.conv.composer
+		ed.SetText("Look :mo")
+		ed.SetCaret(ed.Len(), ed.Len())
+		u.requestFocus(ed)
 	case "listwide", "listnarrow", "listhidden":
 		// The list column dragged wide or narrow, or hidden.
 		switch name {

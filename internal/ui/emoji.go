@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -102,12 +104,14 @@ type emojiPicker struct {
 	loaded      bool
 
 	// tone is the skin tone of the emojis it lists (0 for yellow), and
-	// tones the menu of tones over them (skintone.go). panelAt is where
-	// the panel is, in content coordinates, and toneAnchor the tone
-	// button's bottom right corner in the panel.
+	// tones the menu of tones over them (skintone.go). panelMouse is the
+	// pointer's last position in the panel (the picker may be drawn
+	// under a transform, so u.mouse can't be turned into it), and
+	// toneAnchor the tone button's bottom right corner in the panel.
 	tone       int
 	tones      toneMenu
-	panelAt    image.Point
+	panelMouse image.Point
+	mouseTag   int
 	toneAnchor image.Point
 
 	stickerSet  model.StickerSet
@@ -143,11 +147,7 @@ func (u *UI) openPicker(mode pickMode, target *model.Message) {
 	if e.tab == tabSticker {
 		e.stickerSet = u.defaultStickerSet()
 	}
-	if !e.loaded {
-		e.loaded = true
-		e.recent = strings.Fields(u.backend.Pref("recent_emoji"))
-		e.tone = u.loadTone()
-	}
+	u.loadPickerPrefs()
 	if mode != pickComposer {
 		u.requestFocus(&e.search)
 	}
@@ -155,8 +155,18 @@ func (u *UI) openPicker(mode pickMode, target *model.Message) {
 
 func (u *UI) closePicker() { u.picker.open = false }
 
-// pickEmoji inserts or sends the chosen emoji and remembers it as recent.
-func (u *UI) pickEmoji(ch string) {
+// loadPickerPrefs reads the recent emojis and the skin tone once.
+func (u *UI) loadPickerPrefs() {
+	e := &u.picker
+	if !e.loaded {
+		e.loaded = true
+		e.recent = strings.Fields(u.backend.Pref("recent_emoji"))
+		e.tone = u.loadTone()
+	}
+}
+
+// rememberEmoji puts ch first among the recent emojis.
+func (u *UI) rememberEmoji(ch string) {
 	e := &u.picker
 	rec := []string{ch}
 	for _, r := range e.recent {
@@ -166,6 +176,12 @@ func (u *UI) pickEmoji(ch string) {
 	}
 	e.recent = rec
 	u.backend.SetPref("recent_emoji", strings.Join(rec, " "))
+}
+
+// pickEmoji inserts or sends the chosen emoji and remembers it as recent.
+func (u *UI) pickEmoji(ch string) {
+	e := &u.picker
+	u.rememberEmoji(ch)
 	switch e.mode {
 	case pickReaction:
 		if e.target != nil {
@@ -304,9 +320,17 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	r := gtx.Dp(16)
 	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(3))).Inset(-gtx.Dp(2)), r+gtx.Dp(2), p.Shadow)
 	borderRRect(gtx, rect, r, p.Picker, p.PopupBorder)
-	e.panelAt = rect.Min
 	defer op.Offset(rect.Min).Push(gtx.Ops).Pop()
 	defer clip.UniformRRect(image.Rectangle{Max: rect.Size()}, r).Push(gtx.Ops).Pop()
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &e.mouseTag, Kinds: pointer.Move | pointer.Press | pointer.Drag})
+		if !ok {
+			break
+		}
+		if pe, ok := ev.(pointer.Event); ok {
+			e.panelMouse = pe.Position.Round()
+		}
+	}
 	pg := gtx
 	pg.Constraints = layout.Exact(rect.Size())
 	// Swallow clicks so they don't reach the scrim.
@@ -324,6 +348,11 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	if e.mode == pickComposer {
 		u.pickerTabs(pg)
 	}
+	// On top of everything in the panel, passing events through, so it
+	// sees the presses its buttons take.
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &e.mouseTag)
+	pass.Pop()
 }
 
 func (u *UI) pickerMessage(gtx C, msg string) D {
@@ -419,7 +448,7 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 							})
 							// A right click offers its tones.
 							if emojiTakesTone[base] && u.rightClick(gtx, "emoji:"+ch, dims.Size) {
-								u.openToneMenu(base, u.mouse.Sub(e.panelAt))
+								u.openToneMenu(base, e.panelMouse)
 							}
 							return dims
 						}))
