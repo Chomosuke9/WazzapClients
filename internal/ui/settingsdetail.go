@@ -346,9 +346,26 @@ func (u *UI) generalSettings(pref func(key, title, sub string) settingRow) []set
 	if len(sec.rows) == 0 {
 		sec.note = "Closing the window quits " + appName + " on this system."
 	}
-	return []settingsSection{sec, {title: "Font size",
+	secs := []settingsSection{sec, {title: "Font size",
 		rows: []settingRow{{key: "zoom", kind: setCustom, w: u.zoomField, run: u.openZoomMenu}},
 		note: "Use " + shortcutMod() + " + / - to increase or decrease text size"}}
+	if u.canClaimLinks() {
+		secs = append(secs, u.linkSettings())
+	}
+	return secs
+}
+
+// linkSettings is the WhatsApp links section: whether whatsapp: links
+// (wa.me's "Continue to chat", group invites) open here (applink.go).
+func (u *UI) linkSettings() settingsSection {
+	sub := "Open chat and group links from websites here instead of in WhatsApp"
+	if u.linksHere() {
+		sub = "On: WhatsApp links open in " + appName
+	}
+	return settingsSection{title: "WhatsApp links", rows: []settingRow{{
+		key: "links", ic: icLink, title: "Open WhatsApp links in " + appName, sub: sub,
+		trailing: icOpenInNew, run: u.claimLinks,
+	}}}
 }
 
 // profileSettings is the Profile page: your picture, name, about and

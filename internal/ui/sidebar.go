@@ -34,6 +34,7 @@ func (u *UI) layoutSidebar(gtx C) D {
 		layout.Rigid(u.layoutSearch),
 		layout.Rigid(u.layoutChips),
 		layout.Rigid(u.layoutBanner),
+		layout.Rigid(u.layoutLinkBar),
 		layout.Rigid(u.layoutAwayBar),
 		layout.Rigid(u.layoutGhostBar),
 		layout.Flexed(1, u.layoutChatList),

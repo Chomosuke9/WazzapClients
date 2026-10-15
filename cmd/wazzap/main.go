@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	rdebug "runtime/debug"
 	"slices"
+	"strings"
 	"time"
 
 	"gioui.org/app"
@@ -48,6 +49,14 @@ func main() {
 	waitPID := flag.Int("wait-pid", 0, "wait for this process to exit first (set by an update's restart)")
 	flag.Parse()
 	*embedding = *embedding || slices.Contains(flag.Args(), "/Embedding")
+	// Windows starts the handler of whatsapp: links with the link last
+	// (desktop.RegisterLinks).
+	link := ""
+	for _, a := range flag.Args() {
+		if strings.HasPrefix(strings.ToLower(a), "whatsapp:") {
+			link = a
+		}
+	}
 	// A chat app idles most of the time; trade a little CPU during bursts
 	// (history sync) for a smaller heap. No memory limit: a long session's
 	// live heap can come near any fixed one, and then the GC runs back to
@@ -59,7 +68,7 @@ func main() {
 	}
 
 	// One instance per data directory: a second launch shows the first
-	// one's window and exits.
+	// one's window, or has it open the link, and exits.
 	demoDir := filepath.Join(os.TempDir(), "WazzapClients-demo")
 	lockDir := *dataDir
 	if *demo {
@@ -68,7 +77,7 @@ func main() {
 	if *waitPID != 0 {
 		desktop.WaitExit(*waitPID, 15*time.Second)
 	}
-	if !desktop.Lock(lockDir) {
+	if !desktop.Lock(lockDir, link) {
 		return
 	}
 	if exe, err := os.Executable(); err == nil && version != "" {
@@ -100,6 +109,7 @@ func main() {
 		Open:     open,
 		Version:  version,
 		KlipyKey: klipyKey,
+		Link:     link,
 	}
 	if *demo {
 		opts.NotifyDir = demoDir
@@ -108,6 +118,12 @@ func main() {
 		opts.Relaunch = []string{}
 		if *dataDir != defaultDataDir() {
 			opts.Relaunch = []string{"-data", *dataDir}
+		}
+		// Once links open here (Settings > General), keep them pointing at
+		// this executable. Development builds (go run) live in a
+		// temporary directory, so only releases do.
+		if version != "" && desktop.LinksRegistered() {
+			desktop.RegisterLinks(opts.Relaunch)
 		}
 	}
 	backend, err := open(list.Path(list.Active))

@@ -69,21 +69,30 @@ Type: files; Name: "{app}\WazzapClients.exe.old"
 Type: files; Name: "{app}\WazzapClients.exe.new"
 
 [Registry]
-; What the app writes for itself: notifications (internal/notify) and
-; starting at login (internal/desktop). Removed on uninstall only.
+; What the app writes for itself: notifications (internal/notify),
+; starting at login and handling whatsapp: links (internal/desktop).
+; Removed on uninstall only; the whatsapp key itself goes in [Code], only
+; when it starts this app.
 Root: HKCU; Subkey: "Software\Classes\AppUserModelId\WazzapClients.Desktop"; ValueType: none; Flags: uninsdeletekey dontcreatekey
 Root: HKCU; Subkey: "Software\Classes\CLSID\{{EC56F81C-5D4A-4D8C-8044-761DDA20EDC8}"; ValueType: none; Flags: uninsdeletekey dontcreatekey
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "WazzapClients"; ValueType: none; Flags: uninsdeletevalue dontcreatekey
+Root: HKCU; Subkey: "Software\Classes\WazzapClients.Link"; ValueType: none; Flags: uninsdeletekey dontcreatekey
+Root: HKCU; Subkey: "Software\WazzapClients"; ValueType: none; Flags: uninsdeletekey dontcreatekey
+Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueName: "WazzapClients"; ValueType: none; Flags: uninsdeletevalue dontcreatekey
 
 [Code]
 // Chats and the linked account stay unless the user says otherwise, so
 // installing again doesn't mean linking again.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  Data: String;
+  Data, Cmd: String;
 begin
   if CurUninstallStep <> usPostUninstall then
     Exit;
+  // whatsapp: links, if they start this app (another may have the key).
+  if RegQueryStringValue(HKCU, 'Software\Classes\whatsapp\shell\open\command', '', Cmd) and
+     (Pos('wazzapclients.exe', Lowercase(Cmd)) > 0) then
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\whatsapp');
   Data := ExpandConstant('{userappdata}\WazzapClients');
   if not DirExists(Data) or UninstallSilent then
     Exit;

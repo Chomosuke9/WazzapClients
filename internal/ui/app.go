@@ -144,7 +144,13 @@ type UI struct {
 
 	// cardPhone is the number of a shared contact whose chat opens once
 	// the backend has looked it up, and cardPhoneName their name.
-	cardPhone, cardPhoneName string
+	// cardPhoneText goes in its composer (a WhatsApp link's, applink.go).
+	cardPhone, cardPhoneName, cardPhoneText string
+
+	linkBar linkBar // asks to open WhatsApp links here (applink.go)
+	// resolving is the code of the link ResolveLink is looking up, and
+	// followed a channel followed from a link, opened once it's listed.
+	resolving, followed string
 
 	files  fileState   // documents and audio on disk
 	voice  voiceState  // the audio message playing
@@ -1273,6 +1279,8 @@ func (u *UI) applyEvents() {
 			if !u.cardPhoneEvent(e) {
 				u.phoneEvent(e)
 			}
+		case model.LinkEvent:
+			u.linkResolved(e)
 		case model.GroupCreatedEvent:
 			u.groupCreated(e)
 		case model.DeletedEvent:
@@ -1310,6 +1318,7 @@ func (u *UI) applyEvents() {
 		case model.ChannelsEvent:
 			u.channels = u.backend.Channels()
 			u.suggested = u.backend.SuggestedChannels()
+			u.channelsChanged()
 		case model.CommunitiesEvent:
 			u.setCommunities(u.backend.Communities())
 		}
@@ -1503,6 +1512,8 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // message and the AFK bar without their notes "scheduled", or ghost mode turned on with
 // /ghost "ghost". The chat list's Select chats "selectchats"; App lock's dialog "applock"
 // (setting it up) or "applockon", and its lock screen "lockscreen".
+// "linkbar" shows the bar that asks to open WhatsApp links here, and
+// "channellink" a channel's link, to follow.
 // "graywarning" opens the acknowledgment for Keep deleted messages.
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
@@ -1564,6 +1575,11 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		for _, c := range u.chats[1:min(3, len(u.chats))] {
 			u.pickRow(c.ID)
 		}
+	case "linkbar":
+		u.linkBar.demo = true
+	case "channellink":
+		// The demo backend's code of a suggested channel's link.
+		u.openAppLink("https://whatsapp.com/channel/DemoChannelBola")
 	case "applock", "applockon", "lockscreen":
 		// App lock's dialog, setting it up or once it's on, and the lock
 		// screen.

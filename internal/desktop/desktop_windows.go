@@ -33,6 +33,7 @@ var (
 	procTranslateMessage         = user32.NewProc("TranslateMessage")
 	procDispatchMessageW         = user32.NewProc("DispatchMessageW")
 	procPostMessageW             = user32.NewProc("PostMessageW")
+	procSendMessageTimeoutW      = user32.NewProc("SendMessageTimeoutW")
 	procPostQuitMessage          = user32.NewProc("PostQuitMessage")
 	procRegisterWindowMessageW   = user32.NewProc("RegisterWindowMessageW")
 	procCreatePopupMenu          = user32.NewProc("CreatePopupMenu")
@@ -60,6 +61,7 @@ const (
 	wmClose       = 0x0010
 	wmContextMenu = 0x007b
 	wmSetIcon     = 0x0080
+	wmCopyData    = 0x004a
 	wmApp         = 0x8000
 
 	wmTray  = wmApp + 1 // the icon's callback message
@@ -91,6 +93,10 @@ const (
 	iconSmall, iconBig  = 0, 1
 
 	errorAlreadyExists = 183
+
+	smtoAbortIfHung = 0x0002
+	// linkMagic marks a WM_COPYDATA that carries a link (see Lock).
+	linkMagic = 0x57414c4b // "WALK"
 )
 
 type wndClassEx struct {
@@ -133,10 +139,17 @@ var instanceKey string
 
 func className() string { return "WazzapClientsTray-" + instanceKey }
 
+// copyData is COPYDATASTRUCT.
+type copyData struct {
+	data uintptr
+	size uint32
+	ptr  uintptr
+}
+
 // Lock makes this process the only instance of the app using the data
 // directory dir. When another instance has it, Lock asks that one to show
-// its window and returns false.
-func Lock(dir string) bool {
+// its window, or to open link when it isn't "", and returns false.
+func Lock(dir, link string) bool {
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
 	}
@@ -158,7 +171,18 @@ func Lock(dir string) bool {
 			var pid uint32
 			procGetWindowThreadProcessId.Call(w, uintptr(unsafe.Pointer(&pid)))
 			procAllowSetForegroundWindow.Call(uintptr(pid))
-			procPostMessageW.Call(w, wmShow, 0, 0)
+			if link != "" {
+				// WM_COPYDATA carries the link over; it has to be sent,
+				// not posted, and the tray's thread answers it at once.
+				b := []byte(link)
+				cd := copyData{data: linkMagic, size: uint32(len(b)), ptr: uintptr(unsafe.Pointer(&b[0]))}
+				var res uintptr
+				procSendMessageTimeoutW.Call(w, wmCopyData, 0, uintptr(unsafe.Pointer(&cd)),
+					smtoAbortIfHung, 5000, uintptr(unsafe.Pointer(&res)))
+				runtime.KeepAlive(b)
+			} else {
+				procPostMessageW.Call(w, wmShow, 0, 0)
+			}
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -298,6 +322,18 @@ func trayProc(hwnd, m, wParam, lParam uintptr) uintptr {
 	case wmShow:
 		tray.t.Open()
 		return 0
+	case wmCopyData:
+		cd := (*copyData)(pointer(lParam))
+		if cd.data != linkMagic || cd.size == 0 || cd.size > 8<<10 {
+			return 0
+		}
+		link := string(unsafe.Slice((*byte)(pointer(cd.ptr)), cd.size))
+		if tray.t.Link != nil {
+			tray.t.Link(link)
+		} else {
+			tray.t.Open()
+		}
+		return 1
 	case wmTip:
 		procShellNotifyIconW.Call(nimMod, uintptr(unsafe.Pointer(iconData(hwnd))))
 		return 0

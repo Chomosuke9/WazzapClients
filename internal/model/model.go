@@ -970,6 +970,30 @@ type PhoneEvent struct {
 	Err   string
 }
 
+// LinkKind is a kind of WhatsApp link only the server can resolve
+// (Backend.ResolveLink).
+type LinkKind int
+
+const (
+	LinkChannel  LinkKind = iota // a channel's invite: https://whatsapp.com/channel/<code>
+	LinkBusiness                 // a business's message link: https://wa.me/message/<code>
+	LinkContact                  // a contact's QR link: https://wa.me/qr/<code>
+)
+
+// LinkEvent answers Backend.ResolveLink. ID is the chat (a person or a
+// business) or the channel the link leads to, and Name a name to show.
+// Text is what a business link puts in the composer. Channel describes a
+// channel's, with its Description. Err is set when it couldn't resolve.
+type LinkEvent struct {
+	Kind        LinkKind
+	Code        string // as passed to ResolveLink
+	ID, Name    string
+	Text        string
+	Channel     *Channel
+	Description string
+	Err         string
+}
+
 // GroupCreatedEvent answers Backend.CreateGroup: ChatID is the new group,
 // or "" when it couldn't be created (Err says why).
 type GroupCreatedEvent struct {
@@ -1120,6 +1144,7 @@ func (ChannelsEvent) isEvent()     {}
 func (CommunitiesEvent) isEvent()  {}
 func (NoticeEvent) isEvent()       {}
 func (PhoneEvent) isEvent()        {}
+func (LinkEvent) isEvent()         {}
 func (GroupCreatedEvent) isEvent() {}
 func (StickersEvent) isEvent()     {}
 func (DeletedEvent) isEvent()      {}
@@ -1346,6 +1371,9 @@ type Backend interface {
 	// LookupPhone checks in the background whether a phone number (digits
 	// with the country code) is on WhatsApp; a PhoneEvent answers.
 	LookupPhone(phone string)
+	// ResolveLink looks up the code of a channel, business message or
+	// contact QR link in the background; a LinkEvent answers.
+	ResolveLink(kind LinkKind, code string)
 	// CreateGroup creates a group in the background; a GroupCreatedEvent
 	// answers, after a ChatEvent for the new chat.
 	CreateGroup(g NewGroup)

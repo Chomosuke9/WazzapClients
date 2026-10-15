@@ -28,6 +28,12 @@ type inviteState struct {
 	joining bool // waiting for the JoinedEvent
 	more    bool // the whole description shows
 	desc    widget.List
+
+	// A channel's link (applink.go) shows the channel instead, with a
+	// Follow button: ch once ResolveLink found it, chDesc its description.
+	channel bool
+	ch      *model.Channel
+	chDesc  string
 }
 
 // The description shows about this much until "Read more" is clicked.
@@ -36,11 +42,10 @@ const (
 	inviteDescLines = 4
 )
 
-// openLink opens a link from a message: an invite link in the app, any
-// other in the browser.
+// openLink opens a link from a message: a WhatsApp link (an invite, a
+// chat with a number) in the app, any other in the browser.
 func (u *UI) openLink(link string) {
-	if code := inviteCode(link); code != "" {
-		u.openInvite(code)
+	if u.openAppLink(link) {
 		return
 	}
 	if !strings.Contains(link, "://") {
@@ -136,9 +141,14 @@ func (u *UI) invitePanel(gtx C) D {
 	if u.btn("invite:cancel").Clicked(gtx) {
 		u.closeDialog()
 	}
-	if u.btn("invite:join").Clicked(gtx) && in.group != nil && !in.joining && d.isOpen() {
-		in.joining = true
-		u.backend.JoinGroup(in.code)
+	if u.btn("invite:join").Clicked(gtx) && d.isOpen() {
+		switch {
+		case in.channel && in.ch != nil:
+			u.followFromLink(in.ch.ID)
+		case !in.channel && in.group != nil && !in.joining:
+			in.joining = true
+			u.backend.JoinGroup(in.code)
+		}
 	}
 	if u.btn("invite:more").Clicked(gtx) {
 		in.more = true
@@ -184,10 +194,35 @@ func (u *UI) invitePanel(gtx C) D {
 	switch {
 	case in.err != "":
 		cancel.label = "OK"
+		title := "Couldn't open this invite"
+		if in.channel {
+			title = "Couldn't open this channel"
+		}
 		children = append(children, gap(32),
-			center(note(16, "Couldn't open this invite", p.Text)), gap(12),
+			center(note(16, title, p.Text)), gap(12),
 			center(note(14.5, in.err, p.TextSecondary)), gap(28),
 			buttons(cancel))
+	case in.channel && in.ch == nil:
+		children = append(children, gap(40),
+			center(note(15, "Looking up the channel…", p.TextSecondary)), gap(32),
+			buttons(cancel))
+	case in.channel:
+		ch := in.ch
+		sub := "Channel"
+		if ch.Followers > 0 {
+			sub += " · " + followers(ch.Followers)
+		}
+		children = append(children, gap(36),
+			center(func(gtx C) D { return u.avatarOf(gtx, ch.ID, avatarChannel, 120) }), gap(24),
+			center(func(gtx C) D {
+				gtx.Constraints.Max.X -= gtx.Dp(48)
+				return u.nameWithBadge(gtx, ch.Name, 20, p.Text, ch.Verified)
+			}), gap(6),
+			center(note(14.5, sub, p.TextSecondary)))
+		if desc := strings.TrimSpace(in.chDesc); desc != "" {
+			children = append(children, gap(24), center(func(gtx C) D { return u.inviteDescription(gtx, desc) }))
+		}
+		children = append(children, gap(32), buttons(cancel, dialogButton{label: "Follow", primary: true}))
 	case g == nil:
 		children = append(children, gap(40),
 			center(note(15, "Looking up the group…", p.TextSecondary)), gap(32),

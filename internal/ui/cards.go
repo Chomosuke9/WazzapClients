@@ -117,7 +117,7 @@ func (u *UI) openMap(l *model.Location) {
 // messagePhone opens the chat with a phone number (digits with the
 // country code) once the backend has looked it up (phoneEvent).
 func (u *UI) messagePhone(digits, name string) {
-	u.cardPhone, u.cardPhoneName = digits, name
+	u.cardPhone, u.cardPhoneName, u.cardPhoneText = digits, name, ""
 	u.backend.LookupPhone(digits)
 }
 
@@ -127,16 +127,15 @@ func (u *UI) cardPhoneEvent(e model.PhoneEvent) bool {
 		return false
 	}
 	u.cardPhone = ""
+	text := u.cardPhoneText
+	u.cardPhoneText = ""
 	switch {
 	case e.Err != "":
 		u.toast(e.Err)
 	case e.ID == "":
 		u.toast("+" + e.Phone + " isn't on WhatsApp.")
 	default:
-		name := first(e.Name, u.cardPhoneName, "+"+e.Phone)
-		if !u.openChatByID(e.ID) {
-			u.openDirect(e.ID, name)
-		}
+		u.openLinkedChat(e.ID, first(e.Name, u.cardPhoneName, "+"+e.Phone), text)
 	}
 	return true
 }

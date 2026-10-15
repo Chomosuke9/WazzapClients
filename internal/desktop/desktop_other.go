@@ -8,7 +8,7 @@ import (
 )
 
 // Lock always succeeds: other systems don't stop a second instance yet.
-func Lock(dir string) bool { return true }
+func Lock(dir, link string) bool { return true }
 
 // TrayStart fails: there is no tray icon on other systems yet.
 func TrayStart(t Tray) error { return ErrUnsupported }
@@ -30,3 +30,18 @@ func SetStartAtLogin(on bool, args []string) error { return ErrUnsupported }
 
 // WaitExit returns at once: Lock doesn't stop a second instance here.
 func WaitExit(pid int, d time.Duration) {}
+
+// CanHandleLinks reports false: only Windows hands the app links.
+func CanHandleLinks() bool { return false }
+
+// RegisterLinks fails.
+func RegisterLinks(args []string) error { return ErrUnsupported }
+
+// LinksRegistered reports false.
+func LinksRegistered() bool { return false }
+
+// LinksHandled reports false.
+func LinksHandled() bool { return false }
+
+// OpenLinkSettings does nothing.
+func OpenLinkSettings() {}

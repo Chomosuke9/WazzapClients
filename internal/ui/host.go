@@ -46,6 +46,9 @@ type Options struct {
 	// the app isn't running. nil means it can't be started again (demo
 	// data).
 	Relaunch []string
+	// Link is a WhatsApp link (whatsapp://…) to open once the account is
+	// online: Windows started the app to open it (applink.go).
+	Link string
 	// NotifyDir keeps the pictures notifications show.
 	NotifyDir string
 	// EmojiDir keeps the emoji pictures that download (the animated and
@@ -115,6 +118,7 @@ func Run(b model.Backend, o Options) error {
 		Icon: icon.Tray,
 		Open: func() { h.request(request{kind: reqShow}) },
 		Quit: func() { h.request(request{kind: reqQuit}) },
+		Link: func(link string) { h.request(request{kind: reqLink, link: link}) },
 	}); err == nil {
 		h.tray = true
 		defer desktop.TrayStop()
@@ -165,6 +169,7 @@ func newHost(b model.Backend, o Options) *host {
 	h := &host{
 		b:        b,
 		o:        o,
+		link:     o.Link,
 		wake:     make(chan struct{}, 1),
 		reqs:     make(chan request, 16),
 		syncPct:  -1,
@@ -247,6 +252,7 @@ type host struct {
 	conn     model.ConnEvent // the latest state, for new windows
 	syncPct  int
 	openChat string                // chat to open in the next window
+	link     string                // a WhatsApp link to open once online
 	drafts   map[string]*chatDraft // the chats' drafts, kept across windows
 	quitting bool
 
@@ -281,6 +287,7 @@ type request struct {
 	kind reqKind
 	act  notify.Activation
 	dir  string // the account of reqSwitch
+	link string // reqLink's, or "" for the one waiting in host.link
 }
 
 type reqKind int
@@ -294,6 +301,7 @@ const (
 	reqRedraw                    // an update moved on: show it
 	reqRestart                   // an update is in place: start it and quit
 	reqAutoUpdate                // time for an automatic update check
+	reqLink                      // a second launch was to open a WhatsApp link
 )
 
 // request queues r for the UI goroutine. It's called from other
@@ -354,6 +362,10 @@ func (h *host) poll(invalidate bool) {
 	}
 	if online && len(h.later) > 0 {
 		h.actLater()
+	}
+	if online && h.link != "" {
+		// Not now: poll may run inside the UI's applyEvents.
+		h.request(request{kind: reqLink})
 	}
 	switch {
 	case len(evs) == 0:
@@ -417,6 +429,14 @@ func (h *host) handle(r request) bool {
 		return h.updateReady()
 	case reqAutoUpdate:
 		h.autoUpdate()
+	case reqLink:
+		// Without a link it's poll's: the open account came online.
+		if r.link != "" {
+			h.link = r.link
+		}
+		if h.link != "" {
+			h.show()
+		}
 	case reqRestart:
 		return h.restart()
 	}
@@ -507,6 +527,20 @@ func (h *host) show() {
 		h.u.openFromNotification(h.openChat)
 		h.openChat = ""
 	}
+	h.openLink()
+	h.win.Invalidate()
+}
+
+// openLink opens the WhatsApp link waiting in h.link, once there is a
+// window and the open account is online: until then the link's number or
+// group can't be looked up.
+func (h *host) openLink() {
+	if h.link == "" || h.u == nil || h.conn.State != model.StateOnline {
+		return
+	}
+	link := h.link
+	h.link = ""
+	h.u.openOutsideLink(link)
 	h.win.Invalidate()
 }
 
@@ -573,6 +607,7 @@ func (h *host) newUI() {
 		u.openFromNotification(h.openChat)
 		h.openChat = ""
 	}
+	h.openLink()
 }
 
 // windowEvent handles an event of the open window. It reports whether
@@ -588,6 +623,10 @@ func (h *host) windowEvent(e event.Event) (closed bool, err error) {
 		if f := e.Config.Focused && e.Config.Mode != app.Minimized; f != h.focused {
 			h.focused = f
 			u.away = !f
+			if f {
+				// Back from Windows' settings, maybe: links may open here now.
+				u.linkBar.checked = false
+			}
 			if !f {
 				u.stopOutgoingTyping()
 			}

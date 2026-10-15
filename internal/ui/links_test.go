@@ -56,6 +56,39 @@ func TestInviteCode(t *testing.T) {
 	}
 }
 
+func TestParseAppLink(t *testing.T) {
+	for link, want := range map[string]*appLink{
+		"whatsapp://send?phone=6281234567890&text=Hi%20there": {phone: "6281234567890", text: "Hi there"},
+		"whatsapp://send/?phone=%2B62+812-3456-7890":          {phone: "6281234567890"},
+		"WhatsApp://chat?code=FrLhsO1aBMEBhOFBtpLwxl":         {code: "FrLhsO1aBMEBhOFBtpLwxl"},
+		"https://wa.me/6281234567890?text=hello":              {phone: "6281234567890", text: "hello"},
+		"https://api.whatsapp.com/send?phone=15551234567":     {phone: "15551234567"},
+		"https://api.whatsapp.com/send/?phone=15551234567":    {phone: "15551234567"},
+		"https://chat.whatsapp.com/FrLhsO1aBMEBhOFBtpLwxl":    {code: "FrLhsO1aBMEBhOFBtpLwxl"},
+		"whatsapp://send?text=no+number":                      nil,
+		"whatsapp://chat?code=bad/../code":                    nil,
+		"https://wa.me/message/ABCDEF":                        {resolve: "ABCDEF", kind: model.LinkBusiness},
+		"https://api.whatsapp.com/message/ABCDEF":             {resolve: "ABCDEF", kind: model.LinkBusiness},
+		"https://wa.me/qr/QRCODE12":                           {resolve: "QRCODE12", kind: model.LinkContact},
+		"https://whatsapp.com/channel/0029VaExample":          {resolve: "0029VaExample", kind: model.LinkChannel},
+		"https://www.whatsapp.com/channel/0029VaExample/":     {resolve: "0029VaExample", kind: model.LinkChannel},
+		"whatsapp://channel/0029VaExample":                    {resolve: "0029VaExample", kind: model.LinkChannel},
+		"https://wa.me/channel/0029VaExample":                 nil,
+		"https://wa.me/qr/bad-code!":                          nil,
+		"https://wa.me/c/6281234567890":                       nil,
+		"https://wa.me.evil.example/6281234567890":            nil,
+		"https://example.com/send?phone=6281234567890":        nil,
+	} {
+		got, ok := parseAppLink(link)
+		switch {
+		case want == nil && ok:
+			t.Errorf("parseAppLink(%q) = %+v, want none", link, got)
+		case want != nil && (!ok || got != *want):
+			t.Errorf("parseAppLink(%q) = %+v, %v, want %+v", link, got, ok, *want)
+		}
+	}
+}
+
 // TestLinkHoverClick checks that hovering a link takes its underline away
 // and that clicking an invite link opens the invite dialog.
 func TestLinkHoverClick(t *testing.T) {
@@ -124,5 +157,66 @@ func TestMentionClick(t *testing.T) {
 	u.openMention(m, "@Bima")
 	if !u.info.open || u.info.chatID != "bima" || u.selected.ID != "work" {
 		t.Fatalf("clicking @Bima showed info %q (open %v) in chat %q, want bima's in work", u.info.chatID, u.info.open, u.selected.ID)
+	}
+}
+
+// TestOpenAppLink checks that a wa.me link opens the number's chat with
+// the link's text in the composer.
+func TestOpenAppLink(t *testing.T) {
+	u := New(mock.New())
+	u.Start(func() {})
+	u.applyEvents()
+	u.openOutsideLink("whatsapp://send?phone=%2B1+555-123-4567&text=Hello%21")
+	u.applyEvents()
+	if u.selected == nil || u.selected.ID != "15551234567@s.whatsapp.net" {
+		t.Fatalf("open chat %v, want 15551234567@s.whatsapp.net", u.selected)
+	}
+	if got := u.conv.composer.Text(); got != "Hello!" {
+		t.Errorf("composer %q, want %q", got, "Hello!")
+	}
+}
+
+// TestResolveLinks opens the links the server resolves with the demo
+// backend: a business's message link and a contact's QR link open their
+// chats, a followed channel opens, and another shows to follow first.
+func TestResolveLinks(t *testing.T) {
+	u := New(mock.New())
+	u.Start(func() {})
+	u.applyEvents()
+	open := func(link string) {
+		t.Helper()
+		if !u.openAppLink(link) {
+			t.Fatalf("openAppLink(%q) = false", link)
+		}
+		u.applyEvents()
+	}
+	open("https://wa.me/message/" + mock.LinkBusiness)
+	if u.selected == nil || u.selected.ID != "nova@lid" {
+		t.Fatalf("business link opened %v, want nova@lid", u.selected)
+	}
+	if got := u.conv.composer.Text(); !strings.HasPrefix(got, "Hi! I'd like") {
+		t.Errorf("business link's composer %q", got)
+	}
+	open("https://wa.me/qr/" + mock.LinkContact)
+	if u.selected == nil || u.selected.ID != "rina" {
+		t.Fatalf("contact link opened %v, want rina", u.selected)
+	}
+	open("https://whatsapp.com/channel/" + mock.LinkChannelFollowed)
+	if u.page != pageChannels || u.selected == nil || u.selected.ID != "techdaily@newsletter" {
+		t.Fatalf("followed channel's link: page %v, chat %v", u.page, u.selected)
+	}
+	open("https://whatsapp.com/channel/" + mock.LinkChannelSuggested)
+	in := u.dialog.invite
+	if u.dialog.kind != dialogInvite || !in.channel || in.ch == nil || in.ch.ID != "bola@newsletter" {
+		t.Fatalf("suggested channel's link shows %+v", in)
+	}
+	u.followFromLink(in.ch.ID)
+	u.applyEvents()
+	if u.selected == nil || u.selected.ID != "bola@newsletter" {
+		t.Fatalf("followed channel opened %v, want bola@newsletter", u.selected)
+	}
+	open("https://wa.me/qr/Unknown1")
+	if u.selected.ID != "bola@newsletter" {
+		t.Errorf("an unknown link opened %v", u.selected)
 	}
 }

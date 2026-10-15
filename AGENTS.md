@@ -257,6 +257,14 @@ Gotchas already found in the pinned version (v0.10.x):
 - Keep in chat is a `KeepInChatMessage` (kept in `wz_messages.kept`; history sync says it
   in `WebMessageInfo.keepInChat`). WhatsApp reports go only from the phone: hypermeow has
   no call for them, so Report asks and offers to block (`confirmReport`).
+- Websites send WhatsApp links (wa.me, api.whatsapp.com) on to `whatsapp://send?phone=…`
+  and invites to `whatsapp://chat?code=…`; Windows starts the scheme's handler with the
+  link as the last argument. Apps can't make themselves the default: Windows keeps the
+  choice in a hash-protected `UserChoice` (24H2: `UserChoiceLatest`) key. Settings >
+  General, or the bar above the chat list that asks like a browser that isn't the
+  default (`layoutLinkBar`), registers the app (`desktop.RegisterLinks`) and, when another app has the
+  scheme, opens `ms-settings:defaultapps?registeredAppUser=WazzapClients`. The link waits
+  in `host.link` until the account is online, since it needs a lookup.
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
@@ -377,7 +385,12 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    (with the unread count) and the day pinned at the top while a chat
                    scrolls in scrolldown.go; system messages ("Alice added Bob", missed
                    calls: grey chips down the middle) in system.go; group invite links (the dialog that joins
-                   one) in invite.go; a community's announcements (cards down the
+                   one) in invite.go; WhatsApp's links (wa.me, api.whatsapp.com/send,
+                   whatsapp://send and whatsapp://chat: a number's chat with the link's
+                   text in the composer, or the invite dialog; and those the server
+                   resolves, `Backend.ResolveLink`: a channel, shown in the invite dialog
+                   to follow, a business's wa.me/message link and a contact's wa.me/qr
+                   link), clicked in a message or handed over by Windows, in applink.go; a community's announcements (cards down the
                    middle headed by their sender, a forward button beside them, and
                    "Only community admins can send messages" for members) in announce.go;
                    chat actions shared by menus and info panels (mute choices, lists,
@@ -441,6 +454,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    (LIMIT_SHARING, kept with its info; it can't be set) in about.go;
                    a chat's disappearing-messages timer (wz_chats.ephemeral, for the
                    avatars' timer badge) in timer.go;
+                   the links only the server resolves (channels, business messages,
+                   contact QR codes; `ResolveLink`) in links.go;
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
                    and snippetmedia.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot); in
@@ -475,7 +490,9 @@ internal/notify/   system notifications: WinRT toasts on Windows (replaced per c
                    when read, Reply and Mark as read through a COM activator), notify-send
                    or osascript elsewhere
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
-                   (Windows; stubs elsewhere), and the system's light or dark theme (Settings >
+                   (Windows; stubs elsewhere), whatsapp: links (links_windows.go: a ProgID
+                   and Capabilities, so Settings > Default apps offers the app; a second
+                   launch hands its link to the running one with WM_COPYDATA), and the system's light or dark theme (Settings >
                    Chats > Theme > System default, read again when the window gets focus),
                    and the names of microphones and speakers (Windows)
 internal/update/   updates from GitHub releases (Settings > Help; automatic updates, on by
@@ -663,7 +680,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, invite,
-# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), channellink (a channel's link, to follow), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
