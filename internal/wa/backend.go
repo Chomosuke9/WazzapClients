@@ -73,6 +73,9 @@ type Backend struct {
 	subMu     sync.Mutex
 	subtitles map[string]string // group JID → participant list
 
+	labelMu sync.Mutex
+	labels  map[string]map[string]memberLabel // group JID → member → label (labels.go)
+
 	infoMu      sync.Mutex
 	infoFetched map[string]bool // info panels refreshed this session
 	abouts      aboutCache      // contacts' about texts (about.go)
@@ -1367,6 +1370,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		cd := convData{jid: jid, isGroup: jid.Server == types.GroupServer}
 		if conv.LimitSharing != nil {
 			b.setLimitSharing(ctx, jid.String(), conv.GetLimitSharing(), conv.GetLimitSharingSettingTimestamp())
+		}
+		for _, gp := range conv.GetParticipant() {
+			if who, err := types.ParseJID(gp.GetUserJID()); err == nil && cd.isGroup {
+				b.setMemberLabel(ctx, jid.String(), who, gp.GetMemberLabel())
+			}
 		}
 		if cd.isGroup || isChannel(jid) {
 			cd.name = first(conv.GetName(), conv.GetDisplayName())

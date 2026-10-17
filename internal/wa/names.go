@@ -278,6 +278,9 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 	}
 	if isGroup && !m.FromMe && r.senderJID != "" {
 		m.Sender = b.senderNameStr(ctx, r.senderJID, r.senderPush)
+		if l, ok := b.memberLabelOf(ctx, m.ChatID, r.senderJID); ok {
+			m.SenderLabel = l
+		}
 	}
 	if r.quote != nil {
 		m.Quote = b.resolveQuote(ctx, m.ChatID, r.quote)

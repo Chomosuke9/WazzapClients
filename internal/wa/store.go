@@ -154,6 +154,13 @@ CREATE TABLE IF NOT EXISTS wz_list_chats (
 	chat TEXT NOT NULL,
 	PRIMARY KEY (list, chat)
 );
+CREATE TABLE IF NOT EXISTS wz_member_labels (
+	chat   TEXT NOT NULL,             -- group JID
+	member TEXT NOT NULL,             -- participant, canonical (usually a LID)
+	label  TEXT NOT NULL DEFAULT '',  -- '' once they removed it
+	ts     INTEGER NOT NULL DEFAULT 0, -- Unix seconds it was set
+	PRIMARY KEY (chat, member)
+);
 `
 
 // migrations add columns to databases created by older versions.

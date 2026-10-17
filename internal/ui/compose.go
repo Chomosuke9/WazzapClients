@@ -615,7 +615,7 @@ func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
 	}
 	q := &model.Quote{ID: m.ID, Text: m.Text, Media: m.Media}
 	if !m.FromMe {
-		q.Sender = m.Sender
+		q.Sender, q.SenderID = m.Sender, m.SenderID
 		if q.Sender == "" && u.selected != nil && !u.selected.IsGroup {
 			q.Sender = u.selected.Name
 		}

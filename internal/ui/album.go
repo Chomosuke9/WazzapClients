@@ -4,7 +4,6 @@ import (
 	"image"
 	"strconv"
 
-	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 
@@ -218,10 +217,9 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 	var sender, fwd, quote part
 	hasSender := c.IsGroup && !out && r.first && m0.Sender != ""
 	if hasSender {
-		col := p.Senders[hashIndex(m0.SenderID+m0.Sender, len(p.Senders))]
 		sgtx := cgtx
 		sgtx.Constraints.Max.X = gridW - 2*textInset
-		sender = record(sgtx, u.label(13, m0.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+		sender = record(sgtx, func(gtx C) D { return u.layoutSenderName(gtx, m0, p.BubbleIn) })
 	}
 	if m0.Forwarded {
 		fwd = record(cgtx, func(gtx C) D {

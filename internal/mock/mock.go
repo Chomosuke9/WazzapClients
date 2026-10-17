@@ -385,6 +385,17 @@ func demo(now time.Time) []*demoChat {
 				Receipt: model.Sent, Whisper: []string{"Andre", "Dewi"}},
 		},
 	}
+	// The labels members gave themselves, beside their names.
+	labels := map[string]string{"andre": "Tech lead", "clara": "QA"}
+	for _, m := range work.Messages {
+		if m.Sender != "" && m.SenderID == "" {
+			m.SenderID = strings.ToLower(m.Sender)
+		}
+		if q := m.Quote; q != nil && q.Sender != "" && q.SenderID == "" {
+			q.SenderID = strings.ToLower(q.Sender)
+		}
+		m.SenderLabel = labels[m.SenderID]
+	}
 
 	chats := []*demoChat{
 		rina, family, work,

@@ -133,10 +133,13 @@ type Message struct {
 	FromMe   bool
 	Sender   string // display name; group chats only
 	SenderID string // sender JID; group chats only
-	Text     string
-	Time     time.Time
-	Receipt  Receipt
-	Quote    *Quote
+	// SenderLabel is the tag the sender gave themselves in the group
+	// ("Tyrant"), shown beside their name; "" for none.
+	SenderLabel string
+	Text        string
+	Time        time.Time
+	Receipt     Receipt
+	Quote       *Quote
 	// Reactions counts the reactions to the message by emoji, the most
 	// given first, and MyReaction is yours ("" for none).
 	Reactions  []ReactionCount
@@ -867,6 +870,14 @@ type MediaEvent struct {
 	Failed        bool // the download failed; a NoticeEvent says why
 }
 
+// LabelEvent reports that a group member changed the label beside their
+// name (Message.SenderLabel). Members holds their IDs, LID and phone JID.
+type LabelEvent struct {
+	ChatID  string
+	Members []string
+	Label   string
+}
+
 // InfoEvent reports that the info panel details of a chat changed.
 type InfoEvent struct{ ChatID string }
 
@@ -1139,6 +1150,7 @@ func (CaughtUpEvent) isEvent()     {}
 func (AvatarEvent) isEvent()       {}
 func (MediaEvent) isEvent()        {}
 func (InfoEvent) isEvent()         {}
+func (LabelEvent) isEvent()        {}
 func (StatusEvent) isEvent()       {}
 func (ChannelsEvent) isEvent()     {}
 func (CommunitiesEvent) isEvent()  {}

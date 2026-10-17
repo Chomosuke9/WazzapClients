@@ -46,6 +46,7 @@ func (r *rawMsg) fill(raw, edit []byte) {
 	m.Disappears = c.ctx.GetExpiration() > 0
 	m.ForwardedMany = forwardedMany(c.ctx)
 	r.fwdScore = c.ctx.GetForwardingScore()
+	m.SenderLabel = c.ctx.GetMemberLabel().GetLabel() // as sent; resolve has the latest
 	if !c.buttons.empty() {
 		r.buttons = c.buttons
 		c.buttons.apply(m)

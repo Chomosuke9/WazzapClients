@@ -989,8 +989,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	var sender, body part
 	hasSender := c.IsGroup && !out && tail && m.Sender != ""
 	if hasSender {
-		col := p.Senders[hashIndex(m.SenderID+m.Sender, len(p.Senders))]
-		sender = record(cgtx, u.label(13, m.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+		sender = record(cgtx, func(gtx C) D { return u.layoutSenderName(gtx, m, p.BubbleIn) })
 		contentW = max(contentW, sender.size.X)
 	}
 	var head part
@@ -1480,7 +1479,7 @@ func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width
 		name = "You"
 	}
 	name = plainText(name)
-	col := p.Senders[hashIndex(name, len(p.Senders))]
+	col := u.senderColor(q.SenderID, name)
 	if name == "You" {
 		col = p.Green
 	}
@@ -1678,8 +1677,7 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 	var sender part
 	hasSender := c.IsGroup && !out && tail && m.Sender != ""
 	if hasSender {
-		col := p.Senders[hashIndex(m.SenderID+m.Sender, len(p.Senders))]
-		sender = record(cgtx, u.label(13, m.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+		sender = record(cgtx, func(gtx C) D { return u.layoutSenderName(gtx, m, p.BubbleIn) })
 	}
 	quote := record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, w, u.quotedMessage(m.Quote)) })
 	meta := record(cgtx, func(gtx C) D { return u.layoutMeta(gtx, m, metaCol, nil) })
@@ -1724,8 +1722,7 @@ func (u *UI) stickerHeader(gtx C, m *model.Message, sz, maxW int) part {
 	padX, padY := gtx.Dp(9), gtx.Dp(8)
 	ngtx := gtx
 	ngtx.Constraints = layout.Constraints{Max: image.Pt(max(0, maxW-2*padX), 1<<20)}
-	col := p.Senders[hashIndex(m.SenderID+m.Sender, len(p.Senders))]
-	name := record(ngtx, u.label(13, m.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+	name := record(ngtx, func(gtx C) D { return u.layoutSenderName(gtx, m, p.BubbleIn) })
 	w := min(maxW, max(name.size.X+2*padX, sz+gtx.Dp(24)))
 	h := name.size.Y + 2*padY
 	return record(gtx, func(gtx C) D {

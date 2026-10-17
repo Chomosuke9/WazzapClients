@@ -96,7 +96,7 @@ const annFwdRoom = unit.Dp(44)
 // name and "Community admin".
 func (u *UI) layoutAnnHeader(gtx C, m *model.Message) D {
 	p := u.pal
-	name, col := m.Sender, p.Senders[hashIndex(m.SenderID+m.Sender, len(p.Senders))]
+	name, col := m.Sender, u.senderColor(m.SenderID, m.Sender)
 	pic := func(gtx C) D { return u.avatar(gtx, m.SenderID, m.Sender, false, 38) }
 	if m.FromMe {
 		name, col = "You", p.Green

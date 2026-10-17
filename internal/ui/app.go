@@ -1309,6 +1309,8 @@ func (u *UI) applyEvents() {
 			u.inviteLooked(e)
 		case model.JoinedEvent:
 			u.inviteJoined(e)
+		case model.LabelEvent:
+			u.labelChanged(e)
 		case model.InfoEvent:
 			if u.conv.membersFor == e.ChatID {
 				u.conv.membersFor = ""
