@@ -232,8 +232,8 @@ type UI struct {
 		listSetFor   string
 		find         listSearchState // the search's contacts and messages
 		pick         chatPick        // select mode (selectchats.go)
-		chipOff      int             // px the chips are scrolled (chips.go)
-		chipShown    int             // the chip last scrolled into view
+		chipHidden   int             // the first chip that didn't fit, under ▾ (chips.go)
+		chipMoreH    int             // ▾'s height, where its menu opens
 		showArchived bool
 		list         widget.List
 		rows         map[string]*widget.Clickable
@@ -1399,6 +1399,9 @@ func (u *UI) sortChats() {
 		a, b := u.chats[i], u.chats[j]
 		if a.Pinned != b.Pinned {
 			return a.Pinned
+		}
+		if a.Pinned && !a.PinnedAt.Equal(b.PinnedAt) {
+			return a.PinnedAt.After(b.PinnedAt)
 		}
 		return a.Time.After(b.Time)
 	})

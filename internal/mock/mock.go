@@ -175,6 +175,9 @@ func (b *Backend) Chats() []*model.Chat {
 		if out[i].Pinned != out[j].Pinned {
 			return out[i].Pinned
 		}
+		if out[i].Pinned && !out[i].PinnedAt.Equal(out[j].PinnedAt) {
+			return out[i].PinnedAt.After(out[j].PinnedAt)
+		}
 		return out[i].Time.After(out[j].Time)
 	})
 	return out

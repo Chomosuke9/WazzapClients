@@ -314,7 +314,14 @@ func (b *Backend) SetMuted(id string, v bool, d time.Duration) {
 		}
 	})
 }
-func (b *Backend) SetPinned(id string, v bool) { b.setChat(id, func(c *model.Chat) { c.Pinned = v }) }
+func (b *Backend) SetPinned(id string, v bool) {
+	b.setChat(id, func(c *model.Chat) {
+		c.Pinned, c.PinnedAt = v, time.Time{}
+		if v {
+			c.PinnedAt = b.now()
+		}
+	})
+}
 func (b *Backend) SetFavorite(id string, v bool) {
 	b.setChat(id, func(c *model.Chat) { c.Favorite = v })
 }

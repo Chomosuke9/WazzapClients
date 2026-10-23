@@ -75,6 +75,12 @@ func (b *Backend) isMe(j types.JID) bool {
 	return j.User == cli.Store.ID.User || j.User == cli.Store.LID.User
 }
 
+// isMeID reports whether a chat ID is yours: the "message yourself" chat.
+func (b *Backend) isMeID(id string) bool {
+	j, err := types.ParseJID(id)
+	return err == nil && b.isMe(j)
+}
+
 type contactNames struct {
 	saved, business, push, phone, redacted string
 }
@@ -275,6 +281,9 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 	if m.Kind == model.KindSystem {
 		m.Text, m.Notice = b.systemText(ctx, r, r.stub, r.stubParams)
 		return m
+	}
+	if m.FromMe && m.Receipt >= model.Sent && !isGroup && b.isMeID(m.ChatID) {
+		m.Receipt = model.Read // you've read what you sent yourself
 	}
 	if isGroup && !m.FromMe && r.senderJID != "" {
 		m.Sender = b.senderNameStr(ctx, r.senderJID, r.senderPush)

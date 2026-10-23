@@ -59,6 +59,9 @@ func (u *UI) updateChips(gtx C) {
 			u.pickChip(it)
 		}
 	}
+	if u.btn("chip:more").Clicked(gtx) {
+		u.openChipMenu()
+	}
 }
 
 // loadLists reads the custom lists again, once per frame however many

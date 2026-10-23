@@ -470,7 +470,7 @@ func (u *UI) layoutRowName(gtx C, c *model.Chat, verified bool) D {
 			gtx.Constraints.Min.X = 0
 			return u.label(17.5, c.Name, p.Text).Layout(gtx)
 		}),
-		layout.Rigid(u.label(17.5, "  (You)", p.Text).Layout),
+		layout.Rigid(u.label(17.5, " (You)", p.Text).Layout),
 	)
 }
 

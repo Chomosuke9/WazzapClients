@@ -100,8 +100,14 @@ func (u *UI) drawAvatar(gtx C, id, name string, kind avatarKind, size unit.Dp) D
 			centerIn(gtx, px, u.label(unit.Sp(float32(size)*0.42), "💬", p.Text).Layout)
 			return dims
 		}
-		fillCircle(gtx, mid, px/2, p.GroupAvatar)
-		centerIn(gtx, px, iconW(icGroup, size*0.5, p.GroupAvatarIcon))
+		// Each group its own tint, from the people's initials' colors.
+		bg, fg := p.GroupAvatar, p.GroupAvatarIcon
+		if id != "" && len(p.AvatarBgs) > 0 {
+			i := avatarTint(id, name, len(p.AvatarBgs))
+			bg, fg = p.AvatarBgs[i], p.AvatarFgs[i]
+		}
+		fillCircle(gtx, mid, px/2, bg)
+		centerIn(gtx, px, iconW(icGroup, size*0.5, fg))
 		return dims
 	}
 	if initial := avatarInitial(name); initial != "" && len(p.AvatarBgs) > 0 {

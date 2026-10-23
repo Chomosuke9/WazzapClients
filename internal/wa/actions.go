@@ -318,8 +318,12 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg *wa
 			b.sendFailed(chatID, id, "Couldn't send the message.")
 			return
 		}
-		_ = b.store.setReceipt(b.ctx, chatID, []string{id}, model.Sent)
-		b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{id}, Receipt: model.Sent})
+		r := model.Sent
+		if b.isMeID(chatID) {
+			r = model.Read // nobody else to read it
+		}
+		_ = b.store.setReceipt(b.ctx, chatID, []string{id}, r)
+		b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{id}, Receipt: r})
 		b.serverTime(chatID, id, resp.Timestamp)
 	}()
 }

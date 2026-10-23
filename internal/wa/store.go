@@ -907,6 +907,9 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	}
 	c.IsGroup = isGroup != 0
 	c.Pinned = pinned > 0
+	if c.Pinned {
+		c.PinnedAt = time.Unix(pinned, 0)
+	}
 	c.Muted = mutedUntil == -1 || mutedUntil > now.Unix()
 	if c.Muted && mutedUntil > 0 {
 		c.MuteUntil = time.Unix(mutedUntil, 0)

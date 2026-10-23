@@ -84,12 +84,54 @@ func LoadEmojiFont(path string) error {
 	}
 	for i := range set.faces {
 		set.faces[i].Font.Typeface = emojiTypeface
-		set.faces[i].Face.(memFace).font.BitmapHook = emojiBitmap // the 3D emoji style
+		f := set.faces[i].Face.(memFace).font
+		f.BitmapHook = emojiBitmap // the 3D emoji style
+		f.Cmap = noKeycapCmap{f.Cmap}
 	}
 	set.font.BitmapHook = emojiBitmap
 	emojiFonts.Store(set)
 	return nil
 }
+
+// noKeycapCmap hides digits, # and * from the shapers. Noto Color
+// Emoji has digits, # and * (keycaps' first parts), and comes right after
+// Segoe UI in typeface, so where Segoe UI isn't installed every number was
+// drawn with it, as wide picture glyphs. shapeEmoji's copy of the font
+// keeps them, for the keycaps it draws.
+type noKeycapCmap struct{ fontapi.Cmap }
+
+func (c noKeycapCmap) Lookup(r rune) (fontapi.GID, bool) {
+	if keycapBase(r) {
+		return 0, false
+	}
+	return c.Cmap.Lookup(r)
+}
+
+func (c noKeycapCmap) Iter() fontapi.CmapIter { return &noKeycapIter{it: c.Cmap.Iter()} }
+
+// noKeycapIter reads a character ahead: go-text's iterators move on in
+// Char, not Next.
+type noKeycapIter struct {
+	it fontapi.CmapIter
+	r  rune
+	g  fontapi.GID
+}
+
+func (it *noKeycapIter) Next() bool {
+	for it.it.Next() {
+		if it.r, it.g = it.it.Char(); !keycapBase(it.r) {
+			return true
+		}
+	}
+	return false
+}
+
+func (it *noKeycapIter) Char() (rune, fontapi.GID) { return it.r, it.g }
+
+// keycapBase reports whether r starts a keycap emoji (1️⃣, #️⃣, *️⃣). The
+// font's space stays: the shaper keeps the emoji font for a space after an
+// emoji (see narrowEmojiSpaces).
+func keycapBase(r rune) bool { return r >= '0' && r <= '9' || r == '#' || r == '*' }
 
 // memFace is a font parsed from bytes that stay in memory.
 type memFace struct{ font *fontapi.Font }

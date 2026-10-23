@@ -358,7 +358,7 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    panel's place) and a group's members in chatsearch.go; the chat list's
                    search (chats, archived ones too, contacts and every chat's messages) in
                    listsearch.go; custom lists as filter chips and New list in lists.go, the chip row,
-                   which scrolls sideways, in chips.go; Select chats (the ⋮ menu: checkboxes
+                   with unread counts and a ▾ for those that don't fit, in chips.go; Select chats (the ⋮ menu: checkboxes
                    and a bar of bulk actions) in selectchats.go; App lock (a salted PBKDF2
                    hash in the prefs, the lock screen, auto-lock; shared by the host's UIs)
                    in applock.go; the composer's

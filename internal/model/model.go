@@ -402,7 +402,10 @@ type Chat struct {
 	Name    string
 	IsGroup bool
 	Pinned  bool
-	Muted   bool
+	// PinnedAt is when the chat was pinned: pinned chats keep the order
+	// they were pinned in, the latest first, whatever arrives.
+	PinnedAt time.Time
+	Muted    bool
 	// MuteUntil is when a timed mute ends; zero while muted means always.
 	MuteUntil time.Time
 	Archived  bool

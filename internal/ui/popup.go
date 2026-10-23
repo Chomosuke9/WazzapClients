@@ -144,6 +144,7 @@ const (
 	ctxInfoPhoto   // a group's picture in its info panel (groupedit.go)
 	ctxReact       // a message's reaction bar alone, from its React button (sidebuttons.go)
 	ctxPickMute    // mute durations for the chats picked (selectchats.go)
+	ctxChips       // the filter chips that didn't fit (chips.go)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -461,6 +462,8 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			if u.sidebar.pick.on {
 				items = u.pickMuteItems()
 			}
+		case ctxChips:
+			items = u.chipMenuItems()
 		}
 		if items == nil {
 			u.ctx = ctxMenu{} // its chat went away

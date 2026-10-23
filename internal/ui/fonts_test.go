@@ -60,6 +60,30 @@ func TestEmojiSpaceWithSystemNoto(t *testing.T) {
 	}
 }
 
+// TestDigitsWithoutSegoe checks that without Segoe UI (Linux, macOS)
+// digits, # and * come from a text font, not the emoji font's keycap
+// parts, which comes next in typeface.
+func TestDigitsWithoutSegoe(t *testing.T) {
+	fm := fontscan.NewFontMap(nil)
+	for i, f := range bundledFonts() {
+		fm.AddFace(f.Face.Face(), fontscan.Location{File: fmt.Sprintf("font-%d", i)},
+			opentype.FontToDescription(f.Font))
+	}
+	fm.SetQuery(fontscan.Query{
+		Families: strings.Split(string(typeface), ", "),
+		Aspect:   opentype.FontToDescription(font.Font{}).Aspect,
+	})
+	emoji := fm.ResolveFace('🎓')
+	for _, r := range "09#*" {
+		if fm.ResolveFace(r) == emoji {
+			t.Errorf("%c is drawn with the emoji font", r)
+		}
+	}
+	if _, ok := emoji.NominalGlyph(' '); !ok {
+		t.Error("the emoji font lost its space")
+	}
+}
+
 func checkEmojiSpaces(t *testing.T, u *UI) {
 	t.Helper()
 	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},

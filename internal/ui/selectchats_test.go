@@ -6,14 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"gioui.org/f32"
 	"gioui.org/io/input"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // selectUI starts a demo UI and returns it with a function that draws a
@@ -152,23 +151,34 @@ func TestSelectChats(t *testing.T) {
 	}
 }
 
-// TestChipsScroll checks the filter chips, with the lists' and "+",
-// scroll sideways when they don't fit.
-func TestChipsScroll(t *testing.T) {
-	u, r, frame := selectUI(t)
+// TestChipsMore checks the filter chips that don't fit collapse into ▾,
+// whose menu turns them on, and that chips count their unread chats.
+func TestChipsMore(t *testing.T) {
+	u, _, frame := selectUI(t)
+	items := u.chipItems()
+	counts := u.chipCounts(items)
+	if counts[filterAll] != 0 || counts[filterUnread] == 0 || counts[filterGroups] == 0 {
+		t.Errorf("counts %v: want none for All, some unread and groups", counts)
+	}
 	u.split.w = 320
 	frame()
 	frame()
 	if len(u.lists) == 0 {
 		t.Fatal("no demo lists")
 	}
-	p := f32.Pt(float32(railWidth+100), 41+1+68+43+11+17) // over the chips, below the title bar
-	r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p},
-		pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: p, Scroll: f32.Pt(0, 120)})
+	n := len(u.chipItems())
+	if u.sidebar.chipHidden >= n {
+		t.Fatalf("all %d chips shown in a narrow list", n)
+	}
+	u.openChipMenu()
 	frame()
-	frame()
-	if u.sidebar.chipOff <= 0 {
-		t.Errorf("the wheel didn't scroll the chips (offset %d)", u.sidebar.chipOff)
+	if u.ctx.kind != ctxChips || len(u.ctx.items) != n-u.sidebar.chipHidden {
+		t.Fatalf("menu %v with %d items, want %d", u.ctx.kind, len(u.ctx.items), n-u.sidebar.chipHidden)
+	}
+	list := u.ctx.items[len(u.ctx.items)-2] // the last list, before New list
+	list.run()
+	if u.sidebar.filter != filterList || u.sidebar.listID != u.lists[len(u.lists)-1].ID {
+		t.Errorf("%q from the menu didn't filter by it", list.label)
 	}
 }
 
@@ -221,5 +231,20 @@ func TestAppLock(t *testing.T) {
 	frame()
 	if u.lock.locked {
 		t.Error("still locked with App lock off")
+	}
+}
+
+// TestPinnedOrder checks pinned chats keep the order they were pinned in,
+// the latest first, when a message comes to one pinned earlier.
+func TestPinnedOrder(t *testing.T) {
+	u, _, frame := selectUI(t)
+	u.backend.SetPinned("design", true)
+	frame()
+	if u.chats[0].ID != "design" {
+		t.Fatalf("the chat pinned last is %s, not first", u.chats[0].ID)
+	}
+	u.upsertMessage(&model.Message{ID: "late", ChatID: "family", Text: "hi", Time: testNow().Add(time.Hour)})
+	if u.chats[0].ID != "design" || !u.chats[1].Pinned || !u.chats[2].Pinned {
+		t.Errorf("a message reordered the pinned chats: %s, %s, %s", u.chats[0].ID, u.chats[1].ID, u.chats[2].ID)
 	}
 }
