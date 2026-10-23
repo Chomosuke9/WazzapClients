@@ -140,3 +140,52 @@ func TestKeepDeletedStatus(t *testing.T) {
 		t.Errorf("on: got %+v, want it kept and revoked at %v", up, at)
 	}
 }
+
+// TestStatusSeenElsewhere checks that statuses viewed on your phone show
+// as viewed: its read receipt (read receipts on) or read-self (off), on
+// status@broadcast or, for a group story, in its group. Someone else's
+// read is of your own status and changes nothing.
+func TestStatusSeenElsewhere(t *testing.T) {
+	b := testBackend(t)
+	now := time.Now()
+	me := types.NewJID("1", types.HiddenUserServer)
+	poster := types.NewJID("555", types.DefaultUserServer)
+	group := types.NewJID("123", types.GroupServer)
+	for _, id := range []string{"S1", "S2", "S3", "S4"} {
+		b.onStatus(&events.Message{
+			Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: types.StatusBroadcastJID, Sender: poster, IsGroup: true},
+				ID: types.MessageID(id), Timestamp: now},
+			Message: &waE2E.Message{Conversation: proto.String("status " + id)}})
+	}
+	if err := b.store.putStatus(b.ctx, b.db, storedStatus{id: "G1", sender: "555@lid", group: group.String(), ts: now, c: content{text: "story"}}); err != nil {
+		t.Fatal(err)
+	}
+	receipt := func(chat types.JID, from types.JID, typ types.ReceiptType, ids ...types.MessageID) {
+		b.onReceipt(&events.Receipt{
+			MessageSource: types.MessageSource{Chat: chat, Sender: from, IsGroup: true, IsFromMe: from == me},
+			MessageIDs:    ids, Type: typ, Timestamp: now})
+	}
+	receipt(types.StatusBroadcastJID, me, types.ReceiptTypeRead, "S1", "S2")
+	receipt(types.StatusBroadcastJID, types.NewJID("777", types.HiddenUserServer), types.ReceiptTypeRead, "S3")
+	receipt(types.StatusBroadcastJID, me, types.ReceiptTypeReadSelf, "S4")
+	receipt(group, me, types.ReceiptTypeRead, "G1")
+
+	viewed := map[string]bool{}
+	for _, th := range b.Statuses() {
+		for _, up := range th.Updates {
+			viewed[up.ID] = up.Viewed
+		}
+	}
+	want := map[string]bool{"S1": true, "S2": true, "S3": false, "S4": true, "G1": true}
+	for id, w := range want {
+		if viewed[id] != w {
+			t.Errorf("%s viewed = %v, want %v", id, viewed[id], w)
+		}
+	}
+
+	// The read receipt names the poster as the status came, not canonical.
+	var participant string
+	if err := b.db.QueryRow(`SELECT participant FROM wz_status WHERE id = 'S1'`).Scan(&participant); err != nil || participant != poster.String() {
+		t.Errorf("participant = %q (%v), want %s", participant, err, poster)
+	}
+}

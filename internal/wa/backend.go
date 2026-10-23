@@ -1225,36 +1225,26 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 	ctx := b.ctx
 	chat := b.canonical(ctx, e.Chat).String()
 	var r model.Receipt
-	if isStatus(e.Chat) {
-		// Statuses seen on another device.
-		if e.Type == types.ReceiptTypeReadSelf {
-			ids := make([]string, len(e.MessageIDs))
-			for i, id := range e.MessageIDs {
-				ids[i] = string(id)
-			}
-			_ = b.store.setStatusViewed(ctx, ids)
+	// Statuses you saw on another device: your phone's read (or played)
+	// receipt, or read-self with read receipts off. Group stories come in
+	// their group, mixed with its messages.
+	if statusSeenByMe(e) && (isStatus(e.Chat) || e.Chat.Server == types.GroupServer) {
+		group := chat
+		if isStatus(e.Chat) {
+			group = ""
+		}
+		n := b.store.statusesSeen(ctx, group, e.MessageIDs)
+		if n > 0 {
 			b.emit(model.StatusEvent{})
 		}
-		return
+		if group == "" || n == int64(len(e.MessageIDs)) {
+			return
+		}
+	} else if isStatus(e.Chat) {
+		return // someone viewed one of yours
 	}
 	switch e.Type {
 	case types.ReceiptTypeReadSelf:
-		if len(e.MessageIDs) > 0 {
-			args := []any{chat}
-			for _, id := range e.MessageIDs {
-				args = append(args, id)
-			}
-			result, err := b.db.ExecContext(ctx, `UPDATE wz_status SET viewed = 1 WHERE group_jid = ? AND id IN (`+placeholders(len(e.MessageIDs))+`)`, args...)
-			if err == nil {
-				n, _ := result.RowsAffected()
-				if n > 0 {
-					b.emit(model.StatusEvent{})
-				}
-				if n == int64(len(e.MessageIDs)) {
-					return
-				}
-			}
-		}
 		b.readElsewhere(chat, e.MessageIDs)
 		return
 	case types.ReceiptTypeDelivered:

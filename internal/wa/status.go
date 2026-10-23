@@ -29,6 +29,7 @@ func isStatus(j types.JID) bool {
 // storedStatus is one status update as kept in wz_status.
 type storedStatus struct {
 	id, sender, push string
+	participant      string // the poster as the status came (sender is canonical), for its read receipt
 	group            string
 	fromMe           bool
 	ts               time.Time
@@ -61,11 +62,15 @@ func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedS
 		ts:     evt.Info.Timestamp,
 		c:      c,
 	}
+	if !evt.Info.Sender.IsEmpty() {
+		s.participant = evt.Info.Sender.ToNonAD().String()
+	}
 	if isGroupStatus(evt) {
 		s.group = evt.Info.Chat.String()
 		for _, a := range c.ctx.GetStatusAttributions() {
 			if author, err := types.ParseJID(a.GetGroupStatus().GetAuthorJID()); err == nil && evt.Info.Sender.IsEmpty() && (author.Server == types.HiddenUserServer || author.Server == types.DefaultUserServer) {
 				s.sender = b.canonical(ctx, author).String()
+				s.participant = author.ToNonAD().String()
 				break
 			}
 		}
@@ -87,12 +92,13 @@ func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) err
 		blob = marshal(st.c.inner)
 	}
 	_, err := x.ExecContext(ctx, `
-		INSERT INTO wz_status (id, sender, push, from_me, ts, media, text, bg, thumb, media_blob, viewed, group_jid, duration, file_type)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_status (id, sender, push, from_me, ts, media, text, bg, thumb, media_blob, viewed, group_jid, duration, file_type, participant)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET viewed = MAX(wz_status.viewed, excluded.viewed),
-			thumb = COALESCE(excluded.thumb, wz_status.thumb)`,
+			thumb = COALESCE(excluded.thumb, wz_status.thumb),
+			participant = COALESCE(NULLIF(wz_status.participant, ''), excluded.participant)`,
 		st.id, st.sender, st.push, boolInt(st.fromMe), st.ts.Unix(), int(st.c.media), st.c.text, int64(st.c.bg),
-		st.c.thumb, blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type)
+		st.c.thumb, blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type, st.participant)
 	return err
 }
 
@@ -101,6 +107,37 @@ func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) err
 func (s *msgStore) markStatusRevoked(ctx context.Context, id string, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_status SET revoked = ? WHERE id = ? AND revoked = 0`, at.UnixMilli(), id)
 	return err
+}
+
+// statusSeenByMe reports whether a receipt says you saw what it names on
+// another device. Others' reads of a status are of your own.
+func statusSeenByMe(e *events.Receipt) bool {
+	switch e.Type {
+	case types.ReceiptTypeReadSelf, types.ReceiptTypePlayedSelf:
+		return true
+	case types.ReceiptTypeRead, types.ReceiptTypePlayed:
+		return e.IsFromMe
+	}
+	return false
+}
+
+// statusesSeen marks the statuses among ids viewed: those of group (a
+// group's stories), or of status@broadcast when group is "". It returns
+// how many of ids are such statuses.
+func (s *msgStore) statusesSeen(ctx context.Context, group string, ids []types.MessageID) int64 {
+	if len(ids) == 0 {
+		return 0
+	}
+	args := []any{group}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE wz_status SET viewed = 1 WHERE group_jid = ? AND id IN (`+placeholders(len(ids))+`)`, args...)
+	if err != nil {
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return n
 }
 
 func (s *msgStore) setStatusViewed(ctx context.Context, ids []string) error {
@@ -294,26 +331,31 @@ func (b *Backend) statusName(ctx context.Context, j types.JID, push string) stri
 }
 
 // ViewStatus marks a status as seen and tells its poster, unless ghost
-// mode is on.
+// mode is on: a read receipt to status@broadcast (a group story's group)
+// naming the poster as the status came, which also shows it seen on your
+// phone.
 func (b *Backend) ViewStatus(threadID, statusID string) {
 	_ = b.store.setStatusViewed(b.ctx, []string{statusID})
 	cli := b.client()
-	sender, err := types.ParseJID(threadID)
-	if cli == nil || err != nil || !cli.IsConnected() || b.ghost() {
+	if cli == nil || !cli.IsConnected() || b.ghost() {
+		return
+	}
+	var author, participant, group string
+	var fromMe bool
+	if err := b.db.QueryRowContext(b.ctx, `SELECT sender, participant, group_jid, from_me FROM wz_status WHERE id = ?`, statusID).
+		Scan(&author, &participant, &group, &fromMe); err != nil || fromMe {
 		return
 	}
 	chat := types.StatusBroadcastJID
-	if sender.Server == types.GroupServer {
-		chat = sender
-		var author string
-		var fromMe bool
-		if err := b.db.QueryRowContext(b.ctx, `SELECT sender, from_me FROM wz_status WHERE id = ? AND group_jid = ?`, statusID, threadID).Scan(&author, &fromMe); err != nil || fromMe {
+	if group != "" {
+		var err error
+		if chat, err = types.ParseJID(group); err != nil {
 			return
 		}
-		sender, err = types.ParseJID(author)
-		if err != nil || sender.IsEmpty() {
-			return
-		}
+	}
+	sender, err := types.ParseJID(first(participant, author))
+	if err != nil || sender.IsEmpty() {
+		return
 	}
 	go func() {
 		if err := cli.MarkRead(b.ctx, []types.MessageID{statusID}, time.Now(), chat, sender); err != nil {

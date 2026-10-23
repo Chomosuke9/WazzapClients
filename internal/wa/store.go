@@ -191,6 +191,9 @@ var migrations = []string{
 	`ALTER TABLE wz_chats ADD COLUMN not_member INTEGER NOT NULL DEFAULT 0`,
 	// Keep in chat, on a disappearing message.
 	`ALTER TABLE wz_messages ADD COLUMN kept INTEGER NOT NULL DEFAULT 0`,
+	// A status's poster as it came (a LID or a phone number), which its read
+	// receipt names; sender is canonical.
+	`ALTER TABLE wz_status ADD COLUMN participant TEXT NOT NULL DEFAULT ''`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
