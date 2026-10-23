@@ -84,6 +84,10 @@ type UI struct {
 	// (draft.go); the host's, so they outlast the window.
 	drafts map[string]*chatDraft
 
+	// idle is how long the user hasn't touched the keyboard or mouse
+	// (desktop.IdleTime); nil, in tests, is never idle.
+	idle func() time.Duration
+
 	chats      []*model.Chat
 	selected   *model.Chat
 	selPage    page             // page the selected chat was opened from
@@ -673,9 +677,14 @@ func (u *UI) open(c *model.Chat) {
 	u.restoreDraft()
 }
 
+// idleAfter is how long without input makes the user away (markSeen).
+const idleAfter = time.Minute
+
 // markSeen marks the open chat read while it is on screen and the window
 // has focus, as WhatsApp does: messages that arrive in it never count as
 // unread, and ones that came while the window was away are read on return.
+// A user who hasn't touched the keyboard or mouse for idleAfter is away
+// too, with the window in front: the first input after marks them read.
 // It reports whether it marked anything.
 func (u *UI) markSeen() bool {
 	c := u.selected
@@ -687,7 +696,7 @@ func (u *UI) markSeen() bool {
 		ch.Unread = 0
 		c.Unread = 1
 	}
-	if c.Unread <= 0 {
+	if c.Unread <= 0 || u.idle != nil && u.idle() >= idleAfter {
 		return false
 	}
 	c.Unread = 0

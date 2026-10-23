@@ -593,6 +593,7 @@ func (h *host) newUI() {
 	// The window may be there already (another account opened in it).
 	u.deco.Maximized = h.maximized
 	u.away = h.win != nil && h.events != nil && !h.focused
+	u.idle = desktop.IdleTime
 	// A new UI starts from the stored chats and the current state.
 	h.queue = append(h.queue[:0], h.conn)
 	if h.syncPct >= 0 && h.conn.State.LoggedIn() {

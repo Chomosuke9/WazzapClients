@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"testing"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -44,6 +45,17 @@ func TestOpenChatStaysRead(t *testing.T) {
 	frame()
 	if c := u.chatByID("rina"); c.Unread != 0 {
 		t.Errorf("back: open chat shows %d unread", c.Unread)
+	}
+	// Idle with the window in front: away too, until the next input.
+	idle := idleAfter
+	u.idle = func() time.Duration { return idle }
+	if c := arrive(1); c.Unread != 1 {
+		t.Errorf("idle: open chat shows %d unread, want 1", c.Unread)
+	}
+	idle = 0
+	frame()
+	if c := u.chatByID("rina"); c.Unread != 0 {
+		t.Errorf("back from idle: open chat shows %d unread", c.Unread)
 	}
 }
 
