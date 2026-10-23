@@ -79,7 +79,17 @@ func useEmojiStore(t *testing.T, style emojiStyleKind, files map[string][]byte) 
 	emojiStore = s
 	emojiStyleNow.Store(int32(style))
 	t.Cleanup(func() {
-		sheetWrites.Wait() // before dir goes
+		// Before dir goes: downloads still writing (a 404's .none file
+		// goes in after Fetch is asked), then the sheets being kept.
+		for _, st := range []*emojiset.Store{s, emojiStore} {
+			if st == nil {
+				continue
+			}
+			for st.Pending() > 0 {
+				time.Sleep(time.Millisecond)
+			}
+		}
+		sheetWrites.Wait()
 		emojiStore = old
 		emojiStyleNow.Store(int32(oldStyle))
 		emojiStill = oldStill

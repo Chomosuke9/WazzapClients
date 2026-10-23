@@ -56,6 +56,7 @@ func fakeStore(t *testing.T, files map[string]string, fail bool) (*Store, *sync.
 		return nil, http.StatusNotFound, nil
 	}
 	s.SetNotify(func() { got <- struct{}{} })
+	t.Cleanup(func() { settle(s) }) // before the folder goes
 	return s, &asked, got
 }
 
