@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -820,7 +821,12 @@ func (b *Backend) handle(evt any) {
 		if len(e.Index) > 0 && e.Index[0] == appstate.IndexFavorites && e.GetFavoritesAction() != nil {
 			b.onFavorites(e.GetFavoritesAction())
 		}
+		if len(e.Index) > 0 && e.Index[0] == appstate.IndexStatusPrivacy {
+			b.onStatusPrivacy(e.GetStatusPrivacy())
+		}
 		b.onStickerAppState(e)
+	case *events.UserStatusMute:
+		b.onStatusMute(e)
 
 	case *events.Contact:
 		b.names.clear()
@@ -954,8 +960,15 @@ func clearedUpTo(r *waSyncAction.SyncActionMessageRange, at time.Time) (int64, b
 // appStateResyncKey marks resyncAppStateOnce as done, in wz_meta. v2 also
 // picks up lists and favourites, which older versions ignored; v3 favourite
 // stickers; v4 again, for the ones v3 dropped; v5 the pins, mutes and
-// archives of chats whose history came after them, which were dropped.
-const appStateResyncKey = "appstate_resynced_v5"
+// archives of chats whose history came after them, which were dropped; v6
+// status privacy and hidden statuses (regular_high alone, after v5).
+const appStateResyncKey = "appstate_resynced_v6"
+
+// prevResyncKey is the resync before appStateResyncKey. Once it was done,
+// only the collections in resyncAgain are fetched again.
+const prevResyncKey = "appstate_resynced_v5"
+
+var resyncAgain = []appstate.WAPatchName{appstate.WAPatchRegularHigh}
 
 // recoveryGap is how long to wait before asking the phone again to repair
 // the same app state collection.
@@ -1004,10 +1017,14 @@ func (b *Backend) resyncAppStateOnce() {
 		return
 	}
 	cli := b.client()
+	again := b.store.meta(b.ctx, prevResyncKey) != ""
 	for _, name := range appstate.AllPatchNames {
 		// Remember each patch that synced, so that one which keeps failing
 		// doesn't refetch all the others on every connect.
 		done := key + ":" + string(name)
+		if again && !slices.Contains(resyncAgain, name) {
+			continue
+		}
 		if b.ctx.Err() != nil {
 			return
 		}

@@ -36,6 +36,7 @@ type storedStatus struct {
 	c                content
 	viewed           bool
 	revoke           string // ID of a status that was deleted (ts and fromMe are the delete's)
+	audience, emoji  string // the poster's audience it was shared with (audienceLabel)
 }
 
 // parseStatus interprets a message posted to status@broadcast.
@@ -65,6 +66,7 @@ func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedS
 	if !evt.Info.Sender.IsEmpty() {
 		s.participant = evt.Info.Sender.ToNonAD().String()
 	}
+	s.emoji, s.audience = audienceLabel(c.ctx.GetStatusAudienceMetadata())
 	if isGroupStatus(evt) {
 		s.group = evt.Info.Chat.String()
 		for _, a := range c.ctx.GetStatusAttributions() {
@@ -92,13 +94,14 @@ func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) err
 		blob = marshal(st.c.inner)
 	}
 	_, err := x.ExecContext(ctx, `
-		INSERT INTO wz_status (id, sender, push, from_me, ts, media, text, bg, thumb, media_blob, viewed, group_jid, duration, file_type, participant)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_status (id, sender, push, from_me, ts, media, text, bg, thumb, media_blob, viewed, group_jid, duration, file_type, participant,
+			audience, audience_emoji)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET viewed = MAX(wz_status.viewed, excluded.viewed),
 			thumb = COALESCE(excluded.thumb, wz_status.thumb),
 			participant = COALESCE(NULLIF(wz_status.participant, ''), excluded.participant)`,
 		st.id, st.sender, st.push, boolInt(st.fromMe), st.ts.Unix(), int(st.c.media), st.c.text, int64(st.c.bg),
-		st.c.thumb, blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type, st.participant)
+		st.c.thumb, blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type, st.participant, st.audience, st.emoji)
 	return err
 }
 
@@ -205,7 +208,8 @@ func (s *msgStore) dropStatuses(ctx context.Context, before time.Time) []string 
 
 // recentStatuses returns updates newer than since, oldest first.
 func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statusRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, sender, push, from_me, ts, media, text, bg, thumb, viewed, revoked, group_jid, duration, file_type
+	rows, err := s.db.QueryContext(ctx, `SELECT id, sender, push, from_me, ts, media, text, bg, thumb, viewed, revoked, group_jid, duration, file_type,
+			audience, audience_emoji
 		FROM wz_status WHERE ts >= ? ORDER BY ts`, since.Unix())
 	if err != nil {
 		return nil, err
@@ -219,7 +223,8 @@ func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statu
 			fromMe, media, viewed int
 			ts, bg, revoked       int64
 		)
-		if err := rows.Scan(&u.ID, &r.sender, &r.push, &fromMe, &ts, &media, &u.Text, &bg, &u.Thumb, &viewed, &revoked, &r.group, &u.Duration, &u.FileType); err != nil {
+		if err := rows.Scan(&u.ID, &r.sender, &r.push, &fromMe, &ts, &media, &u.Text, &bg, &u.Thumb, &viewed, &revoked, &r.group, &u.Duration, &u.FileType,
+			&u.Audience, &u.AudienceEmoji); err != nil {
 			return nil, err
 		}
 		u.Time = time.Unix(ts, 0)
@@ -228,7 +233,9 @@ func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statu
 		if revoked != 0 {
 			u.Revoked = time.UnixMilli(revoked)
 		}
-		u.Viewed = r.group != "" && fromMe != 0 || viewed != 0 && fromMe == 0 // your own ring stays green
+		// Your own ring stays green; your updates in a group's are seen
+		// once you watch them, like anyone's.
+		u.Viewed = viewed != 0 && (fromMe == 0 || r.group != "")
 		u.FromMe = fromMe != 0
 		u.SenderID = r.sender
 		r.fromMe = fromMe != 0
@@ -281,7 +288,9 @@ func (b *Backend) Statuses() []*model.StatusThread {
 		b.log.Errorf("load statuses: %v", err)
 		return nil
 	}
+	mutes := b.statusMutes(ctx)
 	byID := map[string]*model.StatusThread{}
+	skip := map[string]bool{}
 	var threads []*model.StatusThread
 	for _, r := range rows {
 		id := r.sender
@@ -290,12 +299,24 @@ func (b *Backend) Statuses() []*model.StatusThread {
 		} else if r.fromMe {
 			id = "me"
 		}
+		if skip[id] {
+			continue
+		}
 		t := byID[id]
 		if t == nil {
 			t = &model.StatusThread{ID: r.sender, Mine: r.fromMe}
 			if !r.fromMe {
 				j, _ := types.ParseJID(r.sender)
 				t.Name = b.statusName(ctx, j, r.push)
+				if r.group == "" {
+					if !b.savedContact(ctx, j) {
+						// WhatsApp shows the status updates of your
+						// saved contacts only.
+						skip[id] = true
+						continue
+					}
+					_, t.Muted = mutes[r.sender]
+				}
 			}
 			if r.group != "" {
 				t.ID, t.Group, t.Mine, t.Name = r.group, true, false, r.group
@@ -318,9 +339,15 @@ func (b *Backend) Statuses() []*model.StatusThread {
 		if a.Mine != c.Mine {
 			return a.Mine
 		}
-		return a.Last().Time.After(c.Last().Time)
+		return a.Latest().Time.After(c.Latest().Time)
 	})
 	return threads
+}
+
+// savedContact reports whether j is in your address book. Without a
+// device store (before logging in) nobody can be told apart: everyone is.
+func (b *Backend) savedContact(ctx context.Context, j types.JID) bool {
+	return b.client() == nil || b.lookup(ctx, j).saved != ""
 }
 
 // statusName labels a status poster: saved name, business name, push name

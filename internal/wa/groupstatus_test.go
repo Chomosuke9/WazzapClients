@@ -102,9 +102,16 @@ func TestGroupStatusSeparationAndExpiry(t *testing.T) {
 	if len(threads) != 3 {
 		t.Fatalf("got %d threads", len(threads))
 	}
+	// Your own update in a group's stories is unseen until you watch it.
 	for _, thread := range threads {
-		if thread.ID == "123@g.us" && (len(thread.Updates) != 2 || !thread.Updates[1].FromMe || !thread.Updates[1].Viewed) {
+		if thread.ID == "123@g.us" && (len(thread.Updates) != 2 || !thread.Updates[1].FromMe || thread.Updates[1].Viewed) {
 			t.Fatalf("own group update: %+v", thread)
+		}
+	}
+	b.ViewStatus("123@g.us", "b")
+	for _, thread := range b.Statuses() {
+		if thread.ID == "123@g.us" && !thread.Updates[1].Viewed {
+			t.Fatalf("own group update not seen once watched: %+v", thread.Updates[1])
 		}
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

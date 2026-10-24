@@ -65,7 +65,8 @@ func (u *UI) layoutRail(gtx C) D {
 	// Dots mark news since the page was last opened.
 	statusUnseen := false
 	for _, t := range u.statuses {
-		if !t.Mine && !t.Viewed() && t.Last().Time.After(u.statusSeen) {
+		// Not for hidden contacts, nor for your own updates in a group's.
+		if !t.Mine && !t.Muted && !t.Viewed() && !t.Latest().FromMe && t.Latest().Time.After(u.statusSeen) {
 			statusUnseen = true
 		}
 	}

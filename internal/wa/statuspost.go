@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/polymorfa/hypermeow"
@@ -157,6 +156,24 @@ func (b *Backend) sendStatus(cli *whatsmeow.Client, id string, msg *waE2E.Messag
 		to, _ = types.ParseJID(group) // validated by PostStatus
 		msg, extra = groupStatusMessage(msg)
 		extra.ID = id
+	} else {
+		meta, err := b.statusAudience(b.ctx, cli)
+		if err != nil {
+			b.statusFailed(id, err)
+			return
+		}
+		if meta != nil {
+			ci := describe(msg).ctx
+			if ci == nil {
+				ci = &waE2E.ContextInfo{}
+			}
+			ci.StatusAudienceMetadata = meta
+			setContext(msg, ci)
+			emoji, name := audienceLabel(meta)
+			if _, err := b.db.ExecContext(b.ctx, `UPDATE wz_status SET audience = ?, audience_emoji = ? WHERE id = ?`, name, emoji, id); err != nil {
+				b.log.Warnf("status %s audience: %v", id, err)
+			}
+		}
 	}
 	if _, err := b.sendMessage(b.ctx, cli, to, msg, extra); err != nil {
 		b.statusFailed(id, err)
@@ -173,7 +190,12 @@ func (b *Backend) sendStatus(cli *whatsmeow.Client, id string, msg *waE2E.Messag
 func (b *Backend) statusFailed(id string, err error) {
 	b.log.Errorf("post status %s: %v", id, err)
 	b.dropStatus(b.ctx, id)
-	b.emit(model.NoticeEvent{Text: "Couldn't post your status."})
+	text := "Couldn't post your status."
+	if errors.Is(err, errStatusAudience) {
+		text = "Your status wasn't posted: WhatsApp would have shared it with people outside the audience you chose. " +
+			"Choose your status audience again on your phone, then try again."
+	}
+	b.emit(model.NoticeEvent{Text: text})
 	b.emit(model.StatusEvent{})
 }
 
@@ -208,61 +230,4 @@ func (b *Backend) dropPendingStatuses(ctx context.Context) {
 		b.log.Warnf("status %s was never sent; dropping it", id)
 		b.dropStatus(ctx, id)
 	}
-}
-
-// statusPrivacy caches your status privacy setting.
-type statusPrivacy struct {
-	mu       sync.Mutex
-	val      *model.StatusPrivacy
-	at       time.Time
-	fetching bool
-}
-
-// statusPrivacyTTL is how long the setting is trusted before it's fetched
-// again (it changes on the phone).
-const statusPrivacyTTL = time.Minute
-
-// StatusPrivacy implements model.Backend.
-func (b *Backend) StatusPrivacy() *model.StatusPrivacy {
-	sp := &b.statusPriv
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
-	cli := b.client()
-	if !sp.fetching && time.Since(sp.at) > statusPrivacyTTL && cli != nil && cli.IsConnected() {
-		sp.fetching = true
-		go func() {
-			ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
-			defer cancel()
-			list, err := cli.GetStatusPrivacy(ctx)
-			sp.mu.Lock()
-			sp.fetching = false
-			if err != nil || len(list) == 0 {
-				sp.mu.Unlock()
-				b.log.Warnf("get status privacy: %v", err)
-				return
-			}
-			sp.val, sp.at = audienceOf(list[0]), time.Now()
-			sp.mu.Unlock()
-			b.emit(model.StatusEvent{})
-		}()
-	}
-	if sp.val == nil {
-		return nil
-	}
-	v := *sp.val
-	return &v
-}
-
-// audienceOf converts the default status privacy list.
-func audienceOf(p types.StatusPrivacy) *model.StatusPrivacy {
-	out := &model.StatusPrivacy{Count: len(p.List)}
-	switch p.Type {
-	case types.StatusPrivacyTypeBlacklist:
-		out.Audience = model.AudienceExcept
-	case types.StatusPrivacyTypeWhitelist:
-		out.Audience = model.AudienceOnly
-	default:
-		out.Audience, out.Count = model.AudienceContacts, 0
-	}
-	return out
 }

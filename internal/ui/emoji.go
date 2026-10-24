@@ -76,7 +76,8 @@ type pickMode int
 const (
 	pickComposer pickMode = iota
 	pickReaction
-	pickMedia // an emoji or sticker to put on a photo in the send view
+	pickMedia    // an emoji or sticker to put on a photo in the send view
+	pickAudience // an audience of your own's emoji (statusprivacy.go)
 )
 
 type pickTab int
@@ -191,6 +192,10 @@ func (u *UI) pickEmoji(ch string) {
 		return
 	case pickMedia:
 		u.placeEmoji(ch)
+		u.closePicker()
+		return
+	case pickAudience:
+		u.status.privacy.emoji = ch
 		u.closePicker()
 		return
 	}

@@ -578,6 +578,7 @@ func (u *UI) setPage(pg page) {
 	u.page = pg
 	u.status.groupID = ""
 	u.closeNewChat()
+	u.closeStatusPrivacy()
 	u.settings.detail = 0
 	u.hideInfo()
 	u.hideChatSearch()
@@ -793,7 +794,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	u.layoutGallery(gtx)
 	u.layoutViewer(gtx)
 	u.layoutPicView(gtx)
-	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia) {
+	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia || u.picker.mode == pickAudience) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
 	u.layoutCtxMenu(gtx)
@@ -868,7 +869,13 @@ func (u *UI) layoutPageSidebar(gtx C) D {
 	u.sidebar.openSel.step(gtx, openID, durSwitch)
 	switch u.page {
 	case pageStatus:
-		return u.layoutStatusList(gtx)
+		if u.statusPrivacyCovers() {
+			u.layoutStatusPrivacy(gtx)
+			return D{Size: gtx.Constraints.Max}
+		}
+		d := u.layoutStatusList(gtx)
+		u.layoutStatusPrivacy(gtx)
+		return d
 	case pageChannels:
 		return u.layoutChannelList(gtx)
 	case pageCommunities:
@@ -1004,6 +1011,7 @@ func (u *UI) update(gtx C) {
 		u.sidebar.list.Position = layout.Position{}
 	}
 	u.updateNewChat(gtx)
+	u.updateStatusPrivacy(gtx)
 	// The open page's rail button hides its list, or shows it again.
 	if chats := u.rail.chats.Clicked(gtx); chats && u.page == pageChats && !u.sidebar.showArchived && u.newChat.step == ncNone {
 		u.setListHidden(!u.split.hidden)
@@ -1210,6 +1218,8 @@ func (u *UI) escape() {
 		u.conv.reply = nil
 	case u.status.viewer.isOpen():
 		u.status.viewer.close()
+	case u.status.privacy.open():
+		u.statusPrivacyBack()
 	case u.page == pageSettings && u.settings.detail != 0:
 		u.settingsBack()
 	}
@@ -1329,6 +1339,7 @@ func (u *UI) applyEvents() {
 			}
 		case model.StatusEvent:
 			u.statuses = u.backend.Statuses()
+			u.statusPrivacyEvent()
 		case model.StickersEvent:
 			u.picker.stickersOK = [3]bool{} // reloaded when next drawn
 		case model.ChannelsEvent:
@@ -1897,16 +1908,44 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.status.viewer.show(t)
 			u.status.viewer.anim.snap(true)
 		}
-	case "statusadd", "statusmenu", "statusprivacy", "statustext", "statussend":
-		// Posting a status, from the Status page.
+	case "statusadd", "statusmenu", "statusprivacy", "statustext", "statussend",
+		"statushidden", "statusrowmenu", "statuspeople", "statusname", "statusnew", "statusaudience":
+		// Posting a status, from the Status page; the Hidden section open,
+		// a contact's menu (Hide), an update shared with close friends;
+		// Status privacy, an audience's people, its name and emoji, and a
+		// new audience's.
 		u.setPage(pageStatus)
 		switch name {
 		case "statusadd":
 			u.openStatusAdd()
 		case "statusmenu":
 			u.ctx = ctxMenu{kind: ctxStatusMenu, at: u.mouse}
-		case "statusprivacy":
+		case "statushidden":
+			u.status.showHidden = true
+		case "statusrowmenu":
+			u.ctx = ctxMenu{kind: ctxStatusRow, chatID: "budi", at: u.mouse}
+		case "statusaudience":
+			for _, t := range u.statuses {
+				if t.ID == "rina" && len(t.Updates) > 1 {
+					u.status.viewer.show(t)
+					u.status.viewer.index = 1
+					u.status.viewer.paused = true
+					u.status.viewer.anim.snap(true)
+				}
+			}
+		case "statusprivacy", "statuspeople", "statusname", "statusnew":
 			u.openStatusPrivacy()
+			switch name {
+			case "statuspeople":
+				u.openAudiencePeople(model.AudienceList, 0, false)
+			case "statusname":
+				u.openAudiencePeople(model.AudienceList, 0, false)
+				u.openAudienceName(0)
+			case "statusnew":
+				u.openAudienceName(-1)
+				u.status.privacy.name.SetText("Weekend crew")
+			}
+			u.status.privacy.snap()
 		case "statustext":
 			u.openStatusText()
 			u.status.text.ed.SetText("Off to the beach this weekend 🌊")

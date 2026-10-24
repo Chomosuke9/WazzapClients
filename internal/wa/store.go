@@ -194,6 +194,10 @@ var migrations = []string{
 	// A status's poster as it came (a LID or a phone number), which its read
 	// receipt names; sender is canonical.
 	`ALTER TABLE wz_status ADD COLUMN participant TEXT NOT NULL DEFAULT ''`,
+	// The audience its poster shared a status with, when they chose close
+	// friends or one of their own: its name and emoji.
+	`ALTER TABLE wz_status ADD COLUMN audience TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wz_status ADD COLUMN audience_emoji TEXT NOT NULL DEFAULT ''`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {

@@ -81,36 +81,6 @@ func (u *UI) pickStatusMedia() {
 	})
 }
 
-// openStatusPrivacy tells who sees your status updates. Hypermeow can
-// read the setting but not change it, so changing it is left to the
-// phone.
-func (u *UI) openStatusPrivacy() {
-	b := u.backend
-	u.dialog = dialogState{kind: dialogConfirm, title: "Status privacy",
-		bodyFn:  func() string { return statusPrivacyText(b.StatusPrivacy()) },
-		buttons: []dialogButton{{label: "OK", primary: true}}}
-}
-
-func statusPrivacyText(p *model.StatusPrivacy) string {
-	const change = "\n\nTo change who can see them, open Status privacy in WhatsApp on your phone. " +
-		"Changes won't affect status updates you've already posted."
-	people := func(n int) string {
-		if n == 1 {
-			return "1 contact"
-		}
-		return itoa(n) + " contacts"
-	}
-	switch {
-	case p == nil:
-		return "Checking who can see your status updates…"
-	case p.Audience == model.AudienceExcept:
-		return "Your status updates are shared with your contacts, except " + people(p.Count) + "." + change
-	case p.Audience == model.AudienceOnly:
-		return "Your status updates are shared only with " + people(p.Count) + "." + change
-	}
-	return "Your status updates are shared with all your contacts." + change
-}
-
 // statusColors are the backgrounds a text status cycles through, from
 // WhatsApp's.
 var statusColors = []uint32{

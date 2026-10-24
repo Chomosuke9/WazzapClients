@@ -25,7 +25,11 @@ type statusState struct {
 	menu, add widget.Clickable
 	list      widget.List
 	viewer    statusViewer
-	text      statusTextState // writing a text status
+	text      statusTextState    // writing a text status
+	privacy   statusPrivacyPanel // Status privacy and your audiences (statusprivacy.go)
+	// showHidden opens the Hidden section: the status updates of the
+	// contacts you hid (model.StatusThread.Muted).
+	showHidden bool
 }
 
 // statusTime formats a status timestamp: "Today at 06:45", "Yesterday at
@@ -41,14 +45,18 @@ func statusTime(t, now time.Time) string {
 }
 
 // layoutStatusList draws the Status page: your own status, then recent
-// (unseen) and viewed updates from contacts.
+// (unseen) and viewed updates from contacts, and last those of the
+// contacts you hid, under Hidden, which opens and closes.
 func (u *UI) layoutStatusList(gtx C) D {
 	p := u.pal
 	if u.status.groupID != "" && u.btn("st:all").Clicked(gtx) {
 		u.setPage(pageStatus)
 	}
+	if u.btn("st:hidden").Clicked(gtx) {
+		u.status.showHidden = !u.status.showHidden
+	}
 	var mine *model.StatusThread
-	var recent, viewed []*model.StatusThread
+	var recent, viewed, hidden []*model.StatusThread
 	for _, t := range u.statuses {
 		if u.status.groupID != "" && (!t.Group || t.ID != u.status.groupID) {
 			continue
@@ -56,6 +64,8 @@ func (u *UI) layoutStatusList(gtx C) D {
 		switch {
 		case t.Mine:
 			mine = t
+		case t.Muted:
+			hidden = append(hidden, t)
 		case t.Viewed():
 			viewed = append(viewed, t)
 		default:
@@ -65,19 +75,25 @@ func (u *UI) layoutStatusList(gtx C) D {
 	type entry struct {
 		label  string
 		thread *model.StatusThread
-		first  bool // first label follows "My status" and sits a bit lower
+		hidden bool // the Hidden heading, with its Show or Hide
 	}
 	var entries []entry
-	if len(recent) > 0 {
-		entries = append(entries, entry{label: "Recent", first: true})
-		for _, t := range recent {
-			entries = append(entries, entry{thread: t})
+	section := func(label string, threads []*model.StatusThread) {
+		if len(threads) > 0 {
+			entries = append(entries, entry{label: label})
+			for _, t := range threads {
+				entries = append(entries, entry{thread: t})
+			}
 		}
 	}
-	if len(viewed) > 0 {
-		entries = append(entries, entry{label: "Viewed", first: len(recent) == 0})
-		for _, t := range viewed {
-			entries = append(entries, entry{thread: t})
+	section("Recent", recent)
+	section("Viewed", viewed)
+	if len(hidden) > 0 {
+		entries = append(entries, entry{label: "Hidden", hidden: true})
+		if u.status.showHidden {
+			for _, t := range hidden {
+				entries = append(entries, entry{thread: t})
+			}
 		}
 	}
 	now := u.now()
@@ -119,7 +135,7 @@ func (u *UI) layoutStatusList(gtx C) D {
 				if i == 0 {
 					sub := "Click to add status update"
 					if mine != nil {
-						sub = statusTime(mine.Last().Time, now)
+						sub = statusTime(mine.Latest().Time, now)
 					}
 					return layout.Inset{Bottom: 9.5}.Layout(gtx, func(gtx C) D {
 						title := "My status"
@@ -130,19 +146,53 @@ func (u *UI) layoutStatusList(gtx C) D {
 					})
 				}
 				e := entries[i-1]
+				if e.hidden {
+					return u.hiddenHeading(gtx)
+				}
 				if e.label != "" {
-					top := unit.Dp(31.5)
-					return u.sectionLabel(gtx, e.label, layout.Inset{Left: 27, Top: top, Bottom: 22}, labelOpts{maxLines: 1})
+					return u.sectionLabel(gtx, e.label, layout.Inset{Left: 27, Top: 31.5, Bottom: 22}, labelOpts{maxLines: 1})
 				}
 				t := e.thread
-				return u.statusRow(gtx, "status:"+t.ID, t, t.Name, statusTime(t.Last().Time, now), 76, false)
+				return u.statusRow(gtx, "status:"+t.ID, t, t.Name, statusTime(t.Latest().Time, now), 76, false)
 			})
 		}),
 	)
 }
 
-// statusRow is one poster: the ringed preview, name and time.
+// hiddenHeading is the Hidden section's heading, with a green Show or
+// Hide at its end that opens or closes the section, like WhatsApp's.
+func (u *UI) hiddenHeading(gtx C) D {
+	p := u.pal
+	return layout.Inset{Left: 27, Right: 26, Top: 31.5, Bottom: 22}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Flexed(1, u.label(15.2, "Hidden", p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+			layout.Rigid(func(gtx C) D {
+				txt := "Show"
+				if u.status.showHidden {
+					txt = "Hide"
+				}
+				c := u.btn("st:hidden")
+				return clickable(gtx, c, func(gtx C) D {
+					col := mix(p.Green, p.Text, 0.25*u.hover(gtx, c))
+					return u.label(15.2, txt, col, labelOpts{weight: font.Medium, maxLines: 1}).Layout(gtx)
+				})
+			}),
+		)
+	})
+}
+
+// statusRow is one poster: the ringed preview, name and time. A right
+// click on someone else's opens its menu (Hide or Unhide).
 func (u *UI) statusRow(gtx C, key string, t *model.StatusThread, title, sub string, height unit.Dp, mine bool) D {
+	dims := u.statusRowBody(gtx, key, t, title, sub, height, mine)
+	if t != nil && !t.Mine && !t.Group && u.rightClick(gtx, key, dims.Size) {
+		u.ctx = ctxMenu{kind: ctxStatusRow, chatID: t.ID, at: u.mouse}
+	}
+	return dims
+}
+
+func (u *UI) statusRowBody(gtx C, key string, t *model.StatusThread, title, sub string, height unit.Dp, mine bool) D {
 	p := u.pal
 	c := u.btn(key)
 	if c.Clicked(gtx) {
@@ -219,7 +269,7 @@ func (u *UI) statusAvatar(gtx C, t *model.StatusThread, size unit.Dp, mine bool)
 			strokeArc(gtx, c, r, start, sweep, stroke, col)
 		}
 		tr := op.Offset(image.Pt(off, off)).Push(gtx.Ops)
-		u.statusPreview(gtx, t, t.Last(), inner)
+		u.statusPreview(gtx, t, t.Latest(), inner)
 		tr.Pop()
 	}
 	if mine {
@@ -237,8 +287,8 @@ func (u *UI) statusAvatar(gtx C, t *model.StatusThread, size unit.Dp, mine bool)
 	return D{Size: image.Pt(px, px)}
 }
 
-// statusPreview fills a circle of px with an update's picture, or its
-// background color for text statuses.
+// statusPreview fills a circle of px with an update's picture, or a text
+// status's words in small on its background color.
 func (u *UI) statusPreview(gtx C, t *model.StatusThread, up *model.StatusUpdate, px int) {
 	r := image.Rect(0, 0, px, px)
 	if len(up.Thumb) > 0 {
@@ -258,6 +308,7 @@ func (u *UI) statusPreview(gtx C, t *model.StatusThread, up *model.StatusUpdate,
 	}
 	if up.Media == model.MediaNone && up.Background != 0 {
 		fillCircle(gtx, image.Pt(px/2, px/2), px/2, argbColor(up.Background))
+		u.statusTextThumb(gtx, up.Text, px)
 		return
 	}
 	id, name := t.ID, t.Name
@@ -265,6 +316,22 @@ func (u *UI) statusPreview(gtx C, t *model.StatusThread, up *model.StatusUpdate,
 		id, name = u.meID, u.meName()
 	}
 	u.avatar(gtx, id, name, t.Group, dp(gtx, px))
+}
+
+// statusTextThumb draws a text status's words in small in the middle of
+// its circle of px, as WhatsApp's previews show them.
+func (u *UI) statusTextThumb(gtx C, txt string, px int) {
+	txt = trimSpace(txt)
+	if txt == "" {
+		return
+	}
+	size := unit.Sp(float32(px) / gtx.Metric.PxPerSp / 6.5)
+	l := record(gtx, func(gtx C) D {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(px*3/4, px*3/4)}
+		return u.label(size, txt, rgb(0xffffff), labelOpts{align: text.Middle, maxLines: 3}).Layout(gtx)
+	})
+	defer clip.Ellipse(image.Rect(0, 0, px, px)).Push(gtx.Ops).Pop()
+	l.at(gtx, (px-l.size.X)/2, (px-l.size.Y)/2)
 }
 
 func argbColor(c uint32) color.NRGBA {
@@ -514,7 +581,9 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	}
 	if v.isOpen() && v.shownAt.IsZero() {
 		v.shownAt = now
-		if up := t.Updates[v.index]; !up.Viewed && !t.Mine && !up.FromMe {
+		// Your own updates in a group's stories are seen once watched
+		// too; the backend tells only others' posters.
+		if up := t.Updates[v.index]; !up.Viewed && !t.Mine {
 			up.Viewed = true
 			u.backend.ViewStatus(t.ID, up.ID)
 		}
@@ -522,7 +591,8 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	up := t.Updates[v.index]
 	if v.isOpen() {
 		u.syncStatusVideo(t, up)
-		hold := v.paused || v.zp.zoomed() || v.replying(gtx)
+		// Its menu, and the dialog Hide asks in, hold it too.
+		hold := v.paused || v.zp.zoomed() || v.replying(gtx) || u.ctx.isOpen() || u.dialog.isOpen()
 		if u.statusTick(gtx, now, hold) {
 			advance(1)
 			gtx.Execute(op.InvalidateCmd{})
@@ -566,6 +636,17 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	u.layoutStatusContent(gtx, t, up, frame, &v.zp)
 	zoom.Pop()
 	defer pushFx(gtx, e, f32.Affine2D{}).Pop()
+	if up.Audience != "" && !v.zp.zoomed() {
+		// The audience its poster shared it with, on the picture's corner.
+		chip := record(gtx, func(gtx C) D {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(0, frame.Dx()-gtx.Dp(24)), frame.Dy())}
+			return background(gtx, argb(0x000000, 0x90), 14, func(gtx C) D {
+				return layout.Inset{Left: 10, Right: 12, Top: 5, Bottom: 5}.Layout(gtx,
+					u.label(13.5, up.AudienceEmoji+" "+up.Audience, rgb(0xffffff), labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+			})
+		})
+		chip.at(gtx, frame.Min.X+gtx.Dp(12), frame.Min.Y+gtx.Dp(12))
+	}
 
 	// Progress segments across the top of the frame.
 	n := len(t.Updates)
@@ -609,20 +690,29 @@ func (u *UI) layoutStatusViewer(gtx C) {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(u.label(16, name, white, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
 				layout.Rigid(func(gtx C) D {
-					tl := u.label(13.5, statusTime(up.Time, u.now()), argb(0xffffff, 0xb0))
-					if up.Revoked.IsZero() {
-						return tl.Layout(gtx)
+					dim := argb(0xffffff, 0xb0)
+					line := []layout.FlexChild{layout.Rigid(u.label(13.5, statusTime(up.Time, u.now()), dim).Layout)}
+					if !up.Revoked.IsZero() {
+						// Kept with Keep deleted messages (extras.go).
+						line = append(line,
+							layout.Rigid(layout.Spacer{Width: 8}.Layout),
+							layout.Rigid(iconW(icBlock, 14, u.pal.Danger)),
+							layout.Rigid(layout.Spacer{Width: 2}.Layout),
+							layout.Rigid(u.label(13.5, "Deleted", u.pal.Danger).Layout))
 					}
-					// Kept with Keep deleted messages (extras.go).
-					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(tl.Layout),
-						layout.Rigid(layout.Spacer{Width: 8}.Layout),
-						layout.Rigid(iconW(icBlock, 14, u.pal.Danger)),
-						layout.Rigid(layout.Spacer{Width: 2}.Layout),
-						layout.Rigid(u.label(13.5, "Deleted", u.pal.Danger).Layout),
-					)
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx, line...)
 				}),
 			)
+		}),
+		layout.Rigid(func(gtx C) D {
+			if t.Mine || t.Group {
+				return D{}
+			}
+			c := u.btn("st:viewermenu")
+			if c.Clicked(gtx) {
+				u.ctx = ctxMenu{kind: ctxStatusRow, chatID: t.ID, at: u.mouse}
+			}
+			return u.iconButton(gtx, c, icMenu, 40, 24, white)
 		}),
 		layout.Rigid(func(gtx C) D {
 			ic := icPauseFill

@@ -67,7 +67,7 @@ func TestAudienceOf(t *testing.T) {
 		{types.StatusPrivacy{Type: types.StatusPrivacyTypeBlacklist, List: jids}, model.StatusPrivacy{Audience: model.AudienceExcept, Count: 2}},
 		{types.StatusPrivacy{Type: types.StatusPrivacyTypeWhitelist, List: jids[:1]}, model.StatusPrivacy{Audience: model.AudienceOnly, Count: 1}},
 	} {
-		if got := *audienceOf(c.in); got != c.want {
+		if got := *audienceOf(c.in); got.Audience != c.want.Audience || got.Count != c.want.Count {
 			t.Errorf("%s: got %+v, want %+v", c.in.Type, got, c.want)
 		}
 	}

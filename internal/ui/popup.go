@@ -132,6 +132,8 @@ const (
 	ctxLists       // a chat's "Add to list" checkboxes, on their own
 	ctxStatusAdd   // the Status page's ⊕: post photos and videos, or text
 	ctxStatusMenu  // the Status page's ⋮
+	ctxStatusRow   // a contact's status updates: Hide or Unhide (chatID is theirs)
+	ctxStatusList  // an audience of your own's ⋮ (statusprivacy.go)
 	ctxGroupPhoto  // the new group's picture
 	ctxGroupTimer  // the new group's disappearing messages
 	ctxCommunity   // the announcements' groups (chatID is the community's)
@@ -448,6 +450,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			items = u.statusAddItems()
 		case ctxStatusMenu:
 			items = u.statusMenuItems()
+		case ctxStatusRow:
+			items = u.statusRowItems(m.chatID)
+		case ctxStatusList:
+			items = u.statusListItems()
 		case ctxZoom:
 			items = u.zoomMenuItems()
 		case ctxAcctMode:

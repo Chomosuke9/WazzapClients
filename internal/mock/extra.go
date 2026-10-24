@@ -18,6 +18,7 @@ import (
 // communities and the info panel.
 type extras struct {
 	statuses    []*model.StatusThread
+	privacy     model.StatusPrivacy
 	channels    []*model.Channel
 	suggested   []*model.Channel
 	communities []*model.Community
@@ -67,8 +68,53 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 	b.emit(model.StatusEvent{})
 }
 
-// StatusPrivacy is the default: all your contacts.
-func (b *Backend) StatusPrivacy() *model.StatusPrivacy { return &model.StatusPrivacy{} }
+// StatusPrivacy returns the demo setting, as if synced from the phone.
+func (b *Backend) StatusPrivacy() *model.StatusPrivacy {
+	p := b.privacy
+	p.Editable = true
+	p.Lists = slices.Clone(p.Lists)
+	return &p
+}
+
+// SetStatusPrivacy keeps the new setting; a new audience gets an ID.
+func (b *Backend) SetStatusPrivacy(p model.StatusPrivacy) {
+	p.Lists = slices.Clone(p.Lists)
+	for i := range p.Lists {
+		if p.Lists[i].ID == "" {
+			b.posted++
+			p.Lists[i].ID = "list-" + strconv.Itoa(b.posted)
+			if p.Audience == model.AudienceList && p.ListID == "" {
+				p.ListID = p.Lists[i].ID
+			}
+		}
+	}
+	switch p.Audience {
+	case model.AudienceContacts:
+		p.Count = 0
+	case model.AudienceExcept:
+		p.Count = len(p.Except)
+	case model.AudienceOnly:
+		p.Count = len(p.Only)
+	case model.AudienceClose:
+		p.Count = len(p.Close)
+	case model.AudienceList:
+		if l := p.List(p.ListID); l != nil {
+			p.Count = len(l.Members)
+		}
+	}
+	b.privacy = p
+	b.emit(model.StatusEvent{})
+}
+
+// MuteStatus hides or shows a demo poster's status updates.
+func (b *Backend) MuteStatus(id string, muted bool) {
+	for _, t := range b.statuses {
+		if t.ID == id && !t.Mine && !t.Group {
+			t.Muted = muted
+		}
+	}
+	b.emit(model.StatusEvent{})
+}
 
 func (b *Backend) Channels() []*model.Channel { return b.channels }
 
@@ -223,17 +269,34 @@ func textStatus(id string, t time.Time, viewed bool, text string, bg uint32) *mo
 	return &model.StatusUpdate{ID: id, Text: text, Time: t, Viewed: viewed, Background: bg}
 }
 
+// closeFriends marks u as shared with its poster's close friends.
+func closeFriends(u *model.StatusUpdate) *model.StatusUpdate {
+	u.Audience, u.AudienceEmoji = "Close friends", "💜"
+	return u
+}
+
 // demoExtras fills statuses, channels and communities for the demo account.
 func demoExtras(at func(daysAgo, h, m int) time.Time) extras {
 	return extras{
 		statuses: []*model.StatusThread{
 			{ID: "me", Mine: true, Updates: []*model.StatusUpdate{status("s-me", at(0, 7, 12), false, 0x2c3e50, 0x4ca1af)}},
 			{ID: "rina", Name: "Rina Kartika", Updates: []*model.StatusUpdate{
-				status("s-r1", at(0, 9, 2), false, 0xee9ca7, 0xffdde1), status("s-r2", at(0, 9, 5), false, 0x3a7bd5, 0x00d2ff)}},
+				status("s-r1", at(0, 9, 2), false, 0xee9ca7, 0xffdde1), closeFriends(status("s-r2", at(0, 9, 5), false, 0x3a7bd5, 0x00d2ff))}},
 			{ID: "budi", Name: "Budi Santoso", Updates: []*model.StatusUpdate{
 				textStatus("s-b1", at(0, 6, 40), false, "Futsal tonight? ⚽", 0xff8a8c54)}},
 			{ID: "dewi", Name: "Dewi Lestari", Updates: []*model.StatusUpdate{
 				status("s-d1", at(1, 21, 15), true, 0x134e5e, 0x71b280)}},
+			{ID: "landlord", Name: "Mr. Harto (Landlord)", Muted: true, Updates: []*model.StatusUpdate{
+				textStatus("s-h1", at(0, 8, 15), false, "Water off 10:00–12:00 tomorrow for pipe repairs.", 0xff243640)}},
+		},
+		privacy: model.StatusPrivacy{
+			Audience: model.AudienceList, ListID: "list-trip", Count: 3,
+			Except: []string{"landlord", "bank"},
+			Close:  []string{"rina", "dewi", "mom"},
+			Lists: []model.StatusList{
+				{ID: "list-trip", Name: "Bali trip", Emoji: "🌴", Members: []string{"rina", "budi", "sari"}},
+				{ID: "list-work", Name: "Work", Emoji: "💼", Members: []string{"andre", "clara", "dewi", "bank"}},
+			},
 		},
 		channels: []*model.Channel{
 			{ID: "techdaily@newsletter", Name: "Tech Daily", Verified: true, Followers: 1200000, Following: true, Unread: 3, Time: at(0, 8, 0),
