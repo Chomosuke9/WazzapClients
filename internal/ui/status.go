@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strconv"
 	"time"
 
 	"gioui.org/f32"
@@ -242,7 +243,6 @@ func (u *UI) statusRowBody(gtx C, key string, t *model.StatusThread, title, sub 
 func (u *UI) statusAvatar(gtx C, t *model.StatusThread, size unit.Dp, mine bool) D {
 	p := u.pal
 	px := gtx.Dp(size)
-	stroke := float32(gtx.Dp(1.7))
 	inner := px - 2*gtx.Dp(4.5)
 	off := (px - inner) / 2
 	if t == nil {
@@ -251,23 +251,7 @@ func (u *UI) statusAvatar(gtx C, t *model.StatusThread, size unit.Dp, mine bool)
 		u.avatar(gtx, u.meID, u.meName(), false, dp(gtx, inner))
 		t.Pop()
 	} else {
-		n := len(t.Updates)
-		gap := float32(0)
-		if n > 1 {
-			gap = 0.16
-		}
-		sweep := (2*math.Pi - float32(n)*gap) / float32(n)
-		c := f32.Pt(float32(px)/2, float32(px)/2)
-		r := float32(px)/2 - stroke/2
-		// Oldest first, counter-clockwise from the top, like WhatsApp.
-		for i, up := range t.Updates {
-			col := p.Green
-			if up.Viewed {
-				col = p.RingViewed
-			}
-			start := -math.Pi/2 - gap/2 - float32(i)*(sweep+gap) - sweep
-			strokeArc(gtx, c, r, start, sweep, stroke, col)
-		}
+		u.statusRing(gtx, t, px, 1.7)
 		tr := op.Offset(image.Pt(off, off)).Push(gtx.Ops)
 		u.statusPreview(gtx, t, t.Latest(), inner)
 		tr.Pop()
@@ -285,6 +269,75 @@ func (u *UI) statusAvatar(gtx C, t *model.StatusThread, size unit.Dp, mine bool)
 		t.Pop()
 	}
 	return D{Size: image.Pt(px, px)}
+}
+
+// statusRing strokes a thread's ring in a square of px: one arc per
+// update, oldest first, counter-clockwise from the top, gray once seen,
+// like WhatsApp. An unseen update shared with close friends or a custom
+// audience is purple. Recorded once per look, as stroked paths are costly.
+func (u *UI) statusRing(gtx C, t *model.StatusThread, px int, width unit.Dp) {
+	p := u.pal
+	sw := gtx.Dp(width)
+	// The key's name is the stroke's width and each update's look.
+	name := strconv.AppendInt(make([]byte, 0, 24), int64(sw), 10)
+	name = append(name, ':')
+	from := len(name)
+	for _, up := range t.Updates {
+		switch {
+		case up.Viewed:
+			name = append(name, 'v')
+		case up.Audience != "":
+			name = append(name, 'a')
+		default:
+			name = append(name, 'n')
+		}
+	}
+	k := glyphKey{name: "ring" + string(name), px: px, col: p.Green, bg: p.RingViewed, alt: p.RingAudience}
+	cachedGlyph(gtx, k, func(gtx C) D {
+		seen := name[from:]
+		n := len(seen)
+		stroke := float32(sw)
+		gap := float32(0)
+		if n > 1 {
+			gap = 0.16
+		}
+		sweep := (2*math.Pi - float32(n)*gap) / float32(n)
+		c := f32.Pt(float32(px)/2, float32(px)/2)
+		r := float32(px)/2 - stroke/2
+		for i, s := range seen {
+			col := p.Green
+			switch s {
+			case 'v':
+				col = p.RingViewed
+			case 'a':
+				col = p.RingAudience
+			}
+			start := -math.Pi/2 - gap/2 - float32(i)*(sweep+gap) - sweep
+			strokeArc(gtx, c, r, start, sweep, stroke, col)
+		}
+		return D{Size: image.Pt(px, px)}
+	})
+}
+
+// listStatus is the thread whose ring a chat list row shows: yours on
+// your own chat, and a contact's or group's while it has updates you
+// haven't seen (never a hidden one), as WhatsApp's list does.
+func (u *UI) listStatus(c *model.Chat) *model.StatusThread {
+	for _, t := range u.statuses {
+		if t.Mine {
+			if c.Self {
+				return t
+			}
+			continue
+		}
+		if t.ID == c.ID && t.Group == c.IsGroup {
+			if t.Muted || t.Viewed() {
+				return nil
+			}
+			return t
+		}
+	}
+	return nil
 }
 
 // statusPreview fills a circle of px with an update's picture, or a text

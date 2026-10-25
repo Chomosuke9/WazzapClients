@@ -53,6 +53,7 @@ type Palette struct {
 	RowHover                         color.NRGBA // settings and info list rows
 	Danger, DangerSoft               color.NRGBA // "Log out"; "Exit group" and friends
 	RingViewed                       color.NRGBA // status ring once seen
+	RingAudience                     color.NRGBA // status ring of one shared with close friends or a custom audience
 	Verified                         color.NRGBA
 	AnnounceBg, AnnounceIcon         color.NRGBA // community announcements tile
 	ChannelAvatar, ChannelAvatarIcon color.NRGBA // channel without a picture
@@ -126,7 +127,7 @@ var darkPalette = Palette{
 
 	EmptyIcon: rgb(0x454545), RowHover: rgb(0x1d1f1f),
 	Danger: rgb(0xe85d65), DangerSoft: rgb(0xed9ea5),
-	RingViewed: rgb(0x414141), Verified: rgb(0x3c79e6),
+	RingViewed: rgb(0x414141), RingAudience: rgb(0xa77bf3), Verified: rgb(0x3c79e6),
 	AnnounceBg: rgb(0x342c21), AnnounceIcon: rgb(0xf6d78b),
 	ChannelAvatar: rgb(0x32281e), ChannelAvatarIcon: rgb(0xd3a887),
 	StatusBg: rgb(0x0f0f0f),
@@ -179,7 +180,7 @@ var lightPalette = Palette{
 
 	EmptyIcon: rgb(0xc4c9cc), RowHover: rgb(0xf5f6f6),
 	Danger: rgb(0xea0038), DangerSoft: rgb(0xd4314a),
-	RingViewed: rgb(0xc3c9cc), Verified: rgb(0x2a7de1),
+	RingViewed: rgb(0xc3c9cc), RingAudience: rgb(0x8a4fd8), Verified: rgb(0x2a7de1),
 	AnnounceBg: rgb(0xfdf1d8), AnnounceIcon: rgb(0xc58a13),
 	ChannelAvatar: rgb(0xf6e7da), ChannelAvatarIcon: rgb(0xa86f45),
 	StatusBg: rgb(0x0f0f0f),

@@ -744,18 +744,11 @@ func (u *UI) memberAvatar(gtx C, m model.Member) D {
 
 // ringedAvatar is a profile picture inside a status ring.
 func (u *UI) ringedAvatar(gtx C, t *model.StatusThread, id, name string, size unit.Dp) D {
-	p := u.pal
 	px := gtx.Dp(size)
-	col := p.Green
-	if t.Viewed() && !t.Mine {
-		col = p.RingViewed
-	}
-	fillCircle(gtx, image.Pt(px/2, px/2), px/2, col)
-	ring := gtx.Dp(2)
-	fillCircle(gtx, image.Pt(px/2, px/2), px/2-ring, p.Panel)
+	u.statusRing(gtx, t, px, 2)
 	inset := gtx.Dp(4)
 	tr := op.Offset(image.Pt(inset, inset)).Push(gtx.Ops)
-	u.avatar(gtx, id, name, false, dp(gtx, px-2*inset))
+	u.avatar(gtx, id, name, t.Group, dp(gtx, px-2*inset))
 	tr.Pop()
 	return D{Size: image.Pt(px, px)}
 }

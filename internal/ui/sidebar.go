@@ -379,7 +379,12 @@ func (u *UI) chatRow(gtx C, c *model.Chat, o rowOpts) D {
 	avatar := o.avatar
 	timer := avatar == nil // Channels and Communities pass their own
 	if avatar == nil {
-		avatar = func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 52) }
+		avatar = func(gtx C) D {
+			if t := u.listStatus(c); t != nil {
+				return u.ringedAvatar(gtx, t, c.ID, c.Name, 52)
+			}
+			return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 52)
+		}
 	}
 	left, gap := o.avatarW, o.textGap
 	if left == 0 {

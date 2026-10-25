@@ -24,6 +24,7 @@ type glyphKey struct {
 	name    string
 	px      int
 	col, bg color.NRGBA
+	alt     color.NRGBA // a third color, for glyphs that need one
 	flag    bool
 }
 
