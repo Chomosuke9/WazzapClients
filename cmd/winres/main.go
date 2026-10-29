@@ -10,6 +10,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"image"
 	"log"
 	"os"
@@ -21,7 +22,7 @@ import (
 )
 
 func main() {
-	syso := flag.String("syso", "rsrc_windows_amd64.syso", "the object file go build links in")
+	syso := flag.String("syso", "rsrc_windows_%s.syso", "the object files go build links in (%s: the architecture)")
 	ico := flag.String("ico", "../../installer/wazzap.ico", "the installer's icon")
 	flag.Parse()
 
@@ -53,7 +54,9 @@ func main() {
 	}
 	rs.SetVersionInfo(vi)
 
-	write(*syso, func(f *os.File) error { return rs.WriteObject(f, winres.ArchAMD64) })
+	for _, arch := range []winres.Arch{winres.ArchAMD64, winres.ArchI386} {
+		write(fmt.Sprintf(*syso, arch), func(f *os.File) error { return rs.WriteObject(f, arch) })
+	}
 	write(*ico, func(f *os.File) error { return ic.SaveICO(f) })
 }
 

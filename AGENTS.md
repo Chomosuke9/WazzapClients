@@ -141,9 +141,13 @@ Gotchas already found in the pinned version (v0.10.x):
   muted and looping (`Player.SetLoop`), at most `maxGIFs` at once.
 - Videos use the OS's decoder, never a bundled codec (`internal/video`). The Windows
   backend calls COM through `syscall.SyscallN` without cgo: convert pointers to
-  `uintptr` inside the `SyscallN` argument list, and read `double` results from `r2`
+  `uintptr` inside the `SyscallN` argument list, and read `double` results from `r2` on 64-bit
   (Go returns XMM0 there). Media Foundation's memory goes back only with `MFShutdown`,
-  so each player starts and shuts it down. The viewer's video UI is `videoview.go`;
+  so each player starts and shuts it down. 32-bit Windows passes a `double` as two
+  stack words and returns it in x87's ST0, which `SyscallN` can't read: go through
+  `withDouble` and `callDouble` (`double_386.go`, a thunk in `double_386.s`). Drag and
+  drop and blocking screenshots aren't ported to 32-bit (a `POINTL` passed by value).
+  The viewer's video UI is `videoview.go`;
   `WAZZAP_DEMO_VIDEO=<file.mp4>` makes `-demo` play that file.
 - `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.

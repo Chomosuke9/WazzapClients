@@ -231,11 +231,12 @@ photos exactly as they are.
 
 ## Download
 
-Prebuilt packages for **Windows** (amd64) and **Linux** (amd64) are on the
+Prebuilt packages for **Windows** (amd64 and 32-bit) and **Linux** (amd64) are on the
 [Releases](https://github.com/chomosuke9/wazzapclients/releases) page and attached to every CI run.
 
 - `WazzapClients-Setup.exe` installs the app for your user only. It doesn't need admin rights.
 - `WazzapClients-windows-amd64.exe` is the same app without an installer.
+- `WazzapClients-windows-386.exe` is the app for 32-bit Windows, without an installer. Files can't be dropped on its window, and it can't keep view once messages out of screenshots.
 
 The app updates itself in the background and installs the new release when it restarts. To turn that off or update now, use **Settings > Help**.
 See [docs/releasing.md](docs/releasing.md) for how releases are made and signed.

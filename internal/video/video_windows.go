@@ -392,11 +392,12 @@ func (w *winPlayer) do(c command) {
 	case cmdPause:
 		syscall.SyscallN(w.engine.vtbl[vPause], e)
 	case cmdSeek:
-		secs := uintptr(math.Float64bits(c.pos.Seconds()))
+		secs := c.pos.Seconds()
 		if w.ex != nil && !c.exact {
-			syscall.SyscallN(w.ex.vtbl[vSetCurrentTimeEx], uintptr(unsafe.Pointer(w.ex)), secs, seekModeApproximate)
+			args := withDouble([]uintptr{uintptr(unsafe.Pointer(w.ex))}, secs)
+			syscall.SyscallN(w.ex.vtbl[vSetCurrentTimeEx], append(args, seekModeApproximate)...)
 		} else {
-			syscall.SyscallN(w.engine.vtbl[vSetCurrentTime], e, secs)
+			syscall.SyscallN(w.engine.vtbl[vSetCurrentTime], withDouble([]uintptr{e}, secs)...)
 		}
 	case cmdMute:
 		on := uintptr(0)
@@ -405,12 +406,12 @@ func (w *winPlayer) do(c command) {
 		}
 		syscall.SyscallN(w.engine.vtbl[vSetMuted], e, on)
 	case cmdVolume:
-		syscall.SyscallN(w.engine.vtbl[vSetVolume], e, uintptr(math.Float64bits(c.vol)))
+		syscall.SyscallN(w.engine.vtbl[vSetVolume], withDouble([]uintptr{e}, c.vol)...)
 	case cmdRate:
 		// The default rate too, which a reload of the source goes back to.
-		r := uintptr(math.Float64bits(c.rate))
-		syscall.SyscallN(w.engine.vtbl[vSetDefaultRate], e, r)
-		syscall.SyscallN(w.engine.vtbl[vSetPlaybackRate], e, r)
+		r := withDouble([]uintptr{e}, c.rate)
+		syscall.SyscallN(w.engine.vtbl[vSetDefaultRate], r...)
+		syscall.SyscallN(w.engine.vtbl[vSetPlaybackRate], r...)
 	case cmdLoop:
 		on := uintptr(0)
 		if c.on {
@@ -421,8 +422,7 @@ func (w *winPlayer) do(c command) {
 }
 
 // poll copies out a new frame, if there is one, and updates the status.
-// It reports whether the video is playing. The engine returns doubles in
-// XMM0, which syscall hands back as r2.
+// It reports whether the video is playing.
 func (w *winPlayer) poll() bool {
 	e := uintptr(unsafe.Pointer(w.engine))
 	var st Status
@@ -433,12 +433,10 @@ func (w *winPlayer) poll() bool {
 	}
 	rs, _, _ := syscall.SyscallN(w.engine.vtbl[vGetReadyState], e)
 	st.Ready = uint16(rs) >= haveMetadata
-	_, pos, _ := syscall.SyscallN(w.engine.vtbl[vGetCurrentTime], e)
-	_, dur, _ := syscall.SyscallN(w.engine.vtbl[vGetDuration], e)
 	paused, _, _ := syscall.SyscallN(w.engine.vtbl[vIsPaused], e)
 	ended, _, _ := syscall.SyscallN(w.engine.vtbl[vIsEnded], e)
-	st.Pos = seconds(math.Float64frombits(uint64(pos)))
-	st.Dur = seconds(math.Float64frombits(uint64(dur)))
+	st.Pos = seconds(callDouble(w.engine.vtbl[vGetCurrentTime], e))
+	st.Dur = seconds(callDouble(w.engine.vtbl[vGetDuration], e))
 	st.Paused, st.Ended = paused != 0, ended != 0
 	if st.Ready && !w.p.audio {
 		var cx, cy uint32

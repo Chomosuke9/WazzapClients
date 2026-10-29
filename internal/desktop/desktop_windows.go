@@ -19,6 +19,10 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+// pointer turns an address Windows passed into a pointer, without go
+// vet's complaint about converting a uintptr.
+func pointer(p uintptr) unsafe.Pointer { return *(*unsafe.Pointer)(unsafe.Pointer(&p)) }
+
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
 	gdi32    = syscall.NewLazyDLL("gdi32.dll")

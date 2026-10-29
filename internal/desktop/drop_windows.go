@@ -89,10 +89,6 @@ var (
 	dropMsg     uintptr                 // asks the window's thread to register
 )
 
-// pointer turns an address Windows passed into a pointer, without go
-// vet's complaint about converting a uintptr.
-func pointer(p uintptr) unsafe.Pointer { return *(*unsafe.Pointer)(unsafe.Pointer(&p)) }
-
 func handler() DropHandler {
 	dropMu.Lock()
 	defer dropMu.Unlock()

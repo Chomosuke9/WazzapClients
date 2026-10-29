@@ -12,6 +12,7 @@ Versi Go mengikuti `go.mod`. Kedua target menerapkan patch go-text
 | --- | --- |
 | `WazzapClients-Setup.exe` | Installer Windows (Inno Setup, `installer/wazzap.iss`) |
 | `WazzapClients-windows-amd64.exe` | Aplikasi Windows portable, tanpa jendela console; juga file yang diunduh oleh tombol update |
+| `WazzapClients-windows-386.exe` | Aplikasi Windows 32-bit portable (tanpa installer); juga file update-nya |
 | `WazzapClients-linux-amd64` | Executable Linux |
 | `SHA256SUMS`, `SHA256SUMS.sig` | Checksum semua file di atas dan patch update rilis ini, dan tanda tangan ed25519-nya (hanya di release) |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md` | Lisensi aplikasi (MPL-2.0) dan lisensi semua software pihak ketiga di dalamnya (hanya di release) |

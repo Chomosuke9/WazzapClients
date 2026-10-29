@@ -105,6 +105,16 @@ jobs:
       - name: Build all packages
         run: go build ./...
 
+      # 32-bit Windows: the same code, but its own calling convention
+      # (internal/video's double_386.go).
+      - name: Vet and build for 32-bit Windows
+        if: runner.os == 'Windows'
+        env:
+          GOARCH: '386'
+        run: |
+          go vet ./...
+          go build ./...
+
       # =========================
       # Windows
       # =========================
@@ -125,11 +135,32 @@ jobs:
             exit $LASTEXITCODE
           }
 
+          # 32-bit: portable only, without an installer.
+          $env:GOARCH = '386'
+          go build `
+            -trimpath `
+            -ldflags "-s -w -H=windowsgui -X main.version=$env:VERSION -X main.klipyKey=$env:KLIPY_KEY" `
+            -o bin/dist/WazzapClients-windows-386.exe `
+            ./cmd/wazzap
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Upload Windows executable
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
           path: bin/dist/WazzapClients-windows-amd64.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload 32-bit Windows executable
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          path: bin/dist/WazzapClients-windows-386.exe
           archive: false
           if-no-files-found: error
           retention-days: 14
@@ -202,7 +233,7 @@ jobs:
 
     runs-on: ubuntu-22.04
 
-    # Each update patch takes bsdiff about half a minute (ten of them).
+    # Each update patch takes bsdiff about half a minute (fifteen of them).
     timeout-minutes: 30
 
     permissions:
@@ -222,6 +253,12 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: WazzapClients-windows-amd64.exe
+          path: dist
+
+      - name: Download 32-bit Windows build
+        uses: actions/download-artifact@v8
+        with:
+          name: WazzapClients-windows-386.exe
           path: dist
 
       - name: Download Windows installer
@@ -254,7 +291,7 @@ jobs:
             grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vxF "$RELEASE_TAG" | head -n 5 || true)
 
           for tag in $tags; do
-            for exe in WazzapClients-windows-amd64.exe WazzapClients-linux-amd64; do
+            for exe in WazzapClients-windows-amd64.exe WazzapClients-windows-386.exe WazzapClients-linux-amd64; do
               old="$RUNNER_TEMP/old/$tag"
               mkdir -p "$old"
               if ! gh release download "$tag" --pattern "$exe" --dir "$old" --clobber; then
@@ -272,6 +309,7 @@ jobs:
           shopt -s nullglob
           sha256sum \
             WazzapClients-windows-amd64.exe \
+            WazzapClients-windows-386.exe \
             WazzapClients-Setup.exe \
             WazzapClients-linux-amd64 \
             *.bsdiff \
@@ -357,6 +395,7 @@ jobs:
 
             gh release upload "$RELEASE_TAG" \
               dist/WazzapClients-windows-amd64.exe \
+              dist/WazzapClients-windows-386.exe \
               dist/WazzapClients-Setup.exe \
               dist/WazzapClients-linux-amd64 \
               dist/SHA256SUMS \
@@ -369,6 +408,7 @@ jobs:
 
             gh release create "$RELEASE_TAG" \
               dist/WazzapClients-windows-amd64.exe \
+              dist/WazzapClients-windows-386.exe \
               dist/WazzapClients-Setup.exe \
               dist/WazzapClients-linux-amd64 \
               dist/SHA256SUMS \
