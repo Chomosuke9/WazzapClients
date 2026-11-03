@@ -22,38 +22,37 @@ func appIcon(px int, withTile bool) *image.RGBA {
 	// The drawing is laid out in a square of side s at ox, oy.
 	s, ox, oy := float32(px), float32(0), float32(0)
 
-	// The tile, green fading a little darker downwards.
 	var hole image.Image // the tile, if any
 	if withTile {
-		tile := vgradient(px, color.NRGBA{R: 0x2c, G: 0xc9, B: 0x6e, A: 0xff},
-			color.NRGBA{R: 0x1d, G: 0xaa, B: 0x61, A: 0xff})
-		roundRect(z, 0, 0, s, s, 0.225*s)
+		tile := image.NewUniform(color.NRGBA{R: 0x25, G: 0xd3, B: 0x66, A: 0xff})
+		roundRect(z, 0, 0, s, s, 0.15*s)
 		z.Draw(img, img.Bounds(), tile, image.Point{})
 		hole = tile
 	} else {
-		// The bubble spans 0.675 of the tile, centered at 0.5, 0.4925.
-		s = float32(px) * 0.98 / 0.675
-		ox, oy = float32(px)/2-0.5*s, float32(px)/2-0.4925*s
+		// The bubble and its tail span 2/3 of the tile, centered.
+		s = float32(px) * 0.98 * 3 / 2
+		ox, oy = float32(px)/2-0.5*s, float32(px)/2-0.5*s
 	}
 
 	// The bubble: a ring with a tail at its bottom left. The inner circle
 	// winds the other way, which cuts the hole.
 	white := image.NewUniform(color.White)
-	cx, cy := ox+0.5*s, oy+0.49*s
-	ro := 0.335 * s
-	w := max(0.05*s, 1.3) // the ring's width, at least 1.3 px when tiny
+	cx, cy := ox+0.5*s, oy+0.5*s
+	ro := s / 3
+	w := max(0.06*s, 1.3) // the ring's width, at least 1.3 px when tiny
 	ri := ro - w
 	z.Reset(px, px)
 	circle(z, cx, cy, ro, false)
 	circle(z, cx, cy, ri, true)
-	mid := (ro + ri) / 2
 	at := func(deg float64, r float32) (float32, float32) {
 		a := deg * math.Pi / 180
 		return cx + r*float32(math.Cos(a)), cy + r*float32(math.Sin(a))
 	}
-	ax, ay := at(112, mid)
-	bx, by := at(158, mid)
-	tx, ty := ox+0.17*s, oy+0.83*s
+	// The tail's sides leave the outer circle and meet down at the
+	// bubble's bottom left corner.
+	ax, ay := at(118.6, ro)
+	bx, by := at(150, ro)
+	tx, ty := ox+0.1683*s, oy+0.8333*s
 	z.MoveTo(ax, ay)
 	z.LineTo(tx, ty)
 	z.LineTo(bx, by)
@@ -88,9 +87,9 @@ func appIcon(px int, withTile bool) *image.RGBA {
 		{0.045, -0.175}, {-0.105, 0.025}, {-0.005, 0.025},
 		{-0.045, 0.175}, {0.105, -0.030}, {0.005, -0.030},
 	}
-	b := 1.1 * s
+	b := 1.2 * s
 	if px <= 24 {
-		b = 1.25 * s // tray sizes: more bolt, or it's a smudge
+		b = 1.3 * s // tray sizes: more bolt, or it's a smudge
 	}
 	z.Reset(px, px)
 	for i, p := range bolt {
@@ -187,24 +186,3 @@ func roundRect(z *vector.Rasterizer, x0, y0, x1, y1, r float32) {
 	z.CubeTo(x0, y0+k, x0+k, y0, x0+r, y0)
 	z.ClosePath()
 }
-
-// vgradient is a px square image fading from top to bottom.
-func vgradient(px int, top, bottom color.NRGBA) image.Image {
-	img := image.NewNRGBA(image.Rect(0, 0, 1, px))
-	mix := func(a, b uint8, t float32) uint8 { return uint8(float32(a) + (float32(b)-float32(a))*t + 0.5) }
-	for y := range px {
-		t := float32(y) / float32(max(px-1, 1))
-		img.SetNRGBA(0, y, color.NRGBA{R: mix(top.R, bottom.R, t), G: mix(top.G, bottom.G, t),
-			B: mix(top.B, bottom.B, t), A: 0xff})
-	}
-	return &stretchX{img}
-}
-
-// stretchX repeats a one pixel wide image sideways.
-type stretchX struct{ *image.NRGBA }
-
-func (s *stretchX) Bounds() image.Rectangle {
-	return image.Rect(0, 0, math.MaxInt32, s.NRGBA.Bounds().Dy())
-}
-
-func (s *stretchX) At(x, y int) color.Color { return s.NRGBA.At(0, y) }
