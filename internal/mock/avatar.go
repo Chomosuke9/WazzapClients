@@ -42,6 +42,9 @@ func (b *Backend) Avatar(id string) []byte {
 	return pic
 }
 
+// AvatarKnown implements model.Backend: the demo knows every picture.
+func (b *Backend) AvatarKnown(id string) bool { return id != "" }
+
 // ProfilePhoto returns the demo picture: there is no bigger one.
 func (b *Backend) ProfilePhoto(id string) []byte { return b.Avatar(id) }
 

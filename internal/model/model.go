@@ -1505,6 +1505,11 @@ type Backend interface {
 	// or nil. A missing or stale picture is fetched in the background and
 	// announced with an AvatarEvent. Safe to call from any goroutine.
 	Avatar(id string) []byte
+	// AvatarKnown reports whether this computer has looked up the profile
+	// picture of a chat or user, so that a nil Avatar means it has none
+	// (as of that look) rather than that it isn't here yet. Safe to call
+	// from any goroutine.
+	AvatarKnown(id string) bool
 	// ProfilePhoto downloads the full-size profile picture of a chat or
 	// user (Avatar is a small preview) and returns it, or nil when there
 	// is none or it can't be fetched. It blocks: call it off the UI

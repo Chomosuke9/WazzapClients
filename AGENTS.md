@@ -511,8 +511,12 @@ internal/linkpreview/ reads a page's Open Graph tags (or title) for the preview 
                    send; Settings > Privacy > Disable link previews turns it off
 internal/osclip/   files and pictures on the system clipboard (Gio's carries only text)
 internal/remote/   the HTTP API the watch app (github.com/Chomosuke9/WazzapWatch, Amazfit, Zepp OS)
-                   reads the open account through: chats, messages, sending, read, and a
-                   long-polled list of changes. Its shared/convert.js reads this JSON: change both.
+                   reads the open account through: chats, messages, sending, reactions, read, search,
+                   and a long-polled list of changes, and pictures (profile pictures and a
+                   message's photo or sticker, as small PNGs of 256 colors on black, in
+                   images.go; requests that wait for the backend's events register in
+                   `listen`). Search shares the backend's search of every chat with the
+                   window's, so one cancels the other. Its shared/convert.js reads this JSON: change both.
                    It listens on this computer and its Tailscale addresses (port 8642) and
                    asks for a bearer token; every request runs on the UI goroutine (Options.Do)
 internal/camera/   the attach menu's Camera: opens the system's camera app and waits for the

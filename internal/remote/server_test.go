@@ -23,17 +23,32 @@ type testHost struct {
 	conn model.ConnEvent
 	sent []*model.Message
 	read []string
+	// backend, when set, stands for b.
+	backend model.Backend
+	// pump hands the backend's events to the server after every call, as
+	// the host's poll does.
+	pump *Server
 }
 
-func (h *testHost) Backend() model.Backend { return h.b }
-func (h *testHost) Conn() model.ConnEvent  { return h.conn }
-func (h *testHost) Sent(m *model.Message)  { h.sent = append(h.sent, m) }
-func (h *testHost) Read(id string)         { h.read = append(h.read, id) }
+func (h *testHost) Backend() model.Backend {
+	if h.backend != nil {
+		return h.backend
+	}
+	return h.b
+}
+func (h *testHost) Conn() model.ConnEvent { return h.conn }
+func (h *testHost) Sent(m *model.Message) { h.sent = append(h.sent, m) }
+func (h *testHost) Read(id string)        { h.read = append(h.read, id) }
 
 func (h *testHost) do(f func()) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	f()
+	if h.pump != nil {
+		for _, e := range h.b.Poll() {
+			h.pump.Event(e)
+		}
+	}
 	return nil
 }
 
@@ -330,5 +345,52 @@ func TestClip(t *testing.T) {
 		if got != c.want || cut != c.cut {
 			t.Errorf("clip(%q, %d) = %q, %v; want %q, %v", c.in, c.n, got, cut, c.want, c.cut)
 		}
+	}
+}
+
+func TestReact(t *testing.T) {
+	s, h := newTest(t)
+	m := h.b.Messages("budi", 1)[0]
+	path := "/v1/chats/budi/messages/" + m.ID
+	var e map[string]string
+	if code := do(t, s, "POST", path+"/react", `{"emoji": "👍"}`, &e); code != http.StatusOK {
+		t.Fatalf("react: %d %v", code, e)
+	}
+	var got struct{ Message Message }
+	do(t, s, "GET", path, "", &got)
+	if got.Message.MyReaction != "👍" || len(got.Message.Reactions) == 0 {
+		t.Fatalf("after reacting: %+v", got.Message)
+	}
+	var thumbs bool
+	for _, r := range got.Message.Reactions {
+		thumbs = thumbs || r.Emoji == "👍" && r.Count >= 1
+	}
+	if !thumbs {
+		t.Errorf("no 👍 among %+v", got.Message.Reactions)
+	}
+
+	// Taking it back.
+	do(t, s, "POST", path+"/react", `{"emoji": ""}`, &e)
+	got.Message = Message{}
+	do(t, s, "GET", path, "", &got)
+	if got.Message.MyReaction != "" {
+		t.Errorf("taken back: %+v", got.Message)
+	}
+
+	for body, want := range map[string]int{
+		`{"emoji": " 👍"}`:                              http.StatusBadRequest,
+		`{"emoji": "` + strings.Repeat("a", 17) + `"}`: http.StatusBadRequest,
+		`not json`: http.StatusBadRequest,
+	} {
+		if code := do(t, s, "POST", path+"/react", body, &e); code != want {
+			t.Errorf("%s: %d, want %d", body, code, want)
+		}
+	}
+	if code := do(t, s, "POST", "/v1/chats/budi/messages/nope/react", `{"emoji": "👍"}`, &e); code != http.StatusNotFound {
+		t.Errorf("no such message: %d", code)
+	}
+	h.conn.State = model.StateQR
+	if code := do(t, s, "POST", path+"/react", `{"emoji": "👍"}`, &e); code != http.StatusServiceUnavailable {
+		t.Errorf("logged out: %d", code)
 	}
 }

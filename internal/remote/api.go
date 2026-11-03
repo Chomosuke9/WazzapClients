@@ -54,6 +54,16 @@ type Message struct {
 	Edited    bool   `json:"edited,omitempty"`
 	Forwarded bool   `json:"forwarded,omitempty"`
 	Quote     *Quote `json:"quote,omitempty"`
+	// Reactions count the reactions by emoji, the most given first, and
+	// MyReaction is yours.
+	Reactions  []Reaction `json:"reactions,omitempty"`
+	MyReaction string     `json:"myReaction,omitempty"`
+}
+
+// Reaction is how many people reacted with one emoji.
+type Reaction struct {
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
 }
 
 // Quote is the message a reply answers.
@@ -148,6 +158,12 @@ func toMessage(m *model.Message, limit int) Message {
 		t, _ := clip(q.Text, quoteLimit)
 		w.Quote = &Quote{ID: q.ID, Sender: q.Sender, Text: t, Media: mediaName(q.Media)}
 	}
+	for _, r := range m.Reactions {
+		if r.Count > 0 {
+			w.Reactions = append(w.Reactions, Reaction{Emoji: r.Emoji, Count: r.Count})
+		}
+	}
+	w.MyReaction = m.MyReaction
 	return w
 }
 

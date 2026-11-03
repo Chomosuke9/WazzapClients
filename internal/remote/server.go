@@ -11,8 +11,13 @@
 //	GET  /v1/chats/{chat}/messages?limit=15&before=<id>   newest first page, then older
 //	GET  /v1/chats/{chat}/messages/{id}         one message with all of its text
 //	POST /v1/chats/{chat}/messages              send {"text", "replyTo", "nonce"}
+//	POST /v1/chats/{chat}/messages/{id}/react   react {"emoji"}; "" takes yours back
 //	POST /v1/chats/{chat}/read                  mark the chat read
 //	GET  /v1/events?since=<cursor>&wait=25      what changed since cursor (long poll)
+//	GET  /v1/search?q=<text>&limit=15           chats by name and messages by text
+//	GET  /v1/chats/{chat}/photo/version         which profile picture the chat has
+//	GET  /v1/chats/{chat}/photo?size=58         the profile picture, a PNG circle
+//	GET  /v1/chats/{chat}/messages/{id}/image?w=400&h=400   a photo or sticker, a PNG
 package remote
 
 import (
@@ -81,6 +86,9 @@ type Server struct {
 	// phone retrying) doesn't send twice. UI goroutine only.
 	sent      map[string]Message
 	sentOrder []string
+
+	// Requests waiting for a backend event (images.go). UI goroutine only.
+	waiters []*waiter
 }
 
 // Status is what the settings page shows about a server.
@@ -114,8 +122,13 @@ func newServer(o Options) *Server {
 	mux.HandleFunc("GET /v1/chats/{chat}/messages", s.auth(s.messages))
 	mux.HandleFunc("GET /v1/chats/{chat}/messages/{id}", s.auth(s.message))
 	mux.HandleFunc("POST /v1/chats/{chat}/messages", s.auth(s.send))
+	mux.HandleFunc("POST /v1/chats/{chat}/messages/{id}/react", s.auth(s.react))
 	mux.HandleFunc("POST /v1/chats/{chat}/read", s.auth(s.read))
 	mux.HandleFunc("GET /v1/events", s.auth(s.events))
+	mux.HandleFunc("GET /v1/search", s.auth(s.search))
+	mux.HandleFunc("GET /v1/chats/{chat}/photo/version", s.auth(s.photoVersion))
+	mux.HandleFunc("GET /v1/chats/{chat}/photo", s.auth(s.photo))
+	mux.HandleFunc("GET /v1/chats/{chat}/messages/{id}/image", s.auth(s.picture))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fail(w, http.StatusNotFound, "no such endpoint") })
 	s.srv = &http.Server{
 		Handler:           mux,
@@ -161,6 +174,7 @@ func (s *Server) Event(e model.Event) {
 	if w, ok := event(e); ok {
 		s.ev.add(w)
 	}
+	s.wake(e)
 }
 
 // Reset tells watches to reload everything: another account opened.
@@ -491,6 +505,44 @@ func findChat(chats []*model.Chat, id string) *model.Chat {
 		}
 	}
 	return nil
+}
+
+// react sets your reaction to a message, or takes it back. The message
+// comes again in a "message" event, as on every change.
+func (s *Server) react(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Emoji string `json:"emoji"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "the body must be JSON: {\"emoji\": ...}")
+		return
+	}
+	// An emoji is a few code points at most (a flag, skin tones, ZWJ sequences).
+	if !utf8.ValidString(req.Emoji) || utf8.RuneCountInString(req.Emoji) > 16 || strings.TrimSpace(req.Emoji) != req.Emoji {
+		fail(w, http.StatusBadRequest, "emoji must be one emoji, or empty")
+		return
+	}
+	chat, id := r.PathValue("chat"), r.PathValue("id")
+	s.call(w, http.StatusOK, func() (any, *apiError) {
+		if !s.o.Host.Conn().State.LoggedIn() {
+			return nil, &apiError{http.StatusServiceUnavailable, "WhatsApp isn't linked"}
+		}
+		b := s.o.Host.Backend()
+		ms := b.MessagesFrom(chat, id, 1)
+		if len(ms) == 0 || ms[0].ID != id {
+			return nil, &apiError{http.StatusNotFound, "no such message"}
+		}
+		m := ms[0]
+		if m.Kind == model.KindDeleted || m.Kind == model.KindSystem {
+			return nil, &apiError{http.StatusConflict, "this message can't take a reaction"}
+		}
+		if c := findChat(b.Chats(), chat); c != nil && c.Left {
+			return nil, &apiError{http.StatusConflict, "you're no longer in this group"}
+		}
+		b.React(m, req.Emoji)
+		return map[string]any{}, nil
+	})
 }
 
 func (s *Server) read(w http.ResponseWriter, r *http.Request) {

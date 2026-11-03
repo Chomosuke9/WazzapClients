@@ -113,6 +113,13 @@ func (b *Backend) Avatar(id string) []byte {
 	return data
 }
 
+// AvatarKnown implements model.Backend: the cache file is there, a
+// picture or empty for none, even if it's old.
+func (b *Backend) AvatarKnown(id string) bool {
+	_, err := os.Stat(b.avatarPath(id))
+	return err == nil
+}
+
 func (b *Backend) fetchAvatar(id string) {
 	cli := b.client()
 	if cli == nil || !cli.IsConnected() {
