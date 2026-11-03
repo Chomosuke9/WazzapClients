@@ -31,7 +31,8 @@ import (
 // account: they carry over when another account opens.
 var appPrefs = append([]string{prefTheme, prefDoodles, prefEnterSend, prefBackground, prefListWidth, prefListHidden, prefZoom,
 	prefPrivacy, prefPrivacyToggle, prefNoCapture, prefVolume, prefVoiceRate, prefEmojiStyle, prefEmojiStill,
-	prefKlipy, prefKlipyKey, prefKlipyID, prefKlipyFavs, prefAutoUpdate, prefEmojiTone, prefAppLock, prefAppLockAfter}, perfPrefs...)
+	prefKlipy, prefKlipyKey, prefKlipyID, prefKlipyFavs, prefAutoUpdate, prefEmojiTone, prefAppLock, prefAppLockAfter,
+	prefRemote, prefRemoteToken, prefRemoteAll, prefRemotePort}, perfPrefs...)
 
 // accountRow is an account in the switcher.
 type accountRow struct {
@@ -341,6 +342,11 @@ func (h *host) useBackend(b model.Backend, bg *bgAccount) {
 	if !running {
 		b.Start(h.poke)
 	}
+	// The watch reloads the other account's chats.
+	if h.remote != nil {
+		h.remote.Reset()
+	}
+	h.applyRemote()
 	h.updateTooltip()
 	memtrim.Trim()
 }

@@ -155,6 +155,7 @@ func (u *UI) extrasSettings() []settingsSection {
 				}),
 		}},
 		u.gifSettings(),
+		u.remoteSettings(),
 		{rows: []settingRow{{key: "gray", ic: icExtensionGray, title: "Ethically gray features",
 			sub: "Edit history, deleted messages, view once and more", run: func() { u.openSettingsSub("gray") }}},
 			note: "Extra features aren't made by WhatsApp. They only use what WhatsApp lets every linked device do."},

@@ -393,6 +393,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    recording and Raw photos: each off until turned on), and
                    its Ethically gray features page (Edit history, Keep deleted messages, Replay view
                    once, and commands marked Gray, like /ghost, each with a switch of its own);
+                   Smartwatch access (an extra feature: the host runs internal/remote's server
+                   for the watch app, its token and address on the Extra features page) in remote.go;
                    the Performance settings (switches for animations, smooth scrolling and
                    GIF/sticker autoplay, and an Advanced page of memory and CPU knobs with
                    live memory numbers; app prefs kept in the package's `perf`) in perf.go;
@@ -508,6 +510,11 @@ internal/klipy/    searches KLIPY's GIFs (trending, search, the share count) and
 internal/linkpreview/ reads a page's Open Graph tags (or title) for the preview of a link you
                    send; Settings > Privacy > Disable link previews turns it off
 internal/osclip/   files and pictures on the system clipboard (Gio's carries only text)
+internal/remote/   the HTTP API the watch app (github.com/Chomosuke9/WazzapWatch, Amazfit, Zepp OS)
+                   reads the open account through: chats, messages, sending, read, and a
+                   long-polled list of changes. Its shared/convert.js reads this JSON: change both.
+                   It listens on this computer and its Tailscale addresses (port 8642) and
+                   asks for a bearer token; every request runs on the UI goroutine (Options.Do)
 internal/camera/   the attach menu's Camera: opens the system's camera app and waits for the
                    photo it saves (no capture of our own; that would need each OS's capture API)
 internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or

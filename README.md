@@ -132,6 +132,12 @@ WhatsApp already lets every linked device do, and they run from your own account
   </tr>
 </table>
 
+⌚ **Smartwatch access** lets [WazzapWatch](https://github.com/Chomosuke9/WazzapWatch), an app
+for Amazfit watches (Zepp OS, in the works), read your chats and send replies through this
+computer while the app runs. It serves a small HTTP API
+on port 8642 to this computer and its [Tailscale](https://tailscale.com) addresses only (or
+every network, if you turn that on), and every request needs the token shown on the page.
+
 A page of its own, *Ethically gray features*, holds the ones that show more than the sender
 meant you to see. Each has its own switch:
 

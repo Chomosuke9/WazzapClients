@@ -24,6 +24,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/notify"
+	"github.com/chomosuke9/wazzapclients/internal/remote"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
@@ -131,6 +132,8 @@ func Run(b model.Backend, o Options) error {
 	h.b.Start(h.poke)
 	h.startBackground()
 	h.startAuto()
+	h.applyRemote()
+	defer h.stopRemote()
 	for {
 		select {
 		case e := <-h.events:
@@ -152,6 +155,8 @@ func Run(b model.Backend, o Options) error {
 			if h.handle(r) {
 				return nil
 			}
+		case f := <-h.remoteCalls:
+			f()
 		case <-h.notesDue:
 			h.flushNotes()
 		case opened := <-h.bgOpen:
@@ -180,6 +185,7 @@ func newHost(b model.Backend, o Options) *host {
 		closing:  make(map[string]chan struct{}),
 		notesDue: make(chan struct{}, 1),
 	}
+	h.remoteCalls = make(chan func(), 8)
 	dir := ""
 	if o.Accounts != nil {
 		dir = o.Accounts.Active
@@ -281,6 +287,12 @@ type host struct {
 	// notesTimer fires when the notifiers' pending messages are due.
 	notesTimer *time.Timer
 	lock       *appLock // App lock, for every window's UI
+
+	// remote serves the watch app while Smartwatch access is on (remote.go),
+	// started with remoteCfg; its requests run here, from remoteCalls.
+	remote      *remote.Server
+	remoteCfg   remoteConfig
+	remoteCalls chan func()
 }
 
 type request struct {
@@ -359,6 +371,9 @@ func (h *host) poll(invalidate bool) {
 			}
 		}
 		h.notes.event(ev)
+		if h.remote != nil {
+			h.remote.Event(ev)
+		}
 	}
 	if online && len(h.later) > 0 {
 		h.actLater()
