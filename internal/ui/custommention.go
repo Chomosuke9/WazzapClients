@@ -12,7 +12,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
-// Custom mentions, an extra feature with one switch for them and @admin:
+// Custom mentions, part of the Extended mentions extra feature with @admin:
 // "@Tim frontend" mentions people you picked in a group. They go like @admin:
 // the text says "@<group JID>", a
 // GroupMention gives that the name, and the people are the mentioned JIDs
@@ -273,7 +273,7 @@ func (u *UI) customMentionPage(gtx C, c *model.Chat, info *model.ChatInfo) []lay
 // demoCustomMentions gives the open group two custom mentions, for
 // cmd/screenshot.
 func (u *UI) demoCustomMentions() {
-	u.groupMentions = true
+	u.extendedMentions = true
 	chat := u.selected.ID
 	var ids []string
 	if info := u.chatMembers(chat); info != nil {

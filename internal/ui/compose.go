@@ -291,10 +291,10 @@ type mentionState struct {
 }
 
 // mentionsHere reports whether the composer of c offers mentions: in a group,
-// or in a private chat once that extra feature is on. Not in your own chat,
+// or in a private chat with Extended mentions on. Not in your own chat,
 // where there's no one else to mention.
 func (u *UI) mentionsHere(c *model.Chat) bool {
-	return c.IsGroup || u.privateMentions && !c.Self && !isChannelID(c.ID)
+	return c.IsGroup || u.extendedMentions && !c.Self && !isChannelID(c.ID)
 }
 
 // mentionTarget is the person a private chat is with, as a member.
@@ -389,7 +389,7 @@ func (u *UI) mentionQuery() *mentionState {
 type mentionHitsKey struct {
 	query, me string
 	info      *model.ChatInfo
-	groups    bool // @admin and custom mentions are on
+	extended  bool // @admin and custom mentions are on
 	custom    int  // customMentionsVer
 }
 
@@ -398,7 +398,7 @@ type mentionHitsKey struct {
 // best first, saved contacts before the rest, yourself last.
 func (u *UI) mentionHits(info *model.ChatInfo, query string) []model.Member {
 	c := &u.conv
-	k := mentionHitsKey{query: query, me: u.meName(), info: info, groups: u.groupMentions, custom: u.customMentionsVer}
+	k := mentionHitsKey{query: query, me: u.meName(), info: info, extended: u.extendedMentions, custom: u.customMentionsVer}
 	if c.hitsOK && c.hitsKey == k {
 		return c.hits
 	}
@@ -439,14 +439,14 @@ func (u *UI) mentionHits(info *model.ChatInfo, query string) []model.Member {
 	})
 	var out []model.Member
 	for _, id := range []string{mentionAllID, mentionAdminID} {
-		if id == mentionAdminID && !u.groupMentions {
+		if id == mentionAdminID && !u.extendedMentions {
 			continue // an extra feature
 		}
 		if strings.HasPrefix(id[1:], query) {
 			out = append(out, model.Member{ID: id, Name: id[1:]})
 		}
 	}
-	if u.groupMentions {
+	if u.extendedMentions {
 		out = append(out, u.customMentionHits(info, query)...)
 	}
 	for _, h := range hits {

@@ -208,8 +208,8 @@ func TestExtrasOffByDefault(t *testing.T) {
 	u := New(b)
 	u.Start(func() {})
 	u.applyEvents()
-	if u.slash.on || u.groupMentions || u.rawPhotos {
-		t.Fatalf("extras on by default: slash %v, @admin %v, raw %v", u.slash.on, u.groupMentions, u.rawPhotos)
+	if u.slash.on || u.extendedMentions || u.rawPhotos {
+		t.Fatalf("extras on by default: slash %v, @admin %v, raw %v", u.slash.on, u.extendedMentions, u.rawPhotos)
 	}
 	u.SelectID("work")
 	hasAdmin := func() bool {
@@ -245,7 +245,7 @@ func TestExtrasOffByDefault(t *testing.T) {
 	}
 
 	u.ShowPage("extras")
-	for _, key := range []string{prefSlash, prefGroupMentions, prefRawPhotos} {
+	for _, key := range []string{prefSlash, prefExtendedMentions, prefRawPhotos} {
 		settingRowByKey(t, u, key).run()
 		u.settings.stale = true
 		if b.Pref(key) != "on" || !settingRowByKey(t, u, key).on {
@@ -256,7 +256,7 @@ func TestExtrasOffByDefault(t *testing.T) {
 		t.Error("extras turned on aren't offered")
 	}
 	// A new window remembers them.
-	if u2 := New(b); !u2.slash.on || !u2.groupMentions || !u2.rawPhotos {
+	if u2 := New(b); !u2.slash.on || !u2.extendedMentions || !u2.rawPhotos {
 		t.Error("extras weren't remembered")
 	}
 	// Raw goes when it's turned off.

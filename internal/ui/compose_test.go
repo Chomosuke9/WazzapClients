@@ -106,19 +106,19 @@ func TestEnterAfterMention(t *testing.T) {
 	}
 }
 
-// TestPrivateMention checks that a private chat's mention picker, once its
-// extra feature is on, offers the other person and no one else, and that
+// TestPrivateMention checks that a private chat's mention picker, with
+// Extended mentions on, offers the other person and no one else, and that
 // picking them makes a real mention.
 func TestPrivateMention(t *testing.T) {
 	st := newSlashTest(t, "rina")
 	u := st.u
 	st.typeText("@")
-	if u.privateMentions || u.mentionQuery() != nil {
+	if u.extendedMentions || u.mentionQuery() != nil {
 		t.Fatal("offered while off")
 	}
 	u.ShowPage("extras")
-	settingRowByKey(t, u, prefPrivateMentions).run()
-	if st.b.Pref(prefPrivateMentions) != "on" || !New(st.b).privateMentions {
+	settingRowByKey(t, u, prefExtendedMentions).run()
+	if st.b.Pref(prefExtendedMentions) != "on" || !New(st.b).extendedMentions {
 		t.Fatal("the switch wasn't kept")
 	}
 	u.ShowPage("chats") // or the composer isn't drawn to take the key
@@ -160,7 +160,7 @@ func TestPrivateMention(t *testing.T) {
 			t.Errorf("mentions in %+v", c)
 		}
 	}
-	u.privateMentions = false
+	u.extendedMentions = false
 	if u.mentionsHere(&model.Chat{ID: "rina"}) || !u.mentionsHere(&model.Chat{ID: "work", IsGroup: true}) {
 		t.Error("the switch off should leave only groups")
 	}

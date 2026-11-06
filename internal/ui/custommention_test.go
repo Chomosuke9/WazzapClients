@@ -14,7 +14,7 @@ import (
 // customTest opens the demo's "work" group with custom mentions on.
 func customTest(t *testing.T) *slashTest {
 	st := newSlashTest(t, "work")
-	st.u.groupMentions = true
+	st.u.extendedMentions = true
 	return st
 }
 
@@ -41,14 +41,14 @@ func customRow(ms *mentionState) int {
 	return slices.IndexFunc(ms.members, func(m model.Member) bool { return strings.HasPrefix(m.ID, mentionCustomPrefix) })
 }
 
-// One switch on the Extra features page turns on @admin and custom mentions
-// together. It's off until then, and remembered.
+// One switch on the Extra features page, Extended mentions, turns on @admin and
+// custom mentions together. It's off until then, and remembered.
 func TestCustomMentionsExtra(t *testing.T) {
 	b := mock.New()
 	u := New(b)
 	u.Start(func() {})
 	u.applyEvents()
-	if u.groupMentions {
+	if u.extendedMentions {
 		t.Fatal("on by default")
 	}
 	u.SelectID("work")
@@ -75,15 +75,15 @@ func TestCustomMentionsExtra(t *testing.T) {
 		t.Error("in the ⋮ menu while off")
 	}
 	u.ShowPage("extras")
-	settingRowByKey(t, u, prefGroupMentions).run()
-	if b.Pref(prefGroupMentions) != "on" || !offered() || !adminOffered() {
+	settingRowByKey(t, u, prefExtendedMentions).run()
+	if b.Pref(prefExtendedMentions) != "on" || !offered() || !adminOffered() {
 		t.Error("not offered once on")
 	}
 	if !slices.ContainsFunc(u.convMenuItems(u.selected), func(it menuItem) bool { return it.key == "mentions" }) {
 		t.Error("not in the ⋮ menu once on")
 	}
 	u2 := New(b)
-	if !u2.groupMentions {
+	if !u2.extendedMentions {
 		t.Error("the switch wasn't remembered")
 	}
 	if l := u2.customMentionsOf("work"); len(l) != 1 || l[0].Name != "Tim frontend" || !slices.Equal(l[0].Members, others[:2]) {

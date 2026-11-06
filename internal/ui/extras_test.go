@@ -147,9 +147,9 @@ func TestExtraFeatureWithoutConsent(t *testing.T) {
 	st := newSlashTest(t, "work")
 	st.u.ShowPage("extras")
 	st.frame()
-	st.u.btn("settings:" + prefGroupMentions).Click()
+	st.u.btn("settings:" + prefExtendedMentions).Click()
 	st.frame()
-	if !st.u.groupMentions || !extraOn(st.b, prefGroupMentions) || st.u.dialog.isOpen() {
+	if !st.u.extendedMentions || !extraOn(st.b, prefExtendedMentions) || st.u.dialog.isOpen() {
 		t.Fatal("a regular extra feature did not enable immediately")
 	}
 }

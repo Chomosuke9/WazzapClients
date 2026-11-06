@@ -17,11 +17,10 @@ import (
 
 // Preferences of the extra features (Backend.Pref keys), on when "on".
 const (
-	prefSlash           = "slash_commands"  // slash.go
-	prefGroupMentions   = "admin_mention"   // "@admin" and custom mentions (custommention.go) in the mention picker
-	prefPrivateMentions = "private_mention" // mentioning the other person in a private chat (compose.go)
-	prefRawPhotos       = "raw_photos"      // Raw quality for photos
-	prefEditHistory     = "edit_history"    // the earlier texts of edited messages (edit.go)
+	prefSlash            = "slash_commands" // slash.go
+	prefExtendedMentions = "admin_mention"  // "@admin" and custom mentions (custommention.go), and mentioning the other person in a private chat (compose.go)
+	prefRawPhotos        = "raw_photos"     // Raw quality for photos
+	prefEditHistory      = "edit_history"   // the earlier texts of edited messages (edit.go)
 )
 
 // grayCmdPref is the preference that turns on a gray command.
@@ -46,8 +45,7 @@ func setExtra(b model.Backend, key string, on bool) {
 func (u *UI) loadExtras() {
 	b := u.backend
 	u.slash.on = extraOn(b, prefSlash)
-	u.groupMentions = extraOn(b, prefGroupMentions)
-	u.privateMentions = extraOn(b, prefPrivateMentions)
+	u.extendedMentions = extraOn(b, prefExtendedMentions)
 	u.rawPhotos = extraOn(b, prefRawPhotos)
 	u.editHistory = extraOn(b, prefEditHistory)
 	u.keepDeleted = extraOn(b, model.PrefKeepDeleted)
@@ -144,12 +142,9 @@ func (u *UI) extrasSettings() []settingsSection {
 				&u.slash.on, func() { u.conv.richFor = "" }), // the composer starts or stops showing commands
 		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
 		{title: "Mentions", rows: []settingRow{
-			u.extraToggle(prefGroupMentions, "Group mentions",
-				"Type @admin in a group to mention its admins, or a custom mention, like @Tim frontend, for people you pick",
-				&u.groupMentions, nil),
-			u.extraToggle(prefPrivateMentions, "Mentions in private chats",
-				"Type @ in a private chat to mention the person you're talking to",
-				&u.privateMentions, nil),
+			u.extraToggle(prefExtendedMentions, "Extended mentions",
+				"Type @admin in a group to mention its admins, or a custom mention, like @Tim frontend, for people you pick. In a private chat, type @ to mention the person you're talking to",
+				&u.extendedMentions, nil),
 		}, note: "Make custom mentions from a group's ⋮ menu or its info. They're kept on this computer, for this account."},
 		u.privacyExtras(),
 		{title: "Photos", rows: []settingRow{

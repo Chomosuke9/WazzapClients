@@ -248,7 +248,7 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 	if admin {
 		rows = append(rows, item("perms", listItem{ic: icSettings, title: "Group permissions"}))
 	}
-	if u.groupMentions && !c.Left {
+	if u.extendedMentions && !c.Left {
 		rows = append(rows, item("mentions", listItem{ic: icGroups, title: "Custom mentions", sub: customMentionCount(u.customMentionsOf(c.ID))}))
 	}
 	rows = append(rows, u.infoDivider(12, 3.2))
