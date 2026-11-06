@@ -13,12 +13,22 @@ import (
 )
 
 // The volume of videos, voice messages and audio files, set with the
-// slider beside a video's mute button. It's an app preference, in percent,
-// so a loud video doesn't start at full volume again after a restart.
+// slider beside a video's mute button. It's the slider's position (see gain),
+// an app preference in percent, so a loud video doesn't start at full volume
+// again after a restart.
 const prefVolume = "volume" // 100 if ""
 
 // volumeStep is how much a mouse wheel notch over the slider moves it.
 const volumeStep = 0.05
+
+// gain is what a player's volume is at slider position pos. Players scale the
+// sound's amplitude, and hearing follows its logarithm: straight through, half
+// way along the slider is only 6 dB down, and most of the change is at the
+// bottom. A cube is close to even steps over 60 dB and still reaches silence.
+func gain(pos float32) float64 {
+	p := float64(pos)
+	return p * p * p
+}
 
 // volSlider is a volume slider's input state.
 type volSlider struct {
@@ -42,7 +52,7 @@ func (u *UI) setVolume(v float32, save bool) {
 		u.volume = v
 		for _, p := range []*video.Player{u.viewer.video.player, u.status.viewer.video.player, u.voice.player} {
 			if p != nil {
-				p.SetVolume(float64(v))
+				p.SetVolume(gain(v))
 			}
 		}
 	}

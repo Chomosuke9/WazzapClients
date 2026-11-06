@@ -473,6 +473,10 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		raw = evt.Message
 	}
 	p.msg.rawPayload = marshal(raw)
+	// A copy of a message in HD is that message, not another (copies.go).
+	if id := first(copyOf(raw), copyOf(m)); id != "" && id != msg.ID && !viewOnce && c.media != model.MediaNone {
+		msg.ID, p.msg.isCopy = id, true
+	}
 	if id, q := c.ctx.GetStanzaID(), c.ctx.GetQuotedMessage(); id != "" && hasMediaKey(q) {
 		// It may quote a view once message whose media never came here.
 		p.msg.quotedMedia, p.msg.quotedID = q, id

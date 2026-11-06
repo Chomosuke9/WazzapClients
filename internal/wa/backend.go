@@ -172,6 +172,9 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 		b.db.Close()
 		return nil, fmt.Errorf("init message store: %w", err)
 	}
+	if err := b.foldCopies(b.ctx); err != nil {
+		b.log.Warnf("fold message copies: %v", err) // tried again next time
+	}
 
 	osInfo.Do(func() {
 		store.SetOSInfo("WazzapClients", [3]uint32{0, 1, 0})
@@ -1050,8 +1053,8 @@ func (b *Backend) onMessage(e *events.Message) {
 	}
 	b.noteTimer(ctx, e)
 	p, ok := b.parse(ctx, e)
-	if !ok || p.target != "" {
-		// What came after "Waiting for this message" may show nothing.
+	if !ok || p.target != "" || p.msg.isCopy {
+		// What came after "Waiting for this message" may show nothing of its own.
 		b.dropWaiting(b.canonical(ctx, e.Info.Chat).String(), e.Info.ID)
 	}
 	if !ok {
@@ -1125,7 +1128,7 @@ func (b *Backend) onUndecryptable(e *events.UndecryptableMessage) {
 func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 	ctx := b.ctx
 	chat := p.msg.ChatID
-	isNew := false
+	isNew, sharper := false, false
 	switch {
 	case p.revoke:
 		b.revoke(ctx, chat, p)
@@ -1175,6 +1178,7 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		if seen && old.Kind == model.KindWaiting {
 			seen = false
 		}
+		sharper = seen && p.msg.isCopy && !b.store.hasCopy(ctx, chat, p.msg.ID) && hdBlob(old.Media, p.msg.rawPayload) != nil
 		if err := b.store.ensureChat(ctx, b.db, chat, info.IsGroup, name); err != nil {
 			b.log.Errorf("store chat %s: %v", chat, err)
 			return
@@ -1208,6 +1212,9 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		b.emitChat(chat)
 		if isNew {
 			b.autoDownload(m)
+		}
+		if sharper {
+			b.dropSmallerMedia(m)
 		}
 	} else if isNew {
 		_ = b.store.addUnread(ctx, chat, false)

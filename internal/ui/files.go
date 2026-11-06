@@ -343,7 +343,7 @@ func (u *UI) loadVoice() {
 		u.backend.OpenMedia(m)
 		return
 	}
-	p.SetVolume(float64(u.volume))
+	p.SetVolume(gain(u.volume))
 	if v.msg.Media == model.MediaVoice && u.voiceRate != 1 {
 		p.SetRate(u.voiceRate)
 	}

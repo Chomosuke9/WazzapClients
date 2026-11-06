@@ -275,6 +275,13 @@ Gotchas already found in the pinned version (v0.10.x):
 - Keep in chat is a `KeepInChatMessage` (kept in `wz_messages.kept`; history sync says it
   in `WebMessageInfo.keepInChat`). WhatsApp reports go only from the phone: hypermeow has
   no call for them, so Report asks and offers to block (`confirmReport`).
+- WhatsApp sends a picture or video in HD twice: the message, in standard quality, then a
+  copy under an ID of its own whose `messageContextInfo` points back to it
+  (`HD_IMAGE_DUAL_UPLOAD`, `HD_VIDEO_DUAL_UPLOAD`; a video can also get a copy in HEVC or
+  AV1, and a motion photo's clip comes the same way). They're one message: reactions and
+  replies go to the first, and the copy can come much later or, in history sync, before it.
+  `parse` files a copy under the message's ID, in `copy_payload`, and `mediaBlob` downloads
+  the HD file from it (`internal/wa/copies.go`).
 - Websites send WhatsApp links (wa.me, api.whatsapp.com) on to `whatsapp://send?phone=…`
   and invites to `whatsapp://chat?code=…`; Windows starts the scheme's handler with the
   link as the last argument. Apps can't make themselves the default: Windows keeps the
@@ -469,6 +476,7 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    what a stored message shows, read from its payload (raw_payload, which
                    /catch shows, and edit_payload), in payload.go;
                    albums (an albumMessage, then each picture pointing back to it) in album.go;
+                   the copies WhatsApp sends of a message in HD (filed under it) in copies.go;
                    polls, locations, contact cards and events (cards in bubbles) and the
                    votes and event answers they get (wz_votes) in polls.go;
                    system messages (model.KindSystem), stored with a waWeb stub as their

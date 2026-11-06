@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS wz_messages (
 	-- and the content of its latest edit.
 	raw_payload  BLOB,
 	edit_payload BLOB,
+	copy_payload BLOB, -- the copy WhatsApp sent of it in HD or another format (copies.go)
 	PRIMARY KEY (chat, id)
 );
 CREATE INDEX IF NOT EXISTS wz_messages_chat_ts ON wz_messages (chat, ts);
@@ -198,6 +199,7 @@ var migrations = []string{
 	// friends or one of their own: its name and emoji.
 	`ALTER TABLE wz_status ADD COLUMN audience TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_status ADD COLUMN audience_emoji TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wz_messages ADD COLUMN copy_payload BLOB`, // copies.go
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -433,6 +435,7 @@ type storedMsg struct {
 	senderPush string
 	whisper    string // /whisper recipient JIDs, newline-joined
 	rawPayload []byte // the marshaled waE2E message
+	isCopy     bool   // a copy of the message ID, not the message (copies.go)
 	// quotedMedia is the photo, video or voice message the message
 	// quotes (quotedID), when the quote carries what downloading it takes
 	// (see fillViewOnce).
@@ -443,9 +446,13 @@ type storedMsg struct {
 // putMessage stores a message, or what came of one again: the payload it
 // came with first stays (setRawPayload replaces your own as it goes out),
 // so do its latest edit and its text as edited, and a deleted one stays
-// deleted.
+// deleted. A copy that stood in for the message gives way to it (copies.go).
 func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error {
-	_, err := x.ExecContext(ctx, `
+	var err error
+	if m.isCopy {
+		err = s.putCopy(ctx, x, m)
+	} else {
+		_, err = x.ExecContext(ctx, `
 		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, whisper, kept, raw_payload)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
@@ -454,10 +461,15 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 				THEN wz_messages.text ELSE excluded.text END,
 			receipt = MAX(wz_messages.receipt, excluded.receipt),
 			kept = MAX(wz_messages.kept, excluded.kept),
-			raw_payload = COALESCE(wz_messages.raw_payload, excluded.raw_payload)
+			ts = CASE WHEN wz_messages.raw_payload IS wz_messages.copy_payload AND wz_messages.copy_payload IS NOT NULL
+				THEN excluded.ts ELSE wz_messages.ts END,
+			raw_payload = CASE WHEN wz_messages.raw_payload IS wz_messages.copy_payload AND wz_messages.copy_payload IS NOT NULL
+				THEN COALESCE(excluded.raw_payload, wz_messages.raw_payload)
+				ELSE COALESCE(wz_messages.raw_payload, excluded.raw_payload) END
 		WHERE wz_messages.kind != ?`,
-		m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
-		m.Text, int(m.Receipt), m.whisper, boolInt(m.Kept), m.rawPayload, int(model.KindDeleted))
+			m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
+			m.Text, int(m.Receipt), m.whisper, boolInt(m.Kept), m.rawPayload, int(model.KindDeleted))
+	}
 	if err != nil {
 		return err
 	}
@@ -533,7 +545,7 @@ func (s *msgStore) setFailed(ctx context.Context, chat, id string) error {
 // group admin who deleted it, or "" for its sender.
 func (s *msgStore) markDeleted(ctx context.Context, chat, id, by string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?3, media = 0, text = '', pinned = 0, edited = 0,
-			revoked = 0, revoked_by = ?4, raw_payload = NULL, edit_payload = NULL
+			revoked = 0, revoked_by = ?4, raw_payload = NULL, edit_payload = NULL, copy_payload = NULL
 		WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2;
@@ -655,10 +667,12 @@ func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.
 		blob, err = s.stickerBlob(ctx, id)
 		return model.MediaSticker, blob, err
 	}
-	var raw []byte
-	err = s.db.QueryRowContext(ctx, `SELECT media, raw_payload FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
-		Scan(&media, &raw)
-	_, blob = rawMedia(raw)
+	var raw, cp []byte
+	err = s.db.QueryRowContext(ctx, `SELECT media, raw_payload, copy_payload FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
+		Scan(&media, &raw, &cp)
+	if blob = hdBlob(media, cp); blob == nil {
+		_, blob = rawMedia(raw)
+	}
 	return
 }
 
