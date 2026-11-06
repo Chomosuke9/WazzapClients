@@ -28,13 +28,15 @@ import (
 // "@Name", the message carries "@<user>" plus the JID.
 type mentionRef struct {
 	name, jid string
+	people    []string // whom a custom mention notifies (custommention.go)
 }
 
 // Picker entries that aren't members: "@all" notifies everyone, "@admin"
-// the group's admins.
+// the group's admins, and "@custom" the people picked for a custom mention.
 const (
-	mentionAllID   = "@all"
-	mentionAdminID = "@admin"
+	mentionAllID    = "@all"
+	mentionAdminID  = "@admin"
+	mentionCustomID = "@custom"
 )
 
 // requestFocus focuses tag (an editor), or clears focus when nil, on the
@@ -232,6 +234,17 @@ func (u *UI) draftWith(txt string, mentions []mentionRef, chat string) model.Dra
 			d.Mentions = append(d.Mentions, jid)
 		}
 	}
+	// A message can show one name for "@<chat JID>", which every "@<chat
+	// JID>" in it takes. Others keep their plain text, and still notify.
+	named := false
+	nameChat := func(at string) bool {
+		if named {
+			return false
+		}
+		named = true
+		d.Text = strings.ReplaceAll(d.Text, at, "@"+chat)
+		return true
+	}
 	for _, mr := range refs {
 		at := "@" + mr.name
 		if !strings.Contains(d.Text, at) {
@@ -242,14 +255,21 @@ func (u *UI) draftWith(txt string, mentions []mentionRef, chat string) model.Dra
 			d.MentionAll = true // the text keeps "@all"
 			continue
 		case mentionAdminID:
-			d.MentionAdmins = true
-			d.Text = strings.ReplaceAll(d.Text, at, "@"+chat)
+			d.MentionAdmins = nameChat(at)
 			if info := u.chatMembers(chat); info != nil {
 				for _, m := range info.Members {
 					if m.Admin && !m.Me {
 						addJID(m.ID)
 					}
 				}
+			}
+			continue
+		case mentionCustomID:
+			if nameChat(at) {
+				d.MentionChat = mr.name
+			}
+			for _, id := range u.customMentionPeople(chat, mr.people) {
+				addJID(id)
 			}
 			continue
 		}
@@ -325,15 +345,16 @@ func (u *UI) mentionQuery() *mentionState {
 type mentionHitsKey struct {
 	query, me string
 	info      *model.ChatInfo
-	admin     bool
+	groups    bool // @admin and custom mentions are on
+	custom    int  // customMentionsVer
 }
 
-// mentionHits lists what the mention picker offers for query: "@all" and
-// "@admin", then the members it finds (see fuzzy.go), best first, saved
-// contacts before the rest, yourself last.
+// mentionHits lists what the mention picker offers for query: "@all",
+// "@admin" and custom mentions, then the members it finds (see fuzzy.go),
+// best first, saved contacts before the rest, yourself last.
 func (u *UI) mentionHits(info *model.ChatInfo, query string) []model.Member {
 	c := &u.conv
-	k := mentionHitsKey{query: query, me: u.meName(), info: info, admin: u.adminMention}
+	k := mentionHitsKey{query: query, me: u.meName(), info: info, groups: u.groupMentions, custom: u.customMentionsVer}
 	if c.hitsOK && c.hitsKey == k {
 		return c.hits
 	}
@@ -374,12 +395,15 @@ func (u *UI) mentionHits(info *model.ChatInfo, query string) []model.Member {
 	})
 	var out []model.Member
 	for _, id := range []string{mentionAllID, mentionAdminID} {
-		if id == mentionAdminID && !u.adminMention {
+		if id == mentionAdminID && !u.groupMentions {
 			continue // an extra feature
 		}
 		if strings.HasPrefix(id[1:], query) {
 			out = append(out, model.Member{ID: id, Name: id[1:]})
 		}
+	}
+	if u.groupMentions {
+		out = append(out, u.customMentionHits(info, query)...)
 	}
 	for _, h := range hits {
 		out = append(out, h.m)
@@ -411,7 +435,14 @@ func (u *UI) pickMention(i int) {
 	ed := &u.conv.composer
 	ed.SetCaret(ms.start, ms.end)
 	ed.Insert("@" + name + " ")
-	u.conv.mentions = append(u.conv.mentions, mentionRef{name: name, jid: m.ID})
+	ref := mentionRef{name: name, jid: m.ID}
+	if id, ok := strings.CutPrefix(m.ID, mentionCustomPrefix); ok {
+		ref.jid = mentionCustomID
+		if cm := u.customMentionByID(u.selected.ID, id); cm != nil {
+			ref.people = cm.Members
+		}
+	}
+	u.conv.mentions = append(u.conv.mentions, ref)
 	u.requestFocus(ed)
 }
 
@@ -567,11 +598,13 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 			// A member's name, with their phone number when you haven't
 			// saved them.
 			name, sub, size, many := memberTitle(m), memberSub(m), unit.Sp(15.5), true
-			switch m.ID {
-			case mentionAllID:
+			switch {
+			case m.ID == mentionAllID:
 				sub, size = "Mention all members in this chat", 16
-			case mentionAdminID:
+			case m.ID == mentionAdminID:
 				sub, size = "Mention all admins in this chat", 16
+			case strings.HasPrefix(m.ID, mentionCustomPrefix):
+				size = 16 // memberSub says who's in it (customMentionHits)
 			default:
 				many = false
 			}

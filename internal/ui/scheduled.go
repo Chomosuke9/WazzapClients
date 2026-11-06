@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"slices"
 	"strings"
 	"time"
 
@@ -168,6 +169,16 @@ func (u *UI) editScheduled(j auto.Job) {
 				}
 			}
 		}
+	}
+	if j.MentionChat != "" {
+		// Whoever the text doesn't name is the custom mention's.
+		ref := mentionRef{name: j.MentionChat, jid: mentionCustomID}
+		for _, id := range j.Mentions {
+			if !slices.ContainsFunc(refs, func(r mentionRef) bool { return r.jid == id }) {
+				ref.people = append(ref.people, id)
+			}
+		}
+		refs = append(refs, ref)
 	}
 	u.conv.reply = nil
 	if j.Reply != "" {

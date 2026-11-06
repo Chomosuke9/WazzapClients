@@ -75,6 +75,7 @@ func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.M
 			if r.Round {
 				asVideoNote(m)
 			}
+			nameCaption(m, r.mentions)
 			return m
 		}
 	}
@@ -87,7 +88,27 @@ func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.M
 			}
 		}
 	}
-	return &waE2E.Message{Conversation: proto.String(r.Text)}
+	return &waE2E.Message{Conversation: proto.String(namedGroupMentions(r.Text, r.mentions))}
+}
+
+// nameCaption writes the group mentions in a media message's caption as the
+// names they show, for a copy that goes without its mentions.
+func nameCaption(m *waE2E.Message, mentions string) {
+	named := func(caption *string) *string {
+		if caption == nil {
+			return nil
+		}
+		return proto.String(namedGroupMentions(*caption, mentions))
+	}
+	if c := m.GetImageMessage(); c != nil {
+		c.Caption = named(c.Caption)
+	}
+	if c := m.GetVideoMessage(); c != nil {
+		c.Caption = named(c.Caption)
+	}
+	if c := m.GetDocumentMessage(); c != nil {
+		c.Caption = named(c.Caption)
+	}
 }
 
 // cardOf returns the place, contact cards, poll or event in m, without
@@ -391,7 +412,13 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 		if msg != nil && raw.Round {
 			asVideoNote(msg)
 		}
+		if msg != nil {
+			nameCaption(msg, raw.mentions)
+		}
 	}
+	// A copy goes without the mentions, whose "@<group JID>" means nothing
+	// without them.
+	text := namedGroupMentions(raw.Text, raw.mentions)
 	var ci *waE2E.ContextInfo
 	if forwarded {
 		// Each forward adds one to the score, which says "Forwarded many
@@ -413,7 +440,7 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	case raw.Media != model.MediaNone || raw.Kind == model.KindDeleted || raw.Text == "":
 		return false // media we can't resend
 	default:
-		e := &waE2E.ExtendedTextMessage{Text: proto.String(raw.Text), ContextInfo: ci}
+		e := &waE2E.ExtendedTextMessage{Text: proto.String(text), ContextInfo: ci}
 		if raw.Link.Shown(raw.Text) {
 			addLink(e, raw.Link, raw.Thumb)
 			if media == model.MediaNone {
@@ -424,7 +451,7 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	}
 	m := &model.Message{
 		ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Time: b.sendTime(), Receipt: model.Pending,
-		Kind: raw.Kind, Media: raw.Media, Text: raw.Text,
+		Kind: raw.Kind, Media: raw.Media, Text: text,
 	}
 	sm := storedMsg{Message: m, rawPayload: marshal(msg)}
 	if err := b.store.putMessage(ctx, b.db, sm); err != nil {

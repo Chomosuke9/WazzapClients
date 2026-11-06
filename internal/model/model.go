@@ -394,9 +394,11 @@ type Version struct {
 }
 
 // MentionRef is an @mention in text to edit: the text shows "@" + Name,
-// and ID is who it notifies (a JID, or "@all" or "@admin").
+// and ID is who it notifies (a JID, or "@all", "@admin" or "@custom").
 type MentionRef struct {
 	Name, ID string
+	// People are whom a "@custom" mention notifies.
+	People []string
 }
 
 // Chat is a one-to-one or group conversation. Messages are not part of it:
@@ -470,6 +472,9 @@ const (
 	MentionNotifies = '\u2063'
 	// MentionAdmins marks "@admin", which notifies the group's admins.
 	MentionAdmins = '\u2062'
+	// MentionGroup marks a name for people picked by hand ("@Tim frontend")
+	// that notifies others. One that notifies you is MentionNotifies.
+	MentionGroup = '\u2061'
 )
 
 // ForMe reports whether m, as a backend resolved it, mentions you (or
@@ -497,8 +502,8 @@ type Draft struct {
 	// Mentions then lists the group's admins.
 	MentionAdmins bool
 	// MentionChat, when set, means Text contains "@<chat JID>", shown as
-	// "@" + MentionChat (a snippet's {mention} without a reply). It
-	// notifies no one.
+	// "@" + MentionChat: a snippet's {mention} without a reply, which
+	// notifies no one, or a custom mention, which notifies those in Mentions.
 	MentionChat string
 	// Link is the preview of a link in Text to send with it, or nil, and
 	// LinkThumb its picture (a small JPEG).
@@ -1599,7 +1604,7 @@ func SearchKey(s string) string {
 	b.Grow(len(s))
 	for _, r := range s {
 		switch r {
-		case '*', '_', '~', '`', '\u2068', '\u2069', MentionNotifies, MentionAdmins:
+		case '*', '_', '~', '`', '\u2068', '\u2069', MentionNotifies, MentionAdmins, MentionGroup:
 			continue
 		}
 		b.WriteRune(FoldRune(r))

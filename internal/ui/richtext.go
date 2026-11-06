@@ -199,7 +199,7 @@ func (pf pillFor) pilled(mention string) bool {
 }
 
 // mentionMarks are the invisible marks around and inside a mention.
-var mentionMarks = strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "", string(model.MentionAdmins), "")
+var mentionMarks = strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "", string(model.MentionAdmins), "", string(model.MentionGroup), "")
 
 // richSpans turns message text into styled spans: WhatsApp formatting,
 // highlighted mentions and links. deco has each span's decorations.
@@ -273,7 +273,7 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, 
 				cur = prev
 			} else {
 				prev := cur
-				if r, _ := utf8.DecodeRuneInString(name); r != model.MentionNotifies && r != model.MentionAdmins {
+				if r, _ := utf8.DecodeRuneInString(name); r != model.MentionNotifies && r != model.MentionAdmins && r != model.MentionGroup {
 					cur |= decoMention
 				}
 				add(mentionMarks.Replace(name), mf, p.Green)

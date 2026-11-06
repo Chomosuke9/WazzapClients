@@ -212,7 +212,11 @@ type UI struct {
 	slash   slashState   // slash commands and their notes (slash.go)
 	codes   shortcodes   // :emoji: names typed in the composer (shortcode.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
-	adminMention, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
+	groupMentions, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
+	// Custom mentions (custommention.go): each group's as read from its
+	// preference, and a count of the changes to them.
+	customMentions    map[string][]customMention
+	customMentionsVer int
 	// captureBlocked keeps the window out of screenshots (viewonce.go).
 	captureBlocked bool
 	// privacy is privacy mode (privacy.go), and secret how much of what
@@ -2130,5 +2134,28 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.info.anim.snap(true)
 		u.openInfoSub(name)
 		u.applyEvents()
+	case "mentions", "custommention", "newmention", "custompick":
+		// Custom mentions: a group's page, one being edited, a new one, and
+		// the mention picker offering them.
+		u.demoCustomMentions()
+		switch name {
+		case "mentions":
+			u.openInfo(u.selected.ID)
+			u.info.anim.snap(true)
+			u.openInfoSub(infoMentions)
+		case "custommention":
+			u.openCustomMention(u.selected.ID, &u.customMentionsOf(u.selected.ID)[0])
+			u.dialog.anim.snap(true)
+			u.dialog.bar.snap(true)
+		case "newmention":
+			u.openCustomMention(u.selected.ID, nil)
+			u.dialog.listName.SetText("admin")
+			u.dialog.anim.snap(true)
+		case "custompick":
+			ed := &u.conv.composer
+			ed.SetText("Hi @t")
+			ed.SetCaret(ed.Len(), ed.Len())
+			u.requestFocus(ed)
+		}
 	}
 }

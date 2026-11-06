@@ -109,6 +109,9 @@ type rawQuote struct {
 	media  model.Media
 	round  bool
 	quoted bool // the payload carries the quoted message
+	// mentions are those of the quoted message, when the payload carries
+	// them, and remote the chat it's in, when another (a private reply).
+	mentions, remote string
 }
 
 // manyForwards is the forwarding score from which WhatsApp says
@@ -128,7 +131,8 @@ func quoteOf(ci *waE2E.ContextInfo) *rawQuote {
 		return nil
 	}
 	qc := describe(q)
-	return &rawQuote{id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, round: qc.round, quoted: q != nil}
+	return &rawQuote{id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, round: qc.round, quoted: q != nil,
+		mentions: strings.Join(mentionsOf(qc.ctx), ","), remote: ci.GetRemoteJID()}
 }
 
 // resolveQuote turns a payload's quote in chat into the one shown. The

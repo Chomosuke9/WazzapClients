@@ -213,6 +213,11 @@ Gotchas already found in the pinned version (v0.10.x):
   moves its caret with them as usual. In a command's text that takes @mentions
   (`Option.Mentions`, /schedule's message) the mention picker shows instead, and it
   takes Enter first (`slashTakesMentions`).
+- `@admin` and custom mentions are the group mentioning itself: the text holds
+  `@<group JID>`, a `GroupMention` in `ContextInfo` gives that its name, `MentionedJID` says
+  who's notified, and the message goes in a `GroupMentionedMessage`. All of a message's
+  `@<group JID>` show the same name, so it can have one: `draftWith` leaves any other
+  group name as plain text and still notifies its people.
 - hypermeow doesn't parse a group's `<general_chat/>` (a community's General chat).
   `markGeneralChats` (`internal/wa/communities.go`) asks for the joined groups again
   through `DangerousInternals().SendGroupIQ` on connect and reads it from the raw nodes.
@@ -399,7 +404,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    Snippets, the snippets /snippet send offers in the slash picker, their {variables}
                    and /catch's payload dialog) in snippets.go; and
                    the Extra features settings page in extras.go (the app's own features,
-                   such as slash commands, @admin, the Privacy mode toggle, Block screen
+                   such as slash commands, @admin and custom mentions (one switch; @Tim frontend: people you
+                   pick in a group, named and mentioned like @admin, in custommention.go), the Privacy mode toggle, Block screen
                    recording and Raw photos: each off until turned on), and
                    its Ethically gray features page (Edit history, Keep deleted messages, Replay view
                    once, and commands marked Gray, like /ghost, each with a switch of its own);
@@ -735,6 +741,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
+# custom mentions: mentions (a group's page), custommention, newmention (its name's error), custompick (the picker offering them);
 # a group's info being edited: groupname, groupdesc, groupphoto (its picture's menu); picview (the chat's picture, big); the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots

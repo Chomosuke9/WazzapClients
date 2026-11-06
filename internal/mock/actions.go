@@ -403,6 +403,9 @@ func (b *Backend) showMentions(chatID string, d model.Draft) string {
 	if d.MentionAdmins {
 		txt = strings.ReplaceAll(txt, "@"+chatID, "⁨"+string(model.MentionAdmins)+"@admin⁩")
 	}
+	if d.MentionChat != "" {
+		txt = strings.ReplaceAll(txt, "@"+chatID, "⁨"+string(model.MentionGroup)+"@"+d.MentionChat+"⁩")
+	}
 	if info := b.Info(chatID); info != nil {
 		for _, m := range info.Members {
 			user, _, _ := strings.Cut(m.ID, "@")
@@ -448,11 +451,14 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 			break
 		}
 		sb.WriteString(rest[:i])
-		name := strings.TrimLeft(rest[i+len("⁨"):j], string([]rune{model.MentionNotifies, model.MentionAdmins}))
+		raw := rest[i+len("⁨") : j]
+		name := strings.TrimLeft(raw, string([]rune{model.MentionNotifies, model.MentionAdmins, model.MentionGroup}))
 		sb.WriteString(name)
 		name = strings.TrimPrefix(name, "@")
 		id := "@" + name
-		if info := b.Info(m.ChatID); info != nil && name != "all" && name != "admin" {
+		if strings.ContainsRune(raw, model.MentionGroup) {
+			id = "@custom"
+		} else if info := b.Info(m.ChatID); info != nil && name != "all" && name != "admin" {
 			for _, mb := range info.Members {
 				if mb.Name == name {
 					id = mb.ID

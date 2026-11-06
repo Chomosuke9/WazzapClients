@@ -12,12 +12,14 @@ import (
 )
 
 // Pages that open inside the info panel, with a back arrow: a chat's
-// starred messages, a group's permissions and its member changes.
+// starred messages, a group's permissions, its member changes and its custom
+// mentions (custommention.go).
 
 const (
-	infoStarred = "starred"
-	infoPerms   = "perms"
-	infoChanges = "changes"
+	infoStarred  = "starred"
+	infoPerms    = "perms"
+	infoChanges  = "changes"
+	infoMentions = "mentions"
 )
 
 // openInfoSub shows one of the panel's pages.
@@ -47,6 +49,8 @@ func infoSubTitle(sub string) string {
 		return "Group permissions"
 	case infoChanges:
 		return "Member changes"
+	case infoMentions:
+		return "Custom mentions"
 	}
 	return ""
 }
@@ -60,6 +64,8 @@ func (u *UI) infoSubRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 		return u.permRows(gtx, c, info)
 	case infoChanges:
 		return u.changeRows()
+	case infoMentions:
+		return u.customMentionPage(gtx, c, info)
 	}
 	return nil
 }
@@ -369,6 +375,9 @@ func (u *UI) infoChatActions(gtx C, c *model.Chat, info *model.ChatInfo) {
 	}
 	if clicked("perms") {
 		u.openInfoSub(infoPerms)
+	}
+	if clicked("mentions") {
+		u.openInfoSub(infoMentions)
 	}
 	if clicked("theme") {
 		u.openChatTheme(chat)

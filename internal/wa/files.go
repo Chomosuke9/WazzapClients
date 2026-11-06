@@ -233,7 +233,8 @@ func (b *Backend) draftContext(chatID string, d model.Draft, m *model.Message) *
 		ci.GroupMentions = []*waE2E.GroupMention{{GroupJID: proto.String(chatID), GroupSubject: proto.String("admin")}}
 	}
 	if d.MentionChat != "" {
-		// Like @admin, but no one is in MentionedJID: it notifies no one.
+		// Like @admin, under a name of its own. MentionedJID says whom it
+		// notifies: the people of a custom mention, or for a snippet no one.
 		ci.GroupMentions = append(ci.GroupMentions, &waE2E.GroupMention{GroupJID: proto.String(chatID), GroupSubject: proto.String(d.MentionChat)})
 	}
 	if r := d.Reply; r != nil {

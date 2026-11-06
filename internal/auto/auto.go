@@ -41,6 +41,8 @@ type Job struct {
 	Mentions      []string `json:"mentions,omitempty"`
 	MentionAll    bool     `json:"all,omitempty"`
 	MentionAdmins bool     `json:"admins,omitempty"`
+	// MentionChat is the name of a custom mention (model.Draft.MentionChat).
+	MentionChat string `json:"named,omitempty"`
 	// Reply is the ID of the message it replies to, or "".
 	Reply string `json:"reply,omitempty"`
 }
@@ -240,7 +242,7 @@ func (a *Backend) sendDue() {
 }
 
 func (a *Backend) send(j Job) *model.Message {
-	d := model.Draft{Text: j.Text, Mentions: j.Mentions, MentionAll: j.MentionAll, MentionAdmins: j.MentionAdmins}
+	d := model.Draft{Text: j.Text, Mentions: j.Mentions, MentionAll: j.MentionAll, MentionAdmins: j.MentionAdmins, MentionChat: j.MentionChat}
 	if j.Reply != "" {
 		if ms := a.Backend.MessagesFrom(j.Chat, j.Reply, 1); len(ms) > 0 && ms[0].ID == j.Reply {
 			d.Reply = ms[0]

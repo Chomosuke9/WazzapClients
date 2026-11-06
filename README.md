@@ -215,8 +215,9 @@ message exposes its latest available edit content. Deleted payloads follow the
 existing deletion preferences, and view once export requires Replay view once.
 
 Group commands work in groups where you're an admin. You'll also find **`@admin`**, which
-mentions every admin of a group at once, and **Raw quality**, which sends JPEG and PNG
-photos exactly as they are.
+mentions every admin of a group at once, **custom mentions**, which name a set of people you
+pick in a group (`@Tim frontend`, from the group's ⋮ menu or its info) to mention them all at
+once, and **Raw quality**, which sends JPEG and PNG photos exactly as they are.
 
 </details>
 

@@ -130,7 +130,7 @@ func exportText(m *model.Message) string {
 	}
 	t := strings.Map(func(r rune) rune {
 		switch r {
-		case '⁨', '⁩', model.MentionNotifies, model.MentionAdmins:
+		case '⁨', '⁩', model.MentionNotifies, model.MentionAdmins, model.MentionGroup:
 			return -1 // mention marks
 		}
 		return r

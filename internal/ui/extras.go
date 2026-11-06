@@ -17,10 +17,10 @@ import (
 
 // Preferences of the extra features (Backend.Pref keys), on when "on".
 const (
-	prefSlash        = "slash_commands" // slash.go
-	prefAdminMention = "admin_mention"  // "@admin" in the mention picker
-	prefRawPhotos    = "raw_photos"     // Raw quality for photos
-	prefEditHistory  = "edit_history"   // the earlier texts of edited messages (edit.go)
+	prefSlash         = "slash_commands" // slash.go
+	prefGroupMentions = "admin_mention"  // "@admin" and custom mentions (custommention.go) in the mention picker
+	prefRawPhotos     = "raw_photos"     // Raw quality for photos
+	prefEditHistory   = "edit_history"   // the earlier texts of edited messages (edit.go)
 )
 
 // grayCmdPref is the preference that turns on a gray command.
@@ -45,7 +45,7 @@ func setExtra(b model.Backend, key string, on bool) {
 func (u *UI) loadExtras() {
 	b := u.backend
 	u.slash.on = extraOn(b, prefSlash)
-	u.adminMention = extraOn(b, prefAdminMention)
+	u.groupMentions = extraOn(b, prefGroupMentions)
 	u.rawPhotos = extraOn(b, prefRawPhotos)
 	u.editHistory = extraOn(b, prefEditHistory)
 	u.keepDeleted = extraOn(b, model.PrefKeepDeleted)
@@ -142,9 +142,10 @@ func (u *UI) extrasSettings() []settingsSection {
 				&u.slash.on, func() { u.conv.richFor = "" }), // the composer starts or stops showing commands
 		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
 		{title: "Mentions", rows: []settingRow{
-			u.extraToggle(prefAdminMention, "@admin", "Type @admin in a group to mention all of its admins at once",
-				&u.adminMention, nil),
-		}},
+			u.extraToggle(prefGroupMentions, "Group mentions",
+				"Type @admin in a group to mention its admins, or a custom mention, like @Tim frontend, for people you pick",
+				&u.groupMentions, nil),
+		}, note: "Make custom mentions from a group's ⋮ menu or its info. They're kept on this computer, for this account."},
 		u.privacyExtras(),
 		{title: "Photos", rows: []settingRow{
 			u.extraToggle(prefRawPhotos, "Raw quality", "Offer Raw when sending photos: JPEG and PNG files go as they are, not scaled or compressed",

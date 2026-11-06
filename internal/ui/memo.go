@@ -190,7 +190,7 @@ func displayText(s string) string {
 			return ' '
 		case r == '\n':
 			return r
-		case r < 0x20, r == 0x7f, r == mentionStart, r == mentionEnd, r == model.MentionNotifies, r == model.MentionAdmins:
+		case r < 0x20, r == 0x7f, r == mentionStart, r == mentionEnd, r == model.MentionNotifies, r == model.MentionAdmins, r == model.MentionGroup:
 			return -1
 		}
 		return r

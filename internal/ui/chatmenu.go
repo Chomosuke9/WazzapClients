@@ -39,6 +39,12 @@ func (u *UI) convMenuItems(c *model.Chat) []menuItem {
 			add(menuItem{key: "add", ic: icPersonAdd, label: "Add member", run: func() { u.openAddMembers(c) }})
 		}
 		add(menuItem{key: "info", ic: icInfo, label: "Group info", run: func() { u.openInfo(id) }})
+		if u.groupMentions && !c.Left {
+			add(menuItem{key: "mentions", ic: icGroups, label: "Custom mentions", run: func() {
+				u.openInfo(id)
+				u.openInfoSub(infoMentions)
+			}})
+		}
 	} else {
 		add(menuItem{key: "info", ic: icInfo, label: "Contact info", run: func() { u.openInfo(id) }})
 	}

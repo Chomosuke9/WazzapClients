@@ -37,7 +37,7 @@ func (u *UI) startEdit(m *model.Message) {
 	c.edit.msg, c.edit.orig = m, text
 	c.reply, c.mentions = nil, nil
 	for _, r := range refs {
-		c.mentions = append(c.mentions, mentionRef{name: r.Name, jid: r.ID})
+		c.mentions = append(c.mentions, mentionRef{name: r.Name, jid: r.ID, people: r.People})
 	}
 	setComposer(&c.composer, text)
 	u.requestFocus(&c.composer)

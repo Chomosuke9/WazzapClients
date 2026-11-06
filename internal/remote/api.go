@@ -100,7 +100,7 @@ const quoteLimit = 60
 // sendLimit is the longest text the watch may send, in runes.
 const sendLimit = 4096
 
-var mentionMarks = strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "", string(model.MentionAdmins), "")
+var mentionMarks = strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "", string(model.MentionAdmins), "", string(model.MentionGroup), "")
 
 // clip returns s without mention marks, cut to at most n runes (n < 0
 // keeps all of it), and whether it was cut.

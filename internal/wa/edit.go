@@ -21,6 +21,8 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 	}
 	text := r.Text
 	var refs []model.MentionRef
+	var people []string // mentioned, with no "@<user>" in the text
+	custom := -1        // the index in refs of a custom mention
 	for _, s := range strings.Split(r.mentions, ",") {
 		switch {
 		case s == "":
@@ -28,15 +30,22 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 			refs = append(refs, model.MentionRef{Name: "all", ID: "@all"})
 		case strings.HasPrefix(s, groupMentionPrefix):
 			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
-			if jid == m.ChatID {
-				text = strings.ReplaceAll(text, "@"+jid, "@admin")
-				refs = append(refs, model.MentionRef{Name: "admin", ID: "@admin"})
-			} else {
-				text = strings.ReplaceAll(text, "@"+jid, "@"+subject)
+			text = strings.ReplaceAll(text, "@"+jid, "@"+subject)
+			switch {
+			case jid != m.ChatID:
+			case strings.EqualFold(subject, "admin"):
+				refs = append(refs, model.MentionRef{Name: subject, ID: "@admin"})
+			default:
+				custom = len(refs)
+				refs = append(refs, model.MentionRef{Name: subject, ID: "@custom"})
 			}
 		default:
 			j, err := types.ParseJID(s)
-			if err != nil || j.User == "" || !strings.Contains(text, "@"+j.User) {
+			if err != nil || j.User == "" {
+				continue
+			}
+			if !strings.Contains(text, "@"+j.User) {
+				people = append(people, j.ToNonAD().String())
 				continue
 			}
 			name := b.senderName(ctx, j, "")
@@ -44,13 +53,16 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 			refs = append(refs, model.MentionRef{Name: name, ID: j.ToNonAD().String()})
 		}
 	}
+	if custom >= 0 {
+		refs[custom].People = people
+	}
 	return text, refs
 }
 
 // stripMarks removes the isolate marks around resolved mentions.
 func stripMarks(s string) string {
 	return strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "",
-		string(model.MentionAdmins), "").Replace(s)
+		string(model.MentionAdmins), "", string(model.MentionGroup), "").Replace(s)
 }
 
 // Edit implements model.Backend.

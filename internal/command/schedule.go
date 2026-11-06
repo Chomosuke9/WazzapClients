@@ -24,7 +24,7 @@ func runSchedule(c *Context) error {
 	text := strings.TrimSpace(c.Text("message"))
 	d := c.Draft(text)
 	j := auto.Job{Chat: c.Chat.ID, At: at, Text: d.Text, Shown: text, Mentions: d.Mentions,
-		MentionAll: d.MentionAll, MentionAdmins: d.MentionAdmins}
+		MentionAll: d.MentionAll, MentionAdmins: d.MentionAdmins, MentionChat: d.MentionChat}
 	if c.Reply != nil {
 		j.Reply = c.Reply.ID
 	}

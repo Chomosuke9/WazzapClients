@@ -241,10 +241,13 @@ func groupMention(jid, subject string) string {
 func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions string) string {
 	// A group mentioning itself with no one mentioned is a snippet's
 	// {mention} (see Draft.MentionChat), not @admin.
-	people := false
+	people, me := false, false
 	for _, s := range strings.Split(mentions, ",") {
 		if s != "" && s != mentionAll && !strings.HasPrefix(s, groupMentionPrefix) {
 			people = true
+			if j, err := types.ParseJID(s); err == nil && b.isMe(j.ToNonAD()) {
+				me = true
+			}
 		}
 	}
 	for _, s := range strings.Split(mentions, ",") {
@@ -255,22 +258,67 @@ func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions st
 		case strings.HasPrefix(s, groupMentionPrefix):
 			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
 			m := mention(subject)
-			if jid == chatID && (people || strings.EqualFold(subject, "admin")) {
+			switch {
+			case jid != chatID:
+			case strings.EqualFold(subject, "admin"):
 				// A group mentioning itself is "@admin" (see Send).
 				m = markedMention(model.MentionAdmins, subject)
+			case people && me:
+				// A custom mention: the name of the people mentioned.
+				m = markedMention(model.MentionNotifies, subject)
+			case people:
+				m = markedMention(model.MentionGroup, subject)
 			}
 			text = strings.ReplaceAll(text, "@"+jid, m)
 			continue
 		}
 		j, err := types.ParseJID(s)
-		if err != nil || j.User == "" {
-			continue
+		if err != nil || j.User == "" || !strings.Contains(text, "@"+j.User) {
+			continue // @admin and custom mentions don't name their people
 		}
 		m := mention(b.senderName(ctx, j, ""))
 		if b.isMe(j.ToNonAD()) {
 			m = markedMention(model.MentionNotifies, b.myName())
 		}
 		text = strings.ReplaceAll(text, "@"+j.User, m)
+	}
+	return text
+}
+
+// groupTokenRe finds a group mentioned as a message's text says it, "@<group
+// JID>" (@admin, custom mentions, a snippet's {mention}).
+var groupTokenRe = regexp.MustCompile(`@[\d-]+@g\.us`)
+
+// quoteMentions shows the mentions in the text of a quote in chat, by the
+// quoted message's own mentions: a reply's are about the reply, and may name
+// the group differently. Clients often quote the text alone, so a group mention
+// left over takes its name from the original, or at worst the group's.
+func (b *Backend) quoteMentions(ctx context.Context, chat string, q *rawQuote, text string) string {
+	if q.mentions != "" {
+		text = b.replaceMentions(ctx, chat, text, q.mentions)
+	}
+	if !groupTokenRe.MatchString(text) {
+		return text
+	}
+	if orig, ok := b.store.message(ctx, first(q.remote, chat), q.id); ok {
+		text = b.replaceMentions(ctx, chat, text, orig.mentions)
+	}
+	return groupTokenRe.ReplaceAllStringFunc(text, func(s string) string {
+		if c, ok := b.store.chat(ctx, s[1:]); ok && c.Name != "" {
+			return mention(c.Name)
+		}
+		return mention("group")
+	})
+}
+
+// namedGroupMentions writes the group mentions of a stored message's text as
+// the names they show, for a quote, which every client can then read as it is.
+func namedGroupMentions(text, mentions string) string {
+	for _, s := range strings.Split(mentions, ",") {
+		if rest, ok := strings.CutPrefix(s, groupMentionPrefix); ok {
+			jid, subject, _ := strings.Cut(rest, ":")
+			text = strings.ReplaceAll(text, "@"+jid, "@"+subject)
+		}
 	}
 	return text
 }
@@ -293,6 +341,9 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 	}
 	if r.quote != nil {
 		m.Quote = b.resolveQuote(ctx, m.ChatID, r.quote)
+		if m.Quote != nil {
+			m.Quote.Text = b.quoteMentions(ctx, m.ChatID, r.quote, m.Quote.Text)
+		}
 	}
 	if m.Quote != nil && m.Quote.SenderID != "" {
 		m.Quote.Sender = b.senderNameStr(ctx, m.Quote.SenderID, "")
@@ -343,8 +394,8 @@ func (b *Backend) myName() string {
 // are invisible; the UI uses them to highlight the whole name.
 func mention(name string) string { return "\u2068@" + name + "\u2069" }
 
-// markedMention is a mention whose kind mark (model.MentionNotifies or
-// model.MentionAdmins) tells the UI whom it notifies.
+// markedMention is a mention whose kind mark (model.MentionNotifies,
+// model.MentionAdmins or model.MentionGroup) tells the UI whom it notifies.
 func markedMention(kind rune, name string) string {
 	return "\u2068" + string(kind) + "@" + name + "\u2069"
 }
