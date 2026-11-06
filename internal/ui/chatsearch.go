@@ -365,7 +365,8 @@ func (u *UI) membersHeaderRow(gtx C, count string) D {
 	)
 }
 
-// filterMembers returns the members whose name contains q, ignoring case.
+// filterMembers returns the members whose name contains q, ignoring case, or
+// whose phone number matches it.
 func filterMembers(ms []model.Member, q string) []model.Member {
 	qr := []rune(trimSpace(q))
 	if len(qr) == 0 {
@@ -373,7 +374,7 @@ func filterMembers(ms []model.Member, q string) []model.Member {
 	}
 	var out []model.Member
 	for _, m := range ms {
-		if len(matchRanges([]rune(plainText(m.Name)), qr)) > 0 {
+		if len(matchRanges([]rune(plainText(memberTitle(m))), qr)) > 0 || phoneScore(m.Phone, q) > 0 {
 			out = append(out, m)
 		}
 	}

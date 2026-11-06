@@ -212,7 +212,7 @@ type UI struct {
 	slash   slashState   // slash commands and their notes (slash.go)
 	codes   shortcodes   // :emoji: names typed in the composer (shortcode.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
-	groupMentions, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
+	groupMentions, privateMentions, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
 	// Custom mentions (custommention.go): each group's as read from its
 	// preference, and a count of the changes to them.
 	customMentions    map[string][]customMention
@@ -2018,8 +2018,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			set("/ghost ")
 			u.sendComposer()
 		}
-	case "mention", "mentioned":
-		// The mention picker, or a draft with picked mentions.
+	case "mention", "mentioned", "privatemention":
+		// The mention picker (privatemention: with -ochat a private chat, and
+		// its extra feature on), or a draft with picked mentions.
+		u.privateMentions = u.privateMentions || name == "privatemention"
 		ed := &u.conv.composer
 		ed.SetText("Hi @")
 		ed.SetCaret(4, 4)

@@ -83,4 +83,9 @@ func TestFilterMembers(t *testing.T) {
 	if want := []string{"Andre", "*Dani*"}; !slices.Equal(got, want) {
 		t.Errorf("filterMembers = %v, want %v", got, want)
 	}
+	// The number of someone listed by their push name still finds them.
+	ms = []model.Member{{Name: "~Alazka", Push: "Alazka", Phone: "+62 811-8440-205"}, {Name: "Bima"}}
+	if got := filterMembers(ms, "08118440"); len(got) != 1 || got[0].Name != "~Alazka" {
+		t.Errorf("filterMembers by number = %v", got)
+	}
 }

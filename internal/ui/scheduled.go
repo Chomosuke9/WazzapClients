@@ -161,12 +161,11 @@ func (u *UI) editScheduled(j auto.Job) {
 	if j.MentionAdmins {
 		refs = append(refs, mentionRef{name: "admin", jid: mentionAdminID})
 	}
-	if info := u.chatMembers(c.ID); info != nil {
-		for _, id := range j.Mentions {
-			for _, m := range info.Members {
-				if m.ID == id && strings.Contains(text, "@"+u.mentionName(m)) {
-					refs = append(refs, mentionRef{name: u.mentionName(m), jid: id})
-				}
+	members := u.mentionMembers(c)
+	for _, id := range j.Mentions {
+		for _, m := range members {
+			if m.ID == id && strings.Contains(text, "@"+u.mentionName(m)) {
+				refs = append(refs, mentionRef{name: u.mentionName(m), jid: id})
 			}
 		}
 	}

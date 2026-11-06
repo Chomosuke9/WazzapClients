@@ -711,29 +711,83 @@ func (u *UI) infoMembersHeader(gtx C, info *model.ChatInfo) D {
 }
 
 func (u *UI) infoMember(gtx C, m model.Member) D {
-	it := listItem{title: m.Name}
-	if m.Me {
-		it.sub = "Add member tag"
-	}
+	title := memberTitle(m)
+	it := listItem{title: title}
+	var role layout.Widget
 	if m.Admin {
-		it.trailing = func(gtx C) D { return layout.Inset{Right: 17}.Layout(gtx, u.pill("Group admin", 12.3, false)) }
+		txt := "Group admin"
+		if m.SuperAdmin {
+			txt = "Group superadmin"
+		}
+		role = u.pill(txt, 12.3, false)
+	}
+	switch phone := memberSub(m); {
+	case m.Me || phone != "":
+		it.content = u.memberLines(title, m.Me, phone, role)
+	case role != nil:
+		it.trailing = func(gtx C) D { return layout.Inset{Right: memberPadRight}.Layout(gtx, role) }
 	}
 	g := infoGeom
 	g.iconCenter = infoPadX - g.hoverLeft + 25.5
 	g.textLeft = 75.4
 	g.height, g.subHeight = 76, 76
+	g.padRight = memberPadRight
 	it.glyph = func(gtx C, col color.NRGBA) D { return u.memberAvatar(gtx, m) }
 	key := "member:" + m.ID
 	c := u.btn(key)
 	if c.Clicked(gtx) && !m.Me {
-		u.openContact(m.ID, m.Name)
+		u.openContact(m.ID, title)
 	}
-	return u.layoutMemberItem(gtx, c, it, g, m.Me)
+	return u.layoutListItem(gtx, c, it, g)
+}
+
+// memberPadRight is how far a member's role and number stop from the row's edge.
+const memberPadRight = 17
+
+// memberLines is a member's two lines, like WhatsApp: their name and role
+// (nil for none), then on your own row a green prompt, and on the right the
+// number of someone you haven't saved. Each side of a line gets the room the
+// other leaves, so a long name still fits above a number.
+func (u *UI) memberLines(title string, me bool, phone string, role layout.Widget) layout.Widget {
+	p := u.pal
+	line := func(left, right layout.Widget) layout.Widget {
+		return func(gtx C) D {
+			gtx.Constraints.Min = image.Point{}
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx C) D {
+					d := left(gtx)
+					d.Size.X = gtx.Constraints.Max.X // or the right side would move left
+					return d
+				}),
+				layout.Rigid(func(gtx C) D {
+					if right == nil {
+						return D{}
+					}
+					return layout.Inset{Left: 8}.Layout(gtx, right)
+				}),
+			)
+		}
+	}
+	under := func(gtx C) D { return D{} }
+	if me {
+		under = u.label(14.5, "Add member tag", p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout
+	}
+	var number layout.Widget
+	if phone != "" {
+		number = u.label(13, phone, p.TextSecondary, labelOpts{maxLines: 1}).Layout
+	}
+	return func(gtx C) D {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(line(u.label(17, title, p.Text, labelOpts{maxLines: 1}).Layout, role)),
+			layout.Rigid(layout.Spacer{Height: 2}.Layout),
+			layout.Rigid(line(under, number)),
+		)
+	}
 }
 
 // memberAvatar draws a member's picture, ringed when they have a status.
 func (u *UI) memberAvatar(gtx C, m model.Member) D {
-	id, name := m.ID, m.Name
+	id, name := m.ID, memberTitle(m)
 	if m.Me {
 		id, name = u.meID, u.meName()
 	}
@@ -754,23 +808,6 @@ func (u *UI) ringedAvatar(gtx C, t *model.StatusThread, id, name string, size un
 	u.avatar(gtx, id, name, t.Group, dp(gtx, px-2*inset))
 	tr.Pop()
 	return D{Size: image.Pt(px, px)}
-}
-
-// layoutMemberItem is layoutListItem with a green subtitle for your own row.
-func (u *UI) layoutMemberItem(gtx C, c *widget.Clickable, it listItem, g listGeom, me bool) D {
-	if !me {
-		return u.layoutListItem(gtx, c, it, g)
-	}
-	p := u.pal
-	title, sub := it.title, it.sub
-	it.content = func(gtx C) D {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(u.label(17, title, p.Text).Layout),
-			layout.Rigid(layout.Spacer{Height: 2}.Layout),
-			layout.Rigid(u.label(14.5, sub, p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
-		)
-	}
-	return u.layoutListItem(gtx, c, it, g)
 }
 
 // disappearingIcon is WhatsApp's disappearing-messages glyph: a timer dial,

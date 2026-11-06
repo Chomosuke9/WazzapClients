@@ -593,11 +593,13 @@ type Member struct {
 	Name string
 	// Contact is the name you saved them under (or their business's name),
 	// Push the name they gave themselves, and Phone their formatted phone
-	// number, each when known. Name is the first of Contact, Phone and
-	// "~Push". The pickers that find people as you type use them.
+	// number, each when known. Name is the first of Contact, "~Push" and
+	// Phone. The member list and the pickers that find people as you type
+	// use them.
 	Contact, Push, Phone string
-	Admin                bool
-	Me                   bool
+	// Admin is set for SuperAdmin too, who is usually who made the group.
+	Admin, SuperAdmin bool
+	Me                bool
 }
 
 // ChatInfo is what the contact or group info panel shows.
@@ -611,6 +613,8 @@ type ChatInfo struct {
 	AboutSet time.Time
 	// Phone is a contact's formatted phone number.
 	Phone string
+	// Push is the name a contact you haven't saved gave themselves, when known.
+	Push string
 	// Members lists group participants: you first, then admins, then the rest.
 	Members []Member
 	// Created and CreatedBy describe who made a group and when ("you" or a name).

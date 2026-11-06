@@ -290,10 +290,58 @@ type mentionState struct {
 	members    []model.Member
 }
 
-// mentionQuery returns the mention being typed in a group chat, or nil.
+// mentionsHere reports whether the composer of c offers mentions: in a group,
+// or in a private chat once that extra feature is on. Not in your own chat,
+// where there's no one else to mention.
+func (u *UI) mentionsHere(c *model.Chat) bool {
+	return c.IsGroup || u.privateMentions && !c.Self && !isChannelID(c.ID)
+}
+
+// mentionTarget is the person a private chat is with, as a member.
+func (u *UI) mentionTarget(c *model.Chat) model.Member {
+	m := model.Member{ID: c.ID, Name: c.Name}
+	info := u.chatMembers(c.ID)
+	if info != nil {
+		m.Phone, m.Push = info.Phone, info.Push
+	}
+	if m.Push == "" && c.Name != m.Phone {
+		m.Contact = c.Name
+	}
+	return m
+}
+
+// mentionMembers is who c's mentions can name: a group's members, or the
+// other person of a private chat.
+func (u *UI) mentionMembers(c *model.Chat) []model.Member {
+	if !c.IsGroup {
+		return []model.Member{u.mentionTarget(c)}
+	}
+	if info := u.chatMembers(c.ID); info != nil {
+		return info.Members
+	}
+	return nil
+}
+
+// mentionCandidates is what the picker offers in c for query: in a private
+// chat, only the other person.
+func (u *UI) mentionCandidates(c *model.Chat, query string) []model.Member {
+	if c.IsGroup {
+		if info := u.chatMembers(c.ID); info != nil {
+			return u.mentionHits(info, query)
+		}
+		return nil
+	}
+	m := u.mentionTarget(c)
+	if memberTitle(m) == "" || query != "" && memberScore(m, query) == 0 {
+		return nil
+	}
+	return []model.Member{m}
+}
+
+// mentionQuery returns the mention being typed, or nil.
 func (u *UI) mentionQuery() *mentionState {
 	c := u.selected
-	if c == nil || !c.IsGroup || u.postingStatus() || !u.slashTakesMentions() {
+	if c == nil || !u.mentionsHere(c) || u.postingStatus() || !u.slashTakesMentions() {
 		return nil // a command's picker offers members itself
 	}
 	ed := &u.conv.composer
@@ -322,11 +370,7 @@ func (u *UI) mentionQuery() *mentionState {
 					return nil
 				}
 			}
-			info := u.chatMembers(c.ID)
-			if info == nil {
-				return nil
-			}
-			hits := u.mentionHits(info, q)
+			hits := u.mentionCandidates(c, q)
 			if len(hits) == 0 {
 				return nil
 			}
@@ -614,7 +658,7 @@ func (u *UI) layoutMentionPicker(gtx C, ms *mentionState) D {
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx C) D {
 							if !many {
-								return u.avatar(gtx, m.ID, m.Name, false, 36)
+								return u.avatar(gtx, m.ID, memberTitle(m), false, 36)
 							}
 							d := gtx.Dp(36)
 							fillCircle(gtx, image.Pt(d/2, d/2), d/2, p.PopupBorder)

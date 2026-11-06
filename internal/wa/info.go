@@ -138,7 +138,11 @@ func (b *Backend) fetchInfo(jid types.JID) {
 			_ = json.Unmarshal([]byte(old), info)
 		}
 		info.Name = b.chatName(ctx, jid)
-		info.Phone = b.lookup(ctx, jid).phone
+		n := b.lookup(ctx, jid)
+		info.Phone, info.Push = n.phone, ""
+		if n.saved == "" && n.business == "" {
+			info.Push = first(n.push, b.storedPush(ctx, jid))
+		}
 		info.Common = b.commonGroups(ctx, jid)
 		if online {
 			b.fillContactInfo(ctx, info, jid)
@@ -296,17 +300,21 @@ func (b *Backend) fillGroupInfo(ctx context.Context, info *model.ChatInfo, g *ty
 	var ms []ranked
 	for _, p := range g.Participants {
 		me := b.isMe(p.JID) || (!p.PhoneNumber.IsEmpty() && b.isMe(p.PhoneNumber))
-		m := model.Member{ID: b.canonical(ctx, p.JID).String(), Admin: p.IsAdmin || p.IsSuperAdmin, Me: me}
+		m := model.Member{ID: b.canonical(ctx, p.JID).String(), Admin: p.IsAdmin || p.IsSuperAdmin, SuperAdmin: p.IsSuperAdmin, Me: me}
 		if me {
 			m.Name = "You"
 		} else {
 			n := b.memberNames(ctx, p.JID, p.PhoneNumber)
+			if n.push == "" {
+				n.push = p.DisplayName
+			}
 			m.Name = n.label(p.JID)
 			m.Contact, m.Push, m.Phone = first(n.saved, n.business), n.push, first(n.phone, n.redacted)
 		}
 		ms = append(ms, ranked{m, m.Contact != ""})
 	}
-	// You first, then admins, then saved contacts, then everyone else.
+	// You first, then admins, then saved contacts, then those with a push
+	// name, then everyone else.
 	sort.SliceStable(ms, func(i, j int) bool {
 		a, c := ms[i], ms[j]
 		switch {
@@ -316,6 +324,8 @@ func (b *Backend) fillGroupInfo(ctx context.Context, info *model.ChatInfo, g *ty
 			return a.m.Admin
 		case a.saved != c.saved:
 			return a.saved
+		case (a.m.Push != "") != (c.m.Push != ""):
+			return a.m.Push != ""
 		}
 		return strings.ToLower(a.m.Name) < strings.ToLower(c.m.Name)
 	})
@@ -335,18 +345,24 @@ func (b *Backend) memberName(ctx context.Context, j, pn types.JID) string {
 func (b *Backend) memberNames(ctx context.Context, j, pn types.JID) contactNames {
 	n := b.lookup(ctx, j)
 	if n.saved == "" && !pn.IsEmpty() {
-		if m := b.lookup(ctx, pn); m.saved != "" || m.business != "" {
+		m := b.lookup(ctx, pn)
+		if m.saved != "" || m.business != "" {
 			n = m
 		}
+		n.push = first(n.push, m.push)
 		if n.phone == "" {
 			n.phone = formatPhone(pn.User)
 		}
+	}
+	if n.saved == "" && n.business == "" && n.push == "" {
+		// The device store keeps only push names it saw arrive, as in senderName.
+		n.push = b.storedPush(ctx, j)
 	}
 	return n
 }
 
 // label is how a group participant is listed: saved name, business name,
-// phone number, then "~push name".
+// "~push name", then phone number.
 func (n contactNames) label(j types.JID) string {
-	return first(n.saved, n.business, n.phone, tilde(n.push), n.redacted, j.User)
+	return first(n.saved, n.business, tilde(n.push), n.phone, n.redacted, j.User)
 }

@@ -106,6 +106,66 @@ func TestEnterAfterMention(t *testing.T) {
 	}
 }
 
+// TestPrivateMention checks that a private chat's mention picker, once its
+// extra feature is on, offers the other person and no one else, and that
+// picking them makes a real mention.
+func TestPrivateMention(t *testing.T) {
+	st := newSlashTest(t, "rina")
+	u := st.u
+	st.typeText("@")
+	if u.privateMentions || u.mentionQuery() != nil {
+		t.Fatal("offered while off")
+	}
+	u.ShowPage("extras")
+	settingRowByKey(t, u, prefPrivateMentions).run()
+	if st.b.Pref(prefPrivateMentions) != "on" || !New(st.b).privateMentions {
+		t.Fatal("the switch wasn't kept")
+	}
+	u.ShowPage("chats") // or the composer isn't drawn to take the key
+	u.SelectID("rina")
+	st.frame()
+
+	st.typeText("@")
+	ms := u.mentionQuery()
+	if ms == nil || len(ms.members) != 1 || ms.members[0].ID != "rina" {
+		t.Fatalf("@ offered %+v, want only Rina", ms)
+	}
+	st.typeText("@all")
+	if ms := u.mentionQuery(); ms != nil {
+		t.Fatalf("@all offered %+v in a private chat", ms.members)
+	}
+	st.typeText("@rin")
+	st.press(key.NameReturn)
+	if st.text() != "@Rina Kartika " {
+		t.Fatalf("picked %q", st.text())
+	}
+	if d := u.draftFrom(trimSpace(st.text())); d.Text != "@rina" || len(d.Mentions) != 1 || d.Mentions[0] != "rina" {
+		t.Fatalf("draft %q mentions %v", d.Text, d.Mentions)
+	}
+
+	// Someone you haven't saved goes by their push name.
+	m := u.mentionTarget(&model.Chat{ID: "6281@s.whatsapp.net", Name: "+62 811"})
+	if memberTitle(m) != "+62 811" {
+		t.Errorf("no info: %+v", m)
+	}
+	u.conv.members, u.conv.membersFor = &model.ChatInfo{Phone: "+62 811", Push: "Alazka"}, "6281@s.whatsapp.net"
+	m = u.mentionTarget(&model.Chat{ID: "6281@s.whatsapp.net", Name: "+62 811"})
+	if memberTitle(m) != "~Alazka" || memberSub(m) != "+62 811" || u.mentionName(m) != "Alazka" {
+		t.Errorf("push name: %+v", m)
+	}
+
+	// Not your own chat or a channel, and groups as ever.
+	for _, c := range []model.Chat{{ID: "me@lid", Self: true}, {ID: "x@newsletter"}} {
+		if u.mentionsHere(&c) {
+			t.Errorf("mentions in %+v", c)
+		}
+	}
+	u.privateMentions = false
+	if u.mentionsHere(&model.Chat{ID: "rina"}) || !u.mentionsHere(&model.Chat{ID: "work", IsGroup: true}) {
+		t.Error("the switch off should leave only groups")
+	}
+}
+
 // TestMentionPickerNames checks that the mention picker finds members you
 // haven't saved by their number typed any way, names them by the name they
 // gave themselves, and ranks better matches first.

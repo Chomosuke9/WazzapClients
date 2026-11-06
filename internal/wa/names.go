@@ -439,9 +439,9 @@ func (b *Backend) resolveChat(ctx context.Context, rc rawChat) *model.Chat {
 }
 
 // groupSubtitle lists participants like WhatsApp's header: saved contacts,
-// then everyone else, then "You".
+// then push names, then everyone else, then "You".
 func (b *Backend) groupSubtitle(ctx context.Context, participants []types.GroupParticipant) string {
-	var saved, others []string
+	var saved, pushes, others []string
 	me := false
 	for _, p := range participants {
 		if b.isMe(p.JID) || (!p.PhoneNumber.IsEmpty() && b.isMe(p.PhoneNumber)) {
@@ -455,17 +455,20 @@ func (b *Backend) groupSubtitle(ctx context.Context, participants []types.GroupP
 		switch {
 		case n.saved != "":
 			saved = append(saved, n.saved)
+		case n.push != "":
+			pushes = append(pushes, tilde(n.push))
 		case n.phone != "":
 			others = append(others, n.phone)
 		case !p.PhoneNumber.IsEmpty():
 			others = append(others, formatPhone(p.PhoneNumber.User))
 		default:
-			others = append(others, first(tilde(n.push), n.redacted, p.DisplayName, p.JID.User))
+			others = append(others, first(n.redacted, p.DisplayName, p.JID.User))
 		}
 	}
 	sort.Strings(saved)
+	sort.Strings(pushes)
 	sort.Strings(others)
-	names := append(saved, others...)
+	names := append(append(saved, pushes...), others...)
 	if len(names) > 40 {
 		names = names[:40]
 	}

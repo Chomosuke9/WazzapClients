@@ -410,7 +410,7 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    and /catch's payload dialog) in snippets.go; and
                    the Extra features settings page in extras.go (the app's own features,
                    such as slash commands, @admin and custom mentions (one switch; @Tim frontend: people you
-                   pick in a group, named and mentioned like @admin, in custommention.go), the Privacy mode toggle, Block screen
+                   pick in a group, named and mentioned like @admin, in custommention.go), mentions in private chats (the other person only), the Privacy mode toggle, Block screen
                    recording and Raw photos: each off until turned on), and
                    its Ethically gray features page (Edit history, Keep deleted messages, Replay view
                    once, and commands marked Gray, like /ghost, each with a switch of its own);
@@ -747,6 +747,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
 # custom mentions: mentions (a group's page), custommention, newmention (its name's error), custompick (the picker offering them);
+# privatemention (the picker in a private chat: -ochat rina);
 # a group's info being edited: groupname, groupdesc, groupphoto (its picture's menu); picview (the chat's picture, big); the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
