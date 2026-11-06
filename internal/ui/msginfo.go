@@ -184,7 +184,7 @@ func (u *UI) msgInfoPreview(gtx C) D {
 	bgtx := gtx.Disabled()
 	bgtx.Constraints = layout.Constraints{Max: image.Pt(maxW, gtx.Dp(2000))}
 	var bub part
-	if s.msg.Kind == model.KindSticker {
+	if s.msg.Kind == model.KindSticker || isRound(s.msg) {
 		bub = record(bgtx, func(gtx C) D { return u.layoutStickerMessage(gtx, c, s.msg, true, maxW) })
 	} else {
 		bub = record(bgtx, func(gtx C) D { return u.layoutBubble(gtx, c, s.msg, true, maxW) })

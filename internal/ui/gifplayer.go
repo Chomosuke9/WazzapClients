@@ -67,7 +67,7 @@ func (u *UI) gifFrame(m *model.Message, maxPx int) *imgEntry {
 	key := m.ChatID + "/" + m.ID
 	g := ps.gifs[key]
 	if g == nil {
-		if ps.gifFetch[key] != 0 || len(ps.gifs) >= perf.gifs {
+		if ps.gifFetch[key] != 0 || len(ps.gifs) >= perf.gifs && key != ps.sound {
 			return nil
 		}
 		if ps.gifFetch == nil {

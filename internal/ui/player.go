@@ -46,6 +46,11 @@ type players struct {
 
 	gifs     map[string]*gifPlayer // the GIFs playing, by "chat/id"
 	gifFetch map[string]gifFetch
+
+	// sound is the video note playing with sound, by "chat/id" (roundvideo.go).
+	sound     string
+	soundOn   bool  // its player has been told
+	soundUsed int64 // frame of last use
 }
 
 // stickerFrame returns the current frame of an animated sticker, starting
@@ -107,6 +112,9 @@ func (ps *players) endFrame() {
 			delete(ps.gifs, k)
 		}
 	}
+	if ps.sound != "" && ps.soundUsed < ps.frame {
+		ps.sound, ps.soundOn = "", false // scrolled away
+	}
 	ps.frame++
 }
 
@@ -119,6 +127,7 @@ func (ps *players) stopAll() {
 		g.close()
 		delete(ps.gifs, k)
 	}
+	ps.sound, ps.soundOn = "", false
 }
 
 // stop stops the player of key.

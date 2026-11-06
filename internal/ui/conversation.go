@@ -689,7 +689,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		}
 		// The chevron covers part of the bubble's hover area, so it keeps
 		// itself visible while it is hovered. It fades and slides in.
-		show := (hovered || chev.Hovered() || (u.ctx.isOpen() && u.ctx.msg == m)) && m.Kind != model.KindSticker && u.jumbo(c, m) == nil
+		show := (hovered || chev.Hovered() || (u.ctx.isOpen() && u.ctx.msg == m)) && m.Kind != model.KindSticker && !isRound(m) && u.jumbo(c, m) == nil
 		if cv := smooth(u.anims.fade(gtx, animKey{p: chev, tag: tagShow}, show, durHoverIn, durHoverOut)); cv > 0 {
 			bg := p.BubbleIn
 			if m.FromMe {
@@ -705,7 +705,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			fx.Pop()
 			ct.Pop()
 		}
-		if ann && m.Kind != model.KindDeleted && m.Kind != model.KindUnsupported && m.Kind != model.KindWaiting && m.Kind != model.KindSticker {
+		if ann && m.Kind != model.KindDeleted && m.Kind != model.KindUnsupported && m.Kind != model.KindWaiting && m.Kind != model.KindSticker && !isRound(m) {
 			// Announcements offer a forward button beside them, when there's room.
 			if bx := bubble.size.X + gtx.Dp(sideBtnGap); x+bx+gtx.Dp(sideBtn) <= w+margin {
 				ft := op.Offset(image.Pt(bx, 0)).Push(gtx.Ops)
@@ -908,9 +908,9 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 	}
 	var dims D
 	switch {
-	case m.Kind == model.KindSticker && u.announcementsOf(c) != nil:
+	case (m.Kind == model.KindSticker || isRound(m)) && u.announcementsOf(c) != nil:
 		dims = u.layoutAnnSticker(gtx, m, maxW)
-	case m.Kind == model.KindSticker:
+	case m.Kind == model.KindSticker || isRound(m):
 		dims = u.layoutStickerMessage(gtx, c, m, r.first, maxW)
 	case u.jumbo(c, m) != nil:
 		dims = u.layoutJumboMessage(gtx, c, m, u.jumbo(c, m), r.first, maxW)
@@ -1485,7 +1485,7 @@ func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width
 	}
 	txt := q.Text
 	if q.Media != model.MediaNone {
-		txt = mediaLabel(&model.Message{Media: q.Media, Text: q.Text})
+		txt = mediaLabel(&model.Message{Media: q.Media, Text: q.Text, Round: q.Round})
 	}
 	gtx.Constraints.Min.X = width
 	gtx.Constraints.Max.X = width
@@ -1649,12 +1649,16 @@ func (u *UI) quotedMessage(q *model.Quote) *model.Message {
 // WhatsApp.
 func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail bool, maxW int) D {
 	if m.Quote == nil {
+		side := gtx.Dp(150)
+		if isRound(m) {
+			side = min(gtx.Dp(roundVideoDp), maxW)
+		}
 		if !(c.IsGroup && !m.FromMe && tail && m.Sender != "") {
-			return u.layoutSticker(gtx, m)
+			return u.layoutSticker(gtx, m, side)
 		}
 		// The first of a sender's run in a group is headed by their name.
-		head := u.stickerHeader(gtx, m, gtx.Dp(150), maxW)
-		st := record(gtx, func(gtx C) D { return u.layoutSticker(gtx, m) })
+		head := u.stickerHeader(gtx, m, side, maxW)
+		st := record(gtx, func(gtx C) D { return u.layoutSticker(gtx, m, side) })
 		head.at(gtx, 0, 0)
 		x, y := stickerUnderHeader(gtx, head, st.size.X)
 		st.at(gtx, x, y)
@@ -1670,7 +1674,11 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 		u.jumpTo(m.Quote.ID)
 	}
 	pad, inset := gtx.Dp(3), gtx.Dp(8)
-	sz := min(gtx.Dp(200), maxW-2*pad-2*inset)
+	sz := gtx.Dp(200)
+	if isRound(m) {
+		sz = gtx.Dp(roundVideoDp)
+	}
+	sz = min(sz, maxW-2*pad-2*inset)
 	w := sz + 2*inset // the inner width
 	cgtx := gtx
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
@@ -1739,11 +1747,11 @@ func stickerUnderHeader(gtx C, head part, sw int) (x, y int) {
 	return max(0, head.size.X-sw-gtx.Dp(4)), head.size.Y + gtx.Dp(8)
 }
 
-// layoutSticker draws a sticker without a bubble, with the time on a chip
-// under its corner, colored like the sender's bubbles.
-func (u *UI) layoutSticker(gtx C, m *model.Message) D {
+// layoutSticker draws a sticker or video note, sz across, without a bubble,
+// with the time on a chip under its corner, colored like the sender's
+// bubbles.
+func (u *UI) layoutSticker(gtx C, m *model.Message, sz int) D {
 	p := u.pal
-	sz := gtx.Dp(150)
 	u.stickerPicture(gtx, m, sz)
 	bg, metaCol := p.BubbleIn, p.MetaIn
 	if m.FromMe {
@@ -1763,6 +1771,10 @@ func (u *UI) layoutSticker(gtx C, m *model.Message) D {
 
 // stickerPicture draws a sticker (or its placeholder) in an sz square.
 func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
+	if isRound(m) {
+		u.roundPicture(gtx, m, sz)
+		return
+	}
 	img := u.messageImage(m, sz*2)
 	if img == nil || img.state != imgReady {
 		fillRRect(gtx, image.Rect(0, 0, sz, sz), gtx.Dp(12), argb(0x808080, 0x30))

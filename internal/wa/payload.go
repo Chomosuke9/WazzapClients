@@ -36,6 +36,7 @@ func (r *rawMsg) fill(raw, edit []byte) {
 		return
 	}
 	m.Thumb, r.hasBlob = c.keptThumb(), c.keepsBlob(pm)
+	m.Round = c.round
 	m.Duration = c.duration
 	m.Link = c.link
 	c.file.apply(m)
@@ -106,6 +107,7 @@ type rawQuote struct {
 	sender string // as the payload names them
 	text   string
 	media  model.Media
+	round  bool
 	quoted bool // the payload carries the quoted message
 }
 
@@ -126,7 +128,7 @@ func quoteOf(ci *waE2E.ContextInfo) *rawQuote {
 		return nil
 	}
 	qc := describe(q)
-	return &rawQuote{id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, quoted: q != nil}
+	return &rawQuote{id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, round: qc.round, quoted: q != nil}
 }
 
 // resolveQuote turns a payload's quote in chat into the one shown. The
@@ -136,13 +138,13 @@ func (b *Backend) resolveQuote(ctx context.Context, chat string, q *rawQuote) *m
 	if q == nil {
 		return nil
 	}
-	quote := &model.Quote{ID: q.id, Text: q.text, Media: q.media}
+	quote := &model.Quote{ID: q.id, Text: q.text, Media: q.media, Round: q.round}
 	sender := q.sender
 	if q.text == "" && q.media == model.MediaNone && q.id != "" {
 		orig, ok := b.store.message(ctx, chat, q.id)
 		switch {
 		case ok:
-			quote.Text, quote.Media = orig.Text, orig.Media
+			quote.Text, quote.Media, quote.Round = orig.Text, orig.Media, orig.Round
 			switch orig.Kind {
 			case model.KindDeleted:
 				quote.Text = "This message was deleted"

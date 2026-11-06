@@ -76,7 +76,7 @@ func quoteOf(r *model.Message) *model.Quote {
 	if r.FromMe {
 		name = ""
 	}
-	return &model.Quote{ID: r.ID, Sender: name, SenderID: r.SenderID, Text: r.Text, Media: r.Media}
+	return &model.Quote{ID: r.ID, Sender: name, SenderID: r.SenderID, Text: r.Text, Media: r.Media, Round: r.Round}
 }
 
 func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool, quote *model.Quote) {

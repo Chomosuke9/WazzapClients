@@ -579,6 +579,9 @@ func mediaLabel(m *model.Message) string {
 	case model.MediaImage:
 		return "Photo"
 	case model.MediaVideo:
+		if m.Round {
+			return "Video note"
+		}
 		return "Video"
 	case model.MediaGIF:
 		return "GIF"

@@ -72,6 +72,9 @@ func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.M
 	}
 	if media, blob, err := b.store.mediaBlob(ctx, chatID, id); err == nil && len(blob) > 0 {
 		if m := mediaMessage(media, blob); m != nil {
+			if r.Round {
+				asVideoNote(m)
+			}
 			return m
 		}
 	}
@@ -157,6 +160,13 @@ func mediaMessage(media model.Media, blob []byte) *waE2E.Message {
 	return &m
 }
 
+// asVideoNote turns a video from mediaMessage back into the video note it
+// was stored from. Both are a VideoMessage, so the blob doesn't tell them
+// apart; the message's Round does.
+func asVideoNote(m *waE2E.Message) {
+	m.PtvMessage, m.VideoMessage = m.VideoMessage, nil
+}
+
 // setContext attaches ci to whichever content m carries.
 func setContext(m *waE2E.Message, ci *waE2E.ContextInfo) {
 	switch {
@@ -166,6 +176,8 @@ func setContext(m *waE2E.Message, ci *waE2E.ContextInfo) {
 		m.StickerMessage.ContextInfo = ci
 	case m.VideoMessage != nil:
 		m.VideoMessage.ContextInfo = ci
+	case m.PtvMessage != nil:
+		m.PtvMessage.ContextInfo = ci
 	case m.AudioMessage != nil:
 		m.AudioMessage.ContextInfo = ci
 	case m.DocumentMessage != nil:
@@ -242,7 +254,7 @@ func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) 
 		// "Reply privately" quotes a group message in a one-to-one chat.
 		ci.RemoteJID = proto.String(r.ChatID)
 	}
-	q := &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media}
+	q := &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media, Round: r.Round}
 	// Store the raw quoted text, not the display text with resolved names.
 	if raw, ok := b.store.message(b.ctx, r.ChatID, r.ID); ok {
 		q.Text = raw.Text
@@ -376,6 +388,9 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	}
 	if len(blob) > 0 {
 		msg = mediaMessage(media, blob)
+		if msg != nil && raw.Round {
+			asVideoNote(msg)
+		}
 	}
 	var ci *waE2E.ContextInfo
 	if forwarded {

@@ -298,6 +298,7 @@ type voiceState struct {
 
 // toggleVoice plays or pauses an audio message.
 func (u *UI) toggleVoice(m *model.Message) {
+	u.stopRoundSound()
 	v := &u.voice
 	if v.key == fileKey(m) {
 		switch {

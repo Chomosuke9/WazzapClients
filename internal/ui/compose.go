@@ -613,7 +613,7 @@ func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
 	if u.btn("reply:close").Clicked(gtx) {
 		u.conv.reply = nil // it keeps drawing while it shrinks away
 	}
-	q := &model.Quote{ID: m.ID, Text: m.Text, Media: m.Media}
+	q := &model.Quote{ID: m.ID, Text: m.Text, Media: m.Media, Round: m.Round}
 	if !m.FromMe {
 		q.Sender, q.SenderID = m.Sender, m.SenderID
 		if q.Sender == "" && u.selected != nil && !u.selected.IsGroup {

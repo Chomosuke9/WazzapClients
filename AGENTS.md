@@ -139,6 +139,9 @@ Gotchas already found in the pinned version (v0.10.x):
   `internal/webpanim`; `stickerFrame` (`player.go`) plays the ones on screen.
   GIFs are MP4s: `gifFrame` (`gifplayer.go`) plays the ones on screen in their bubbles,
   muted and looping (`Player.SetLoop`), at most `maxGIFs` at once.
+- A video note is a `ptvMessage`, the same protobuf as a `videoMessage`, so its stored
+  blob doesn't say which it was. It keeps `media` = `MediaVideo`, `Message.Round` is read
+  from the payload, and `asVideoNote` turns the blob back when it's forwarded or quoted.
 - Videos use the OS's decoder, never a bundled codec (`internal/video`). The Windows
   backend calls COM through `syscall.SyscallN` without cgo: convert pointers to
   `uintptr` inside the `SyscallN` argument list, and read `double` results from `r2`
@@ -437,7 +440,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    kept on disk), in photoview.go; the Media panel (the rail's Media button:
                    media, docs and links from every chat, or one chat's) in gallery.go; the list column's
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
-                   line as fit, in stickerrow.go; a text of one to three emojis
+                   line as fit, in stickerrow.go; video notes (a circle like a sticker, without a bubble,
+                   muted and looping through `gifFrame` once the file is here, a click plays them
+                   with sound and a progress ring) in roundvideo.go; a text of one to three emojis
                    alone, drawn big without a bubble like a sticker, in jumbo.go; the Emoji style
                    (Settings > Chats: 2D, built in; 2D animated, with an Animated emojis page of
                    switches for where they play: message text, big emojis, quotes, reactions, the

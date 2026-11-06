@@ -54,6 +54,7 @@ func (u *UI) micClicked() bool {
 		return false
 	}
 	u.stopVoice()
+	u.stopRoundSound()
 	s, err := recorder.Start(u.images.invalidate)
 	if err != nil {
 		u.toast(recordProblem(err))

@@ -87,7 +87,7 @@ func (u *UI) layoutEditPreview(gtx C, m *model.Message) D {
 	if u.btn("edit:close").Clicked(gtx) {
 		u.cancelEdit() // it keeps drawing while it shrinks away
 	}
-	q := &model.Quote{ID: m.ID, Text: m.Text, Media: m.Media}
+	q := &model.Quote{ID: m.ID, Text: m.Text, Media: m.Media, Round: m.Round}
 	if m.Kind == model.KindImage && m.Text == "" {
 		q.Text = ""
 	}

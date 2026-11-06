@@ -55,6 +55,7 @@ func (u *UI) viewerItems() []*model.Message {
 }
 
 func (u *UI) openViewer(m *model.Message) {
+	u.stopRoundSound()
 	if u.viewer.anim.v > 0 {
 		u.forgetViewerImage(u.viewer.msgID) // still fading out
 	}

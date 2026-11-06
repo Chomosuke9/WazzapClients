@@ -438,6 +438,8 @@ func demo(now time.Time) []*demoChat {
 		}},
 		{ID: "gym", Name: "Gym Buddies", IsGroup: true, Muted: true, Unread: 27, Presence: "Kevin, Leo, Mike, You", Messages: []*model.Message{
 			grp("Kevin", day(1, 21, 40), "Leg day tomorrow, no excuses 🦵"),
+			{Sender: "Mike", SenderID: "mike", Kind: model.KindImage, Media: model.MediaVideo, Round: true, Duration: 12,
+				Time: day(1, 21, 46), ImageA: 0x3a6073, ImageB: 0x16222a},
 			{Sender: "Leo", Kind: model.KindImage, Media: model.MediaVideo, Duration: 18, Text: "New PR on squats 💪",
 				Time: day(1, 21, 52), ImageA: 0x232526, ImageB: 0x414345},
 		}},
