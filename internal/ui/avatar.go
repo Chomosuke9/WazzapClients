@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"hash/fnv"
 	"image"
 	"image/color"
 	"strings"
@@ -100,21 +99,21 @@ func (u *UI) drawAvatar(gtx C, id, name string, kind avatarKind, size unit.Dp) D
 			centerIn(gtx, px, u.label(unit.Sp(float32(size)*0.42), "💬", p.Text).Layout)
 			return dims
 		}
-		// Each group its own tint, from the people's initials' colors.
+		// Each group its own tint, from the people's colors.
 		bg, fg := p.GroupAvatar, p.GroupAvatarIcon
-		if id != "" && len(p.AvatarBgs) > 0 {
-			i := avatarTint(id, name, len(p.AvatarBgs))
-			bg, fg = p.AvatarBgs[i], p.AvatarFgs[i]
+		if id != "" {
+			i := personTint(id, name)
+			bg, fg = p.AvatarBgs[i], p.Senders[i]
 		}
 		fillCircle(gtx, mid, px/2, bg)
 		centerIn(gtx, px, iconW(icGroup, size*0.5, fg))
 		return dims
 	}
-	if initial := avatarInitial(name); initial != "" && len(p.AvatarBgs) > 0 {
-		i := avatarTint(id, name, len(p.AvatarBgs))
+	if initial := avatarInitial(name); initial != "" {
+		i := personTint(id, name)
 		fillCircle(gtx, mid, px/2, p.AvatarBgs[i])
 		if hide < 1 {
-			centerIn(gtx, px, u.label(unit.Sp(float32(size)*0.48), initial, faded(p.AvatarFgs[i], 1-hide), labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+			centerIn(gtx, px, u.label(unit.Sp(float32(size)*0.48), initial, faded(p.Senders[i], 1-hide), labelOpts{weight: font.Medium, maxLines: 1}).Layout)
 		}
 		return dims
 	}
@@ -149,15 +148,4 @@ func avatarInitial(name string) string {
 		break
 	}
 	return ""
-}
-
-// avatarTint picks the color of someone's initial from their ID, so it
-// stays the same wherever they show up.
-func avatarTint(id, name string, n int) int {
-	if id == "" {
-		id = name
-	}
-	h := fnv.New32a()
-	h.Write([]byte(id))
-	return int(h.Sum32() % uint32(n))
 }

@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"hash/fnv"
 	"image/color"
+	"strings"
 
 	"gioui.org/font"
 	"gioui.org/text"
@@ -39,10 +41,10 @@ type Palette struct {
 	Composer, ComposerHint       color.NRGBA
 	GroupAvatar, GroupAvatarIcon color.NRGBA
 	UserAvatar, UserAvatarIcon   color.NRGBA
-	// AvatarBgs and AvatarFgs color the initial of someone without a
-	// picture, chosen by their ID; GeneralAvatar is behind a community's
-	// General chat's speech bubble.
-	AvatarBgs, AvatarFgs     []color.NRGBA
+	// AvatarBgs is behind the initial of someone without a picture, which is
+	// drawn in their color from Senders; personTint picks both. GeneralAvatar
+	// is behind a community's General chat's speech bubble.
+	AvatarBgs                []color.NRGBA
 	GeneralAvatar            color.NRGBA
 	Banner, BannerText, QRFg color.NRGBA
 	Menu, MenuHover, Shadow  color.NRGBA
@@ -117,13 +119,12 @@ var darkPalette = Palette{
 	Composer: rgb(0x242626), ComposerHint: rgb(0xabadac),
 	GroupAvatar: rgb(0x102540), GroupAvatarIcon: rgb(0x70adff),
 	UserAvatar: rgb(0x303434), UserAvatarIcon: rgb(0xa6abad),
-	AvatarBgs:     rgbs(0x242346, 0x102540, 0x0f3330, 0x16321d, 0x3a2e10, 0x3d2414, 0x3d1a2b),
-	AvatarFgs:     rgbs(0xa598f3, 0x70adff, 0x5fcfbf, 0x6fd38a, 0xefc152, 0xf5a172, 0xf18db5),
+	AvatarBgs:     rgbs(0x36192a, 0x092c3d, 0x362c1f, 0x242447, 0x092d2f, 0x35221e, 0x092642, 0x35271e, 0x321622, 0x103529),
 	GeneralAvatar: rgb(0xd1d8da),
 	Banner:        rgb(0x2e2f2f), BannerText: rgb(0xd0d2d2), QRFg: rgb(0x122e31),
 	Menu: rgb(0x242626), MenuHover: rgb(0x2e2f2f), Shadow: argb(0x000000, 0x60),
 	CloseHover: rgb(0xc42b1c),
-	Senders:    rgbs(0xcca48f, 0x8fb8e8, 0xe6a1b8, 0x86c9a8, 0xdcc27a, 0xb1a3e6, 0xe89b7f, 0x7fc3d6, 0xc7b7a0),
+	Senders:    rgbs(0xff72a1, 0x53bdeb, 0xffd279, 0xa791ff, 0x42c7b8, 0xfc9775, 0x53a6fd, 0xdba685, 0xfb5061, 0x25d366),
 
 	EmptyIcon: rgb(0x454545), RowHover: rgb(0x1d1f1f),
 	Danger: rgb(0xe85d65), DangerSoft: rgb(0xed9ea5),
@@ -170,13 +171,12 @@ var lightPalette = Palette{
 	Composer: rgb(0xffffff), ComposerHint: rgb(0x667781),
 	GroupAvatar: rgb(0xdbe7fb), GroupAvatarIcon: rgb(0x3778e5),
 	UserAvatar: rgb(0xe8ebed), UserAvatarIcon: rgb(0x8a9499),
-	AvatarBgs:     rgbs(0xe8e5fc, 0xdbe7fb, 0xd5f2ee, 0xd9f2df, 0xf8edcf, 0xfbe3d4, 0xfadbe8),
-	AvatarFgs:     rgbs(0x5e4fc8, 0x3778e5, 0x1f8a7d, 0x2b8a45, 0x9a6c00, 0xb3561f, 0xb43d72),
+	AvatarBgs:     rgbs(0xffdae7, 0xcaecfa, 0xfff0d4, 0xe8e0ff, 0xcbf2ee, 0xfee2d8, 0xd2e8fe, 0xf4ded1, 0xfbd8dc, 0xd9fdd3),
 	GeneralAvatar: rgb(0xdfe5e7),
 	Banner:        rgb(0xfff4c5), BannerText: rgb(0x54656f), QRFg: rgb(0x122e31),
 	Menu: rgb(0xffffff), MenuHover: rgb(0xf5f6f6), Shadow: argb(0x0b141a, 0x30),
 	CloseHover: rgb(0xc42b1c),
-	Senders:    rgbs(0x1f7aec, 0xe542a3, 0x02a698, 0xc85a00, 0x7f66ff, 0xd62f45, 0x029d00, 0x0e8a94, 0xa4661f),
+	Senders:    rgbs(0xd42a66, 0x027eb5, 0x9d6c2c, 0x5e47de, 0x028377, 0xc4532d, 0x0063cb, 0x855538, 0xb80531, 0x1b8755),
 
 	EmptyIcon: rgb(0xc4c9cc), RowHover: rgb(0xf5f6f6),
 	Danger: rgb(0xea0038), DangerSoft: rgb(0xd4314a),
@@ -198,13 +198,25 @@ var lightPalette = Palette{
 	Selection:   rgb(0xb3d4fc),
 }
 
-func hashIndex(s string, n int) int {
-	var h uint32 = 2166136261
-	for i := 0; i < len(s); i++ {
-		h ^= uint32(s[i])
-		h *= 16777619
+// personTint is the index in Senders and AvatarBgs of someone, or of a group,
+// from their ID: its user's last digit, like WhatsApp
+// (useWAWebDefaultProfileColors in WhatsApp Web), so it's the same on every
+// device. Only an ID without a digit there, which WhatsApp doesn't have (demo
+// data), takes a hash, and no ID at all a hash of the name.
+func personTint(id, name string) int {
+	user := id
+	if i := strings.IndexAny(user, ":@"); i >= 0 {
+		user = user[:i]
 	}
-	return int(h % uint32(n))
+	if n := len(user); n > 0 && user[n-1] >= '0' && user[n-1] <= '9' {
+		return int(user[n-1] - '0')
+	}
+	if id == "" {
+		id = name
+	}
+	h := fnv.New32a()
+	h.Write([]byte(id))
+	return int(h.Sum32() % 10)
 }
 
 // Typeface prefers Segoe UI (what WhatsApp Desktop uses on Windows), color

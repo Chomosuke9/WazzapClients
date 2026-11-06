@@ -57,6 +57,11 @@ Gotchas already found in the pinned version (v0.10.x):
   `go mod verify`. The module cache was once modified locally (probably by an IDE
   auto-import); delete that module version from `GOMODCACHE`, re-download it, and
   `go clean -cache`.
+- WhatsApp colors a person's name, quote bar and initial, and a group's placeholder, by
+  the last digit of their LID (or the group's ID), from ten of its design tokens
+  (`personTint`). They come from WhatsApp Web's `useWAWebDefaultProfileColors`; its older
+  `WAWebChatParticipantColor` (17 colors, the next free one per chat) applies only while
+  an A/B flag is off.
 - Text rendering supports bitmap color-emoji fonts (CBDT/sbix) but not COLR fonts such as
   Windows' Segoe UI Emoji, which renders monochrome. Noto Color Emoji (CBDT) isn't
   bundled (10.7 MB): `emojiset.FontPath` downloads it on first run (SHA-256 pinned),

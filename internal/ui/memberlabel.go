@@ -14,11 +14,7 @@ import (
 // so it is the same on their messages, quotes of them and everywhere else
 // (names change; the ID doesn't). The name is used only without an ID.
 func (u *UI) senderColor(id, name string) color.NRGBA {
-	p := u.pal
-	if id == "" {
-		id = name
-	}
-	return p.Senders[hashIndex(id, len(p.Senders))]
+	return u.pal.Senders[personTint(id, name)]
 }
 
 // layoutSenderName draws a group message's sender: their name in their
