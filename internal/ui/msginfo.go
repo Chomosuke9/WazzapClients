@@ -192,7 +192,7 @@ func (u *UI) msgInfoPreview(gtx C) D {
 	h := padTop + bub.size.Y + padBottom
 	wgtx := gtx
 	wgtx.Constraints = layout.Exact(image.Pt(w, h))
-	u.conv.wallpaper.layout(wgtx, u.pal.ChatBg, u.pal.Doodle, u.doodles)
+	u.layoutWallpaper(wgtx)
 	bub.at(gtx, w-padX-bub.size.X, padTop)
 	return D{Size: image.Pt(w, h)}
 }

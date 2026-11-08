@@ -20,11 +20,11 @@ func TestSettingsSearch(t *testing.T) {
 			found = &u.settings.hits[i] // Performance has it too, after
 		}
 	}
-	if found == nil || found.category != settingChats {
+	if found == nil || found.category != settingAppearance {
 		t.Fatalf("hits for wallpaper: %+v", u.settings.hits)
 	}
-	if u.settings.hits[0].key != "" || u.settings.hits[0].category != settingChats {
-		t.Fatalf("Chats (by its description) should come first: %+v", u.settings.hits)
+	if u.settings.hits[0].key != "" || u.settings.hits[0].category != settingAppearance {
+		t.Fatalf("Appearance (by its description) should come first: %+v", u.settings.hits)
 	}
 	u.settings.search.SetText("microphone")
 	st.frame()

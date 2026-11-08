@@ -201,10 +201,20 @@ func (pf pillFor) pilled(mention string) bool {
 // mentionMarks are the invisible marks around and inside a mention.
 var mentionMarks = strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "", string(model.MentionAdmins), "", string(model.MentionGroup), "")
 
+// linkFor is the color of links and mentions in text of color col: white
+// ones in your bubbles in a vibrant chat theme.
+func linkFor(p *Palette, col color.NRGBA) color.NRGBA {
+	if col == p.TextOut && p.LinkOut.A != 0 {
+		return p.LinkOut
+	}
+	return p.Link
+}
+
 // richSpans turns message text into styled spans: WhatsApp formatting,
 // highlighted mentions and links. deco has each span's decorations.
 func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, pills pillFor) (spans []styledtext.SpanStyle, deco []spanDeco) {
 	p := u.pal
+	link := linkFor(p, col)
 	base := font.Font{Typeface: typeface}
 	if italic {
 		base.Style = font.Italic
@@ -219,7 +229,7 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, 
 	addLink := func(s string, f font.Font) {
 		prev := cur
 		cur |= decoLink
-		add(s, f, p.Link)
+		add(s, f, link)
 		cur = prev
 	}
 	for _, r := range parseFormatting(text) {
@@ -276,7 +286,7 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, 
 				if r, _ := utf8.DecodeRuneInString(name); r != model.MentionNotifies && r != model.MentionAdmins && r != model.MentionGroup {
 					cur |= decoMention
 				}
-				add(mentionMarks.Replace(name), mf, p.Green)
+				add(mentionMarks.Replace(name), mf, link)
 				cur = prev
 			}
 			if j < len(rest) {

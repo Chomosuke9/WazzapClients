@@ -67,6 +67,8 @@ var (
 	icPermMedia     = icon.PermMedia
 	icStar          = icon.Star
 	icPalette       = icon.Palette
+	icPhotoLibrary  = icon.PhotoLibrary
+	icWallpaper     = icon.Image
 	icLockOutline   = icon.Lock
 	icShield        = icon.Security
 	icSettings      = icon.Settings

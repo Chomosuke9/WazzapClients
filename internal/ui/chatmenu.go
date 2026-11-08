@@ -1,15 +1,11 @@
 package ui
 
 import (
-	"image"
 	"net/url"
 	"strings"
 	"time"
 
-	"gioui.org/font"
 	"gioui.org/layout"
-	"gioui.org/op"
-	"gioui.org/text"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -158,164 +154,6 @@ func (u *UI) timerInfo(id string) *model.ChatInfo {
 		return u.info.data
 	}
 	return u.chatMembers(id)
-}
-
-// Chat themes: a color for your bubbles and the wallpaper, per chat.
-
-type chatTheme struct {
-	name string
-	hue  uint32 // 0 for the default colors
-}
-
-var chatThemes = []chatTheme{
-	{"Default", 0}, {"Teal", 0x00a884}, {"Blue", 0x3478f6}, {"Purple", 0x8e5bd8}, {"Pink", 0xd9468f},
-	{"Red", 0xe0533d}, {"Orange", 0xf08c2e}, {"Yellow", 0xd6ad20}, {"Slate", 0x8696a0},
-}
-
-// prefChatTheme keys a chat's theme in Backend.Pref.
-const prefChatTheme = "theme:"
-
-// chatThemeOf returns the index of a chat's theme in chatThemes.
-func (u *UI) chatThemeOf(id string) int {
-	if u.themes == nil {
-		u.themes = map[string]int{}
-	}
-	if i, ok := u.themes[id]; ok {
-		return i
-	}
-	i := 0
-	name := u.backend.Pref(prefChatTheme + id)
-	for j, t := range chatThemes {
-		if t.name == name {
-			i = j
-		}
-	}
-	u.themes[id] = i
-	return i
-}
-
-func (u *UI) setChatTheme(id string, i int) {
-	u.chatThemeOf(id)
-	u.themes[id] = i
-	name := chatThemes[i].name
-	if i == 0 {
-		name = ""
-	}
-	u.backend.SetPref(prefChatTheme+id, name)
-}
-
-// themed returns the palette with a theme's colors.
-func themed(p *Palette, dark bool, t chatTheme) *Palette {
-	if t.hue == 0 {
-		return p
-	}
-	q := *p
-	h := rgb(t.hue)
-	if dark {
-		q.BubbleOut = mix(rgb(0x1d1f1f), h, 0.42)
-		q.QuoteOut = mix(q.BubbleOut, rgb(0x000000), 0.2)
-		q.MetaOut = mix(q.BubbleOut, rgb(0xffffff), 0.62)
-		q.SecondaryOut = q.MetaOut
-		q.ChatBg = mix(p.ChatBg, h, 0.07)
-		q.Doodle = mix(p.Doodle, h, 0.14)
-	} else {
-		q.BubbleOut = mix(rgb(0xffffff), h, 0.24)
-		q.QuoteOut = mix(q.BubbleOut, h, 0.14)
-		q.MetaOut = mix(q.BubbleOut, rgb(0x000000), 0.48)
-		q.SecondaryOut = q.MetaOut
-		q.ChatBg = mix(p.ChatBg, h, 0.12)
-		q.Doodle = mix(p.Doodle, h, 0.16)
-	}
-	return &q
-}
-
-// chatPalette is the palette the open chat draws with.
-func (u *UI) chatPalette(c *model.Chat) *Palette {
-	if c == nil {
-		return u.pal
-	}
-	return themed(u.pal, u.dark, chatThemes[u.chatThemeOf(c.ID)])
-}
-
-func (u *UI) openChatTheme(c *model.Chat) {
-	u.dialog = dialogState{kind: dialogTheme, title: c.ID}
-}
-
-// themePanel picks the open chat's theme. A pick shows at once.
-func (u *UI) themePanel(gtx C) D {
-	d := &u.dialog
-	p := u.pal
-	id := d.title
-	cur := u.chatThemeOf(id)
-	for i := range chatThemes {
-		if u.btn("theme:" + itoa(i)).Clicked(gtx) {
-			u.setChatTheme(id, i)
-			cur = i
-		}
-	}
-	if u.btn("theme:done").Clicked(gtx) {
-		u.closeDialog()
-	}
-	w := min(gtx.Dp(440), gtx.Constraints.Max.X-gtx.Dp(32))
-	gtx.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, gtx.Constraints.Max.Y)}
-	return layout.UniformInset(24).Layout(gtx, func(gtx C) D {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(u.label(19.5, "Chat theme", p.Text, labelOpts{weight: font.Medium}).Layout),
-			layout.Rigid(layout.Spacer{Height: 6}.Layout),
-			layout.Rigid(u.label(14.5, "Only you see the theme you choose.", p.TextSecondary).Layout),
-			layout.Rigid(layout.Spacer{Height: 18}.Layout),
-			layout.Rigid(func(gtx C) D {
-				cols := 3
-				cw := gtx.Constraints.Max.X / cols
-				ch := gtx.Dp(96)
-				for i, t := range chatThemes {
-					x, y := (i%cols)*cw, (i/cols)*ch
-					func() {
-						defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
-						bg := gtx
-						bg.Constraints = layout.Exact(image.Pt(cw, ch))
-						u.themeSwatch(bg, i, t, i == cur)
-					}()
-				}
-				rows := (len(chatThemes) + cols - 1) / cols
-				return D{Size: image.Pt(gtx.Constraints.Max.X, rows*ch)}
-			}),
-			layout.Rigid(layout.Spacer{Height: 16}.Layout),
-			layout.Rigid(func(gtx C) D {
-				return layout.E.Layout(gtx, func(gtx C) D {
-					return u.dialogButton(gtx, "theme:done", dialogButton{label: "Done", primary: true})
-				})
-			}),
-		)
-	})
-}
-
-// themeSwatch is one theme: its wallpaper with a bubble of yours on it.
-func (u *UI) themeSwatch(gtx C, i int, t chatTheme, on bool) D {
-	p := u.pal
-	tp := themed(p, u.dark, t)
-	c := u.btn("theme:" + itoa(i))
-	return clickable(gtx, c, func(gtx C) D {
-		sz := gtx.Constraints.Max
-		r := image.Rect(gtx.Dp(6), 0, sz.X-gtx.Dp(6), gtx.Dp(64))
-		ring := p.PopupBorder
-		if on {
-			ring = p.Green
-		} else if h := u.hover(gtx, c); h > 0 {
-			ring = mix(ring, p.TextSecondary, h)
-		}
-		borderRRect(gtx, r, gtx.Dp(10), tp.ChatBg, ring)
-		if on {
-			borderRRect(gtx, r.Inset(1), gtx.Dp(10)-1, tp.ChatBg, ring)
-		}
-		b := image.Rect(r.Max.X-gtx.Dp(58), r.Min.Y+gtx.Dp(14), r.Max.X-gtx.Dp(12), r.Min.Y+gtx.Dp(32))
-		fillRRect(gtx, b, gtx.Dp(6), tp.BubbleOut)
-		in := image.Rect(r.Min.X+gtx.Dp(12), r.Min.Y+gtx.Dp(36), r.Min.X+gtx.Dp(52), r.Min.Y+gtx.Dp(52))
-		fillRRect(gtx, in, gtx.Dp(6), tp.BubbleIn)
-		l := record(gtx, u.label(13.5, t.name, p.Text, labelOpts{maxLines: 1, align: text.Middle}).Layout)
-		l.at(gtx, (sz.X-l.size.X)/2, gtx.Dp(70))
-		return D{Size: sz}
-	})
 }
 
 // Encryption.

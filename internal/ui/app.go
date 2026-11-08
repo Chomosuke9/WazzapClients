@@ -192,13 +192,16 @@ type UI struct {
 		key string
 		at  time.Time
 	}
-	pendingCopy string         // clipboard text waiting for a frame
-	themes      map[string]int // chats' themes (chatThemes), as read from prefs
-	gallery     galleryState   // the Media panel (gallery.go)
-	secCode     secCode        // the security code the encryption dialog shows
-	link        groupLink      // the invite link the link dialog shows
-	textSel     textSelection  // selected message text
-	focus       any            // editor to focus next frame (see requestFocus)
+	pendingCopy string              // clipboard text waiting for a frame
+	themes      map[string]chatLook // chats' themes and wallpapers, as read from prefs
+	lookPal     lookPal             // the palette of the last chat look drawn
+	accent      string              // the App theme color (prefAccent)
+	themeUI     themeUI             // the Chat theme dialog's page
+	gallery     galleryState        // the Media panel (gallery.go)
+	secCode     secCode             // the security code the encryption dialog shows
+	link        groupLink           // the invite link the link dialog shows
+	textSel     textSelection       // selected message text
+	focus       any                 // editor to focus next frame (see requestFocus)
 	focusReq    bool
 
 	anims    animStore                     // keyed fades: hovers, new messages, reactions
@@ -609,9 +612,9 @@ func (u *UI) SelectName(name string) {
 func (u *UI) SetDark(dark bool) {
 	u.dark = dark
 	if dark {
-		u.pal = &darkPalette
+		u.pal = withAccent(&darkPalette, true, u.accent)
 	} else {
-		u.pal = &lightPalette
+		u.pal = withAccent(&lightPalette, false, u.accent)
 	}
 	u.th.Palette.Fg = u.pal.Text
 	u.th.Palette.Bg = u.pal.Panel
@@ -1097,6 +1100,7 @@ func (u *UI) update(gtx C) {
 		u.openAttachMenu()
 	}
 	u.updateAttach()
+	u.updateWallPick()
 	u.updatePaste(gtx)
 	u.updateComposerLink(gtx)
 	u.ctrlEnterKeys(gtx)
@@ -2098,9 +2102,13 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.backend.LeaveGroup(u.selected.ID)
 		u.applyEvents()
 		u.openConvMenu()
-	case "theme":
+	case "accent":
+		u.setAccent("Red") // the App theme color Red
+	case "theme", "themebubble", "themewall", "themecolor":
+		// The Chat theme dialog's pages, the chat in Pearl Indigo.
 		u.openChatTheme(u.selected)
-		u.setChatTheme(u.selected.ID, 2)
+		u.setChatTheme(u.selected.ID, schemeIndex("Pearl-Indigo"))
+		u.themeUI.page = map[string]string{"themebubble": "bubble", "themewall": "wall", "themecolor": "color"}[name]
 	case "encryption":
 		u.openEncryption(u.selected, u.selected.Name)
 		u.applyEvents()

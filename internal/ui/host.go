@@ -55,6 +55,8 @@ type Options struct {
 	// EmojiDir keeps the emoji pictures that download (the animated and
 	// 3D emoji styles). "" doesn't download any: every style draws 2D.
 	EmojiDir string
+	// WallpaperDir keeps the photos chosen as chat wallpapers.
+	WallpaperDir string
 	// Accounts lists the accounts linked on this computer, and Open opens
 	// the backend of one's data directory; the backend given to Run is
 	// the open one's. With nil Accounts there is only that backend.
@@ -91,6 +93,7 @@ func Run(b model.Backend, o Options) error {
 			os.Remove(p) // broken: downloaded again next time
 		}
 	}
+	wallpaperDir = o.WallpaperDir
 	klipyAppKey, klipyAgent = o.KlipyKey, "WazzapClients/"+cmp.Or(o.Version, "dev")
 	h := newHost(b, o)
 	h.upd.h = h

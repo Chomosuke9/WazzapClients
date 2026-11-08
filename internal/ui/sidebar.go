@@ -771,6 +771,9 @@ func receiptIcon(r model.Receipt, p *Palette, out bool) (*icon.Icon, color.NRGBA
 	case model.Delivered:
 		return icTicks, col
 	default:
+		if out && p.TickReadOut.A != 0 {
+			return icTicks, p.TickReadOut
+		}
 		return icTicks, p.TickRead
 	}
 }
