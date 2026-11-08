@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"strings"
 
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/text"
 	"gioui.org/widget/material"
@@ -39,9 +40,11 @@ type Palette struct {
 	// white in a vibrant chat theme; zero means Link and TickRead.
 	LinkOut, TickReadOut color.NRGBA
 	// Plain is a wallpaper without doodles (a minimal chat theme), and
-	// WallPhoto a photo chosen as the chat's wallpaper (chattheme.go).
+	// WallPhoto a photo chosen as the chat's wallpaper (chattheme.go),
+	// cropped around WallFocus (wallphoto.go).
 	Plain                        bool
 	WallPhoto                    string
+	WallFocus                    f32.Point
 	QuoteIn, QuoteOut            color.NRGBA
 	BubbleLine, BubbleButton     color.NRGBA // dividers and text of message buttons
 	CodeBg                       color.NRGBA // behind `inline code`

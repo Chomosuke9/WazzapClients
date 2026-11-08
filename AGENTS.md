@@ -481,7 +481,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    theme, encryption code, Add member, invite link) in chatmenu.go; chat
                    themes (WhatsApp's color schemes, vibrant, tonal and minimal, and the
                    wallpaper: a theme's, a plain color or a photo of yours; per chat or for
-                   every chat) and the Chat theme dialog's pages in chattheme.go, their tables
+                   every chat) and the Chat theme dialog's pages in chattheme.go, a photo
+                   wallpaper (cropped around a point you pick on its Photo position page,
+                   only the part that shows decoded) in wallphoto.go, their tables
                    read from WhatsApp Web's modules in chatthemes.go, and the App theme color
                    (Settings > Appearance > App theme, the accent across the app) in apptheme.go; the
                    info panel's own pages (starred messages, group permissions, member

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -194,6 +195,7 @@ type wallLook struct {
 	bg, doodle color.NRGBA
 	plain      bool   // no doodles
 	photo      string // a photo's path, drawn over bg
+	focus      f32.Point
 }
 
 // wallOf returns the wallpaper of a look on palette p (the scheme's).
@@ -227,8 +229,8 @@ func wallOf(p *Palette, dark bool, l chatLook) wallLook {
 			return solidLook(solidWalls[i], dark)
 		}
 	case "photo":
-		if wallpaperDir != "" && arg != "" {
-			return wallLook{bg: def.bg, doodle: def.bg, plain: true, photo: filepath.Join(wallpaperDir, filepath.Base(arg))}
+		if file, focus := parsePhotoWall(arg); wallpaperDir != "" && file != "" {
+			return wallLook{bg: def.bg, doodle: def.bg, plain: true, photo: filepath.Join(wallpaperDir, filepath.Base(file)), focus: focus}
 		}
 	}
 	return def
@@ -287,7 +289,7 @@ func (u *UI) lookPalette(l chatLook) *Palette {
 			q := *p
 			p = &q
 		}
-		p.ChatBg, p.Doodle, p.Plain, p.WallPhoto = w.bg, w.doodle, w.plain, w.photo
+		p.ChatBg, p.Doodle, p.Plain, p.WallPhoto, p.WallFocus = w.bg, w.doodle, w.plain, w.photo, w.focus
 	}
 	u.lookPal = lookPal{l, u.pal, p}
 	return p
@@ -305,18 +307,17 @@ func (u *UI) chatPalette(c *model.Chat) *Palette {
 // color and doodles.
 func (u *UI) layoutWallpaper(gtx C) {
 	p := u.pal
+	t := &u.themeUI
+	t.pane = gtx.Constraints.Max
 	if p.WallPhoto != "" {
-		sz := gtx.Constraints.Max
-		path := p.WallPhoto
-		e := u.images.get("wall:"+path, max(sz.X, sz.Y), func() []byte {
-			b, _ := os.ReadFile(path)
-			return b
-		})
-		if e.state == imgReady {
-			paintCover(gtx, e.op, e.size, image.Rectangle{Max: sz})
+		focus := p.WallFocus
+		if t.drag && t.dragPath == p.WallPhoto {
+			focus = t.dragFocus
+		}
+		if u.layoutWallPhoto(gtx, p.WallPhoto, focus) {
 			if u.dark {
 				// WhatsApp dims a photo in dark mode.
-				fillRect(gtx, image.Rectangle{Max: sz}, argb(0x000000, 0x40))
+				fillRect(gtx, image.Rectangle{Max: gtx.Constraints.Max}, argb(0x000000, 0x40))
 			}
 			return
 		}
@@ -328,9 +329,19 @@ func (u *UI) layoutWallpaper(gtx C) {
 
 // themeUI is the open Chat theme dialog's page.
 type themeUI struct {
-	page    string // "", "bubble", "wall" or "color"
+	page    string // "", "bubble", "wall", "color" or "pos"
 	picking bool   // the photo dialog is open
 	picked  chan pickedWall
+	// The Photo position page: the photo's size there, and the focus
+	// being dragged (drawn by the wallpaper too, saved on release).
+	posSize   image.Point
+	drag      bool
+	dragPath  string
+	dragFocus f32.Point
+	// pane is the size of the conversation's wallpaper, drawn last, and
+	// wall the photo it showed (wallphoto.go).
+	pane image.Point
+	wall photoWall
 }
 
 type pickedWall struct {
@@ -399,8 +410,10 @@ func (u *UI) updateWallPick() {
 		case r.err != nil:
 			u.toast("Couldn't use that photo.")
 		case r.path != "":
-			u.setWall(r.chatID, "photo:"+r.path)
-			u.themeUI.page = ""
+			// The photo's position next, from the middle.
+			u.setWall(r.chatID, photoWallValue(r.path, wallFocusCenter))
+			u.themeUI.page = "pos"
+			u.dialog.list.Position = layout.Position{}
 		}
 	default:
 	}
@@ -418,7 +431,7 @@ func (u *UI) themePanel(gtx C) D {
 		u.closeDialog()
 	}
 	if u.btn("theme:back").Clicked(gtx) {
-		t.page = map[string]string{"color": "wall"}[t.page]
+		t.page = map[string]string{"color": "wall", "pos": "wall"}[t.page]
 		d.list.Position = layout.Position{}
 	}
 	for _, pg := range []string{"bubble", "wall", "color"} {
@@ -447,6 +460,8 @@ func (u *UI) themePanel(gtx C) D {
 		title, rows = "Wallpaper", u.wallRows(gtx, id, inner)
 	case "color":
 		title, rows = "Color", u.colorRows(gtx, id, inner)
+	case "pos":
+		title, rows = "Photo position", u.wallPosRows(gtx, id, inner)
 	default:
 		if id == lookAll {
 			title = "Chat theme for all chats"
@@ -722,17 +737,30 @@ func (u *UI) wallRows(gtx C, id string, w int) []layout.Widget {
 		wall := walls[i]
 		c := u.btn("wall:" + wall)
 		if c.Clicked(gtx) {
-			u.setWall(id, wall)
+			if wall == cur && strings.HasPrefix(wall, "photo:") {
+				// The chosen photo again: its position.
+				u.themeUI.page = "pos"
+				u.dialog.list.Position = layout.Position{}
+			} else {
+				u.setWall(id, wall)
+			}
 		}
 		lp := wallOf(u.pal, u.dark, chatLook{wall: wall})
 		clickable(gtx, c, func(gtx C) D {
 			sz := gtx.Constraints.Max
 			u.swatchFrame(gtx, sz, wall == cur, u.hover(gtx, c), lp.bg)
 			if lp.photo != "" {
-				path := lp.photo
-				if e := u.images.get("wall:"+path, 512, func() []byte { b, _ := os.ReadFile(path); return b }); e.state == imgReady {
+				if e := u.wallThumb(lp.photo); e.state == imgReady {
 					in := image.Rectangle{Max: sz}.Inset(gtx.Dp(3))
-					paintCover(gtx, e.op, e.size, in)
+					paintFocused(gtx, e.op, e.size, in, lp.focus)
+				}
+				if wall == cur {
+					// A click opens its position: a pencil says so.
+					ctr := image.Pt(sz.X-gtx.Dp(18), sz.Y-gtx.Dp(18))
+					fillCircle(gtx, ctr, gtx.Dp(12), argb(0x000000, 0x99))
+					t := op.Offset(ctr.Sub(image.Pt(gtx.Dp(8), gtx.Dp(8)))).Push(gtx.Ops)
+					drawIcon(gtx, icEdit, 16, rgb(0xffffff))
+					t.Pop()
 				}
 			} else if !lp.plain && u.doodles {
 				// Rings in the doodles' color hint at the pattern.
