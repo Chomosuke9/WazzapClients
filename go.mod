@@ -44,3 +44,5 @@ require (
 replace github.com/go-text/typesetting => ./third_party/typesetting
 
 replace gioui.org => ./third_party/gio
+
+replace github.com/polymorfa/hypermeow => ./third_party/hypermeow

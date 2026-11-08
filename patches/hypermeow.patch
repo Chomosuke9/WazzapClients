@@ -1,0 +1,72 @@
+diff --git a/message.go b/message.go
+index 3069e6d..b9ac023 100644
+--- a/message.go
++++ b/message.go
+@@ -93,6 +93,15 @@ func (cli *Client) updateMessageContactNames(ctx context.Context, info *types.Me
+ }
+ 
+ func (cli *Client) handleUnencryptedMessage(ctx context.Context, node *waBinary.Node) {
++	// WazzapClients patch: since November 2026 WhatsApp delivers status
++	// updates as <status from="status@broadcast"> stanzas carrying the
++	// same <enc> nodes a <message> did. They were acked and dropped here.
++	// Decrypt them like a message; the node keeps its tag, so the ack
++	// stays class="status" with the stanza's type.
++	if _, encrypted := node.GetOptionalChildByTag("enc"); encrypted {
++		cli.handleEncryptedMessage(ctx, node)
++		return
++	}
+ 	info, err := cli.parseMessageInfo(node)
+ 	if err != nil {
+ 		cli.Log.Warnf("Failed to parse message: %v", err)
+diff --git a/status_patch_test.go b/status_patch_test.go
+new file mode 100644
+index 0000000..3d9d55c
+--- /dev/null
++++ b/status_patch_test.go
+@@ -0,0 +1,46 @@
++package whatsmeow
++
++import (
++	"testing"
++
++	waBinary "github.com/polymorfa/hypermeow/binary"
++	"github.com/polymorfa/hypermeow/store"
++	"github.com/polymorfa/hypermeow/types"
++	"github.com/polymorfa/hypermeow/types/events"
++	waLog "github.com/polymorfa/hypermeow/util/log"
++)
++
++// WazzapClients patch: a <status> stanza with <enc> nodes (how WhatsApp
++// delivers status updates since November 2026) goes to decryption, not
++// straight to an ack.
++func TestEncryptedStatusStanzaIsDecrypted(t *testing.T) {
++	me := types.NewJID("628000000001", types.DefaultUserServer)
++	me.Device = 5
++	cli := NewClient(&store.Device{ID: &me, LID: types.NewJID("100000000001", types.HiddenUserServer)}, waLog.Noop)
++	cli.DisabledFeatures.Signal = true // hands the stanza out undecrypted instead
++	var got *events.UndecryptedMessage
++	cli.AddEventHandler(func(evt any) {
++		if e, ok := evt.(*events.UndecryptedMessage); ok {
++			got = e
++		}
++	})
++	poster := types.NewJID("52416300998887", types.HiddenUserServer)
++	node := &waBinary.Node{Tag: "status", Attrs: waBinary.Attrs{
++		"from":        types.StatusBroadcastJID,
++		"id":          "A5B5650DBD9398A7C84ECCFA9FFB35A2",
++		"participant": poster,
++		"notify":      "Vivy",
++		"t":           "1794101501",
++		"type":        "text",
++	}, Content: []waBinary.Node{
++		{Tag: "enc", Attrs: waBinary.Attrs{"type": "pkmsg", "v": "2"}, Content: []byte{1}},
++		{Tag: "enc", Attrs: waBinary.Attrs{"type": "skmsg", "v": "2"}, Content: []byte{2}},
++	}}
++	cli.handleNode(t.Context(), node)
++	if got == nil {
++		t.Fatal("encrypted <status> stanza was dropped")
++	}
++	if got.Info.Chat != types.StatusBroadcastJID || got.Info.Sender != poster || got.Info.ID != "A5B5650DBD9398A7C84ECCFA9FFB35A2" {
++		t.Errorf("wrong info: chat %s, sender %s, id %s", got.Info.Chat, got.Info.Sender, got.Info.ID)
++	}
++}

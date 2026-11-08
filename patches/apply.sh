@@ -33,3 +33,4 @@ build() {
 
 build github.com/go-text/typesetting typesetting typesetting.patch
 build gioui.org gio gio.patch
+build github.com/polymorfa/hypermeow hypermeow hypermeow.patch
