@@ -44,6 +44,7 @@ type content struct {
 	duration int
 	thumb    []byte
 	round    bool          // a video note (ptvMessage)
+	lottie   bool          // a Lottie sticker (application/was)
 	inner    proto.Message // the media message, which downloading the media takes
 	bg       uint32        // ARGB background of a text status
 	ctx      *waE2E.ContextInfo
@@ -237,7 +238,7 @@ func describe(m *waE2E.Message) content {
 	case m.GetStickerMessage() != nil:
 		e := m.GetStickerMessage()
 		return content{kind: model.KindSticker, media: model.MediaSticker, thumb: e.GetPngThumbnail(),
-			inner: e, ctx: e.GetContextInfo()}
+			inner: e, ctx: e.GetContextInfo(), lottie: e.GetIsLottie() || e.GetMimetype() == "application/was"}
 	case m.GetContactMessage() != nil:
 		e := m.GetContactMessage()
 		return content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo(),

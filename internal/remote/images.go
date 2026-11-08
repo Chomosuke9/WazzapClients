@@ -32,6 +32,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
+	"github.com/chomosuke9/wazzapclients/internal/lottie"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
@@ -377,9 +378,19 @@ func centered(img image.Image, w, h int) image.Image {
 	return out
 }
 
-// decodePicture reads a JPEG, PNG or WebP, or an animated WebP's first
-// frame.
+// decodePicture reads a JPEG, PNG or WebP, or an animated WebP's or a
+// Lottie sticker's first frame.
 func decodePicture(data []byte) (image.Image, error) {
+	if lottie.IsWAS(data) {
+		a, err := lottie.Load(data)
+		if err != nil {
+			return nil, err
+		}
+		w, h := a.Fit(512)
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		a.Render(img, 0)
+		return img, nil
+	}
 	if webpanim.IsAnimated(data) {
 		a, err := webpanim.Parse(data)
 		if err != nil {

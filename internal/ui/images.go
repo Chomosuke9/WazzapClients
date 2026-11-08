@@ -15,6 +15,7 @@ import (
 	"gioui.org/op/paint"
 	_ "golang.org/x/image/webp" // stickers
 
+	"github.com/chomosuke9/wazzapclients/internal/lottie"
 	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
@@ -260,11 +261,22 @@ func (c *imageCache) endFrame() {
 	}
 }
 
-// decodeScaled decodes an image to fit in maxSide. Animated WebP stickers
-// decode to their first frame, and animated is set.
+// decodeScaled decodes an image to fit in maxSide. Animated stickers (WebP,
+// or Lottie's .was) decode to their first frame, and animated is set.
 func decodeScaled(data []byte, maxSide int) (img image.Image, animated bool) {
 	if len(data) == 0 {
 		return nil, false
+	}
+	if lottie.IsWAS(data) {
+		// A Lottie sticker: its first frame, drawn at the size it shows.
+		a, err := lottie.Load(data)
+		if err != nil {
+			return nil, false
+		}
+		w, h := a.Fit(maxSide)
+		dst := image.NewRGBA(image.Rect(0, 0, w, h))
+		a.Render(dst, 0)
+		return dst, true
 	}
 	var src image.Image
 	if webpanim.IsAnimated(data) {

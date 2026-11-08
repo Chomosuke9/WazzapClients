@@ -1781,9 +1781,11 @@ func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
 		return
 	}
 	pic, size := img.op, img.size
-	if img.animated && !u.blurred() && u.autoplays(m) {
+	key := stickerKey(m)
+	playing := img.animated && !u.blurred() && (u.autoplays(m) || u.players.forced[key])
+	if playing {
 		b, chat, id := u.backend, m.ChatID, m.ID
-		if f, ok := u.stickerFrame("m:"+chat+"/"+id, sz*2, func() []byte { return b.MediaData(chat, id) }); ok {
+		if f, ok := u.stickerFrame(key, sz*2, func() []byte { return b.MediaData(chat, id) }); ok {
 			pic, size = f, f.Size()
 		}
 	}
@@ -1792,6 +1794,12 @@ func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
 	w, h := int(float32(size.X)*s), int(float32(size.Y)*s)
 	dst := image.Rect((sz-w)/2, (sz-h)/2, (sz-w)/2+w, (sz-h)/2+h)
 	paintCover(gtx, pic, size, dst)
+	if img.animated && !u.conv.selecting {
+		u.stickerClick(gtx, m, sz)
+	}
+	if p := u.players.m[key]; playing && p != nil && (m.Lottie || p.lottie.Load()) {
+		u.stickerEffect(gtx, m, sz)
+	}
 }
 
 // gradientImage stands in for photos in demo data.

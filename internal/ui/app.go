@@ -104,6 +104,7 @@ type UI struct {
 	textHook, labelHook bitmapHook
 	emojiPlace          emojiPlace // what the hooks are drawing (u.emojiIn)
 	players             players    // animated stickers on screen
+	fx                  stickerFX  // premium stickers' effects (stickerfx.go)
 	bars                map[*widget.List]*scrollbar
 
 	page         page

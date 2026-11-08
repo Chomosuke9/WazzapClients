@@ -132,7 +132,11 @@ type Message struct {
 	Media  Media
 	// Round marks a video note (a ptvMessage): a MediaVideo that plays in a
 	// circle in the chat instead of a bubble.
-	Round    bool
+	Round bool
+	// Lottie marks a Lottie sticker (application/was): its media is a zip
+	// of animations, and a premium one's second animation is an effect
+	// played around it.
+	Lottie   bool
 	Duration int // seconds, for voice messages
 	FromMe   bool
 	Sender   string // display name; group chats only

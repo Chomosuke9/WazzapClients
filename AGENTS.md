@@ -146,6 +146,18 @@ Gotchas already found in the pinned version (v0.10.x):
   `internal/webpanim`; `stickerFrame` (`player.go`) plays the ones on screen.
   GIFs are MP4s: `gifFrame` (`gifplayer.go`) plays the ones on screen in their bubbles,
   muted and looping (`Player.SetLoop`), at most `maxGIFs` at once.
+- Lottie stickers (`isLottie`, mimetype `application/was`) are a zip holding
+  `animation/animation.json`; WhatsApp Web plays them with lottie-web 5.12.2's SVG
+  renderer. `internal/lottie` draws them in Go, a frame at a time at the size shown
+  (`runLottie`, at most 30 a second), with no allocations per frame. Match lottie-web,
+  not rlottie: rlottie applies a masked solid's opacity twice, among others. Keyframe
+  times are the composition's (not less the layer's `st`); a precomp's layers play
+  at its time less its `st`, stretched. `TestGolden` compares frames with references
+  rendered by either (see its comment). A premium one's effect is
+  `animation/animation_secondary.json`, played once at 387% of the sticker, centered
+  (`stickerfx.go`): on its first play (`sticker_fx_seen` pref) and on each click.
+  Clicking any animated sticker plays it past the players' cap; `makeRoom` stops
+  others (benched while on screen) until it fits `playerBudget`.
 - A video note is a `ptvMessage`, the same protobuf as a `videoMessage`, so its stored
   blob doesn't say which it was. It keeps `media` = `MediaVideo`, `Message.Round` is read
   from the payload, and `asVideoNote` turns the blob back when it's forwarded or quoted.
@@ -528,6 +540,10 @@ internal/mock/     demo Backend with fake chats (used by -demo and cmd/screensho
                    for the next Start, counted starts and closes)
 internal/photo/    scales and compresses photos to send (Standard, HD, Raw) and Shrink
 internal/webpanim/ animated WebP (animated stickers), decoded one frame at a time
+internal/lottie/   Lottie animations (WhatsApp's Lottie stickers, .was): parsed from JSON,
+                   keyframes evaluated (prop.go), filled and stroked by a rasterizer of
+                   its own (raster.go, stroke.go) with masks, mattes, trim paths,
+                   repeaters, gradients, blend modes and embedded pictures (render.go)
 internal/emojiset/ downloads the emojis into <data>/emoji: Noto Color Emoji, the 2D font, once;
                    Noto's 3D emojis (googlefonts/noto-emoji, 3dpng branch) and animated ones
                    (Google Fonts) one at a time, the first time each shows. A 404 is remembered
