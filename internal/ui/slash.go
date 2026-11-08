@@ -89,6 +89,7 @@ type slashKey struct {
 	info     *model.ChatInfo
 	contacts int
 	snippets int
+	files    int
 }
 
 // slashPick is what the picker shows for the composer's text.
@@ -137,7 +138,7 @@ func (u *UI) slashQuery() *slashPick {
 	if c.IsGroup {
 		info = u.chatMembers(c.ID)
 	}
-	k := slashKey{txt, caret, len(u.conv.mentions), c.ID, info, len(s.contacts), s.snippetsVer}
+	k := slashKey{txt, caret, len(u.conv.mentions), c.ID, info, len(s.contacts), s.snippetsVer, u.slashFiles(c.ID)}
 	if s.cacheOK && s.cacheKey == k {
 		return s.cache
 	}
@@ -160,6 +161,7 @@ func (u *UI) readSlash(txt string, caret int, c *model.Chat, info *model.ChatInf
 		return nil
 	}
 	in.Now = u.now()
+	in.Files = u.slashFiles(c.ID)
 	sp := &slashPick{in: in}
 	if in.Naming {
 		for _, cmd := range command.Matching(in.Name, c.IsGroup) {
@@ -407,6 +409,11 @@ func (u *UI) submitSlash(sp *slashPick) {
 		Reply: u.conv.reply, Backend: u.backend, Now: u.now(), Auto: u.auto, Host: host}
 	if c.IsGroup {
 		ctx.Info = u.chatMembers(c.ID)
+	}
+	if in.Cmd.Files && u.slashFiles(c.ID) > 0 {
+		// Typed as a caption: the command takes the send view's files.
+		u.holdFiles(ctx)
+		return
 	}
 	u.conv.composer.SetText("")
 	u.conv.reply = nil

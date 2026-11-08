@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"strconv"
 	"time"
 
@@ -85,7 +86,19 @@ type Context struct {
 	Now time.Time
 	// Auto sends scheduled messages and AFK replies; nil without it.
 	Auto *auto.Backend
+	// Files are the send view's files when a Files command is typed as a
+	// caption there, in order.
+	Files []File
 	Host
+}
+
+// File is a file of the send view that a command takes (Command.Files).
+type File struct {
+	model.Attachment
+	// Caption is the file's own caption. The file the command was typed
+	// on (Typed) has none: the command's text stands for it.
+	Caption model.Draft
+	Typed   bool
 }
 
 // Get returns the values of the option called name.
@@ -133,19 +146,22 @@ func (c *Context) Fail(text string) {
 	c.Note(&Note{Title: c.Input, Text: text, Failed: true})
 }
 
-// Execute runs c's command, after checking that it can run here.
-func Execute(c *Context) {
+// Execute runs c's command, after checking that it can run here. It
+// returns why the command couldn't run, which a note shows already.
+func Execute(c *Context) error {
+	var err error
 	switch {
 	case c.Cmd.Group && (c.Chat == nil || !c.Chat.IsGroup):
-		c.Fail("/" + c.Cmd.Name + " works only in groups.")
-		return
+		err = errors.New("/" + c.Cmd.Name + " works only in groups.")
 	case c.Cmd.Admin && c.Info != nil && !isAdmin(c.Info):
-		c.Fail("Only group admins can use /" + c.Cmd.Name + ".")
-		return
+		err = errors.New("Only group admins can use /" + c.Cmd.Name + ".")
+	default:
+		err = c.Cmd.Run(c)
 	}
-	if err := c.Cmd.Run(c); err != nil {
+	if err != nil {
 		c.Fail(err.Error())
 	}
+	return err
 }
 
 func isAdmin(info *model.ChatInfo) bool {

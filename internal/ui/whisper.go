@@ -2,10 +2,14 @@ package ui
 
 import (
 	"image/color"
+	"os"
+	"slices"
 	"strings"
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"github.com/chomosuke9/wazzapclients/internal/command"
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // whisperTint colours a whisper bubble so it reads apart from a plain
@@ -58,8 +62,10 @@ func (u *UI) blockWhisperFallback() bool {
 		problem = "Enable Slash commands and /whisper in Extra features first."
 	case u.selected == nil || !u.selected.IsGroup || u.postingStatus():
 		problem = "/whisper works only in group chats."
-	case len(u.attach.files) > 0 || u.conv.edit.msg != nil || u.conv.editorElsewhere:
-		problem = "Use /whisper as a new text command, without attachments."
+	case u.conv.edit.msg != nil:
+		problem = "Use /whisper in a new message, not an edit."
+	case len(u.attach.files) > 0 && u.attach.chatID != u.selected.ID:
+		problem = "/whisper sends only the files picked for this chat."
 	case u.slashQuery() == nil:
 		problem = "Start the message with /whisper, then pick members and type the text."
 	default:
@@ -67,4 +73,67 @@ func (u *UI) blockWhisperFallback() bool {
 	}
 	u.toast(problem)
 	return true
+}
+
+// slashFiles is how many files a command typed in chat's composer would
+// take (Command.Files): the send view's, while it's open for that chat.
+func (u *UI) slashFiles(chat string) int {
+	if a := &u.attach; a.chatID == chat {
+		return len(a.files)
+	}
+	return 0
+}
+
+// heldCmd is a command that took the send view's files (/whisper typed as
+// a caption), waiting for its edited photos to render.
+type heldCmd struct {
+	ctx   *command.Context
+	items []*outItem // ctx.Files' files, as they'll go
+}
+
+// holdFiles closes the send view, giving its files to the command ctx,
+// which runs once they're ready (runHeld). The command's text is the
+// caption of the file on show; the others keep their own.
+func (u *UI) holdFiles(ctx *command.Context) {
+	a := &u.attach
+	h := &heldCmd{ctx: ctx}
+	for i, f := range a.files {
+		typed := i == a.cur
+		var d model.Draft
+		if !typed {
+			d = u.draftFrom(trimSpace(f.caption))
+		}
+		h.items = append(h.items, u.outItem(a.chatID, f, model.Draft{}))
+		ctx.Files = append(ctx.Files, command.File{Caption: d, Typed: typed})
+	}
+	a.held = append(a.held, h)
+	u.conv.reply, u.conv.mentions = nil, nil
+	u.closeSendView(true)
+	u.conv.composer.SetText("")
+	u.runHeld()
+	u.scrollMessages(layout.Position{})
+}
+
+// runHeld runs, in order, the commands whose files are ready.
+func (u *UI) runHeld() {
+	a := &u.attach
+	for len(a.held) > 0 {
+		h := a.held[0]
+		if slices.ContainsFunc(h.items, func(it *outItem) bool { return it.busy }) {
+			return
+		}
+		a.held[0] = nil
+		a.held = a.held[1:]
+		for i, it := range h.items {
+			h.ctx.Files[i].Attachment = it.att
+		}
+		command.Execute(h.ctx)
+		// The backend has read the app's own copies (pictures) by now.
+		for _, it := range h.items {
+			if it.temp {
+				_ = os.Remove(it.att.Path)
+			}
+		}
+	}
+	a.held = nil
 }

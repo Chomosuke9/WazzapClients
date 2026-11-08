@@ -144,7 +144,7 @@ meant you to see. Each has its own switch:
 - 🗑️ **Keep deleted messages** keeps messages and statuses deleted for everyone, marked Deleted.
 - 👁️ **Replay view once** opens view once messages as often as you like, screenshots allowed.
 - 👻 **`/ghost`** and ✏️ **Edit history**, above.
-- **`/whisper @member @member <text>`** submits group text to the selected members' devices only (experimental).
+- **`/whisper @member @member <text>`** submits group text, or photos, videos and files, to the selected members' devices only (experimental).
 
 Turning one on opens a warning about privacy expectations. You must check the acknowledgment
 and choose **Enable feature** before it is activated. Turning it off is immediate; turning it
@@ -171,7 +171,7 @@ stays off until both confirmations are completed; canceling either leaves it off
 | `/scheduled` | Lists the chat's scheduled messages, to send now or cancel |
 | `/afk <reason>` | Auto-replies while you're away, until you send something |
 | `/ghost` | Goes invisible: no read receipts, shown offline, no sending (an ethically gray feature) |
-| `/whisper @member @member <text>` | Sends text to selected group members using individual device envelopes (an ethically gray feature) |
+| `/whisper @member @member <text>` | Sends text, or the files it's typed as the caption of, to selected group members using individual device envelopes (an ethically gray feature) |
 | `/snippet send <name>` | Sends a saved message; the picker over the composer offers them as you type |
 | `/snippet save [name]` | Saves the whole message you reply to (a poll, document or photo too), under that name or a generated one |
 | `/catch` | Opens the stored payload of the message you reply to, with Copy JSON and Export JSON |
@@ -181,9 +181,15 @@ Ethically gray features**, acknowledge the warning, then pick one or more member
 type the message, for example `/whisper @Budi @Siti Meet at 8`. The first non-mention
 starts the message body, where `@mentions` work as in any message. To start the body
 with a mention, put it on a new line (Shift+Enter) after the members: `/whisper @Budi`,
-then `@Siti is here` below. It supports text
-only and respects admin-only groups and ghost mode. Recipients may still copy, quote,
-or forward what they receive.
+then `@Siti is here` below. It respects admin-only groups and ghost mode. Recipients
+may still copy, quote, or forward what they receive.
+
+To whisper photos, videos or files, attach them as usual and type the command as the
+caption in the send view: `/whisper @Budi here's the plan`, or just `/whisper @Budi` for
+no caption. Every file goes to those members, each as a message of its own (an album is
+sent as separate photos); the command's text is the caption of the file it was typed on,
+and the other files keep their captions. The files are uploaded first, so nothing is
+submitted if an upload fails.
 
 A sent whisper leaves a record in the chat, drawn as yours but tinted apart from an
 ordinary message and headed **"Only you can see this"** with the members it went to.

@@ -545,6 +545,28 @@ type Attachment struct {
 	Waveform []byte
 }
 
+// Whisper is what /whisper sends to some of a group's members only: a
+// message for each of its Parts, each leaving a local record in the chat.
+type Whisper struct {
+	ChatID string
+	// Targets are the members it goes to.
+	Targets []string
+	// Reply is the message the first part quotes, or nil.
+	Reply *Message
+	Parts []WhisperPart
+}
+
+// WhisperPart is one message of a whisper: text, or a file with a caption.
+type WhisperPart struct {
+	// Text is the text, or the file's caption, and Mentions the JIDs
+	// @mentioned in it, as in a Draft.
+	Text     string
+	Mentions []string
+	// File is the file it sends, or nil for text. Albums aren't kept: each
+	// file goes as a message of its own.
+	File *Attachment
+}
+
 // Quality is the size a photo is sent at.
 type Quality int
 
@@ -1354,13 +1376,13 @@ type Backend interface {
 	MarkRead(chatIDs []string)
 	// Send queues a text message and returns it in its pending state.
 	Send(chatID string, d Draft) *Message
-	// SendWhisper sends text only to selected group members. mentions are the
-	// JIDs @mentioned in text, as in a Draft, and reply the message it
-	// quotes, or nil. It returns immediately; the
+	// SendWhisper sends a whisper's messages, in order, only to selected
+	// group members. Its files are read before it returns (they may be
+	// deleted then); it uploads and submits them in the background. The
 	// buffered channel yields one error (nil on submission) and closes.
 	// Submission does not confirm delivery. No ordinary outgoing message is
 	// stored, broadcast, synced to self, or automatically retried.
-	SendWhisper(chatID string, targets []string, text string, mentions []string, reply *Message) <-chan error
+	SendWhisper(w Whisper) <-chan error
 	// PressButton answers a message's quick-reply button (Buttons[i]), or
 	// with the row of its list button whose ID is row, and returns the
 	// answer in its pending state, or nil.

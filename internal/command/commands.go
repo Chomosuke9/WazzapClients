@@ -102,12 +102,13 @@ var All = []*Command{
 		Gray: true, Run: runGhost,
 	},
 	{
-		Name: "whisper", Description: "Sends group text only to selected members; experimental, delivery is unconfirmed",
-		Group: true, Gray: true,
+		Name: "whisper", Description: "Sends group text, or the files it's the caption of, only to selected members; experimental, delivery is unconfirmed",
+		Group: true, Gray: true, Files: true,
 		Options: []Option{
 			{Name: "members", Description: "Who to send to; pick one or more @mentions, then a new line (Shift+Enter) to start the text with one",
 				Kind: Member, Required: true, Multiple: true, Until: "\n"},
-			{Name: "text", Description: "The text to send to those members; @mentions work as in any message", Kind: Text, Required: true, Mentions: true},
+			{Name: "text", Description: "The text to send to those members, or the file's caption; @mentions work as in any message",
+				Kind: Text, Required: true, Mentions: true, Caption: true},
 		},
 		Run: runWhisper,
 	},

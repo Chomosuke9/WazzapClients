@@ -254,20 +254,47 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 	if err != nil || cli == nil {
 		return nil
 	}
+	m, up, err := readFile(a, d.Text)
+	if err != nil {
+		b.emit(model.NoticeEvent{Text: err.Error()})
+		return nil
+	}
+	m.ID, m.ChatID, m.Time, m.Receipt = cli.GenerateMessageID(), chatID, b.sendTime(), model.Pending
+	ci := b.draftContext(chatID, d, m)
+	msg, inner := fileMessage(m, up, d.Text, ci, a.ViewOnce)
+	if m.Album != "" {
+		inAlbum(msg, jid, m.Album)
+	}
+	b.keepSent(m, up, msg)
+	ctx := b.ctx
+	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
+		b.log.Errorf("store chat %s: %v", chatID, err)
+	}
+	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, rawPayload: marshal(msg)}); err != nil {
+		b.log.Errorf("store outgoing file: %v", err)
+	}
+	b.emitChat(chatID)
+	go b.uploadAndSend(jid, m, up, msg, inner)
+	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
+		return b.resolve(ctx, r, jid.Server == types.GroupServer)
+	}
+	cp := *m
+	return &cp
+}
+
+// readFile reads a file to send with caption: what its message shows,
+// without an ID, chat or time yet, and its upload. Photos and voice
+// messages are read into memory, so their file may go once it returns.
+func readFile(a model.Attachment, caption string) (*model.Message, upload, error) {
 	st, err := os.Stat(a.Path)
 	if err != nil || st.IsDir() {
-		b.emit(model.NoticeEvent{Text: "Couldn't read " + filepath.Base(a.Path) + "."})
-		return nil
+		return nil, upload{}, errors.New("Couldn't read " + filepath.Base(a.Path) + ".")
 	}
 	name := filepath.Base(a.Path)
 	m := &model.Message{
-		ID:       cli.GenerateMessageID(),
-		ChatID:   chatID,
 		FromMe:   true,
 		Media:    a.Media,
-		Text:     d.Text,
-		Time:     b.sendTime(),
-		Receipt:  model.Pending,
+		Text:     caption,
 		FileName: name,
 		FileSize: st.Size(),
 		FileType: fileType(a),
@@ -280,8 +307,7 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 	case model.MediaImage:
 		m.Kind = model.KindImage
 		if err := up.prepareImage(a.Quality); err != nil {
-			b.emit(model.NoticeEvent{Text: "Couldn't read the photo " + name + "."})
-			return nil
+			return nil, upload{}, errors.New("Couldn't read the photo " + name + ".")
 		}
 		m.Thumb, m.FileType, m.FileSize = up.thumb, "image/jpeg", int64(len(up.data))
 		if up.png {
@@ -304,8 +330,7 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		m.Duration, m.Waveform, m.FileType = a.Seconds, a.Waveform, "audio/ogg; codecs=opus"
 		data, err := os.ReadFile(a.Path)
 		if err != nil {
-			b.emit(model.NoticeEvent{Text: "Couldn't read the voice message."})
-			return nil
+			return nil, upload{}, errors.New("Couldn't read the voice message.")
 		}
 		up.data = data
 	case model.MediaDocument:
@@ -316,34 +341,20 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 	if a.ViewOnce && m.Kind == model.KindImage {
 		m.Kind, m.Album = model.KindViewOnce, ""
 	}
-	ci := b.draftContext(chatID, d, m)
-	msg, inner := fileMessage(m, up, d.Text, ci, a.ViewOnce)
-	if m.Album != "" {
-		inAlbum(msg, jid, m.Album)
-	}
-	// Keep a copy so your own media shows (and opens) without a download.
+	return m, up, nil
+}
+
+// keepSent keeps a copy of a file you send, msg, so your own media shows
+// (and opens) without a download.
+func (b *Backend) keepSent(m *model.Message, up upload, msg *waE2E.Message) {
 	switch {
-	case up.data != nil && a.Media == model.MediaVoice:
+	case up.data != nil && m.Media == model.MediaVoice:
 		up.keep(b.mediaFilePath(payloadView(m, msg)))
 	case up.data != nil:
-		up.keep(b.mediaPath(chatID, m.ID))
-	case st.Size() <= maxLocalCopy:
+		up.keep(b.mediaPath(m.ChatID, m.ID))
+	case m.FileSize <= maxLocalCopy:
 		up.copyTo(b.mediaFilePath(payloadView(m, msg)))
 	}
-	ctx := b.ctx
-	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
-		b.log.Errorf("store chat %s: %v", chatID, err)
-	}
-	if err := b.store.putMessage(ctx, b.db, storedMsg{Message: m, rawPayload: marshal(msg)}); err != nil {
-		b.log.Errorf("store outgoing file: %v", err)
-	}
-	b.emitChat(chatID)
-	go b.uploadAndSend(jid, m, up, msg, inner)
-	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
-		return b.resolve(ctx, r, jid.Server == types.GroupServer)
-	}
-	cp := *m
-	return &cp
 }
 
 // fileType is the MIME type a file is sent with.

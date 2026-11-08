@@ -14,11 +14,15 @@ type whisperUIBackend struct {
 	model.Backend
 	chat, text        string
 	targets, mentions []string
+	parts             []model.WhisperPart
 	done              chan error
 }
 
-func (b *whisperUIBackend) SendWhisper(chat string, targets []string, text string, mentions []string, reply *model.Message) <-chan error {
-	b.chat, b.targets, b.text, b.mentions = chat, targets, text, mentions
+func (b *whisperUIBackend) SendWhisper(w model.Whisper) <-chan error {
+	b.chat, b.targets, b.parts = w.ChatID, w.Targets, w.Parts
+	if len(w.Parts) > 0 {
+		b.text, b.mentions = w.Parts[0].Text, w.Parts[0].Mentions
+	}
 	return b.done
 }
 
@@ -86,7 +90,7 @@ func TestSlashWhisper(t *testing.T) {
 }
 
 func TestWhisperDoesNotFallThrough(t *testing.T) {
-	for _, mode := range []string{"disabled", "slash disabled", "private", "leading space", "attachment", "edit"} {
+	for _, mode := range []string{"disabled", "slash disabled", "private", "leading space", "other chat's files", "edit"} {
 		t.Run(mode, func(t *testing.T) {
 			chat := "work"
 			if mode == "private" {
@@ -106,8 +110,8 @@ func TestWhisperDoesNotFallThrough(t *testing.T) {
 				text = " " + text
 			}
 			st.typeText(text)
-			if mode == "attachment" {
-				st.u.attach.files = []*attachFile{{}}
+			if mode == "other chat's files" {
+				st.u.attach.files, st.u.attach.chatID = []*attachFile{{}}, "rina"
 			}
 			if mode == "edit" {
 				st.u.conv.edit.msg = &model.Message{}
@@ -210,5 +214,67 @@ func TestDismissedNoteShrinksAway(t *testing.T) {
 	}
 	if inRows(n) || len(st.u.slash.leaving["work"]) != 0 {
 		t.Fatal("the note never went")
+	}
+}
+
+// TestWhisperInSendView checks /whisper typed as a caption: it takes the
+// send view's files (no text needed), each with its caption, and nothing
+// goes to the group.
+func TestWhisperInSendView(t *testing.T) {
+	st := newSlashTest(t, "work")
+	st.b.SetPref(grayCmdPref("whisper"), "on")
+	st.u.loadExtras()
+	b := &whisperUIBackend{Backend: st.u.backend, done: make(chan error, 1)}
+	st.u.backend = b
+	before := len(st.b.Messages("work", 1000))
+	a := &st.u.attach
+	a.chatID = "work"
+	a.files = []*attachFile{
+		{Attachment: model.Attachment{Path: "a.jpg", Media: model.MediaImage}},
+		{Attachment: model.Attachment{Path: "b.pdf", Media: model.MediaDocument}, caption: "the doc"},
+	}
+	st.typeText("/whisper ")
+	sp := st.u.slashQuery()
+	if sp == nil || len(sp.vals) == 0 {
+		t.Fatal("no member picker in the caption")
+	}
+	st.u.pickSlash(sp, 0)
+	st.frame()
+	st.u.sendComposer() // the send button, and Enter in the caption
+	if len(b.targets) != 1 || len(b.parts) != 2 {
+		t.Fatalf("wrong whisper: %+v (toast %q)", b, st.u.toastMsg.text)
+	}
+	if p := b.parts[0]; p.File == nil || p.File.Path != "a.jpg" || p.Text != "" {
+		t.Fatalf("typed file: %+v", p)
+	}
+	if p := b.parts[1]; p.File == nil || p.File.Path != "b.pdf" || p.Text != "the doc" {
+		t.Fatalf("other file: %+v", p)
+	}
+	if len(a.files) != 0 || st.text() != "" || len(a.outbox) != 0 {
+		t.Fatalf("send view left open (%d files, %q) or files queued for the group", len(a.files), st.text())
+	}
+	b.done <- nil
+	close(b.done)
+	if len(st.b.Messages("work", 1000)) != before {
+		t.Fatal("whisper's files went to the group")
+	}
+}
+
+// TestWhisperCaptionElsewhere checks that a /whisper typed on another
+// file's caption doesn't go to the group as a caption.
+func TestWhisperCaptionElsewhere(t *testing.T) {
+	st := newSlashTest(t, "work")
+	st.b.SetPref(grayCmdPref("whisper"), "on")
+	st.u.loadExtras()
+	before := len(st.b.Messages("work", 1000))
+	a := &st.u.attach
+	a.chatID = "work"
+	a.files = []*attachFile{
+		{Attachment: model.Attachment{Path: "a.jpg", Media: model.MediaImage}},
+		{Attachment: model.Attachment{Path: "b.jpg", Media: model.MediaImage}, caption: "/whisper @Budi hi"},
+	}
+	st.u.sendComposer()
+	if len(st.b.Messages("work", 1000)) != before || len(a.files) != 2 || a.cur != 1 {
+		t.Fatalf("whisper caption sent or not shown (cur %d)", a.cur)
 	}
 }

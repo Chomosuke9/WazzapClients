@@ -108,7 +108,7 @@ func TestDispatchWhisper(t *testing.T) {
 				cancel()
 			}
 			var nodes []waBinary.Node
-			err := dispatchWhisper(ctx, group, []types.JID{a, b}, "same-id", func(dev types.JID) (*waBinary.Node, bool, error) {
+			err := dispatchWhisper(ctx, group, []types.JID{a, b}, "same-id", "media", func(dev types.JID) (*waBinary.Node, bool, error) {
 				if failAt == "encrypt" && dev == b {
 					return nil, false, errors.New("encryption failed")
 				}
@@ -139,7 +139,7 @@ func TestDispatchWhisper(t *testing.T) {
 				t.Fatalf("sent %d envelopes", len(nodes))
 			}
 			for i, node := range nodes {
-				if node.Tag != "message" || node.Attrs["to"] != group || node.Attrs["id"] != "same-id" || node.Attrs["participant"] != []types.JID{a, b}[i] {
+				if node.Tag != "message" || node.Attrs["to"] != group || node.Attrs["id"] != "same-id" || node.Attrs["type"] != "media" || node.Attrs["participant"] != []types.JID{a, b}[i] {
 					t.Fatalf("wrong routing: %+v", node)
 				}
 				children := node.GetChildren()
@@ -168,7 +168,7 @@ func TestWhisperBackendGates(t *testing.T) {
 	} {
 		b.SetPref("cmd_whisper", map[bool]string{true: "on", false: "off"}[tc.enabled])
 		b.SetPref(model.PrefGhost, map[bool]string{true: "on", false: "off"}[tc.ghost])
-		done := b.SendWhisper(tc.chat, []string{"2@lid"}, tc.text, nil, nil)
+		done := b.SendWhisper(model.Whisper{ChatID: tc.chat, Targets: []string{"2@lid"}, Parts: []model.WhisperPart{{Text: tc.text}}})
 		if err := <-done; err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%+v: %v", tc, err)
 		}
@@ -218,5 +218,49 @@ func TestWhisperRecordRoundTrips(t *testing.T) {
 	n, _ := b.store.message(ctx, "g@g.us", "N1")
 	if n.whisper != "" || len(b.resolve(ctx, n, true).Whisper) != 0 {
 		t.Fatalf("plain message marked as whisper: %q", n.whisper)
+	}
+}
+
+// TestWhisperStanzaType checks a whisper's stanza and enc are typed as
+// hypermeow types the same message, wrappers and all.
+func TestWhisperStanzaType(t *testing.T) {
+	m := &model.Message{FileSize: 3, FileType: "x", FileName: "f"}
+	file := func(media model.Media, caption string, viewOnce bool) *waE2E.Message {
+		m.Media = media
+		msg, _ := fileMessage(m, upload{}, caption, nil, viewOnce)
+		return msg
+	}
+	for _, tc := range []struct {
+		msg            *waE2E.Message
+		typ, mediaType string
+	}{
+		{&waE2E.Message{Conversation: proto.String("hi")}, "text", ""},
+		{&waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("hi")}}, "text", ""},
+		{file(model.MediaImage, "cap", false), "media", "image"},
+		{file(model.MediaImage, "", true), "media", "image"},
+		{file(model.MediaVideo, "", false), "media", "video"},
+		{file(model.MediaGIF, "", false), "media", "gif"},
+		{file(model.MediaAudio, "", false), "media", "audio"},
+		{file(model.MediaVoice, "", false), "media", "ptt"},
+		{file(model.MediaDocument, "", false), "media", "document"},
+		{file(model.MediaDocument, "with a caption", false), "media", "document"},
+	} {
+		if typ, mt := whisperStanzaType(tc.msg); typ != tc.typ || mt != tc.mediaType {
+			t.Errorf("%v: got %s/%s, want %s/%s", tc.msg, typ, mt, tc.typ, tc.mediaType)
+		}
+	}
+}
+
+// TestWhisperFileUnreadable checks that a file that can't be read stops
+// the whole whisper before anything goes.
+func TestWhisperFileUnreadable(t *testing.T) {
+	b := testBackend(t)
+	b.SetPref("cmd_whisper", "on")
+	err := <-b.SendWhisper(model.Whisper{ChatID: "1@g.us", Targets: []string{"2@lid"}, Parts: []model.WhisperPart{
+		{Text: "first"},
+		{File: &model.Attachment{Path: t.TempDir() + "/missing.pdf", Media: model.MediaDocument}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "missing.pdf") {
+		t.Fatalf("unreadable file: %v", err)
 	}
 }

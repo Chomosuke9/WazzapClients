@@ -135,13 +135,19 @@ type outItem struct {
 // queueSend queues a picked file to send, rendering it first if edited.
 func (u *UI) queueSend(chatID string, f *attachFile, d model.Draft) {
 	a := &u.attach
+	a.outbox = append(a.outbox, u.outItem(chatID, f, d))
+}
+
+// outItem makes a picked file ready to send, and starts rendering it if
+// it's an edited photo (busy until it's done).
+func (u *UI) outItem(chatID string, f *attachFile, d model.Draft) *outItem {
 	it := &outItem{chatID: chatID, att: f.Attachment, draft: d, temp: f.temp}
-	it.att.Quality = a.quality
-	a.outbox = append(a.outbox, it)
+	it.att.Quality = u.attach.quality
 	if f.Media == model.MediaImage && f.edit.edited() {
 		it.busy = true
 		u.startRender(&renderJob{sink: sinkSend, out: it, path: f.Path, edit: f.edit.copyEdit()})
 	}
+	return it
 }
 
 // startRender decodes, crops, scales and filters the photo in the
@@ -225,6 +231,7 @@ func (u *UI) updateRenders() {
 		}
 	}
 	u.flushOutbox()
+	u.runHeld()
 }
 
 // renderEdit draws a decoded job's photo with its marks, offscreen.

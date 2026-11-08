@@ -37,11 +37,15 @@ type whisperTestBackend struct {
 	chat, text        string
 	targets, mentions []string
 	reply             *model.Message
+	parts             []model.WhisperPart
 	err               error
 }
 
-func (b *whisperTestBackend) SendWhisper(chat string, targets []string, text string, mentions []string, reply *model.Message) <-chan error {
-	b.chat, b.targets, b.text, b.mentions, b.reply = chat, targets, text, mentions, reply
+func (b *whisperTestBackend) SendWhisper(w model.Whisper) <-chan error {
+	b.chat, b.targets, b.reply, b.parts = w.ChatID, w.Targets, w.Reply, w.Parts
+	if len(w.Parts) > 0 {
+		b.text, b.mentions = w.Parts[0].Text, w.Parts[0].Mentions
+	}
 	done := make(chan error, 1)
 	done <- b.err
 	close(done)
@@ -130,5 +134,43 @@ func TestWhisperInvalid(t *testing.T) {
 		if b.chat != "" || h.note == nil || !h.note.Failed {
 			t.Errorf("accepted %+v: %+v", tc, h.note)
 		}
+	}
+}
+
+// TestWhisperFiles checks /whisper typed as a caption: the text may be
+// left out, and each file goes as a message of its own, the typed one
+// with the command's text and the others with their own captions.
+func TestWhisperFiles(t *testing.T) {
+	text := "/whisper @Siti"
+	in, _ := Parse(text, len([]rune(text)), nil, testMembers)
+	if in.Problem() == "" {
+		t.Fatal("text-only whisper without text accepted")
+	}
+	in.Files = 2
+	if p := in.Problem(); p != "" {
+		t.Fatalf("whisper with files wants text: %s", p)
+	}
+	b, h := &whisperTestBackend{}, &whisperTestHost{}
+	reply := &model.Message{ID: "Q1"}
+	files := []File{
+		{Attachment: model.Attachment{Path: "a.jpg", Media: model.MediaImage}, Caption: model.Draft{Text: "first", Mentions: []string{"sigit@lid"}}},
+		{Attachment: model.Attachment{Path: "b.pdf", Media: model.MediaDocument}, Typed: true},
+	}
+	if err := Execute(&Context{Cmd: in.Cmd, Input: text, Values: in.Values, Chat: &model.Chat{ID: "group", IsGroup: true},
+		Info: &model.ChatInfo{Members: testMembers}, Reply: reply, Backend: b, Host: h, Files: files}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(b.targets, []string{"siti@lid"}) || b.reply != reply || len(b.parts) != 2 {
+		t.Fatalf("wrong whisper: %+v", b)
+	}
+	p0, p1 := b.parts[0], b.parts[1]
+	if p0.File == nil || p0.File.Path != "a.jpg" || p0.Text != "first" || !slices.Equal(p0.Mentions, []string{"sigit@lid"}) {
+		t.Fatalf("first file: %+v", p0)
+	}
+	if p1.File == nil || p1.File.Media != model.MediaDocument || p1.Text != "" {
+		t.Fatalf("typed file: %+v", p1)
+	}
+	if !strings.Contains(h.note.Text, "Uploading") {
+		t.Fatalf("note: %+v", h.note)
 	}
 }

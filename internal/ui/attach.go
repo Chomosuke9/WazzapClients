@@ -64,6 +64,7 @@ type attachState struct {
 	dropAnim tween // the hint while files are dragged over the window
 
 	outbox  []*outItem      // files on their way out, see editrender.go
+	held    []*heldCmd      // commands that took files, waiting for their renders (whisper.go)
 	renders chan *renderJob // edited photos being rendered
 
 	demoEdit string // cmd/screenshot's sample edit still to make: edit, crop or filter
@@ -674,9 +675,11 @@ func (u *UI) sendAttachments() {
 	if f := a.current(); f != nil {
 		f.caption = u.conv.composer.Text()
 	}
-	for _, f := range a.files {
+	for i, f := range a.files {
 		if whisperText(f.caption) {
-			u.toast("Use /whisper as a new text command, without attachments.")
+			// Typed on another file: it runs from that file's caption.
+			u.showFile(i)
+			u.toast("Send /whisper from the caption it's typed in.")
 			return
 		}
 	}

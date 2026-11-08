@@ -61,6 +61,10 @@ type Option struct {
 	// Mentions lets @mentions be picked in a Text option, as in a
 	// message.
 	Mentions bool
+	// Caption lets a Required Text option be left empty when the command
+	// is typed as a caption in the send view (Command.Files, Input.Files):
+	// the files go without a caption then.
+	Caption bool
 }
 
 // Command is a slash command.
@@ -75,7 +79,10 @@ type Command struct {
 	// reading without read receipts). Each needs a switch of its own, under
 	// the Extra features page's "Ethically gray features".
 	Gray bool
-	Run  func(c *Context) error
+	// Files commands take the files of the send view when they're typed
+	// as a caption there (Context.Files). Others leave the files be.
+	Files bool
+	Run   func(c *Context) error
 	// Preview, when set, works out what the command would give with the
 	// options typed so far, which the composer shows as you type: text,
 	// or why it can't, with ok false ("" for nothing to show).
@@ -161,6 +168,9 @@ type Input struct {
 	WordStart, WordEnd int
 	// Now is the time a Preview reads; the zero time is time.Now().
 	Now time.Time
+	// Files is how many files a Files command typed as a caption would
+	// take (0 outside the send view).
+	Files int
 }
 
 // Text returns the first value of option name as typed, or "".
@@ -183,6 +193,9 @@ func (in *Input) Missing() []Option {
 		return nil
 	}
 	for i, o := range in.Cmd.Options {
+		if o.Caption && in.Files > 0 && in.Cmd.Files {
+			continue
+		}
 		if o.Required && (len(in.Values[i]) == 0 || o.Kind == Text && in.Values[i][0].Text == "") {
 			out = append(out, o)
 		}
