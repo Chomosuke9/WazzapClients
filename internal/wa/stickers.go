@@ -3,8 +3,10 @@ package wa
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -100,9 +102,12 @@ func (s *msgStore) unmarkSticker(ctx context.Context, hash, column string) error
 	return err
 }
 
-// stickerBlob returns a synced sticker's StickerMessage.
+// stickerBlob returns a synced sticker's StickerMessage, or a pack's.
 func (s *msgStore) stickerBlob(ctx context.Context, hash string) (blob []byte, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT blob FROM wz_stickers WHERE hash = ?`, hash).Scan(&blob)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = s.db.QueryRowContext(ctx, `SELECT blob FROM wz_pack_stickers WHERE hash = ? LIMIT 1`, hash).Scan(&blob)
+	}
 	return
 }
 
@@ -146,8 +151,13 @@ func (b *Backend) Stickers(set model.StickerSet) []*model.Message {
 	default:
 		return b.receivedStickers()
 	}
+	// Every favourite shows, as on the phone; recents are the latest few.
+	limit := stickerListMax
+	if set == model.StickersFavorite {
+		limit = -1
+	}
 	rows, err := b.db.QueryContext(b.ctx, `SELECT hash FROM wz_stickers WHERE `+order+` > 0
-		ORDER BY `+order+` DESC LIMIT ?`, stickerListMax)
+		ORDER BY `+order+` DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil
 	}
@@ -329,6 +339,23 @@ func (b *Backend) rehashSticker(oldKey string, data []byte) {
 		_, _ = b.db.ExecContext(ctx, `DELETE FROM wz_stickers WHERE hash = ?`, oldKey)
 	}
 	b.emit(model.StickersEvent{})
+}
+
+// stickerLinkChanged reports whether a synced sticker whose download
+// failed for good has another link since: its failure marker names the
+// link that failed (older markers are empty), and syncs and sends since
+// may have brought a fresh one.
+func (b *Backend) stickerLinkChanged(hash string) bool {
+	dead, err := os.ReadFile(b.failedPath(stickerChat, hash))
+	if err != nil {
+		return false
+	}
+	blob, err := b.store.stickerBlob(b.ctx, hash)
+	var m waE2E.StickerMessage
+	if err != nil || proto.Unmarshal(blob, &m) != nil {
+		return false
+	}
+	return m.GetDirectPath() != "" && m.GetDirectPath() != string(dead)
 }
 
 // favoriteStickerVersion is the favoriteSticker app state action's version

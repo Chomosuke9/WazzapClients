@@ -198,6 +198,7 @@ var mediaNames = map[model.Media]string{
 	model.MediaContact:     "contact",
 	model.MediaPoll:        "poll",
 	model.MediaEventInvite: "event",
+	model.MediaStickerPack: "sticker_pack",
 }
 
 func mediaName(m model.Media) string { return mediaNames[m] }

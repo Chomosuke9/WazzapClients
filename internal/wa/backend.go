@@ -68,8 +68,9 @@ type Backend struct {
 
 	avatars   *fetcher
 	downloads *fetcher
-	playing   sync.Map // files being downloaded for OpenMedia and MediaFile, by path
-	albums    sync.Map // album ID → chan closed once the album message is sent (album.go)
+	rmr       reuploads // media retry requests waiting for the phone (reupload.go)
+	playing   sync.Map  // files being downloaded for OpenMedia and MediaFile, by path
+	albums    sync.Map  // album ID → chan closed once the album message is sent (album.go)
 
 	subMu     sync.Mutex
 	subtitles map[string]string // group JID → participant list
@@ -727,6 +728,8 @@ func (b *Backend) handle(evt any) {
 		b.onMessage(e)
 	case *events.UndecryptableMessage:
 		b.onUndecryptable(e)
+	case *events.MediaRetry:
+		b.onMediaRetry(e)
 	case *events.Receipt:
 		b.onReceipt(e)
 

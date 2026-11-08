@@ -44,6 +44,7 @@ type Backend struct {
 	// reactors are who reacted to messages, by chat and message ID.
 	reactors map[string][]model.Reactor
 	extras
+	packs packs // sticker packs opened and added (packs.go)
 
 	// Running as a background account (see background.go).
 	bg bgState
@@ -445,6 +446,12 @@ func demo(now time.Time) []*demoChat {
 		}},
 		{ID: "clara", Name: "Clara Wijaya", Presence: "last seen yesterday at 23:40", Messages: []*model.Message{
 			{FromMe: true, Text: "Thanks for the review!", Time: day(1, 16, 3), Receipt: model.Read},
+			{Text: "https://wa.me/stickerpack/Flump", Time: day(1, 16, 5),
+				Link: &model.LinkPreview{URL: "https://wa.me/stickerpack/Flump", Title: "Flump Sticker Pack on WhatsApp",
+					Description: "Soft, round, and totally unbothered."},
+				Pack: &model.StickerPack{ID: "Flump", FirstParty: true}},
+			{FromMe: true, Media: model.MediaStickerPack, Text: "Office cats", Time: day(1, 16, 6), Receipt: model.Read,
+				Pack: &model.StickerPack{ID: "com.example.stickers office-cats", Name: "Office cats", Publisher: "Clara", Count: 12}},
 		}},
 		{ID: "landlord", Name: "Mr. Harto (Landlord)", Presence: "last seen 2 days ago", Messages: []*model.Message{
 			txt(false, day(2, 10, 0), "Hi, I've received this month's payment. Thank you"),

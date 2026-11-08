@@ -338,6 +338,7 @@ var mediaEmoji = map[model.Media]string{
 	model.MediaContact:     "👤",
 	model.MediaPoll:        "📊",
 	model.MediaEventInvite: "📅",
+	model.MediaStickerPack: "💟",
 }
 
 func (n *notifier) updateTooltip() {

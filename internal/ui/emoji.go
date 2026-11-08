@@ -115,11 +115,17 @@ type emojiPicker struct {
 	mouseTag   int
 	toneAnchor image.Point
 
+	// stickerSet is the sticker tab's open tab: a StickerSet, or past
+	// them the packs added to the picker (packs[stickerSet-3]).
 	stickerSet  model.StickerSet
 	stickers    [3][]*model.Message // per StickerSet
 	stickersOK  [3]bool             // stickers[i] is loaded
 	stickerSel  switcher[int]
 	stickerLine follower
+	packs       []*model.StickerPack        // packs added to the picker
+	packsOK     bool                        // packs is loaded
+	packSt      map[string][]*model.Message // their stickers, by pack, once shown
+	tabScroll   int                         // px the sticker tabs are scrolled sideways
 
 	anim      tween // opening and closing
 	catSel    switcher[int]
@@ -570,9 +576,25 @@ var stickerSets = []struct {
 	{icBubble, "Stickers you receive show up here."},
 }
 
-// stickerList returns a sticker set, loading it on first use.
+// stickerList returns a sticker set or an added pack, loading it on first
+// use.
 func (u *UI) stickerList(set model.StickerSet) []*model.Message {
 	e := &u.picker
+	if int(set) >= len(stickerSets) {
+		packs := u.pickerPacks()
+		i := int(set) - len(stickerSets)
+		if i >= len(packs) {
+			return nil
+		}
+		id := packs[i].ID
+		if _, ok := e.packSt[id]; !ok {
+			if e.packSt == nil {
+				e.packSt = map[string][]*model.Message{}
+			}
+			e.packSt[id] = u.backend.PackStickers(id)
+		}
+		return e.packSt[id]
+	}
 	if !e.stickersOK[set] {
 		e.stickers[set], e.stickersOK[set] = u.backend.Stickers(set), true
 	}
@@ -593,7 +615,11 @@ func (u *UI) defaultStickerSet() model.StickerSet {
 func (u *UI) layoutStickerTab(gtx C) D {
 	e := &u.picker
 	p := u.pal
-	for i := range stickerSets {
+	tabs := len(stickerSets) + len(u.pickerPacks())
+	if int(e.stickerSet) >= tabs {
+		e.stickerSet = u.defaultStickerSet() // its pack was taken off
+	}
+	for i := range tabs {
 		if u.btn("stset:"+itoa(i+1)).Clicked(gtx) && e.stickerSet != model.StickerSet(i) {
 			e.stickerSet = model.StickerSet(i)
 			e.list.Position = layout.Position{}
@@ -619,18 +645,16 @@ func (u *UI) layoutStickerTab(gtx C) D {
 	cols := max(2, (w-gtx.Dp(24))/cell)
 	n := (len(stickers) + cols - 1) / cols
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx C) D {
-			ics := make([]*icon.Icon, len(stickerSets))
-			for i, s := range stickerSets {
-				ics[i] = s.ic
-			}
-			return u.pickerHeader(gtx, "stset:", ics, int(e.stickerSet), &e.stickerSel, &e.stickerLine)
-		}),
+		layout.Rigid(u.stickerTabs),
 		layout.Flexed(1, func(gtx C) D {
 			if len(stickers) == 0 {
 				gtx.Constraints.Max.Y -= gtx.Dp(56) // above the tabs
 				gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-				return u.pickerMessage(gtx, stickerSets[e.stickerSet].empty)
+				empty := "This pack has no stickers."
+				if int(e.stickerSet) < len(stickerSets) {
+					empty = stickerSets[e.stickerSet].empty
+				}
+				return u.pickerMessage(gtx, empty)
 			}
 			return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
 				return u.scrollList(gtx, &e.list, n+1, func(gtx C, row int) D {

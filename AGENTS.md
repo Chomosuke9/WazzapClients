@@ -158,6 +158,22 @@ Gotchas already found in the pinned version (v0.10.x):
   (`stickerfx.go`): on its first play (`sticker_fx_seen` pref) and on each click.
   Clicking any animated sticker plays it past the players' cap; `makeRoom` stops
   others (benched while on screen) until it fits `playerBudget`.
+- Media links expire: the CDN signs a direct path until its `oe` (hex unix time) and
+  answers 403 after it. A favourite sticker keeps the link it had when it was
+  favourited, so most old ones are dead. Only the phone brings media back: a media
+  retry receipt (`SendMediaRetryReceipt`, sent to your own phone whoever sent the
+  message) asks it to upload a message's media again, and `events.MediaRetry` brings
+  the new path. A synced sticker asks through a chat message with its file, yours
+  first (`internal/wa/reupload.go`). Its `.gone` marker names the link that failed,
+  so a sync or send that brings another link lets it download again.
+- A sticker app's pack is a `stickerPackMessage`: a zip ("WhatsApp Sticker Pack Keys",
+  mms type `sticker-pack`) of its stickers, named in the message, and the tray icon,
+  plus a picture ("WhatsApp Sticker Pack Thumbnail Keys", `thumbnail-sticker-pack`).
+  WhatsApp's own packs are `wa.me/stickerpack/<id>` links; their stickers, with media
+  keys, come from `static.whatsapp.net/sticker?cat=sticker_pack_data&id=<id>`, which
+  leaves the Lottie packs (Flump, Chomp...) out unless asked with `lottie=1`. No app
+  state action syncs installed packs between devices (`internal/wa/packs.go`). A
+  zip's stickers have no link: the first send uploads them.
 - A video note is a `ptvMessage`, the same protobuf as a `videoMessage`, so its stored
   blob doesn't say which it was. It keeps `media` = `MediaVideo`, `Message.Round` is read
   from the payload, and `asVideoNote` turns the blob back when it's forwarded or quoted.
@@ -475,7 +491,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    kept on disk), in photoview.go; the Media panel (the rail's Media button:
                    media, docs and links from every chat, or one chat's) in gallery.go; the list column's
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
-                   line as fit, in stickerrow.go; video notes (a circle like a sticker, without a bubble,
+                   line as fit, in stickerrow.go; sticker packs (a shared pack's card, the
+                   "View sticker pack" dialog, which sends its stickers and adds the pack to
+                   the picker, and the picker's tabs of added packs) in stickerpack.go; video notes (a circle like a sticker, without a bubble,
                    muted and looping through `gifFrame` once the file is here, a click plays them
                    with sound and a progress ring) in roundvideo.go; a text of one to three emojis
                    alone, drawn big without a bubble like a sticker, in jumbo.go; the Emoji style
@@ -534,7 +552,9 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    hidden statuses (userStatusMute) and the check that a status reaches only
                    the chosen audience in statusprivacy.go;
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
-                   and snippetmedia.go
+                   and snippetmedia.go; sticker packs (wz_sticker_packs, their stickers in
+                   wz_pack_stickers) in packs.go; media retry requests (the phone uploading
+                   expired stickers again) in reupload.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot); in
                    background.go, what tests of background accounts need (messages kept
                    for the next Start, counted starts and closes)
@@ -771,7 +791,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
-# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;

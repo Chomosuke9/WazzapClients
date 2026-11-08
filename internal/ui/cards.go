@@ -33,6 +33,8 @@ func hasCard(m *model.Message) bool {
 		return len(m.Contacts) > 0
 	case model.MediaEventInvite:
 		return m.Event != nil
+	case model.MediaStickerPack:
+		return m.Pack != nil
 	}
 	return false
 }
@@ -44,11 +46,18 @@ const (
 	buttonMessage                                // the chat with a shared contact (Value: their number)
 	buttonContacts                               // every contact a message shares
 	buttonMap                                    // a live location on the map
+	buttonPack                                   // the sticker pack it shares or links to
 )
 
 // cardButtons are the buttons under m's card.
 func cardButtons(m *model.Message) []model.Button {
-	if !hasCard(m) || m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported || m.Kind == model.KindWaiting {
+	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported || m.Kind == model.KindWaiting {
+		return nil
+	}
+	if m.Pack != nil && (m.Media == model.MediaStickerPack || m.Media == model.MediaNone) {
+		return []model.Button{{Kind: buttonPack, Label: "View sticker pack"}}
+	}
+	if !hasCard(m) {
 		return nil
 	}
 	switch m.Media {
@@ -92,6 +101,8 @@ func (u *UI) pressCardButton(m *model.Message, b model.Button) {
 		u.inform(fmt.Sprintf("%d contacts", len(m.Contacts)), strings.Join(lines, "\n\n"))
 	case buttonMap:
 		u.openMap(m.Location)
+	case buttonPack:
+		u.openPackView(m)
 	}
 }
 
@@ -150,6 +161,8 @@ func (u *UI) layoutCard(gtx C, m *model.Message, maxW, metaW, metaH int, cols bu
 		return u.layoutMapCard(gtx, m, maxW, metaW, metaH, cols)
 	case model.MediaContact:
 		return u.layoutContactCard(gtx, m, maxW, metaH, cols)
+	case model.MediaStickerPack:
+		return u.layoutPackCard(gtx, m, maxW, metaH, cols)
 	}
 	return u.layoutEventCard(gtx, m, maxW, metaW, metaH, cols)
 }

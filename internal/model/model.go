@@ -112,6 +112,9 @@ const (
 	// MediaEventInvite is one of WhatsApp's events: a gathering or call
 	// with a date that people say whether they'll go to (Message.Event).
 	MediaEventInvite
+	// MediaStickerPack is a sticker pack someone shared (Message.Pack):
+	// its picture is the pack's thumbnail.
+	MediaStickerPack
 )
 
 // Quote is the message a reply points to.
@@ -204,6 +207,10 @@ type Message struct {
 	Contacts []ContactCard
 	Poll     *PollState
 	Event    *EventInfo
+	// Pack is the sticker pack a MediaStickerPack message shares, or the
+	// one of WhatsApp's own a link in the text points to
+	// (wa.me/stickerpack/<id>): both have a "View sticker pack" button.
+	Pack *StickerPack
 	// Opened is set on a view once message (KindViewOnce) once it was
 	// opened on this computer, and OnPhone while its media never came to
 	// it: WhatsApp sends view once media only to the phone, so it shows
@@ -216,6 +223,26 @@ type Message struct {
 	Whisper []string
 	// Notice is what a system message (KindSystem) is about.
 	Notice Notice
+}
+
+// StickerPack is a pack of stickers: one a sticker app made (shared in a
+// chat as a zip of its stickers), or one of WhatsApp's own, from its
+// sticker store.
+type StickerPack struct {
+	// ID is the pack's: WhatsApp's own are named ("Flump"), a sticker
+	// app's are its content provider and a UUID.
+	ID                     string
+	Name, Publisher, About string
+	Count                  int   // stickers in it, 0 when unknown
+	Size                   int64 // bytes, 0 when unknown
+	// FirstParty marks one of WhatsApp's own, which a wa.me/stickerpack
+	// link points to.
+	FirstParty bool
+	// Lottie and Animated say what its stickers are.
+	Lottie, Animated bool
+	// Added marks a pack added to the sticker picker, which shows it as a
+	// tab of its own.
+	Added bool
 }
 
 // Location is a place or position someone shared.
@@ -1003,8 +1030,18 @@ type ListsEvent struct{}
 // CommunitiesEvent reports that the community structure changed.
 type CommunitiesEvent struct{}
 
-// StickersEvent reports that the recent or favourite stickers changed.
+// StickersEvent reports that the recent or favourite stickers changed, or
+// the packs added to the picker.
 type StickersEvent struct{}
+
+// StickerPackEvent brings a sticker pack Backend.OpenStickerPack loaded:
+// its details and stickers, or Err.
+type StickerPackEvent struct {
+	ID       string // as the message's Pack named it
+	Pack     *StickerPack
+	Stickers []*Message
+	Err      string
+}
 
 // NoticeEvent is a short message for a toast ("Saved to Downloads").
 type NoticeEvent struct{ Text string }
@@ -1268,6 +1305,7 @@ func (PhoneEvent) isEvent()        {}
 func (LinkEvent) isEvent()         {}
 func (GroupCreatedEvent) isEvent() {}
 func (StickersEvent) isEvent()     {}
+func (StickerPackEvent) isEvent()  {}
 func (DeletedEvent) isEvent()      {}
 func (SearchEvent) isEvent()       {}
 func (ListsEvent) isEvent()        {}
@@ -1396,6 +1434,18 @@ type Backend interface {
 	SendSticker(chatID string, sticker, reply *Message)
 	// Stickers lists one of the sticker picker's sets, newest first.
 	Stickers(set StickerSet) []*Message
+	// OpenStickerPack loads the sticker pack m shares (m.Pack), from the
+	// chat's zip or WhatsApp's sticker store, and hands it out in a
+	// StickerPackEvent. Its stickers can be sent with SendSticker.
+	OpenStickerPack(m *Message)
+	// StickerPacks lists the packs added to the sticker picker, in the
+	// order they were added.
+	StickerPacks() []*StickerPack
+	// PackStickers lists the stickers of a pack added to the picker.
+	PackStickers(id string) []*Message
+	// AddStickerPack adds a pack OpenStickerPack loaded to the picker, or
+	// takes it off. WhatsApp doesn't sync packs between devices.
+	AddStickerPack(id string, add bool)
 	// FavoriteSticker reports whether a sticker message's file is one of
 	// your favourite stickers.
 	FavoriteSticker(m *Message) bool

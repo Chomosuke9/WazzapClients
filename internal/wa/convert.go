@@ -190,10 +190,11 @@ func describe(m *waE2E.Message) content {
 	m = unwrap(m)
 	switch {
 	case m.GetConversation() != "":
-		return content{text: m.GetConversation()}
+		return content{text: m.GetConversation(), extra: extraInfo{Pack: linkedPack(m.GetConversation())}}
 	case m.GetExtendedTextMessage() != nil:
 		e := m.GetExtendedTextMessage()
-		c := content{text: e.GetText(), bg: e.GetBackgroundArgb(), ctx: e.GetContextInfo()}
+		c := content{text: e.GetText(), bg: e.GetBackgroundArgb(), ctx: e.GetContextInfo(),
+			extra: extraInfo{Pack: linkedPack(first(e.GetMatchedText(), e.GetText()))}}
 		if e.GetTitle() != "" || e.GetDescription() != "" {
 			c.link = &model.LinkPreview{URL: e.GetMatchedText(), Title: e.GetTitle(),
 				Description: e.GetDescription()}
@@ -239,6 +240,10 @@ func describe(m *waE2E.Message) content {
 		e := m.GetStickerMessage()
 		return content{kind: model.KindSticker, media: model.MediaSticker, thumb: e.GetPngThumbnail(),
 			inner: e, ctx: e.GetContextInfo(), lottie: e.GetIsLottie() || e.GetMimetype() == "application/was"}
+	case m.GetStickerPackMessage() != nil:
+		e := m.GetStickerPackMessage()
+		return content{text: e.GetName(), media: model.MediaStickerPack, inner: e, ctx: e.GetContextInfo(),
+			extra: extraInfo{Pack: packOfMessage(e)}}
 	case m.GetContactMessage() != nil:
 		e := m.GetContactMessage()
 		return content{text: e.GetDisplayName(), media: model.MediaContact, ctx: e.GetContextInfo(),

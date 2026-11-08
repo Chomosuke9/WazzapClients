@@ -49,6 +49,7 @@ type extraInfo struct {
 	Loc      *model.Location
 	Contacts []model.ContactCard
 	Event    *eventDef
+	Pack     *model.StickerPack // a shared sticker pack, or one a link points to
 }
 
 // pollDef is a poll's options. Max is how many a voter may pick, 0 for
@@ -73,7 +74,7 @@ type eventDef struct {
 // apply puts what x describes on m; a poll's and an event's counts come
 // from fillVotes.
 func (x extraInfo) apply(m *model.Message) {
-	m.Location, m.Contacts = x.Loc, x.Contacts
+	m.Location, m.Contacts, m.Pack = x.Loc, x.Contacts, x.Pack
 	if p := x.Poll; p != nil {
 		m.Poll = &model.PollState{Max: p.Max}
 		for _, o := range p.Options {

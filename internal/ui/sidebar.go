@@ -553,7 +553,7 @@ func mediaIcon(m model.Media) *icon.Icon {
 		return icHeadphones
 	case model.MediaDocument:
 		return icDocument
-	case model.MediaSticker:
+	case model.MediaSticker, model.MediaStickerPack:
 		return icSticker
 	case model.MediaLocation:
 		return icLocation
@@ -605,6 +605,8 @@ func mediaLabel(m *model.Message) string {
 		return "Poll"
 	case model.MediaEventInvite:
 		return "Event"
+	case model.MediaStickerPack:
+		return "Sticker pack"
 	}
 	return m.Text
 }

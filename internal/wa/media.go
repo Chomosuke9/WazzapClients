@@ -294,14 +294,21 @@ func (b *Backend) failedPath(chatID, msgID string) string {
 }
 
 // MediaData implements model.Backend. Media with a failedPath marker is not
-// downloaded again.
+// downloaded again, unless it is a synced sticker whose link changed since
+// (stickerLinkChanged).
 func (b *Backend) MediaData(chatID, msgID string) []byte {
+	if chatID == packChat {
+		return b.store.packTray(b.ctx, msgID)
+	}
 	path := b.mediaPath(chatID, msgID)
 	if data, err := os.ReadFile(path); err == nil {
 		return data
 	}
 	if _, err := os.Stat(b.failedPath(chatID, msgID)); err == nil {
-		return nil
+		if chatID != stickerChat || !b.stickerLinkChanged(msgID) {
+			return nil
+		}
+		_ = os.Remove(b.failedPath(chatID, msgID))
 	}
 	b.downloads.add(chatID+"/"+msgID, func() { b.download(chatID, msgID) })
 	return nil
@@ -312,6 +319,13 @@ func (b *Backend) download(chatID, msgID string) {
 	if cli == nil || !cli.IsConnected() {
 		return
 	}
+	key := msgID
+	if chatID != stickerChat {
+		key = chatID + "/" + msgID
+	}
+	if b.rmr.waiting(key, b.now()) {
+		return // the phone is uploading it again (reupload.go)
+	}
 	ctx, cancel := context.WithTimeout(b.ctx, 2*time.Minute)
 	defer cancel()
 	media, blob, err := b.store.mediaBlob(ctx, chatID, msgID)
@@ -319,15 +333,25 @@ func (b *Backend) download(chatID, msgID string) {
 		return
 	}
 	var get func() ([]byte, error)
+	var sticker *waE2E.StickerMessage
 	switch media {
 	case model.MediaImage:
 		m := &waE2E.ImageMessage{}
 		err = proto.Unmarshal(blob, m)
 		get = func() ([]byte, error) { return cli.Download(ctx, m) }
 	case model.MediaSticker:
-		m := &waE2E.StickerMessage{}
+		sticker = &waE2E.StickerMessage{}
+		err = proto.Unmarshal(blob, sticker)
+		if err == nil && sticker.GetDirectPath() == "" && chatID == stickerChat {
+			// A sticker of a pack, which came in its zip (packs.go).
+			b.refetchPackSticker(ctx, msgID)
+			return
+		}
+		get = func() ([]byte, error) { return cli.Download(ctx, sticker) }
+	case model.MediaStickerPack:
+		m := &waE2E.StickerPackMessage{}
 		err = proto.Unmarshal(blob, m)
-		get = func() ([]byte, error) { return cli.Download(ctx, m) }
+		get = func() ([]byte, error) { return downloadPackThumb(ctx, cli, m) }
 	case model.MediaNone:
 		// A link preview's big picture (linkImageOf).
 		m := &waE2E.ExtendedTextMessage{}
@@ -352,10 +376,29 @@ func (b *Backend) download(chatID, msgID string) {
 	if err != nil && chatID == stickerChat && b.stickerFromChats(ctx, cli, msgID) {
 		return
 	}
+	// A sticker's expired link (403) is as dead as a missing file: only
+	// the phone can upload it again (reupload.go).
+	dead := errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) ||
+		sticker != nil && errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith403)
+	if dead && sticker != nil {
+		if chatID == stickerChat {
+			if b.askStickerReupload(ctx, cli, msgID, sticker.GetFileSHA256()) {
+				return
+			}
+		} else if b.askChatReupload(ctx, cli, chatID, msgID, sticker) {
+			return
+		}
+	}
 	if err != nil {
 		b.log.Infof("download media %s: %v", msgID, err)
-		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
-			_ = os.WriteFile(b.failedPath(chatID, msgID), nil, 0o600)
+		if dead {
+			// A synced sticker's marker names the dead link: the sticker
+			// downloads again once it has another (stickerLinkChanged).
+			var mark []byte
+			if sticker != nil && chatID == stickerChat {
+				mark = []byte(sticker.GetDirectPath())
+			}
+			_ = os.WriteFile(b.failedPath(chatID, msgID), mark, 0o600)
 			b.emit(model.MediaEvent{ChatID: chatID, MsgID: msgID})
 		}
 		return
