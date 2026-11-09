@@ -272,7 +272,7 @@ func (b *Backend) useDevice(device *store.Device) {
 	// full sync must emit them too.
 	cli.EmitAppStateEventsOnFullSync = true
 	cli.AddEventHandler(b.handle)
-	cli.RawNodeHandler = b.rawNode
+	cli.RawNodeHandler = b.groupedReceipts
 	b.cliMu.Lock()
 	b.cli = cli
 	b.cliMu.Unlock()

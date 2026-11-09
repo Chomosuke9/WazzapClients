@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/polymorfa/hypermeow"
-	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waMmsRetry"
 	"github.com/polymorfa/hypermeow/types"
@@ -34,12 +33,14 @@ import (
 const reuploadWait = 45 * time.Second
 
 // reuploadTries is how many chat messages a sticker asks about at most.
-// In November 2026 every sticker the phone uploaded again came encrypted
-// under a key of its own that the answer doesn't carry (its
-// messageSecret was empty), and neither the message's nor any other
-// copy's key opened it: one try, so the phone isn't kept uploading
-// files nobody can read. The download then fails its hash check, which
-// marks the sticker gone (download).
+// In November 2026 most stickers the phone uploaded again came encrypted
+// under a key of its own, which the answer doesn't carry (it holds the
+// direct path alone: no messageSecret, no other field), and neither the
+// message's nor any other stored copy's key opened them; some, like your
+// own sent from WhatsApp Web, kept their key. Maybe the phone keeps a
+// sticker's file once, under the key of the first copy it got. One try,
+// so the phone isn't kept uploading files nobody can read: one that fails
+// its hash check marks the sticker gone (download).
 const reuploadTries = 1
 
 // reupload is a media retry request waiting for the phone's answer.
@@ -222,10 +223,6 @@ func (b *Backend) onMediaRetry(e *events.MediaRetry) {
 		return
 	}
 	path := n.GetDirectPath()
-	// What the answer holds besides the path, fields hypermeow doesn't
-	// know included: the reuploaded file's key isn't found yet.
-	b.log.Infof("media retry %s in %s: new path %s, message secret %x, unknown fields %x",
-		p.id, p.chat, path, n.GetMessageSecret(), n.ProtoReflect().GetUnknown())
 	ctx := b.ctx
 	var raw []byte
 	if b.db.QueryRowContext(ctx, `SELECT raw_payload FROM wz_messages WHERE chat = ? AND id = ?`, p.chat, p.id).Scan(&raw) == nil {
@@ -274,14 +271,4 @@ func repath(m protoreflect.Message, enc []byte, path string) bool {
 		return true
 	})
 	return found
-}
-
-// rawNode is the client's RawNodeHandler: it logs media retry answers as
-// they came (a key for the reuploaded file may sit outside the part
-// hypermeow parses) and passes grouped receipts to groupedReceipts.
-func (b *Backend) rawNode(ctx context.Context, node *waBinary.Node) (*waBinary.Node, bool) {
-	if node.Tag == "notification" && node.AttrGetter().OptionalString("type") == "mediaretry" {
-		b.log.Infof("media retry stanza: %s", node.String())
-	}
-	return b.groupedReceipts(ctx, node)
 }
