@@ -187,7 +187,16 @@ Gotchas already found in the pinned version (v0.10.x):
   backend calls COM through `syscall.SyscallN` without cgo: convert pointers to
   `uintptr` inside the `SyscallN` argument list, and read `double` results from `r2`
   (Go returns XMM0 there). Media Foundation's memory goes back only with `MFShutdown`,
-  so each player starts and shuts it down. The viewer's video UI is `videoview.go`;
+  so each player starts and shuts it down. The Linux backend (`video_linux.go`, cgo,
+  which Gio needs on Linux anyway) runs GStreamer's playbin into an appsink, opened
+  with `dlopen` so the app starts without GStreamer (then ErrUnsupported); its
+  preamble declares the few GStreamer types it reads (GstMessage's type, GstMapInfo)
+  instead of needing headers. It decodes in software: loading the VA plugin opens
+  every GPU, which woke a laptop's sleeping NVIDIA GPU (2.6 s before the first video,
+  and ~70 MB of drivers), so hardware decoders get rank 0 unless `WAZZAP_HWDEC=1`.
+  libav's decoders get 2 threads (`max-threads`; by default one per core, ~90 MB more
+  for a 1080p video), and a closed player hands the C heap back (`malloc_trim`).
+  Its tests make media with ffmpeg and skip without GStreamer's plugins. The viewer's video UI is `videoview.go`;
   `WAZZAP_DEMO_VIDEO=<file.mp4>` makes `-demo` play that file.
 - `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
@@ -587,8 +596,9 @@ internal/emojiset/ downloads the emojis into <data>/emoji: Noto Color Emoji, the
                    (an empty .none file). Also keeps the animations' decoded sheets (sheets.go)
 internal/mapfile/  maps a file into memory copy-on-write (the downloaded emoji font)
 internal/offheap/  pictures whose pixels live outside the Go heap (animated emoji sheets)
-internal/video/    plays videos with the OS's own player (Media Foundation on Windows);
-                   other systems return ErrUnsupported and open the system's player app.
+internal/video/    plays videos with the OS's own player (Media Foundation on Windows,
+                   GStreamer on Linux); other systems, and Linux without GStreamer, return
+                   ErrUnsupported and open the system's player app.
                    OpenAudio plays voice messages and audio files the same way
 internal/record/   records voice messages: the microphone (winmm's waveIn through syscall on
                    Windows; parec or arecord elsewhere) streams 16 kHz PCM into a temporary

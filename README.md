@@ -266,7 +266,12 @@ go run ./cmd/wazzap -demo
 ## Build from source
 
 You need the Go version in `go.mod`. On Linux, first install Gio's
-[system dependencies](https://gioui.org/doc/install/linux).
+[system dependencies](https://gioui.org/doc/install/linux). Videos and voice messages
+play in the app through GStreamer when it's installed (`gst-plugins-base`, `-good` and
+`gst-libav` on Arch; `gstreamer1.0-plugins-base`, `-good` and `gstreamer1.0-libav` on
+Debian and Ubuntu); without it they open in your video player. They decode in
+software, which starts at once and keeps a laptop's second GPU asleep; run with
+`WAZZAP_HWDEC=1` to use the GPU's decoders (VA-API) instead.
 
 ```sh
 sh patches/apply.sh            # once after cloning: builds the patched go-text (see patches/)
