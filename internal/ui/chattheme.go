@@ -406,7 +406,7 @@ func (u *UI) updateWallPick() {
 		t.picking = false
 		switch {
 		case r.err == filepick.ErrUnsupported:
-			u.toast("No file dialog found. Install zenity or kdialog to choose a photo.")
+			u.toast("No file dialog found. Install xdg-desktop-portal (or zenity) to choose a photo.")
 		case r.err != nil:
 			u.toast("Couldn't use that photo.")
 		case r.path != "":

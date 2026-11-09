@@ -258,7 +258,7 @@ func (u *UI) updateAttach() {
 		case r.camera && len(r.files) == 0:
 			// Cancelled, or nothing was taken.
 		case r.err == filepick.ErrUnsupported:
-			u.toast("No file dialog found. Install zenity or kdialog to attach files.")
+			u.toast("No file dialog found. Install xdg-desktop-portal (or zenity) to attach files.")
 		case r.err != nil:
 			u.toast("Couldn't open the file dialog: " + r.err.Error())
 		default:

@@ -638,8 +638,9 @@ internal/remote/   the HTTP API the watch app (github.com/Chomosuke9/WazzapWatch
                    asks for a bearer token; every request runs on the UI goroutine (Options.Do)
 internal/camera/   the attach menu's Camera: opens the system's camera app and waits for the
                    photo it saves (no capture of our own; that would need each OS's capture API)
-internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; zenity, kdialog or
-                   osascript elsewhere), run on its own goroutine
+internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; osascript on macOS;
+                   elsewhere the XDG desktop portal's FileChooser over D-Bus, or else zenity
+                   or kdialog), run on its own goroutine
 internal/memtrim/  gives memory back to the OS after 10 s without a frame (see ui.Run)
 internal/notify/   system notifications: WinRT toasts on Windows (replaced per chat, removed
                    when read, Reply and Mark as read through a COM activator), notify-send

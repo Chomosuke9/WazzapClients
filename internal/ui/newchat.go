@@ -170,7 +170,7 @@ func (u *UI) updateNewChat(gtx C) {
 		nc.photoBusy = false
 		switch {
 		case r.err == filepick.ErrUnsupported:
-			u.toast("No file dialog found. Install zenity or kdialog to choose a picture.")
+			u.toast("No file dialog found. Install xdg-desktop-portal (or zenity) to choose a picture.")
 		case r.err != nil:
 			u.toast("Couldn't use this picture.")
 		case !r.none && nc.step == ncGroup:

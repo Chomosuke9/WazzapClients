@@ -9,9 +9,15 @@ import (
 	"strings"
 )
 
-// open runs the desktop's file dialog tool: osascript on macOS, zenity or
-// kdialog elsewhere.
+// open shows the desktop's file dialog: osascript's on macOS; elsewhere
+// the XDG desktop portal's, or else zenity's or kdialog's.
 func open(title string, multiple bool, filters []Filter) ([]string, error) {
+	if runtime.GOOS != "darwin" {
+		paths, err := portalOpen(title, multiple, filters)
+		if !errors.Is(err, errNoPortal) {
+			return paths, err
+		}
+	}
 	var cmd *exec.Cmd
 	switch {
 	case runtime.GOOS == "darwin":
