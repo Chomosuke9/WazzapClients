@@ -126,6 +126,8 @@ type emojiPicker struct {
 	packsOK     bool                        // packs is loaded
 	packSt      map[string][]*model.Message // their stickers, by pack, once shown
 	tabScroll   int                         // px the sticker tabs are scrolled sideways
+	lastTab     string                      // prefStickerTab, read once
+	lastTabOK   bool
 
 	anim      tween // opening and closing
 	catSel    switcher[int]
@@ -152,7 +154,7 @@ func (u *UI) openPicker(mode pickMode, target *model.Message) {
 	e.stickerSel, e.stickerLine = switcher[int]{}, follower{}
 	e.tones = toneMenu{}
 	if e.tab == tabSticker {
-		e.stickerSet = u.defaultStickerSet()
+		e.stickerSet = u.lastStickerSet()
 	}
 	u.loadPickerPrefs()
 	if mode != pickComposer {
@@ -482,7 +484,7 @@ func (u *UI) pickerTabs(gtx C) {
 				e.composerTab = e.tab
 			}
 			if e.tab == tabSticker {
-				e.stickerSet = u.defaultStickerSet()
+				e.stickerSet = u.lastStickerSet()
 				e.list.Position = layout.Position{}
 			}
 		}
@@ -567,13 +569,60 @@ func (u *UI) pickerHeader(gtx C, prefix string, ics []*icon.Icon, active int, se
 }
 
 // stickerSets are the sticker tab's own tabs, in model.StickerSet order.
+// Stickers received in chats (model.StickersReceived) have no tab: like
+// WhatsApp, the picker holds the stickers you chose.
 var stickerSets = []struct {
 	ic    *icon.Icon
 	empty string
 }{
 	{icClock, "Stickers you send show up here."},
 	{icStar, "Stickers you favourite in WhatsApp show up here."},
-	{icBubble, "Stickers you receive show up here."},
+}
+
+// prefStickerTab is the Pref key of the sticker tab last opened: "recent",
+// "favorite" or "pack:" and the pack's ID. The sticker tab opens on it.
+const prefStickerTab = "sticker_tab"
+
+// lastStickerSet is the tab the sticker tab opens on: the one last opened
+// while it's still there, or else the first with stickers.
+func (u *UI) lastStickerSet() model.StickerSet {
+	e := &u.picker
+	if !e.lastTabOK {
+		e.lastTab, e.lastTabOK = u.backend.Pref(prefStickerTab), true
+	}
+	switch t := e.lastTab; {
+	case t == "recent":
+		return model.StickersRecent
+	case t == "favorite":
+		return model.StickersFavorite
+	case strings.HasPrefix(t, "pack:"):
+		for i, p := range u.pickerPacks() {
+			if p.ID == t[len("pack:"):] {
+				return model.StickerSet(len(stickerSets) + i)
+			}
+		}
+	}
+	return u.defaultStickerSet()
+}
+
+// openStickerSet opens a tab of the sticker tab and remembers it.
+func (u *UI) openStickerSet(set model.StickerSet) {
+	e := &u.picker
+	e.stickerSet = set
+	e.list.Position = layout.Position{}
+	name := "recent"
+	switch {
+	case set == model.StickersFavorite:
+		name = "favorite"
+	case int(set) >= len(stickerSets):
+		if packs := u.pickerPacks(); int(set)-len(stickerSets) < len(packs) {
+			name = "pack:" + packs[int(set)-len(stickerSets)].ID
+		}
+	}
+	if name != e.lastTab {
+		e.lastTab, e.lastTabOK = name, true
+		u.backend.SetPref(prefStickerTab, name)
+	}
 }
 
 // stickerList returns a sticker set or an added pack, loading it on first
@@ -621,8 +670,7 @@ func (u *UI) layoutStickerTab(gtx C) D {
 	}
 	for i := range tabs {
 		if u.btn("stset:"+itoa(i+1)).Clicked(gtx) && e.stickerSet != model.StickerSet(i) {
-			e.stickerSet = model.StickerSet(i)
-			e.list.Position = layout.Position{}
+			u.openStickerSet(model.StickerSet(i))
 		}
 	}
 	stickers := u.stickerList(e.stickerSet)

@@ -21,8 +21,11 @@ const (
 	// fxScale is the effect's size, of the sticker's.
 	fxScale = 3.87
 	// fxMaxSide caps the size the effect is drawn at (it's scaled up from
-	// there): at 512 px it takes about 4 MB of the players' budget.
-	fxMaxSide = 512
+	// there). It is drawn at the size shown up to there: scaled up from
+	// 512 px it was blurry, and a sticker shown 285 px wide (190 dp at
+	// 150%) has an effect 1100 px wide. At 1152 px it takes about 21 MB
+	// of the players' budget, for the few seconds it plays.
+	fxMaxSide = 1152
 	// prefFXSeen keeps the messages whose effect has played, so it plays
 	// once: their IDs, newest last, at most fxSeenMax.
 	prefFXSeen = "sticker_fx_seen"

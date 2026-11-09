@@ -165,7 +165,10 @@ Gotchas already found in the pinned version (v0.10.x):
   message) asks it to upload a message's media again, and `events.MediaRetry` brings
   the new path. A synced sticker asks through a chat message with its file, yours
   first (`internal/wa/reupload.go`). Its `.gone` marker names the link that failed,
-  so a sync or send that brings another link lets it download again.
+  so a sync or send that brings another link lets it download again. In practice
+  the phone answers with a file encrypted under a fresh key it doesn't send (the
+  answer's `messageSecret` is empty, and no copy's key opens it), so a sticker asks
+  once and is marked gone when the file fails its hash check.
 - A sticker app's pack is a `stickerPackMessage`: a zip ("WhatsApp Sticker Pack Keys",
   mms type `sticker-pack`) of its stickers, named in the message, and the tray icon,
   plus a picture ("WhatsApp Sticker Pack Thumbnail Keys", `thumbnail-sticker-pack`).

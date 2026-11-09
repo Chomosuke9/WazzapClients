@@ -379,7 +379,10 @@ func (b *Backend) download(chatID, msgID string) {
 	// A sticker's expired link (403) is as dead as a missing file: only
 	// the phone can upload it again (reupload.go).
 	dead := errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) ||
-		sticker != nil && errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith403)
+		sticker != nil && (errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith403) ||
+			// A file the phone uploaded again under a key we don't have
+			// (reupload.go): downloading it again won't help.
+			errors.Is(err, whatsmeow.ErrInvalidMediaEncSHA256) || errors.Is(err, whatsmeow.ErrInvalidMediaHMAC))
 	if dead && sticker != nil {
 		if chatID == stickerChat {
 			if b.askStickerReupload(ctx, cli, msgID, sticker.GetFileSHA256()) {

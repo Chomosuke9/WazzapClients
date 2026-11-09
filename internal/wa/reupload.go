@@ -33,7 +33,13 @@ import (
 const reuploadWait = 45 * time.Second
 
 // reuploadTries is how many chat messages a sticker asks about at most.
-const reuploadTries = 3
+// In November 2026 every sticker the phone uploaded again came encrypted
+// under a key of its own that the answer doesn't carry (its
+// messageSecret was empty), and neither the message's nor any other
+// copy's key opened it: one try, so the phone isn't kept uploading
+// files nobody can read. The download then fails its hash check, which
+// marks the sticker gone (download).
+const reuploadTries = 1
 
 // reupload is a media retry request waiting for the phone's answer.
 type reupload struct {
@@ -215,6 +221,7 @@ func (b *Backend) onMediaRetry(e *events.MediaRetry) {
 		return
 	}
 	path := n.GetDirectPath()
+	b.log.Infof("media retry %s in %s: new path %s (message secret %d bytes)", p.id, p.chat, path, len(n.GetMessageSecret()))
 	ctx := b.ctx
 	var raw []byte
 	if b.db.QueryRowContext(ctx, `SELECT raw_payload FROM wz_messages WHERE chat = ? AND id = ?`, p.chat, p.id).Scan(&raw) == nil {
