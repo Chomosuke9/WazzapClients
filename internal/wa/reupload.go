@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/polymorfa/hypermeow"
+	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waMmsRetry"
 	"github.com/polymorfa/hypermeow/types"
@@ -221,7 +222,10 @@ func (b *Backend) onMediaRetry(e *events.MediaRetry) {
 		return
 	}
 	path := n.GetDirectPath()
-	b.log.Infof("media retry %s in %s: new path %s (message secret %d bytes)", p.id, p.chat, path, len(n.GetMessageSecret()))
+	// What the answer holds besides the path, fields hypermeow doesn't
+	// know included: the reuploaded file's key isn't found yet.
+	b.log.Infof("media retry %s in %s: new path %s, message secret %x, unknown fields %x",
+		p.id, p.chat, path, n.GetMessageSecret(), n.ProtoReflect().GetUnknown())
 	ctx := b.ctx
 	var raw []byte
 	if b.db.QueryRowContext(ctx, `SELECT raw_payload FROM wz_messages WHERE chat = ? AND id = ?`, p.chat, p.id).Scan(&raw) == nil {
@@ -270,4 +274,14 @@ func repath(m protoreflect.Message, enc []byte, path string) bool {
 		return true
 	})
 	return found
+}
+
+// rawNode is the client's RawNodeHandler: it logs media retry answers as
+// they came (a key for the reuploaded file may sit outside the part
+// hypermeow parses) and passes grouped receipts to groupedReceipts.
+func (b *Backend) rawNode(ctx context.Context, node *waBinary.Node) (*waBinary.Node, bool) {
+	if node.Tag == "notification" && node.AttrGetter().OptionalString("type") == "mediaretry" {
+		b.log.Infof("media retry stanza: %s", node.String())
+	}
+	return b.groupedReceipts(ctx, node)
 }
