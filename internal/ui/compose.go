@@ -707,7 +707,7 @@ func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
 	return layout.Inset{Left: 8, Right: 8, Top: 8}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 			layout.Flexed(1, func(gtx C) D {
-				return u.layoutQuote(gtx, q, p.QuoteIn, p.TextSecondary, gtx.Constraints.Max.X, m)
+				return u.layoutQuote(gtx, m.ChatID, q, p.QuoteIn, p.TextSecondary, gtx.Constraints.Max.X, m)
 			}),
 			layout.Rigid(layout.Spacer{Width: 8}.Layout),
 			layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("reply:close"), icClose, 40, 24, p.Icon) }),

@@ -369,7 +369,7 @@ func TestEmojiPlaces(t *testing.T) {
 	}
 	for range 3 {
 		gtx.Ops.Reset()
-		u.layoutQuote(gtx, &model.Quote{Sender: "Ana", Text: "Hi 😀"}, u.pal.QuoteIn, u.pal.TextSecondary, 300, nil)
+		u.layoutQuote(gtx, "", &model.Quote{Sender: "Ana", Text: "Hi 😀"}, u.pal.QuoteIn, u.pal.TextSecondary, 300, nil)
 	}
 	if n := asked(); n != 0 {
 		t.Fatalf("a quote's emoji played (%d animations) with quotes off", n)

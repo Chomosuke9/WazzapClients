@@ -1185,10 +1185,10 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if m.Quote != nil {
 		qm := u.quotedMessage(m.Quote)
 		qw := min(inner, max(contentW, gtx.Dp(180)))
-		quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, qw, qm) })
+		quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.ChatID, m.Quote, quoteBg, secondary, qw, qm) })
 		contentW = max(contentW, quote.size.X)
 		if quote.size.X < contentW {
-			quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, contentW, qm) })
+			quote = record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.ChatID, m.Quote, quoteBg, secondary, contentW, qm) })
 		}
 	}
 	if voc.size.X > 0 && voc.size.X < contentW {
@@ -1471,7 +1471,7 @@ func (u *UI) forwardedLabel(gtx C, m *model.Message, secondary color.NRGBA) D {
 
 // layoutQuote draws a quoted message: a colored bar, the author and a
 // snippet, plus the quoted picture's thumbnail when it's loaded (qm).
-func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width int, qm *model.Message) D {
+func (u *UI) layoutQuote(gtx C, chat string, q *model.Quote, bg, secondary color.NRGBA, width int, qm *model.Message) D {
 	defer u.emojiIn(emojiQuotes)()
 	p := u.pal
 	name := q.Sender
@@ -1479,7 +1479,7 @@ func (u *UI) layoutQuote(gtx C, q *model.Quote, bg, secondary color.NRGBA, width
 		name = "You"
 	}
 	name = plainText(name)
-	col := u.senderColor(q.SenderID, name)
+	col := u.senderColor(chat, q.SenderID, name)
 	if name == "You" {
 		col = p.Green
 	}
@@ -1687,7 +1687,9 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 	if hasSender {
 		sender = record(cgtx, func(gtx C) D { return u.layoutSenderName(gtx, m, p.BubbleIn) })
 	}
-	quote := record(cgtx, func(gtx C) D { return u.layoutQuote(gtx, m.Quote, quoteBg, secondary, w, u.quotedMessage(m.Quote)) })
+	quote := record(cgtx, func(gtx C) D {
+		return u.layoutQuote(gtx, m.ChatID, m.Quote, quoteBg, secondary, w, u.quotedMessage(m.Quote))
+	})
 	meta := record(cgtx, func(gtx C) D { return u.layoutMeta(gtx, m, metaCol, nil) })
 
 	content := op.Record(gtx.Ops)

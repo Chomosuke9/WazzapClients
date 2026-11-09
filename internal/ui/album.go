@@ -228,7 +228,7 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 	}
 	if m0.Quote != nil {
 		quote = record(cgtx, func(gtx C) D {
-			return u.layoutQuote(gtx, m0.Quote, quoteBg, secondary, gridW, u.quotedMessage(m0.Quote))
+			return u.layoutQuote(gtx, m0.ChatID, m0.Quote, quoteBg, secondary, gridW, u.quotedMessage(m0.Quote))
 		})
 	}
 

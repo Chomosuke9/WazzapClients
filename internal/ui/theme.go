@@ -65,6 +65,9 @@ type Palette struct {
 	Menu, MenuHover, Shadow  color.NRGBA
 	CloseHover               color.NRGBA
 	Senders                  []color.NRGBA
+	// Members are the colors of names in a chat, given by memberColors:
+	// WhatsApp Web's useWAWebGroupColors, 1 to 17.
+	Members []color.NRGBA
 
 	EmptyIcon                        color.NRGBA // big glyphs of empty panes
 	RowHover                         color.NRGBA // settings and info list rows
@@ -140,6 +143,8 @@ var darkPalette = Palette{
 	Menu: rgb(0x242626), MenuHover: rgb(0x2e2f2f), Shadow: argb(0x000000, 0x60),
 	CloseHover: rgb(0xc42b1c),
 	Senders:    rgbs(0xff72a1, 0x53bdeb, 0xffd279, 0xa791ff, 0x42c7b8, 0xfc9775, 0x53a6fd, 0xdba685, 0xfb5061, 0x25d366),
+	Members: rgbs(0x06cf9c, 0x53bdeb, 0xe26ab6, 0xa5b337, 0xfc9775, 0x53a6fd, 0xffb938, 0x25d366, 0xa791ff,
+		0xfb5061, 0x7f66ff, 0x42c7b8, 0xff72a1, 0xd88deb, 0xfa6533, 0x02a698, 0xffd279),
 
 	EmptyIcon: rgb(0x454545), RowHover: rgb(0x2d2e2e),
 	Danger: rgb(0xfb5061), DangerSoft: rgb(0xfa99a4),
@@ -192,6 +197,8 @@ var lightPalette = Palette{
 	Menu: rgb(0xffffff), MenuHover: rgb(0xf5f6f6), Shadow: argb(0x0b141a, 0x30),
 	CloseHover: rgb(0xc42b1c),
 	Senders:    rgbs(0xd42a66, 0x027eb5, 0x9d6c2c, 0x5e47de, 0x028377, 0xc4532d, 0x0063cb, 0x855538, 0xb80531, 0x1b8755),
+	Members: rgbs(0x06cf9c, 0x53bdeb, 0xe542a3, 0xa5b337, 0x007bfc, 0xc58730, 0x1daa61, 0x7f66ff, 0x5e47de,
+		0x25d366, 0xc4532d, 0xff2e74, 0x7d9ef1, 0xfa6533, 0x02a698, 0xb4876e, 0xffb938),
 
 	EmptyIcon: rgb(0xc4c9cc), RowHover: rgb(0xf6f5f4),
 	Danger: rgb(0xea0038), DangerSoft: rgb(0xb80531),

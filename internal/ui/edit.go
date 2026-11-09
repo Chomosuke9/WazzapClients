@@ -105,7 +105,7 @@ func (u *UI) layoutEditPreview(gtx C, m *model.Message) D {
 						})
 					}),
 					layout.Rigid(func(gtx C) D {
-						return u.layoutQuote(gtx, q, p.QuoteIn, p.TextSecondary, gtx.Constraints.Max.X, m)
+						return u.layoutQuote(gtx, m.ChatID, q, p.QuoteIn, p.TextSecondary, gtx.Constraints.Max.X, m)
 					}),
 				)
 			}),

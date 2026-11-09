@@ -66,6 +66,8 @@ type UI struct {
 	winWidth int
 
 	backend model.Backend
+	// memberColors are the colors of the names in each chat (sendercolor.go).
+	memberColors memberColors
 	// lists are the custom chat lists (lists.go); listsStale asks for
 	// them again.
 	lists      []*model.ChatList
@@ -756,6 +758,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	defer u.anims.endFrame()
 	defer u.follows.endFrame()
 	defer u.endFrameClicks()
+	defer u.memberColors.endFrame(u.backend)
 
 	sz := gtx.Constraints.Max
 	u.winWidth = sz.X

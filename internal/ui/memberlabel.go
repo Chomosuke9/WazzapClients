@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"strings"
 
 	"gioui.org/font"
 	"gioui.org/op"
@@ -10,11 +11,16 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
-// senderColor is the color of a group member's name, picked from their ID
-// so it is the same on their messages, quotes of them and everywhere else
-// (names change; the ID doesn't). The name is used only without an ID.
-func (u *UI) senderColor(id, name string) color.NRGBA {
-	return u.pal.Senders[personTint(id, name)]
+// senderColor is the color of a member's name in a chat, the same on their
+// messages and quotes of them there, and kept by ID (names change; the ID
+// doesn't). Each chat gives its members colors of its own (memberColors);
+// a channel's are all the first, like WhatsApp's.
+func (u *UI) senderColor(chat, id, name string) color.NRGBA {
+	c := 1
+	if !strings.HasSuffix(chat, "@newsletter") {
+		c = u.memberColors.get(u.backend, chat, memberKey(id, name))
+	}
+	return u.pal.Members[c-1]
 }
 
 // layoutSenderName draws a group message's sender: their name in their
@@ -27,7 +33,7 @@ func (u *UI) senderColor(id, name string) color.NRGBA {
 // baseline and 4 dp below it, 6 dp past the label's sides and 4 dp after
 // the name (scaled here to the 13 sp name).
 func (u *UI) layoutSenderName(gtx C, m *model.Message, bg color.NRGBA) D {
-	col := u.senderColor(m.SenderID, m.Sender)
+	col := u.senderColor(m.ChatID, m.SenderID, m.Sender)
 	nameStyle := u.label(13, m.Sender, col, labelOpts{weight: font.SemiBold, maxLines: 1})
 	if m.SenderLabel == "" {
 		return nameStyle.Layout(gtx)
