@@ -1,6 +1,7 @@
 package wa
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -65,7 +66,7 @@ func TestCustomMentionsInOneMessage(t *testing.T) {
 	const chat = "120363012345678901@g.us"
 	people := []string{"456@lid", "789@lid"}
 	second, third := model.GroupNameJID(chat, 1), model.GroupNameJID(chat, 2)
-	if second != "120363012345678901-1@g.us" {
+	if second != "1203630123456789011@g.us" {
 		t.Fatalf("second JID %q", second)
 	}
 	m := b.Send(chat, model.Draft{Text: "@" + chat + " @" + second + " @" + third,
@@ -104,22 +105,35 @@ func TestCustomMentionsInOneMessage(t *testing.T) {
 	}
 }
 
+// A made-up group JID must be one WhatsApp takes (WAWebWidValidator: up to
+// 20 digits, no leading zero) or phones show it as text.
 func TestGroupNameJID(t *testing.T) {
-	for _, c := range []struct{ chat, want string }{
-		{"120363012345678901@g.us", "120363012345678901-3@g.us"},
-		{"6281234567-1600000000@g.us", "62812345671600000000-3@g.us"},
+	valid := regexp.MustCompile(`^[1-9][0-9]{0,19}@g\.us$`)
+	for _, c := range []struct {
+		chat string
+		n    int
+		want string
+	}{
+		{"120363012345678901@g.us", 3, "1203630123456789013@g.us"},
+		{"120363012345678901@g.us", 12, "12036301234567890112@g.us"},
+		{"120363012345678901@g.us", 123, "20363012345678901123@g.us"}, // too long: the first digit goes
+		{"6281234567-1600000000@g.us", 3, "28123456716000000003@g.us"},
 	} {
-		if got := model.GroupNameJID(c.chat, 3); got != c.want {
-			t.Errorf("GroupNameJID(%q) = %q, want %q", c.chat, got, c.want)
+		got := model.GroupNameJID(c.chat, c.n)
+		if got != c.want {
+			t.Errorf("GroupNameJID(%q, %d) = %q, want %q", c.chat, c.n, got, c.want)
 		}
-		if _, err := types.ParseJID(c.want); err != nil {
-			t.Errorf("%q doesn't parse: %v", c.want, err)
+		if !valid.MatchString(got) {
+			t.Errorf("%q isn't a group JID WhatsApp takes", got)
 		}
-		if !model.IsGroupNameJID(c.want, c.chat) || !model.IsGroupNameJID(c.chat, c.chat) {
-			t.Errorf("%q not one of %q's", c.want, c.chat)
+		if c.n < 100 && !model.IsGroupNameJID(got, c.chat) {
+			t.Errorf("%q not one of %q's", got, c.chat)
 		}
 	}
-	for _, jid := range []string{"120363012345678902@g.us", "120363012345678901-0@g.us", "120363012345678901-01@g.us", "120363012345678901-x@g.us", "120363012345678901-1@s.whatsapp.net"} {
+	if !model.IsGroupNameJID("120363012345678901@g.us", "120363012345678901@g.us") {
+		t.Error("the group's own JID isn't one of its names")
+	}
+	for _, jid := range []string{"120363012345678902@g.us", "1203630123456789010@g.us", "120363012345678901-1@g.us", "1203630123456789011@s.whatsapp.net"} {
 		if model.IsGroupNameJID(jid, "120363012345678901@g.us") {
 			t.Errorf("%q taken for the group's", jid)
 		}

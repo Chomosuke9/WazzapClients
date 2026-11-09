@@ -552,28 +552,43 @@ type Draft struct {
 // GroupNameJID is the JID that a message's text mentions, as "@<JID>", for
 // the n-th name it gives a group (@admin, custom mentions): the group's own
 // for n = 0, and one made up from it for the others, since WhatsApp shows
-// one name for each JID ("<digits>-<n>@g.us", a JID WhatsApp parses).
+// one name for each JID. A made-up one is the group's digits with n after
+// them: WhatsApp takes a group ID of up to 20 digits without a leading zero
+// (an old group's "<digits>-<10 digits>" only with that timestamp), and
+// today's groups have 18, so it's no one's group. Tapping it says you aren't
+// in it: WhatsApp opens the group a mention's JID names, and these can't
+// name the group itself.
 func GroupNameJID(chat string, n int) string {
-	if n == 0 {
+	if n <= 0 {
 		return chat
 	}
 	user, server, _ := strings.Cut(chat, "@")
-	return strings.ReplaceAll(user, "-", "") + "-" + strconv.Itoa(n) + "@" + server
+	suffix := strconv.Itoa(n)
+	base := strings.ReplaceAll(user, "-", "")
+	if over := len(base) + len(suffix) - maxGroupDigits; over > 0 {
+		base = base[min(over, len(base)):]
+	}
+	return strings.TrimLeft(base+suffix, "0") + "@" + server
 }
+
+// maxGroupDigits is the most digits WhatsApp takes in a group's ID.
+const maxGroupDigits = 20
+
+// maxGroupNames bounds the names one message gives a group, for
+// IsGroupNameJID.
+const maxGroupNames = 100
 
 // IsGroupNameJID reports whether jid is one of chat's GroupNameJIDs.
 func IsGroupNameJID(jid, chat string) bool {
 	if jid == chat {
 		return true
 	}
-	user, server, _ := strings.Cut(chat, "@")
-	rest, ok := strings.CutPrefix(jid, strings.ReplaceAll(user, "-", "")+"-")
-	if !ok {
-		return false
+	for n := 1; n < maxGroupNames; n++ {
+		if jid == GroupNameJID(chat, n) {
+			return true
+		}
 	}
-	n, ok := strings.CutSuffix(rest, "@"+server)
-	i, err := strconv.Atoi(n)
-	return ok && err == nil && i > 0 && n == strconv.Itoa(i)
+	return false
 }
 
 // LinkImage is a link preview's big picture: a JPEG, W x H.
