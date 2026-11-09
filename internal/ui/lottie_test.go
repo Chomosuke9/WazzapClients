@@ -168,7 +168,7 @@ func TestClickedStickerPlays(t *testing.T) {
 	u := New(mock.New())
 	ps := &u.players
 	none := func() []byte { return nil }
-	for i := range 2 * perf.gifs {
+	for i := range perf.stickers {
 		u.stickerFrame(fmt.Sprint("m:other/", i), 64, none)
 	}
 	m := &model.Message{ChatID: "rina", ID: "s1", Kind: model.KindSticker, Media: model.MediaSticker, Lottie: true}
@@ -253,7 +253,7 @@ func TestEffectWithoutRoomWaitsForClick(t *testing.T) {
 	m := b.SendNewSticker("rina", wasFile(t, true), nil)
 	m.Lottie = true
 	key := stickerKey(m)
-	u.players.bytes.Store(playerBudget) // full
+	u.players.bytes.Store(playerBudget.Load()) // full
 	gtx := layout.Context{Ops: new(op.Ops), Now: testNow()}
 	deadline := time.Now().Add(roomWait + 5*time.Second)
 	for {

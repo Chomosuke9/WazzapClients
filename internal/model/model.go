@@ -1484,9 +1484,12 @@ type Backend interface {
 	// chat's zip or WhatsApp's sticker store, and hands it out in a
 	// StickerPackEvent. Its stickers can be sent with SendSticker.
 	OpenStickerPack(m *Message)
-	// StickerPacks lists the packs added to the sticker picker, in the
-	// order they were added.
+	// StickerPacks lists the packs added to the sticker picker, in their
+	// order: as they were added, unless SetStickerPackOrder moved them.
 	StickerPacks() []*StickerPack
+	// SetStickerPackOrder puts the packs added to the picker in the order
+	// of ids, all their IDs. A pack added later goes last.
+	SetStickerPackOrder(ids []string)
 	// PackStickers lists the stickers of a pack added to the picker.
 	PackStickers(id string) []*Message
 	// AddStickerPack adds a pack OpenStickerPack loaded to the picker, or

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS wz_sticker_packs (
 	source      BLOB,                       -- the stickerPackMessage its zip came in
 	tray        BLOB,                       -- its tray icon (PNG or WebP)
 	added       INTEGER NOT NULL DEFAULT 0, -- added to the picker at (unix seconds), 0 = not
+	ord         INTEGER NOT NULL DEFAULT 0, -- its place among the added packs (SetStickerPackOrder)
 	loaded      INTEGER NOT NULL DEFAULT 0  -- its stickers were stored at (unix seconds)
 );
 CREATE TABLE IF NOT EXISTS wz_pack_stickers (
@@ -219,7 +220,7 @@ func (s *msgStore) packTray(ctx context.Context, id string) []byte {
 
 // StickerPacks implements model.Backend.
 func (b *Backend) StickerPacks() []*model.StickerPack {
-	rows, err := b.db.QueryContext(b.ctx, `SELECT `+packColumns+` FROM wz_sticker_packs WHERE added > 0 ORDER BY added, rowid`)
+	rows, err := b.db.QueryContext(b.ctx, `SELECT `+packColumns+` FROM wz_sticker_packs WHERE added > 0 ORDER BY ord, added, rowid`)
 	if err != nil {
 		return nil
 	}
@@ -242,8 +243,32 @@ func (b *Backend) AddStickerPack(id string, add bool) {
 	if add {
 		added = b.now().Unix()
 	}
-	if _, err := b.db.ExecContext(b.ctx, `UPDATE wz_sticker_packs SET added = ? WHERE id = ?`, added, id); err != nil {
+	// A pack added goes after the others, wherever they were moved.
+	if _, err := b.db.ExecContext(b.ctx, `UPDATE wz_sticker_packs SET added = ?1,
+		ord = CASE WHEN ?1 > 0 THEN (SELECT COALESCE(MAX(ord), 0) + 1 FROM wz_sticker_packs WHERE added > 0 AND id != ?2) ELSE 0 END
+		WHERE id = ?2`, added, id); err != nil {
 		b.log.Warnf("add sticker pack %s: %v", id, err)
+		return
+	}
+	b.emit(model.StickersEvent{})
+}
+
+// SetStickerPackOrder implements model.Backend.
+func (b *Backend) SetStickerPackOrder(ids []string) {
+	tx, err := b.db.BeginTx(b.ctx, nil)
+	if err != nil {
+		b.log.Warnf("order sticker packs: %v", err)
+		return
+	}
+	defer tx.Rollback()
+	for i, id := range ids {
+		if _, err := tx.ExecContext(b.ctx, `UPDATE wz_sticker_packs SET ord = ? WHERE id = ? AND added > 0`, i+1, id); err != nil {
+			b.log.Warnf("order sticker packs: %v", err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		b.log.Warnf("order sticker packs: %v", err)
 		return
 	}
 	b.emit(model.StickersEvent{})

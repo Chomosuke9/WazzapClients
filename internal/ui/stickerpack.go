@@ -298,11 +298,23 @@ func (u *UI) packTray(id string, px int) *imgEntry {
 }
 
 // pickerPacks returns the packs added to the picker, loading them on
-// first use.
+// first use. A pack's tab that was open stays open where the pack is now.
 func (u *UI) pickerPacks() []*model.StickerPack {
 	e := &u.picker
 	if !e.packsOK {
+		var open string
+		if i := int(e.stickerSet) - len(stickerSets); i >= 0 && i < len(e.packs) {
+			open = e.packs[i].ID
+		}
 		e.packs, e.packSt, e.packsOK = u.backend.StickerPacks(), nil, true
+		if open != "" {
+			e.stickerSet = model.StickerSet(len(stickerSets) + len(e.packs)) // gone, unless found
+			for i, p := range e.packs {
+				if p.ID == open {
+					e.stickerSet = model.StickerSet(len(stickerSets) + i)
+				}
+			}
+		}
 	}
 	return e.packs
 }
@@ -316,6 +328,12 @@ func (u *UI) stickerTabs(gtx C) D {
 	p := u.pal
 	packs := u.pickerPacks()
 	n := len(stickerSets) + len(packs)
+	if u.btn("stmanage").Clicked(gtx) {
+		u.openMyPacks()
+	}
+	if len(packs) > 0 {
+		n++ // the last opens Your stickers
+	}
 	w := gtx.Constraints.Max.X
 	gtx.Constraints.Min.X = w
 	tabW := w / len(emojiCategories)
@@ -344,15 +362,26 @@ func (u *UI) stickerTabs(gtx C) D {
 		cg := gtx
 		cg.Constraints = layout.Exact(image.Pt(tabW, h))
 		cl := u.btn("stset:" + itoa(i+1))
+		manage := len(packs) > 0 && i == n-1
+		if manage {
+			cl = u.btn("stmanage")
+		}
 		clickable(cg, cl, func(gtx C) D {
-			if i < len(stickerSets) {
-				ic := stickerSets[i].ic
+			if i < len(stickerSets) || manage {
+				ic := icSettings
+				if !manage {
+					ic = stickerSets[i].ic
+				}
+				sel := float32(0)
+				if !manage {
+					sel = e.stickerSel.of(i)
+				}
 				isz := gtx.Dp(26)
 				icT := op.Offset(image.Pt((tabW-isz)/2, gtx.Dp(29)-isz/2)).Push(gtx.Ops)
 				// Icon colors are cached per color: cross-fade two icons
 				// instead of animating the color.
 				drawIcon(gtx, ic, 26, p.Icon)
-				withOpacity(gtx, max(u.hover(gtx, cl), e.stickerSel.of(i)), func() { drawIcon(gtx, ic, 26, p.Text) })
+				withOpacity(gtx, max(u.hover(gtx, cl), sel), func() { drawIcon(gtx, ic, 26, p.Text) })
 				icT.Pop()
 				return D{Size: gtx.Constraints.Max}
 			}

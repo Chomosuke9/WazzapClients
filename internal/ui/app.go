@@ -1352,6 +1352,7 @@ func (u *UI) applyEvents() {
 		case model.StickersEvent:
 			u.picker.stickersOK = [3]bool{} // reloaded when next drawn
 			u.picker.packsOK = false
+			u.myPacksChanged()
 		case model.StickerPackEvent:
 			u.packLoaded(e)
 		case model.ChannelsEvent:
@@ -1557,8 +1558,9 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "linkbar" shows the bar that asks to open WhatsApp links here, and
 // "channellink" a channel's link, to follow, and "sharelink" a share
 // link's chat picker. "pack" opens the last sticker pack the chat shares
-// (-ochat clara), and "packtab" the sticker picker with the chat's packs
-// added.
+// (-ochat clara), "packtab" the sticker picker with the chat's packs
+// added, and "mypacks" Your stickers with them ("mypacksdrag": its first
+// pack dragged 90 px down).
 // "graywarning" opens the acknowledgment for Keep deleted messages.
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
@@ -1696,7 +1698,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "sticker":
 		u.picker.composerTab = tabSticker // as if the sticker tab was used last
 		u.openPicker(pickComposer, nil)
-	case "packtab":
+	case "packtab", "mypacks", "mypacksdrag":
 		// The chat's sticker packs added to the picker, the last one open.
 		for _, m := range u.msgs {
 			if m.Pack != nil {
@@ -1705,6 +1707,14 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			}
 		}
 		u.applyEvents()
+		if name != "packtab" {
+			u.openMyPacks()
+			if name == "mypacksdrag" && len(u.dialog.myPacks.packs) > 0 {
+				dy := 90
+				u.dialog.myPacks.drag = packDrag{on: true, id: u.dialog.myPacks.packs[0].ID, startY: u.mouse.Y - dy, dy: dy}
+			}
+			break
+		}
 		u.picker.composerTab = tabSticker
 		u.openPicker(pickComposer, nil)
 		u.picker.stickerSet = model.StickerSet(len(stickerSets) + len(u.pickerPacks()) - 1)

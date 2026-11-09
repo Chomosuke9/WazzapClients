@@ -32,7 +32,7 @@ import (
 var appPrefs = append([]string{prefTheme, prefAccent, prefDoodles, prefEnterSend, prefBackground, prefListWidth, prefListHidden, prefZoom,
 	prefPrivacy, prefPrivacyToggle, prefNoCapture, prefVolume, prefVoiceRate, prefEmojiStyle, prefEmojiStill,
 	prefKlipy, prefKlipyKey, prefKlipyID, prefKlipyFavs, prefAutoUpdate, prefEmojiTone, prefAppLock, prefAppLockAfter,
-	prefRemote, prefRemoteToken, prefRemoteAll, prefRemotePort}, perfPrefs...)
+	prefRemote, prefRemoteToken, prefRemoteAll, prefRemotePort}, append(perfPrefs, stickerPrefs...)...)
 
 // accountRow is an account in the switcher.
 type accountRow struct {

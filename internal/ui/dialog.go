@@ -32,6 +32,7 @@ const (
 	dialogEvent   // the attach menu's Create event (eventnew.go)
 	dialogAppLock // App lock's password and auto-lock (applock.go)
 	dialogPack    // a sticker pack (stickerpack.go)
+	dialogMyPacks // Your stickers: the packs added to the picker (stickermanage.go)
 )
 
 type dialogButton struct {
@@ -89,6 +90,7 @@ type dialogState struct {
 	poll     pollState
 	listPick listPick
 	pack     packView
+	myPacks  myPacks
 	event    newEventState
 	invite   inviteState
 
@@ -213,6 +215,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.appLockPanel)
 	case dialogPack:
 		panel = record(gtx, u.packPanel)
+	case dialogMyPacks:
+		panel = record(gtx, u.myPacksPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

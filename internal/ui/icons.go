@@ -82,6 +82,7 @@ var (
 	icThumbDown     = icon.ThumbDown
 	icChevronRight  = icon.ChevronRight
 	icDelete        = icon.Delete
+	icDragHandle    = icon.DragHandle
 	icLaptop        = icon.LaptopWindows
 	icAccount       = icon.AccountCircle
 	icKey           = icon.Key

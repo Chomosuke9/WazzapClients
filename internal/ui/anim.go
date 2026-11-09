@@ -273,6 +273,28 @@ func (s *followerStore) step(gtx C, key string, target float32, dur time.Duratio
 	return e.follower.step(gtx, target, dur)
 }
 
+// snap puts key's value at v at once; the next step glides from there.
+func (s *followerStore) snap(key string, v float32) {
+	e := s.m[key]
+	if e == nil {
+		if s.m == nil {
+			s.m = make(map[string]*followEntry)
+		}
+		e = new(followEntry)
+		s.m[key] = e
+	}
+	e.seen = s.frame
+	e.follower.snap(v)
+}
+
+// value is key's value as the last step left it, 0 for a new key.
+func (s *followerStore) value(key string) float32 {
+	if e := s.m[key]; e != nil {
+		return e.v
+	}
+	return 0
+}
+
 // toggle returns key's linear progress toward on, like a tween, but
 // starts at on when it first shows.
 func (s *followerStore) toggle(gtx C, key string, on bool, dur time.Duration) float32 {

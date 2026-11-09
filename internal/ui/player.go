@@ -15,13 +15,20 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
 
-// Twice perf.gifs (6 by default) animated stickers play at once, and
-// playerBudget caps the memory they hold together: a normal 512x512 WebP
-// sticker takes about 2.5 MB (a canvas can be up to 4096x4096), a Lottie
-// one drawn 225 px wide about 1 MB. The rest show their first frame. A
-// sticker clicked to play stops others until it fits (makeRoom).
+// perf.stickers (6 by default) animated stickers play at once, and
+// playerBudget, stickerBudget for each, caps the memory they hold
+// together: a normal 512x512 WebP sticker takes about 2.5 MB (a canvas can
+// be up to 4096x4096), a Lottie one drawn 225 px wide about 1 MB. The rest
+// show their first frame. A sticker clicked to play stops others until it
+// fits (makeRoom). Players read the budget on their own goroutines.
+var playerBudget = func() *atomic.Int64 {
+	var v atomic.Int64
+	v.Store(int64(defaultPerf.stickers) * stickerBudget)
+	return &v
+}()
+
 const (
-	playerBudget = 24 << 20
+	stickerBudget = 4 << 20
 	// roomWait is how long a clicked sticker waits for the players it
 	// stopped to let go of their memory.
 	roomWait = 2 * time.Second
@@ -38,8 +45,8 @@ type stickerPlayer struct {
 	op    paint.ImageOp
 	used  int64 // frame counter of last use
 	stop  chan struct{}
-	// preview marks a GIF playing in the picker (gifs.go), which counts
-	// against a cap of its own: they are small.
+	// preview marks a GIF or sticker playing in the picker (gifs.go,
+	// stickers.go), which counts against a cap of its own.
 	preview bool
 	// fx marks a premium sticker's effect (stickerfx.go), which plays once
 	// and counts against no cap; done is set once it has played (or
@@ -89,8 +96,9 @@ func (u *UI) stickerFrame(key string, maxSide int, load func() []byte) (paint.Im
 	return u.animFrame(key, maxSide, false, load)
 }
 
-// previewFrame is stickerFrame for a GIF in the picker, an animated WebP
-// a few hundred px across. Four times perf.gifs of them play at once.
+// previewFrame is stickerFrame for the picker: a GIF, an animated WebP a
+// few hundred px across, or a sticker. Four times maxGIFs of them play at
+// once.
 func (u *UI) previewFrame(key string, maxSide int, load func() []byte) (paint.ImageOp, bool) {
 	return u.animFrame(key, maxSide, true, load)
 }
@@ -99,15 +107,15 @@ func (u *UI) animFrame(key string, maxSide int, preview bool, load func() []byte
 	ps := &u.players
 	p := ps.m[key]
 	if p == nil {
-		n, limit := len(ps.m)-ps.previews-ps.effects, 2*perf.gifs
+		n, limit := len(ps.m)-ps.previews-ps.effects, perf.stickers
 		if preview {
-			n, limit = ps.previews, 4*perf.gifs
+			n, limit = ps.previews, 4*maxGIFs
 		}
 		if _, ok := ps.benched[key]; ok && !ps.forced[key] {
 			ps.benched[key] = ps.frame
 			return paint.ImageOp{}, false
 		}
-		if n >= limit && !ps.forced[key] {
+		if n >= limit && limit > 0 && !ps.forced[key] {
 			return paint.ImageOp{}, false
 		}
 		p = ps.add(key, &stickerPlayer{preview: preview, clicked: ps.forced[key]})
@@ -181,7 +189,7 @@ func (ps *players) add(key string, p *stickerPlayer) *stickerPlayer {
 // before, the oldest first. The ones stopped are benched.
 func (ps *players) makeRoom(need int64, keep ...string) {
 	held := ps.bytes.Load()
-	for held+need > playerBudget {
+	for held+need > playerBudget.Load() {
 		var victim string
 		var vp *stickerPlayer
 		for k, p := range ps.m {
@@ -211,7 +219,7 @@ func (ps *players) makeRoom(need int64, keep ...string) {
 func (p *stickerPlayer) reserve(held *atomic.Int64, cost int64) bool {
 	deadline := time.Now().Add(roomWait)
 	for {
-		if held.Add(cost) <= playerBudget {
+		if held.Add(cost) <= playerBudget.Load() {
 			p.cost.Add(cost)
 			return true
 		}
@@ -284,9 +292,15 @@ func (p *stickerPlayer) run(load func() []byte, maxSide int, held *atomic.Int64,
 	}
 }
 
-// lottieFPS caps how many frames a second a Lottie sticker is drawn at:
-// each one is rendered from its shapes, and 60 would double the work.
-const lottieFPS = 30
+// lottieFPS caps how many frames a second a Lottie sticker is drawn at
+// (Settings > Performance > Advanced, perf.lottieFPS): each one is rendered
+// from its shapes, and 60 doubles the work of 30. Players read it on their
+// own goroutines, as each starts.
+var lottieFPS = func() *atomic.Int32 {
+	var v atomic.Int32
+	v.Store(int32(defaultPerf.lottieFPS))
+	return &v
+}()
 
 // runLottie plays a Lottie sticker (WhatsApp's .was), drawing each frame
 // from its shapes, as WhatsApp Web's lottie-web does. It loops until the
@@ -312,7 +326,7 @@ func (p *stickerPlayer) playLottie(a *lottie.Animation, w, h int, loop bool, hel
 		return
 	}
 	defer p.release(held)
-	step := max(1, math.Round(a.FrameRate/lottieFPS))
+	step := max(1, math.Round(a.FrameRate/float64(max(1, lottieFPS.Load()))))
 	delay := time.Duration(step / a.FrameRate * float64(time.Second))
 	frames := float64(a.Frames())
 	due := time.Now()

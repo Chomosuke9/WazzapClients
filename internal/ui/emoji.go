@@ -635,14 +635,7 @@ func (u *UI) stickerList(set model.StickerSet) []*model.Message {
 		if i >= len(packs) {
 			return nil
 		}
-		id := packs[i].ID
-		if _, ok := e.packSt[id]; !ok {
-			if e.packSt == nil {
-				e.packSt = map[string][]*model.Message{}
-			}
-			e.packSt[id] = u.backend.PackStickers(id)
-		}
-		return e.packSt[id]
+		return u.packStickers(packs[i].ID)
 	}
 	if !e.stickersOK[set] {
 		e.stickers[set], e.stickersOK[set] = u.backend.Stickers(set), true
@@ -683,8 +676,10 @@ func (u *UI) layoutStickerTab(gtx C) D {
 		if u.btn("sticker:"+s.ChatID+"/"+s.ID).Clicked(gtx) && u.selected != nil {
 			u.backend.SendSticker(u.selected.ID, s, u.conv.reply)
 			u.conv.reply = nil
-			u.closePicker()
-			return D{}
+			if !perf.keepPicker {
+				u.closePicker()
+				return D{}
+			}
 		}
 	}
 	e.stickerSel.step(gtx, int(e.stickerSet), durSwitch)
@@ -720,12 +715,13 @@ func (u *UI) layoutStickerTab(gtx C) D {
 								}
 								img := u.messageImage(s, cell*2)
 								if img != nil && img.state == imgReady {
+									pic, size := u.pickerFrame(s, img, cell*2, cl.Hovered())
 									pad := gtx.Dp(8)
 									in := cell - 2*pad
-									sc := min(float32(in)/float32(img.size.X), float32(in)/float32(img.size.Y))
-									iw, ih := int(float32(img.size.X)*sc), int(float32(img.size.Y)*sc)
+									sc := min(float32(in)/float32(size.X), float32(in)/float32(size.Y))
+									iw, ih := int(float32(size.X)*sc), int(float32(size.Y)*sc)
 									min := image.Pt((cell-iw)/2, (cell-ih)/2)
-									paintCover(gtx, img.op, img.size, image.Rectangle{Min: min, Max: min.Add(image.Pt(iw, ih))})
+									paintCover(gtx, pic, size, image.Rectangle{Min: min, Max: min.Add(image.Pt(iw, ih))})
 								}
 								return D{Size: image.Pt(cell, cell)}
 							})

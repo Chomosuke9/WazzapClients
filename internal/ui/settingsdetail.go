@@ -104,6 +104,7 @@ var settingsViews = map[string]struct {
 	"shortcuts":     {settingShortcuts, ""},
 	"performance":   {settingPerformance, ""},
 	"advanced":      {settingPerformance, "advanced"},
+	"stickers":      {settingPerformance, "stickers"},
 	"extras":        {settingExtras, ""},
 	// With demo accounts: the Account page's list of them, and the
 	// pages of the second (always connected) and third (checked).
@@ -163,7 +164,7 @@ func (u *UI) settingsBack() {
 	switch {
 	case s.editing != 0:
 		s.editing = 0
-	case strings.HasPrefix(s.sub, "knob:"): // a knob of the Advanced page
+	case strings.HasPrefix(s.sub, "knob:"), s.sub == "stickers": // a page of the Advanced page
 		u.openSettingsSub("advanced")
 	case s.sub == "emojianim":
 		u.openSettingsSub("emoji")
@@ -202,6 +203,8 @@ func (u *UI) settingsTitle() string {
 		return "Advanced"
 	case "emoji":
 		return "Emoji style"
+	case "stickers":
+		return "Stickers"
 	case "emojianim":
 		return "Animated emojis"
 	case "camera":
@@ -249,6 +252,8 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.advancedSettings()
 	case "emoji":
 		return u.emojiStyleSettings()
+	case "stickers":
+		return u.stickerSettings()
 	case "emojianim":
 		return u.emojiPlaceSettings()
 	case "theme":

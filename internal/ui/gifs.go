@@ -487,8 +487,10 @@ func (u *UI) layoutGIFTab(gtx C) D {
 			u.hideRecent(gif)
 		case u.btn("gif:" + gif.Slug).Clicked(gtx):
 			u.sendGIF(gif)
-			u.closePicker()
-			return D{}
+			if !perf.keepPicker {
+				u.closePicker()
+				return D{}
+			}
 		}
 	}
 	w := gtx.Constraints.Max.X - gtx.Dp(24)

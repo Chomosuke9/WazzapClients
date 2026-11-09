@@ -199,7 +199,8 @@ var migrations = []string{
 	// friends or one of their own: its name and emoji.
 	`ALTER TABLE wz_status ADD COLUMN audience TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_status ADD COLUMN audience_emoji TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE wz_messages ADD COLUMN copy_payload BLOB`, // copies.go
+	`ALTER TABLE wz_messages ADD COLUMN copy_payload BLOB`,                   // copies.go
+	`ALTER TABLE wz_sticker_packs ADD COLUMN ord INTEGER NOT NULL DEFAULT 0`, // packs.go
 }
 
 func (s *msgStore) init(ctx context.Context) error {

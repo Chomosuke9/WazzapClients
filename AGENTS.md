@@ -149,7 +149,7 @@ Gotchas already found in the pinned version (v0.10.x):
 - Lottie stickers (`isLottie`, mimetype `application/was`) are a zip holding
   `animation/animation.json`; WhatsApp Web plays them with lottie-web 5.12.2's SVG
   renderer. `internal/lottie` draws them in Go, a frame at a time at the size shown
-  (`runLottie`, at most 30 a second), with no allocations per frame. Match lottie-web,
+  (`runLottie`, at most 30 a second unless Settings > Performance > Advanced > Stickers says otherwise, `lottieFPS`), with no allocations per frame. Match lottie-web,
   not rlottie: rlottie applies a masked solid's opacity twice, among others. Keyframe
   times are the composition's (not less the layer's `st`); a precomp's layers play
   at its time less its `st`, stretched. `TestGolden` compares frames with references
@@ -503,7 +503,11 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
                    line as fit, in stickerrow.go; sticker packs (a shared pack's card, the
                    "View sticker pack" dialog, which sends its stickers and adds the pack to
-                   the picker, and the picker's tabs of added packs) in stickerpack.go; video notes (a circle like a sticker, without a bubble,
+                   the picker, and the picker's tabs of added packs) in stickerpack.go, and Your stickers (the
+                   picker's last tab: the added packs, removed or dragged by a handle into
+                   the order of their tabs) in stickermanage.go, and Settings > Performance > Advanced > Stickers (Your stickers, the
+                   picker's animation and keeping it open, stickers playing at once, the Lottie
+                   frame rate; app prefs read into `perf`) in stickers.go; video notes (a circle like a sticker, without a bubble,
                    muted and looping through `gifFrame` once the file is here, a click plays them
                    with sound and a progress ring) in roundvideo.go; a text of one to three emojis
                    alone, drawn big without a bubble like a sticker, in jumbo.go; the Emoji style
@@ -793,7 +797,7 @@ go vet ./... && go build ./...
 # account, accounts (Settings > Account with demo accounts), accountmode and
 # accountcheck (the pages of an account always connected and of one checked),
 # privacy, lastseen, blocked, chatsettings, appearance, apptheme, notifications, shortcuts, extras, help,
-# videovoice, microphone, storage, info, statusviewer, contact (a group member's contact info:
+# videovoice, microphone, storage, stickers, info, statusviewer, contact (a group member's contact info:
 # -contact <id>, default the demo business nova@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
@@ -801,7 +805,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
-# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;

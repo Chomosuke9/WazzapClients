@@ -81,3 +81,18 @@ func (b *Backend) AddStickerPack(id string, add bool) {
 	b.mu.Unlock()
 	b.emit(model.StickersEvent{})
 }
+
+func (b *Backend) SetStickerPackOrder(ids []string) {
+	b.mu.Lock()
+	var order []string
+	for _, id := range ids {
+		if p := b.packs.opened[id]; p != nil && p.Added {
+			order = append(order, id)
+		}
+	}
+	if len(order) == len(b.packs.added) {
+		b.packs.added = order
+	}
+	b.mu.Unlock()
+	b.emit(model.StickersEvent{})
+}

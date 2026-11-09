@@ -195,3 +195,40 @@ func TestRepath(t *testing.T) {
 		t.Fatal("repathed another file")
 	}
 }
+
+// Packs list in the order they were added until they're moved, and one
+// added after a move goes last.
+func TestStickerPackOrder(t *testing.T) {
+	b := testBackend(t)
+	for _, id := range []string{"a", "b", "c", "d"} {
+		if err := b.store.putPack(b.ctx, &model.StickerPack{ID: id, Name: id}, nil, nil, nil, b.now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	order := func() string {
+		var s string
+		for _, p := range b.StickerPacks() {
+			s += p.ID
+		}
+		return s
+	}
+	b.AddStickerPack("a", true)
+	b.AddStickerPack("b", true)
+	b.AddStickerPack("c", true)
+	if got := order(); got != "abc" {
+		t.Fatalf("added: %q", got)
+	}
+	b.SetStickerPackOrder([]string{"c", "a", "b"})
+	if got := order(); got != "cab" {
+		t.Fatalf("moved: %q", got)
+	}
+	b.AddStickerPack("d", true)
+	if got := order(); got != "cabd" {
+		t.Fatalf("added after a move: %q", got)
+	}
+	b.AddStickerPack("a", false)
+	b.AddStickerPack("a", true)
+	if got := order(); got != "cbda" {
+		t.Fatalf("taken off and added again: %q", got)
+	}
+}

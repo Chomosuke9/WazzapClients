@@ -10,8 +10,8 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/video"
 )
 
-// maxGIFs caps how many GIFs play at once in the conversation by default
-// (perf.gifs), like WhatsApp, which plays them as they come on screen.
+// maxGIFs caps how many GIFs play at once in the conversation, like
+// WhatsApp, which plays them as they come on screen.
 // Each has a video player of its own (Media Foundation and a GPU device
 // on Windows); the rest show their thumbnail and a play button.
 const maxGIFs = 3
@@ -67,7 +67,7 @@ func (u *UI) gifFrame(m *model.Message, maxPx int) *imgEntry {
 	key := m.ChatID + "/" + m.ID
 	g := ps.gifs[key]
 	if g == nil {
-		if ps.gifFetch[key] != 0 || len(ps.gifs) >= perf.gifs && key != ps.sound {
+		if ps.gifFetch[key] != 0 || len(ps.gifs) >= maxGIFs && key != ps.sound {
 			return nil
 		}
 		if ps.gifFetch == nil {

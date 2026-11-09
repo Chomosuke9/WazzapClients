@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"runtime"
 	rdebug "runtime/debug"
 	"strconv"
@@ -30,7 +31,6 @@ const (
 	prefLoadedMsgs = "loaded_messages" // messages of the open chat kept loaded
 	prefGCPercent  = "gc_percent"      // the GC's target, debug.SetGCPercent
 	prefTrimAfter  = "trim_after"      // seconds without a frame, or "never"
-	prefPlaying    = "playing"         // GIFs playing at once; stickers twice as many
 	prefCPUs       = "cpus"            // GOMAXPROCS, or "" for all
 	prefEmojiAnims = "emoji_anims"     // MB of animated emoji frames
 	prefEmojiDec   = "emoji_decoders"  // animated emojis decoding at once
@@ -38,7 +38,7 @@ const (
 )
 
 var perfPrefs = []string{prefAnimations, prefSmoothScroll, prefAutoplay,
-	prefImageCache, prefLoadedMsgs, prefGCPercent, prefTrimAfter, prefPlaying, prefCPUs,
+	prefImageCache, prefLoadedMsgs, prefGCPercent, prefTrimAfter, prefCPUs,
 	prefEmojiAnims, prefEmojiDec, prefEmojiFPS}
 
 // perfSettings is what the Performance prefs say, parsed.
@@ -50,11 +50,14 @@ type perfSettings struct {
 	loadedMsgs   int           // at least two pages (paging.go)
 	gcPercent    int           //
 	trimAfter    time.Duration // 0: never
-	gifs         int           // stickers play twice as many
+	stickers     int           // animated stickers playing at once (stickers.go), 0 for no limit
+	pickerAnim   string        // stickers in the picker: "" still, "hover" or "all"
+	keepPicker   bool          // the picker stays open after sending a sticker or GIF
 	cpus         int           // 0: all
 	emojiAnims   int           // bytes of animated emoji frames (emojiAnims)
 	emojiDec     int           // animated emojis decoding at once
 	emojiFPS     int           // frames a second of animated emojis
+	lottieFPS    int           // frames a second of Lottie stickers, at most (lottieFPS)
 }
 
 var defaultPerf = perfSettings{
@@ -64,10 +67,11 @@ var defaultPerf = perfSettings{
 	loadedMsgs:   maxLoaded,
 	gcPercent:    50, // as cmd/wazzap sets it
 	trimAfter:    idleTrim,
-	gifs:         maxGIFs,
+	stickers:     6,
 	emojiAnims:   16 << 20,
 	emojiDec:     2,
 	emojiFPS:     30,
+	lottieFPS:    30,
 }
 
 // perf is the app's performance settings. Animation helpers and the host
@@ -109,9 +113,15 @@ func readPerf(b model.Backend) perfSettings {
 	} else if n, ok := num(prefTrimAfter, 1, 3600); ok {
 		p.trimAfter = time.Duration(n) * time.Second
 	}
-	if n, ok := num(prefPlaying, 0, 20); ok {
-		p.gifs = n
+	if v := b.Pref(prefStickersPlaying); v == "unlimited" {
+		p.stickers = 0
+	} else if n, ok := num(prefStickersPlaying, 1, 32); ok {
+		p.stickers = n
 	}
+	if v := b.Pref(prefPickerAnim); v == "hover" || v == "all" {
+		p.pickerAnim = v
+	}
+	p.keepPicker = b.Pref(prefKeepPicker) == "on"
 	if n, ok := num(prefCPUs, 1, runtime.NumCPU()); ok {
 		p.cpus = n
 	}
@@ -124,6 +134,9 @@ func readPerf(b model.Backend) perfSettings {
 	if n, ok := num(prefEmojiFPS, 5, 120); ok {
 		p.emojiFPS = n
 	}
+	if n, ok := num(prefLottieFPS, 5, 120); ok {
+		p.lottieFPS = n
+	}
 	return p
 }
 
@@ -134,7 +147,8 @@ func loadPerf(b model.Backend) {
 }
 
 // applyProcess sets what perf says about the whole process: the GC's
-// target and how many cores Go uses. A Go memory limit isn't offered:
+// target, how many cores Go uses, and the sticker players' frame rate
+// and memory. A Go memory limit isn't offered:
 // once a long session's live heap nears one, the GC runs back to back.
 func applyProcess() {
 	if perf.gcPercent != applied.gc {
@@ -148,6 +162,12 @@ func applyProcess() {
 			runtime.GOMAXPROCS(perf.cpus)
 		}
 		applied.cpus = perf.cpus
+	}
+	lottieFPS.Store(int32(perf.lottieFPS))
+	if perf.stickers == 0 {
+		playerBudget.Store(math.MaxInt64 / 2) // no limit, and room to add to it
+	} else {
+		playerBudget.Store(int64(perf.stickers) * stickerBudget)
 	}
 }
 
@@ -233,10 +253,6 @@ var perfKnobs = []*perfKnob{
 			"Coming back costs a few milliseconds while the pages still in use return.",
 		opts: []perfOpt{{"", "After 10 seconds (default)"}, {"3", "After 3 seconds"}, {"30", "After 30 seconds"},
 			{"60", "After a minute"}, {"never", "Never"}}},
-	{key: prefPlaying, title: "Playing at once", ic: icPlayFill,
-		about: "How many GIFs, and twice as many animated stickers, play at the same time (four times as many in the GIF picker, " +
-			"where they are small). The rest show a still picture.",
-		opts: []perfOpt{{"", "3 GIFs (default)"}, {"1", "1 GIF"}, {"6", "6 GIFs"}}},
 	{key: prefEmojiAnims, title: "Animated emojis", ic: icEmoji,
 		about: "Frames of animated emojis kept in memory, for the 2D animated emoji styles. An emoji in a " +
 			"message takes about 150 to 350 KB, a big one sent alone about 1 to 2.5 MB. Emojis that don't fit " +
@@ -326,7 +342,7 @@ func (u *UI) advancedSettings() []settingsSection {
 		sub: "Every Performance setting, the switches too", run: func() {
 			u.confirm("Reset performance settings?", "Every setting on the Performance pages goes back to its default.",
 				dialogButton{label: "Reset", primary: true, run: func() {
-					for _, k := range perfPrefs {
+					for _, k := range append(perfPrefs, stickerPrefs...) {
 						b.SetPref(k, "")
 					}
 					u.applyPerf()
@@ -336,7 +352,10 @@ func (u *UI) advancedSettings() []settingsSection {
 	return []settingsSection{
 		now,
 		{title: "Memory", rows: knobs(prefImageCache, prefEmojiAnims, prefLoadedMsgs, prefGCPercent, prefTrimAfter)},
-		{title: "CPU", rows: knobs(prefPlaying, prefEmojiDec, prefEmojiFPS, prefCPUs)},
+		{title: "CPU", rows: knobs(prefEmojiDec, prefEmojiFPS, prefCPUs)},
+		{rows: []settingRow{{key: "stickers", ic: icSticker, title: "Stickers",
+			sub:      "Your stickers, the picker, playing at once and frame rate",
+			trailing: icChevronRight, run: func() { u.openSettingsSub("stickers") }}}},
 		{rows: []settingRow{reset},
 			note: "These change how much memory and CPU the app uses, not what it shows. Watch Memory now as you try them."},
 	}
