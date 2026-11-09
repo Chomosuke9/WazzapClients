@@ -141,7 +141,7 @@ func (u *UI) layoutToneMenu(gtx C) {
 				u.pickEmoji(withTone(of, i))
 			}
 		}
-		if u.btn("tone:scrim").Clicked(gtx) {
+		if noFocus(u.btn("tone:scrim")).Clicked(gtx) {
 			m.open = false
 		}
 	}
@@ -154,7 +154,7 @@ func (u *UI) layoutToneMenu(gtx C) {
 		// A click anywhere else in the panel closes it.
 		sg := gtx
 		sg.Constraints = layout.Exact(sz)
-		u.btn("tone:scrim").Layout(sg, func(gtx C) D { return D{Size: sz} })
+		noFocus(u.btn("tone:scrim")).Layout(sg, func(gtx C) D { return D{Size: sz} })
 	} else {
 		var done func()
 		gtx, done = fadeOut(gtx)

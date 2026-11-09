@@ -422,6 +422,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	}
 	typingV := u.conv.typingAnim.step(gtx, shown, durAppear)
 	u.conv.typingH = 0
+	u.noteMessageRows(rows)
 	msgRows := len(rows)
 	if typingV > 0 {
 		// After the newest message: above the scheduled ones.
@@ -504,9 +505,13 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 				case r.kind == rowScheduled:
 					return u.layoutScheduled(gtx, r.job, r.first, maxBubble)
 				case r.album:
-					return u.layoutAlbumRow(gtx, c, r, maxBubble, margin)
+					d := u.layoutAlbumRow(gtx, c, r, maxBubble, margin)
+					u.focusMessage(gtx, r.msg.ID, image.Rectangle{Max: d.Size})
+					return d
 				case r.group != nil:
-					return u.layoutStickerRow(gtx, c, r, maxBubble, margin)
+					d := u.layoutStickerRow(gtx, c, r, maxBubble, margin)
+					u.focusMessage(gtx, r.msg.ID, image.Rectangle{Max: d.Size})
+					return d
 				default:
 					return u.layoutMessageRow(gtx, c, r, maxBubble, margin)
 				}
@@ -656,6 +661,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		fillRect(gtx, u.selBand(margin, w, h), selColor)
 	}
 	bubble.at(gtx, x, 0)
+	u.focusMessage(gtx, m.ID, image.Rectangle{Min: image.Pt(x, 0), Max: image.Pt(x+bubble.size.X, h)})
 	if c.IsGroup && r.first && !m.FromMe && !ann {
 		// The sender's avatar sits in the left margin, level with the bubble.
 		sz := gtx.Dp(29)

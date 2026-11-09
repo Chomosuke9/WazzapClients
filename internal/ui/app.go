@@ -206,6 +206,7 @@ type UI struct {
 	textSel     textSelection       // selected message text
 	focus       any                 // editor to focus next frame (see requestFocus)
 	focusReq    bool
+	kb          kbState // keyboard use: focus traps, arrows (keyboard.go)
 
 	anims    animStore                     // keyed fades: hovers, new messages, reactions
 	follows  followerStore                 // keyed glides: a poll's bars
@@ -736,9 +737,11 @@ const (
 // Layout draws one frame: custom title bar, then either the login screen or
 // nav rail | chat list | conversation.
 func (u *UI) Layout(gtx C) D {
+	u.trackTrap(gtx)
 	u.zoomKeys(gtx)
 	d := u.layoutWindow(u.applyZoom(gtx))
 	u.layoutZoomBubble(gtx)
+	u.drawFocusRing(gtx)
 	return d
 }
 
@@ -764,6 +767,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	u.winWidth = sz.X
 	fillRect(gtx, image.Rectangle{Max: sz}, u.pal.Frame)
 	tb := u.layoutTitleBar(gtx)
+	u.kb.top = tb.Size.Y
 	defer op.Offset(image.Pt(0, tb.Size.Y)).Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(image.Pt(sz.X, sz.Y-tb.Size.Y))
 
@@ -998,6 +1002,8 @@ func (u *UI) layoutWithInfo(gtx C) D {
 
 // update handles input events before anything is drawn.
 func (u *UI) update(gtx C) {
+	u.navKeys(gtx) // before Esc and the composer
+	u.globalKeys(gtx)
 	for {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
 		if !ok {

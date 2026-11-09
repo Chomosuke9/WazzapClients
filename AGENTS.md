@@ -366,6 +366,16 @@ Gotchas already found in the pinned version (v0.10.x):
   or `ListResponseMessage`), which still carries the button's or row's ID that bots read,
   and only then to a quoted text reply. A `single_select` button, or a `ListMessage`'s,
   is a `model.ButtonList` whose rows open in a dialog (`internal/ui/listpick.go`).
+- Keyboard use is `internal/ui/keyboard.go`, on the Gio patch's `Source.Focus`,
+  `key.FocusTrap`, `key.MoveFocusCmd` and `input.SyntheticCmd`. Every
+  `widget.Clickable` is a Tab stop: give a scrim or an area that only swallows
+  clicks `noFocus(c)` everywhere it's used, `Clicked` included (the first call
+  of a frame makes it focusable). A modal overlay draws `focusTrap(gtx)` before
+  its scrim while it's open. Something focusable that isn't a Clickable (a
+  message's bubble) uses `focusArea`. Shift+F10 right-clicks the focused
+  element, so whatever opens on a right click opens from the keyboard too.
+  Gio's `app.Window` moves the focus on Tab only when nothing asked for Tab:
+  tests do the same (`slashTest.tab`).
 - `widget.Clickable.Layout` reads and drops the clicks nobody has asked about yet.
   Check `Clicked` before laying the button out (the title bar's privacy button).
 - Many buttons act on their click while they're laid out, after parts of the window
@@ -517,7 +527,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    a profile picture shown big, full size (`Backend.ProfilePhoto`, not
                    kept on disk), in photoview.go; the Media panel (the rail's Media button:
                    media, docs and links from every chat, or one chat's) in gallery.go; the list column's
-                   draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; a sender's run of stickers, side by side as many to a
+                   draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; keyboard use
+                   (the focus ring, menus and dialogs trapping the focus, arrows along the chat list,
+                   messages and menus, Shift+F10, F6 and the shortcuts on Settings > Keyboard shortcuts)
+                   in keyboard.go; a sender's run of stickers, side by side as many to a
                    line as fit, in stickerrow.go; sticker packs (a shared pack's card, the
                    "View sticker pack" dialog, which sends its stickers and adds the pack to
                    the picker, and the picker's tabs of added packs) in stickerpack.go, and Your stickers (the

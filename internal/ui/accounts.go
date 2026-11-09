@@ -426,7 +426,7 @@ const (
 
 func (u *UI) updateAccountMenu(gtx C) {
 	m := &u.acctMenu
-	if m.scrim.Clicked(gtx) {
+	if noFocus(&m.scrim).Clicked(gtx) {
 		m.open, u.menu.open = false, false
 	}
 	if len(m.rows) != len(u.accounts) {
@@ -466,7 +466,8 @@ func (u *UI) layoutAccountMenu(gtx C) {
 	if open {
 		sgtx := gtx
 		sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
-		m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		focusTrap(gtx)
+		noFocus(&m.scrim).Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	} else {
 		var done func()
 		gtx, done = fadeOut(gtx)

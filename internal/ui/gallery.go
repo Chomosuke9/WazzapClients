@@ -169,7 +169,7 @@ func (u *UI) galleryUpdate(gtx C) {
 	if u.btn("gal:close").Clicked(gtx) {
 		u.closeGallery()
 	}
-	if u.btn("gal:scrim").Clicked(gtx) {
+	if noFocus(u.btn("gal:scrim")).Clicked(gtx) {
 		u.closeGallery()
 	}
 	for _, t := range galleryTabs {
@@ -260,7 +260,8 @@ func (u *UI) layoutGallery(gtx C) {
 	} else {
 		sg := gtx
 		sg.Constraints = layout.Exact(sz)
-		clickable(sg, u.btn("gal:scrim"), func(gtx C) D { return fill(gtx, faded(p.Scrim, e)) })
+		focusTrap(gtx)
+		clickable(sg, noFocus(u.btn("gal:scrim")), func(gtx C) D { return fill(gtx, faded(p.Scrim, e)) })
 	}
 	// The panel slides up; a fade would need a window-sized layer.
 	m := gtx.Dp(12)
@@ -272,7 +273,7 @@ func (u *UI) layoutGallery(gtx C) {
 	fillRRect(pg, image.Rectangle{Max: r.Size()}.Add(image.Pt(0, gtx.Dp(4))).Inset(-gtx.Dp(3)), gtx.Dp(17), p.Shadow)
 	fillRRect(pg, image.Rectangle{Max: r.Size()}, gtx.Dp(14), p.Panel)
 	// Swallow clicks on the panel so they don't reach the scrim.
-	u.btn("gal:panel").Layout(pg, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	noFocus(u.btn("gal:panel")).Layout(pg, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	layout.Flex{Axis: layout.Vertical}.Layout(pg,
 		layout.Rigid(u.galleryHeader),
 		layout.Flexed(1, func(gtx C) D {

@@ -270,7 +270,8 @@ func (u *UI) layoutViewer(gtx C) {
 	fillRect(gtx, image.Rectangle{Max: sz}, faded(p.Viewer, e))
 	if v.open {
 		// Block input to the chat underneath.
-		u.btn("vw:bg").Layout(gtx, func(gtx C) D { return D{Size: sz} })
+		focusTrap(gtx)
+		noFocus(u.btn("vw:bg")).Layout(gtx, func(gtx C) D { return D{Size: sz} })
 	}
 
 	// Header: who sent it and when.

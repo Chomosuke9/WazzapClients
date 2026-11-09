@@ -60,7 +60,7 @@ func (u *UI) updateMenu(gtx C) {
 	if m.switchAcct.Clicked(gtx) {
 		u.acctMenu.open = !u.acctMenu.open
 	}
-	if m.scrim.Clicked(gtx) {
+	if noFocus(&m.scrim).Clicked(gtx) {
 		m.open = false
 	}
 }
@@ -96,7 +96,8 @@ func (u *UI) layoutMenu(gtx C) {
 	if m.open {
 		sgtx := gtx
 		sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
-		m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		focusTrap(gtx)
+		noFocus(&m.scrim).Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	} else {
 		var done func()
 		gtx, done = fadeOut(gtx)

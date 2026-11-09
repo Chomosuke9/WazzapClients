@@ -190,7 +190,7 @@ func (u *UI) layoutReactions(gtx C) {
 	if r.msgs == nil {
 		return
 	}
-	if r.isOpen() && (r.scrim.Clicked(gtx) || u.selected == nil || u.selected.ID != r.msgs[0].ChatID) {
+	if r.isOpen() && (noFocus(&r.scrim).Clicked(gtx) || u.selected == nil || u.selected.ID != r.msgs[0].ChatID) {
 		u.closeReactions()
 	}
 	v := r.anim.step(gtx, r.isOpen(), popDur(r.isOpen()))
@@ -206,7 +206,8 @@ func (u *UI) layoutReactions(gtx C) {
 	} else {
 		sgtx := gtx
 		sgtx.Constraints = layout.Exact(sz)
-		r.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		focusTrap(gtx)
+		noFocus(&r.scrim).Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	}
 	if r.isOpen() {
 		for _, x := range r.list {

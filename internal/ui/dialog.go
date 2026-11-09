@@ -170,7 +170,7 @@ func (u *UI) layoutDialog(gtx C) {
 		return
 	}
 	p := u.pal
-	if d.isOpen() && d.scrim.Clicked(gtx) {
+	if d.isOpen() && noFocus(&d.scrim).Clicked(gtx) {
 		u.closeDialog()
 	}
 	v := d.anim.step(gtx, d.isOpen(), durDialog)
@@ -188,7 +188,8 @@ func (u *UI) layoutDialog(gtx C) {
 	} else {
 		sgtx := gtx
 		sgtx.Constraints = layout.Exact(sz)
-		d.scrim.Layout(sgtx, func(gtx C) D { return fill(gtx, faded(p.Scrim, e)) })
+		focusTrap(gtx)
+		noFocus(&d.scrim).Layout(sgtx, func(gtx C) D { return fill(gtx, faded(p.Scrim, e)) })
 	}
 
 	var panel part
@@ -229,7 +230,7 @@ func (u *UI) layoutDialog(gtx C) {
 		t := op.Offset(rect.Min).Push(gtx.Ops)
 		pg := gtx
 		pg.Constraints = layout.Exact(panel.size)
-		u.btn("dialog:panel").Layout(pg, func(gtx C) D { return D{Size: panel.size} })
+		noFocus(u.btn("dialog:panel")).Layout(pg, func(gtx C) D { return D{Size: panel.size} })
 		t.Pop()
 	}
 	panel.at(gtx, x, y)

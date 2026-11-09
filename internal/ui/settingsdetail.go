@@ -833,6 +833,34 @@ func shortcutSettings(enterSend bool) []settingsSection {
 		send, line = k("Send message", mod, "Enter"), k("New line", "Enter")
 	}
 	return []settingsSection{
+		{title: "Moving around", rows: []settingRow{
+			k("Next button, field or row", "Tab"),
+			k("Previous button, field or row", "Shift", "Tab"),
+			k("Press the focused button, open the focused chat or message menu", "Enter"),
+			k("Move along the chat list, a chat's messages or a menu", "↑", "↓"),
+			k("First chat or message", "Home"),
+			k("Last chat or message", "End"),
+			k("Open the focused chat's or message's menu", "Shift", "F10"),
+			k("Back to the composer from a message", "Esc"),
+			k("Next part of the window: chat list, messages, composer", "F6"),
+			k("Newest message of the chat", mod, "Alt", "↑"),
+		}},
+		{title: "Chats", rows: []settingRow{
+			k("New chat", mod, "N"),
+			k("New group", mod, "Shift", "N"),
+			k("Search chats", mod, "F"),
+			k("Search the open chat", mod, "Shift", "F"),
+			k("Next chat", mod, "Tab"),
+			k("Previous chat", mod, "Shift", "Tab"),
+			k("Open the first to ninth chat", mod, "1…9"),
+			k("Archive the open chat", mod, "Alt", "Shift", "E"),
+			k("Mute or unmute the open chat", mod, "Alt", "Shift", "M"),
+			k("Mark the open chat as read or unread", mod, "Alt", "Shift", "U"),
+			k("Pin or unpin the open chat", mod, "Alt", "Shift", "P"),
+			k("Emoji picker", mod, "Shift", "E"),
+			k("Settings", mod, ","),
+			k("Profile", mod, "P"),
+		}},
 		{title: "Composer", rows: []settingRow{
 			send, line,
 			k("Bold", mod, "B"),

@@ -49,7 +49,7 @@ func (u *UI) layoutPicView(gtx C) {
 		return
 	}
 	p := u.pal
-	if u.btn("pv:close").Clicked(gtx) || u.btn("pv:bg").Clicked(gtx) {
+	if u.btn("pv:close").Clicked(gtx) || noFocus(u.btn("pv:bg")).Clicked(gtx) {
 		v.open = false
 	}
 	a := v.anim.step(gtx, v.open, durSlide)
@@ -70,7 +70,8 @@ func (u *UI) layoutPicView(gtx C) {
 	fillRect(gtx, image.Rectangle{Max: sz}, faded(p.Viewer, e))
 	if v.open {
 		// Clicking around the picture closes it, and nothing underneath.
-		u.btn("pv:bg").Layout(gtx, func(gtx C) D { return D{Size: sz} })
+		focusTrap(gtx)
+		noFocus(u.btn("pv:bg")).Layout(gtx, func(gtx C) D { return D{Size: sz} })
 	}
 
 	top := pushFx(gtx, e, moveBy(0, -float32(gtx.Dp(12))*(1-e)))
@@ -119,7 +120,7 @@ func (u *UI) layoutPicView(gtx C) {
 	}
 	// Clicking the picture itself keeps it open.
 	stop := op.Offset(dst.Min).Push(gtx.Ops)
-	u.btn("pv:pic").Layout(gtx, func(gtx C) D { return D{Size: dst.Size()} })
+	noFocus(u.btn("pv:pic")).Layout(gtx, func(gtx C) D { return D{Size: dst.Size()} })
 	stop.Pop()
 	if pic := u.picViewImage(); pic != nil {
 		if radius > 0 {

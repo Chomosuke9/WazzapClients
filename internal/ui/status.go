@@ -814,10 +814,10 @@ func (u *UI) layoutStatusReply(gtx C, r image.Rectangle) {
 	gtx.Constraints = layout.Exact(r.Size())
 	// A click on the box types, rather than going to the next update.
 	box := u.btn("st:replybox")
-	if box.Clicked(gtx) {
+	if noFocus(box).Clicked(gtx) {
 		gtx.Execute(key.FocusCmd{Tag: &v.reply})
 	}
-	box.Layout(gtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	noFocus(box).Layout(gtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	typed := trimSpace(v.reply.Text()) != ""
 	layout.Inset{Left: 20, Right: 4}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,

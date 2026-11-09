@@ -278,7 +278,7 @@ func (u *UI) pickerRows(cols int) []pickerRow {
 func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	e := &u.picker
 	if e.open {
-		if e.scrim.Clicked(gtx) {
+		if noFocus(&e.scrim).Clicked(gtx) {
 			u.closePicker()
 		}
 		for {
@@ -301,7 +301,7 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	if e.open {
 		sgtx := gtx
 		sgtx.Constraints = layout.Exact(sz)
-		e.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		noFocus(&e.scrim).Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	} else {
 		var done func()
 		gtx, done = fadeOut(gtx)
@@ -347,7 +347,7 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	pg := gtx
 	pg.Constraints = layout.Exact(rect.Size())
 	// Swallow clicks so they don't reach the scrim.
-	u.btn("picker:panel").Layout(pg, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	noFocus(u.btn("picker:panel")).Layout(pg, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 
 	switch e.tab {
 	case tabEmoji:

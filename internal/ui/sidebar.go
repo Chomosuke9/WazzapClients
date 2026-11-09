@@ -295,6 +295,9 @@ func (u *UI) listName(c *model.Chat) string {
 func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 	defer u.emojiIn(emojiList)()
 	click := u.rowClick(c)
+	if gtx.Focused(click) {
+		u.kb.chat = c.ID
+	}
 	chev := u.btn("rowmenu:" + c.ID)
 	if chev.Clicked(gtx) {
 		u.openChatMenu(c)

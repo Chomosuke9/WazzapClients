@@ -22,3 +22,280 @@ index bd8950f..bee71b8 100644
  				d.imageOps = d.imageOps[:0]
  				d.clearColor = mat.color.Opaque()
  				d.clear = true
+diff --git a/io/input/key.go b/io/input/key.go
+index 4432d95..093b4b5 100644
+--- a/io/input/key.go
++++ b/io/input/key.go
+@@ -29,6 +29,9 @@ type keyQueue struct {
+ 	order    []event.Tag
+ 	dirOrder []dirFocusEntry
+ 	hint     key.InputHint
++	// trap is the index in order of the first handler after the frame's
++	// last key.FocusTrap; 0 without one (WazzapClients patch).
++	trap int
+ }
+ 
+ // keyState is the input state related to key events.
+@@ -99,6 +102,22 @@ func (k *keyHandler) Reset() {
+ func (q *keyQueue) Reset() {
+ 	q.order = q.order[:0]
+ 	q.dirOrder = q.dirOrder[:0]
++	q.trap = 0
++}
++
++// setTrap starts a focus trap at the next handler (WazzapClients patch).
++func (q *keyQueue) setTrap() {
++	q.trap = len(q.order)
++}
++
++// trapped reports whether tag may keep the focus under the frame's focus
++// trap (WazzapClients patch).
++func (q *keyQueue) trapped(handlers map[event.Tag]*handler, tag event.Tag) bool {
++	if q.trap == 0 {
++		return true
++	}
++	h, ok := handlers[tag]
++	return ok && h.key.orderPlusOne-1 >= q.trap
+ }
+ 
+ func (k *keyHandler) ResetEvent() (event.Event, bool) {
+@@ -115,6 +134,10 @@ func (q *keyQueue) Frame(handlers map[event.Tag]*handler, state keyState) keySta
+ 			// Remove focus from the handler that is no longer focusable.
+ 			state.focus = nil
+ 			state.state = TextInputClose
++		} else if !q.trapped(handlers, state.focus) {
++			// WazzapClients patch: a dialog or menu opened over it.
++			state.focus = nil
++			state.state = TextInputClose
+ 		}
+ 	}
+ 	q.updateFocusLayout(handlers)
+@@ -166,29 +189,37 @@ func (q *keyQueue) MoveFocus(handlers map[event.Tag]*handler, state keyState, di
+ 		return state, nil
+ 	}
+ 	order := 0
+-	if state.focus != nil {
+-		order = handlers[state.focus].key.dirOrder
++	if h, ok := handlers[state.focus]; ok && state.focus != nil {
++		order = h.key.dirOrder // WazzapClients patch: the focus may be gone
++	}
++	if order >= len(q.dirOrder) || !q.trapped(handlers, state.focus) {
++		order = 0
+ 	}
+ 	focus := q.dirOrder[order]
+ 	switch dir {
+ 	case key.FocusForward, key.FocusBackward:
+-		if len(q.order) == 0 {
++		// WazzapClients patch: only among the handlers after the focus
++		// trap, if any, starting over at either end.
++		first := q.trap
++		n := len(q.order) - first
++		if n <= 0 {
+ 			break
+ 		}
+-		order := 0
+-		if dir == key.FocusBackward {
+-			order = -1
++		order := -1
++		if h, ok := handlers[state.focus]; ok && state.focus != nil && h.key.orderPlusOne-1 >= first {
++			order = h.key.orderPlusOne - 1 - first
+ 		}
+-		if state.focus != nil {
+-			order = handlers[state.focus].key.orderPlusOne - 1
+-			if dir == key.FocusForward {
+-				order++
+-			} else {
+-				order--
+-			}
++		switch {
++		case order == -1 && dir == key.FocusForward:
++			order = 0
++		case order == -1:
++			order = n - 1
++		case dir == key.FocusForward:
++			order = (order + 1) % n
++		default:
++			order = (order - 1 + n) % n
+ 		}
+-		order = (order + len(q.order)) % len(q.order)
+-		return q.Focus(handlers, state, q.order[order])
++		return q.Focus(handlers, state, q.order[first+order])
+ 	case key.FocusRight, key.FocusLeft:
+ 		next := order
+ 		if state.focus != nil {
+diff --git a/io/input/router.go b/io/input/router.go
+index 05f8e1b..8d23f45 100644
+--- a/io/input/router.go
++++ b/io/input/router.go
+@@ -58,6 +58,10 @@ type Router struct {
+ 	deferring bool
+ 	// scratchFilters is for garbage-free construction of ephemeral filters.
+ 	scratchFilters []taggedFilter
++	// WazzapClients patch: SyntheticCmd's events, and whether the last
++	// press was a key's (FocusInfo.Keyboard).
++	synthetic []event.Event
++	keyboard  bool
+ }
+ 
+ // Source implements the interface between a Router and user interface widgets.
+@@ -197,6 +201,47 @@ func (s Source) Enabled() bool {
+ 	return s.r != nil && !s.disabled
+ }
+ 
++// WazzapClients patch: what the focus ring and keyboard navigation need.
++
++// FocusInfo describes the keyboard focus.
++type FocusInfo struct {
++	// Tag is the focused tag, or nil.
++	Tag event.Tag
++	// Bounds are the focused handler's area in window coordinates, clipped
++	// by the areas around it, as the last frame drew it. Empty when the
++	// last frame didn't draw it.
++	Bounds image.Rectangle
++	// Trapped reports whether the last frame recorded a key.FocusTrap.
++	Trapped bool
++	// Keyboard reports whether the last press was a key's rather than a
++	// pointer's, as a browser's :focus-visible.
++	Keyboard bool
++}
++
++// Focus describes the keyboard focus.
++func (s Source) Focus() FocusInfo {
++	if !s.Enabled() {
++		return FocusInfo{}
++	}
++	q := s.r
++	fi := FocusInfo{Tag: q.state().keyState.focus, Trapped: q.key.queue.trap > 0, Keyboard: q.keyboard}
++	if h, ok := q.handlers[fi.Tag]; ok && fi.Tag != nil && h.key.visible && h.key.dirOrder < len(q.key.queue.dirOrder) {
++		e := q.key.queue.dirOrder[h.key.dirOrder]
++		if e.tag == fi.Tag {
++			fi.Bounds = q.pointer.queue.ClipFor(e.area, e.bounds)
++		}
++	}
++	return fi
++}
++
++// SyntheticCmd routes made-up events, such as a pointer press, after the
++// frame, as if they came from the window (WazzapClients patch).
++type SyntheticCmd struct {
++	Events []event.Event
++}
++
++func (SyntheticCmd) ImplementsCommand() {}
++
+ // Focused reports whether tag is focused, according to the most recent
+ // [key.FocusEvent] delivered.
+ func (s Source) Focused(tag event.Tag) bool {
+@@ -384,6 +429,14 @@ func (q *Router) Frame(frame *op.Ops) {
+ 	}
+ 	q.executeCommands()
+ 	q.Queue(remaining...)
++	// WazzapClients patch: events made up during the frame, routed by
++	// what it drew.
++	if synth := q.synthetic; len(synth) > 0 {
++		q.synthetic = nil
++		kb := q.keyboard // a made-up press isn't the pointer's
++		q.Queue(synth...)
++		q.keyboard = kb
++	}
+ 	st := q.lastState()
+ 	pst, evts := q.pointer.queue.Frame(q.handlers, st.pointerState)
+ 	st.pointerState = pst
+@@ -444,10 +497,16 @@ func (q *Router) processEvent(e event.Event, system bool) {
+ 	state := q.lastState()
+ 	switch e := e.(type) {
+ 	case pointer.Event:
++		if e.Kind == pointer.Press { // WazzapClients patch
++			q.keyboard = false
++		}
+ 		pstate, evts := q.pointer.queue.Push(q.handlers, state.pointerState, e)
+ 		state.pointerState = pstate
+ 		q.changeState(e, state, evts)
+ 	case key.Event:
++		if e.State == key.Press { // WazzapClients patch
++			q.keyboard = true
++		}
+ 		var evts []taggedEvent
+ 		if q.key.filter.Matches(state.keyState.focus, e, system) {
+ 			evts = append(evts, taggedEvent{event: e})
+@@ -552,6 +611,10 @@ func (q *Router) executeCommand(c Command) stateChange {
+ 		state.keyState = q.key.queue.setSelection(state.keyState, req)
+ 	case key.FocusCmd:
+ 		state.keyState, evts = q.key.queue.Focus(q.handlers, state.keyState, req.Tag)
++	case key.MoveFocusCmd: // WazzapClients patch
++		state.keyState, evts = q.key.queue.MoveFocus(q.handlers, state.keyState, req.Dir)
++	case SyntheticCmd: // WazzapClients patch
++		q.synthetic = append(q.synthetic, req.Events...)
+ 	case key.SoftKeyboardCmd:
+ 		state.keyState = state.keyState.softKeyboard(req.Show)
+ 	case key.SnippetCmd:
+@@ -829,6 +892,10 @@ func (q *Router) collect() {
+ 
+ 		case ops.TypeInput:
+ 			tag := encOp.Refs[0].(event.Tag)
++			if tag == key.FocusTrap { // WazzapClients patch
++				kq.setTrap()
++				break
++			}
+ 			s := q.stateFor(tag)
+ 			pc.inputOp(tag, &s.pointer)
+ 			a := pc.currentArea()
+diff --git a/io/key/key.go b/io/key/key.go
+index e5fa606..eaa4185 100644
+--- a/io/key/key.go
++++ b/io/key/key.go
+@@ -238,6 +238,22 @@ func (m Modifiers) Contain(m2 Modifiers) bool {
+ 	return m&m2 == m2
+ }
+ 
++// WazzapClients patch: focus traps and moving the focus on request.
++
++// FocusTrap, recorded as the tag of an [event.Op], keeps keyboard focus
++// moves (Tab, Shift-Tab and [MoveFocusCmd]) among the focusable handlers
++// recorded after it, as a modal dialog or menu needs. A focus outside
++// them is cleared. The last trap of a frame wins.
++var FocusTrap event.Tag = new(focusTrap)
++
++type focusTrap struct{ _ byte }
++
++// MoveFocusCmd moves the focus as Tab (FocusForward) and Shift-Tab
++// (FocusBackward) do.
++type MoveFocusCmd struct {
++	Dir FocusDirection
++}
++
+ // FocusCmd requests to set or clear the keyboard focus.
+ type FocusCmd struct {
+ 	// Tag is the new focus. The focus is cleared if Tag is nil, or if Tag
+@@ -262,6 +278,7 @@ func (SnippetEvent) ImplementsEvent()     {}
+ func (SelectionEvent) ImplementsEvent()   {}
+ 
+ func (FocusCmd) ImplementsCommand()        {}
++func (MoveFocusCmd) ImplementsCommand()    {}
+ func (SoftKeyboardCmd) ImplementsCommand() {}
+ func (SelectionCmd) ImplementsCommand()    {}
+ func (SnippetCmd) ImplementsCommand()      {}
+diff --git a/widget/button.go b/widget/button.go
+index f03e3f1..b5952c8 100644
+--- a/widget/button.go
++++ b/widget/button.go
+@@ -22,6 +22,10 @@ type Clickable struct {
+ 
+ 	requestClicks int
+ 	pressedKey    key.Name
++
++	// NoFocus keeps the button out of keyboard focus, for a scrim or an
++	// area that only swallows clicks (WazzapClients patch).
++	NoFocus bool
+ }
+ 
+ // Click represents a click.
+@@ -146,7 +150,7 @@ func (b *Clickable) update(t event.Tag, gtx layout.Context) (Click, bool) {
+ 			})
+ 		}
+ 	}
+-	for {
++	for !b.NoFocus {
+ 		e, ok := gtx.Event(
+ 			key.FocusFilter{Target: t},
+ 			key.Filter{Focus: t, Name: key.NameReturn},

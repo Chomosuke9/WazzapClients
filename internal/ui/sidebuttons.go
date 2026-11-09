@@ -183,7 +183,7 @@ func (u *UI) openReactBar(m *model.Message) {
 // the button or, near the top, below it.
 func (u *UI) layoutReactMenu(gtx C) {
 	m := &u.ctx
-	if m.isOpen() && (m.scrim.Clicked(gtx) || u.selected == nil || u.selected.ID != m.chatID) {
+	if m.isOpen() && (noFocus(&m.scrim).Clicked(gtx) || u.selected == nil || u.selected.ID != m.chatID) {
 		u.closeMenu()
 	}
 	v := m.anim.step(gtx, m.isOpen(), popDur(m.isOpen()))
@@ -198,7 +198,8 @@ func (u *UI) layoutReactMenu(gtx C) {
 	} else {
 		sgtx := gtx
 		sgtx.Constraints = layout.Exact(gtx.Constraints.Max)
-		m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		focusTrap(gtx)
+		noFocus(&m.scrim).Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	}
 	// The bar is about 43dp tall; top is its bottom middle.
 	off := gtx.Dp(sideBtn)/2 + gtx.Dp(6)

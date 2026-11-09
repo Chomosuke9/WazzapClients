@@ -192,12 +192,12 @@ func (u *UI) layoutStatusText(gtx C) {
 	if s.isOpen() {
 		// Nothing underneath takes clicks; a click anywhere types.
 		bg := u.btn("stt:bg")
-		if bg.Clicked(gtx) {
+		if noFocus(bg).Clicked(gtx) {
 			u.requestFocus(&s.ed)
 		}
 		bgtx := gtx
 		bgtx.Constraints = layout.Exact(sz)
-		bg.Layout(bgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		noFocus(bg).Layout(bgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	}
 	defer pushFx(gtx, e, f32.Affine2D{}).Pop()
 	white := rgb(0xffffff)

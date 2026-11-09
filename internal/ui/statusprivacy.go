@@ -525,7 +525,7 @@ func (u *UI) layoutStatusPrivacy(gtx C) {
 		} else {
 			// Take the clicks the page doesn't use, so they don't reach
 			// the status list underneath.
-			u.btn("sp:panel").Layout(pg, func(gtx C) D { return D{Size: sz} })
+			noFocus(u.btn("sp:panel")).Layout(pg, func(gtx C) D { return D{Size: sz} })
 		}
 		cl := clip.Rect{Max: sz}.Push(gtx.Ops)
 		fillRect(gtx, image.Rectangle{Max: sz}, p.Panel)

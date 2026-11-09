@@ -23,6 +23,15 @@ What `gio.patch` does (marked `WazzapClients patch`):
   at the pictures of earlier, busier frames, which stayed reachable until a
   frame drew as many: closing the emoji picker with its animated emojis left
   ~50 MB of their frames in the heap.
+- Keyboard use (`internal/ui/keyboard.go`). `io/key`: `key.FocusTrap`, an
+  `event.Op` tag that keeps Tab, Shift-Tab and the new `key.MoveFocusCmd`
+  among the focusable handlers recorded after it (a menu or dialog), and
+  clears a focus outside them. `io/input`: `Source.Focus` tells the focused
+  tag, its area in window coordinates (for the focus ring), whether a trap
+  is up and whether the last press was a key's; `SyntheticCmd` routes
+  made-up events after the frame (Shift+F10 right-clicks the focused
+  element). `MoveFocus` no longer panics on a focus that's gone. `widget`:
+  `Clickable.NoFocus` keeps scrims out of Tab's way.
 
 What `hypermeow.patch` does (marked `WazzapClients patch`):
 

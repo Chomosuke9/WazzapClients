@@ -153,7 +153,7 @@ func (u *UI) layoutSendView(gtx C, v float32) {
 	}
 	fillRect(gtx, image.Rectangle{Max: sz}, p.Viewer)
 	// Block input to the chat underneath.
-	u.btn("sv:bg").Layout(gtx, func(gtx C) D { return D{Size: sz} })
+	noFocus(u.btn("sv:bg")).Layout(gtx, func(gtx C) D { return D{Size: sz} })
 
 	isPhoto := f.Media == model.MediaImage
 	topH := gtx.Dp(66)

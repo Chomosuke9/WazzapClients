@@ -54,6 +54,9 @@ func (u *UI) updateMouse(gtx C) {
 					u.mousePress = u.mouse
 				}
 				u.mouseDown = u.mouseDown || e.Buttons.Contain(pointer.ButtonPrimary)
+				if e.Buttons.Contain(pointer.ButtonPrimary) {
+					u.blurOnClick(gtx)
+				}
 			case pointer.Release, pointer.Cancel:
 				u.mouseDown = false
 			}
@@ -383,7 +386,7 @@ func (u *UI) layoutCtxMenu(gtx C) {
 		return
 	}
 	if m.isOpen() {
-		if m.scrim.Clicked(gtx) {
+		if noFocus(&m.scrim).Clicked(gtx) {
 			u.closeMenu()
 		}
 	}
@@ -517,7 +520,8 @@ func (u *UI) layoutCtxMenu(gtx C) {
 	} else {
 		sgtx := gtx
 		sgtx.Constraints = layout.Exact(sz)
-		m.scrim.Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		focusTrap(gtx)
+		noFocus(&m.scrim).Layout(sgtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 	}
 
 	menu := record(gtx, func(gtx C) D { return u.menuPanel(gtx, "menu:", items) })
