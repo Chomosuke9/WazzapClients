@@ -169,15 +169,30 @@ func (u *UI) editScheduled(j auto.Job) {
 			}
 		}
 	}
+	var customs []string
 	if j.MentionChat != "" {
-		// Whoever the text doesn't name is the custom mention's.
-		ref := mentionRef{name: j.MentionChat, jid: mentionCustomID}
+		customs = append(customs, j.MentionChat)
+	}
+	for _, name := range j.GroupNames {
+		if name == "admin" {
+			refs = append(refs, mentionRef{name: name, jid: mentionAdminID})
+		} else {
+			customs = append(customs, name)
+		}
+	}
+	if len(customs) > 0 {
+		// Whoever the text doesn't name is the first custom mention's: the
+		// job doesn't say whose they are, and all of them are notified.
+		ref := mentionRef{name: customs[0], jid: mentionCustomID}
 		for _, id := range j.Mentions {
 			if !slices.ContainsFunc(refs, func(r mentionRef) bool { return r.jid == id }) {
 				ref.people = append(ref.people, id)
 			}
 		}
 		refs = append(refs, ref)
+		for _, name := range customs[1:] {
+			refs = append(refs, mentionRef{name: name, jid: mentionCustomID})
+		}
 	}
 	u.conv.reply = nil
 	if j.Reply != "" {

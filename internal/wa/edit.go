@@ -22,7 +22,7 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 	text := r.Text
 	var refs []model.MentionRef
 	var people []string // mentioned, with no "@<user>" in the text
-	custom := -1        // the index in refs of a custom mention
+	custom := -1        // the index in refs of the first custom mention
 	for _, s := range strings.Split(r.mentions, ",") {
 		switch {
 		case s == "":
@@ -32,11 +32,15 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
 			text = strings.ReplaceAll(text, "@"+jid, "@"+subject)
 			switch {
-			case jid != m.ChatID:
+			case !model.IsGroupNameJID(jid, m.ChatID):
 			case strings.EqualFold(subject, "admin"):
 				refs = append(refs, model.MentionRef{Name: subject, ID: "@admin"})
 			default:
-				custom = len(refs)
+				// The people go to the first: the message doesn't say whose
+				// they are, and all of them are notified anyway.
+				if custom < 0 {
+					custom = len(refs)
+				}
 				refs = append(refs, model.MentionRef{Name: subject, ID: "@custom"})
 			}
 		default:

@@ -234,16 +234,17 @@ func (u *UI) draftWith(txt string, mentions []mentionRef, chat string) model.Dra
 			d.Mentions = append(d.Mentions, jid)
 		}
 	}
-	// A message can show one name for "@<chat JID>", which every "@<chat
-	// JID>" in it takes. Others keep their plain text, and still notify.
-	named := false
-	nameChat := func(at string) bool {
-		if named {
-			return false
+	// A message shows one name for each group JID it mentions: the first
+	// name gets "@<chat JID>", the others JIDs made up from it.
+	named := 0
+	nameChat := func(at, name string) bool {
+		d.Text = strings.ReplaceAll(d.Text, at, "@"+model.GroupNameJID(chat, named))
+		named++
+		if named == 1 {
+			return true
 		}
-		named = true
-		d.Text = strings.ReplaceAll(d.Text, at, "@"+chat)
-		return true
+		d.GroupNames = append(d.GroupNames, name)
+		return false
 	}
 	for _, mr := range refs {
 		at := "@" + mr.name
@@ -255,7 +256,7 @@ func (u *UI) draftWith(txt string, mentions []mentionRef, chat string) model.Dra
 			d.MentionAll = true // the text keeps "@all"
 			continue
 		case mentionAdminID:
-			d.MentionAdmins = nameChat(at)
+			d.MentionAdmins = nameChat(at, mr.name)
 			if info := u.chatMembers(chat); info != nil {
 				for _, m := range info.Members {
 					if m.Admin && !m.Me {
@@ -265,7 +266,7 @@ func (u *UI) draftWith(txt string, mentions []mentionRef, chat string) model.Dra
 			}
 			continue
 		case mentionCustomID:
-			if nameChat(at) {
+			if nameChat(at, mr.name) {
 				d.MentionChat = mr.name
 			}
 			for _, id := range u.customMentionPeople(chat, mr.people) {

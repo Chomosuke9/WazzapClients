@@ -259,7 +259,7 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			}
 		}
 		msg = &waE2E.Message{ExtendedTextMessage: e}
-		if d.MentionAdmins || d.MentionChat != "" {
+		if d.MentionAdmins || d.MentionChat != "" || len(d.GroupNames) > 0 {
 			msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 		}
 		return b.storeAndSendAfter(jid, sm, msg, nil, prep)

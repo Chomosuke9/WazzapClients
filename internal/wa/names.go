@@ -259,7 +259,7 @@ func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions st
 			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
 			m := mention(subject)
 			switch {
-			case jid != chatID:
+			case !model.IsGroupNameJID(jid, chatID):
 			case strings.EqualFold(subject, "admin"):
 				// A group mentioning itself is "@admin" (see Send).
 				m = markedMention(model.MentionAdmins, subject)

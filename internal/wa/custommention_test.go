@@ -57,6 +57,75 @@ func TestCustomMentionMessage(t *testing.T) {
 	}
 }
 
+// Several names in one message each go under a JID of their own, since
+// WhatsApp shows one name for each, and each reads back by its name.
+func TestCustomMentionsInOneMessage(t *testing.T) {
+	b := testBackend(t)
+	b.cli = whatsmeow.NewClient(&store.Device{}, waLog.Noop)
+	const chat = "120363012345678901@g.us"
+	people := []string{"456@lid", "789@lid"}
+	second, third := model.GroupNameJID(chat, 1), model.GroupNameJID(chat, 2)
+	if second != "120363012345678901-1@g.us" {
+		t.Fatalf("second JID %q", second)
+	}
+	m := b.Send(chat, model.Draft{Text: "@" + chat + " @" + second + " @" + third,
+		MentionChat: "Tim frontend", GroupNames: []string{"Tim backend", "admin"}, Mentions: people})
+	if m == nil {
+		t.Fatal("not sent")
+	}
+	var raw []byte
+	_ = b.db.QueryRow(`SELECT raw_payload FROM wz_messages WHERE chat = ? AND id = ?`, chat, m.ID).Scan(&raw)
+	var sent waE2E.Message
+	if err := proto.Unmarshal(raw, &sent); err != nil || sent.GetGroupMentionedMessage() == nil {
+		t.Fatal("not sent as a group mention", err)
+	}
+	var got []string
+	for _, gm := range describe(&sent).ctx.GetGroupMentions() {
+		got = append(got, gm.GetGroupJID()+" "+gm.GetGroupSubject())
+	}
+	if want := []string{chat + " Tim frontend", second + " Tim backend", third + " admin"}; !slices.Equal(got, want) {
+		t.Fatalf("group mentions %q, want %q", got, want)
+	}
+
+	r, _ := b.store.message(b.ctx, chat, m.ID)
+	shown := b.replaceMentions(b.ctx, chat, r.Text, r.mentions)
+	g, a := string(model.MentionGroup), string(model.MentionAdmins)
+	if want := "⁨" + g + "@Tim frontend⁩ ⁨" + g + "@Tim backend⁩ ⁨" + a + "@admin⁩"; shown != want {
+		t.Fatalf("shown %q, want %q", shown, want)
+	}
+
+	text, refs := b.EditText(m)
+	if text != "@Tim frontend @Tim backend @admin" {
+		t.Fatalf("to edit: %q", text)
+	}
+	if len(refs) != 3 || refs[0].Name != "Tim frontend" || refs[0].ID != "@custom" || !slices.Equal(refs[0].People, people) ||
+		refs[1].Name != "Tim backend" || refs[1].ID != "@custom" || refs[2].ID != "@admin" {
+		t.Fatalf("refs %+v", refs)
+	}
+}
+
+func TestGroupNameJID(t *testing.T) {
+	for _, c := range []struct{ chat, want string }{
+		{"120363012345678901@g.us", "120363012345678901-3@g.us"},
+		{"6281234567-1600000000@g.us", "62812345671600000000-3@g.us"},
+	} {
+		if got := model.GroupNameJID(c.chat, 3); got != c.want {
+			t.Errorf("GroupNameJID(%q) = %q, want %q", c.chat, got, c.want)
+		}
+		if _, err := types.ParseJID(c.want); err != nil {
+			t.Errorf("%q doesn't parse: %v", c.want, err)
+		}
+		if !model.IsGroupNameJID(c.want, c.chat) || !model.IsGroupNameJID(c.chat, c.chat) {
+			t.Errorf("%q not one of %q's", c.want, c.chat)
+		}
+	}
+	for _, jid := range []string{"120363012345678902@g.us", "120363012345678901-0@g.us", "120363012345678901-01@g.us", "120363012345678901-x@g.us", "120363012345678901-1@s.whatsapp.net"} {
+		if model.IsGroupNameJID(jid, "120363012345678901@g.us") {
+			t.Errorf("%q taken for the group's", jid)
+		}
+	}
+}
+
 // A reply quotes a group mention by its name, whatever the reply's payload
 // carries of it, and whatever the reply mentions itself.
 func TestQuotedGroupMention(t *testing.T) {

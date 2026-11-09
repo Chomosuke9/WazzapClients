@@ -536,6 +536,10 @@ type Draft struct {
 	// "@" + MentionChat: a snippet's {mention} without a reply, which
 	// notifies no one, or a custom mention, which notifies those in Mentions.
 	MentionChat string
+	// GroupNames are the names of further custom mentions (or "admin"),
+	// when the group's own JID already shows another: Text shows the i-th
+	// as "@" + GroupNameJID(chat, i+1), and Mentions lists whom they notify.
+	GroupNames []string
 	// Link is the preview of a link in Text to send with it, or nil, and
 	// LinkThumb its picture (a small JPEG).
 	Link      *LinkPreview
@@ -543,6 +547,33 @@ type Draft struct {
 	// LinkImage is the picture big, for the wide card WhatsApp shows above
 	// the title, or empty.
 	LinkImage LinkImage
+}
+
+// GroupNameJID is the JID that a message's text mentions, as "@<JID>", for
+// the n-th name it gives a group (@admin, custom mentions): the group's own
+// for n = 0, and one made up from it for the others, since WhatsApp shows
+// one name for each JID ("<digits>-<n>@g.us", a JID WhatsApp parses).
+func GroupNameJID(chat string, n int) string {
+	if n == 0 {
+		return chat
+	}
+	user, server, _ := strings.Cut(chat, "@")
+	return strings.ReplaceAll(user, "-", "") + "-" + strconv.Itoa(n) + "@" + server
+}
+
+// IsGroupNameJID reports whether jid is one of chat's GroupNameJIDs.
+func IsGroupNameJID(jid, chat string) bool {
+	if jid == chat {
+		return true
+	}
+	user, server, _ := strings.Cut(chat, "@")
+	rest, ok := strings.CutPrefix(jid, strings.ReplaceAll(user, "-", "")+"-")
+	if !ok {
+		return false
+	}
+	n, ok := strings.CutSuffix(rest, "@"+server)
+	i, err := strconv.Atoi(n)
+	return ok && err == nil && i > 0 && n == strconv.Itoa(i)
 }
 
 // LinkImage is a link preview's big picture: a JPEG, W x H.

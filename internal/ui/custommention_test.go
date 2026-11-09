@@ -139,8 +139,8 @@ func TestCustomMentionSend(t *testing.T) {
 	}
 }
 
-// A message shows one name for "@<group JID>": the other mentions in it stay
-// as typed, and their people are still notified.
+// A message shows one name for each group JID: the first name gets the
+// group's, the others JIDs made up from it, and everyone of them is notified.
 func TestCustomMentionTwoInOneMessage(t *testing.T) {
 	st := customTest(t)
 	others, _ := membersOf(t, st.u, "work")
@@ -150,7 +150,9 @@ func TestCustomMentionTwoInOneMessage(t *testing.T) {
 		{name: "admin", jid: mentionAdminID},
 	}
 	d := st.u.draftWith("@Tim frontend @admin", refs, "work")
-	if d.Text != "@work @admin" || d.MentionChat != "Tim frontend" || d.MentionAdmins {
+	second := "@" + model.GroupNameJID("work", 1)
+	if d.Text != "@work "+second || d.MentionChat != "Tim frontend" || d.MentionAdmins ||
+		!slices.Equal(d.GroupNames, []string{"admin"}) {
 		t.Fatalf("draft %+v", d)
 	}
 	if !slices.Contains(d.Mentions, others[0]) {
@@ -164,8 +166,21 @@ func TestCustomMentionTwoInOneMessage(t *testing.T) {
 	}
 	// @all goes its own way, beside a name.
 	d = st.u.draftWith("@Tim frontend @all", append(refs[:1:1], mentionRef{name: "all", jid: mentionAllID}), "work")
-	if d.Text != "@work @all" || !d.MentionAll || d.MentionChat != "Tim frontend" {
+	if d.Text != "@work @all" || !d.MentionAll || d.MentionChat != "Tim frontend" || len(d.GroupNames) != 0 {
 		t.Fatalf("with @all: %+v", d)
+	}
+	// Two custom mentions both show their names, and notify their people.
+	d = st.u.draftWith("@Tim frontend and @Tim", refs[:2], "work")
+	if d.Text != "@work and "+second || d.MentionChat != "Tim frontend" || !slices.Equal(d.GroupNames, []string{"Tim"}) {
+		t.Fatalf("two: %+v", d)
+	}
+	if !slices.Contains(d.Mentions, others[0]) || !slices.Contains(d.Mentions, others[1]) {
+		t.Fatalf("two: mentions %v", d.Mentions)
+	}
+	m := st.u.backend.Send("work", d)
+	if m == nil || !strings.Contains(m.Text, string(model.MentionGroup)+"@Tim frontend") ||
+		!strings.Contains(m.Text, string(model.MentionGroup)+"@Tim⁩") {
+		t.Fatalf("sent %+v", m)
 	}
 }
 

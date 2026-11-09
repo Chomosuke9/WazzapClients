@@ -400,6 +400,14 @@ func (b *Backend) showMentions(chatID string, d model.Draft) string {
 	if d.MentionAll {
 		txt = strings.ReplaceAll(txt, "@all", "⁨"+string(model.MentionNotifies)+"@all⁩")
 	}
+	// Before the chat's own: demo IDs have no server, so "@work" starts "@work-1@".
+	for i, name := range d.GroupNames {
+		mark := model.MentionGroup
+		if name == "admin" {
+			mark = model.MentionAdmins
+		}
+		txt = strings.ReplaceAll(txt, "@"+model.GroupNameJID(chatID, i+1), "⁨"+string(mark)+"@"+name+"⁩")
+	}
 	if d.MentionAdmins {
 		txt = strings.ReplaceAll(txt, "@"+chatID, "⁨"+string(model.MentionAdmins)+"@admin⁩")
 	}

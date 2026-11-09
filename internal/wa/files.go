@@ -219,7 +219,7 @@ func (b *Backend) downloadFile(m *model.Message, path string) bool {
 // its mentions and the message it replies to, which it gives m. It
 // returns nil when there is nothing to add.
 func (b *Backend) draftContext(chatID string, d model.Draft, m *model.Message) *waE2E.ContextInfo {
-	if d.Reply == nil && len(d.Mentions) == 0 && !d.MentionAll && !d.MentionAdmins && d.MentionChat == "" {
+	if d.Reply == nil && len(d.Mentions) == 0 && !d.MentionAll && !d.MentionAdmins && d.MentionChat == "" && len(d.GroupNames) == 0 {
 		return nil
 	}
 	ci := &waE2E.ContextInfo{MentionedJID: d.Mentions}
@@ -236,6 +236,11 @@ func (b *Backend) draftContext(chatID string, d model.Draft, m *model.Message) *
 		// Like @admin, under a name of its own. MentionedJID says whom it
 		// notifies: the people of a custom mention, or for a snippet no one.
 		ci.GroupMentions = append(ci.GroupMentions, &waE2E.GroupMention{GroupJID: proto.String(chatID), GroupSubject: proto.String(d.MentionChat)})
+	}
+	for i, name := range d.GroupNames {
+		// More of them, each under a JID of its own (see model.GroupNameJID).
+		ci.GroupMentions = append(ci.GroupMentions, &waE2E.GroupMention{
+			GroupJID: proto.String(model.GroupNameJID(chatID, i+1)), GroupSubject: proto.String(name)})
 	}
 	if r := d.Reply; r != nil {
 		m.Quote = b.quote(chatID, r, ci)

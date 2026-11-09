@@ -254,8 +254,9 @@ Gotchas already found in the pinned version (v0.10.x):
 - `@admin` and custom mentions are the group mentioning itself: the text holds
   `@<group JID>`, a `GroupMention` in `ContextInfo` gives that its name, `MentionedJID` says
   who's notified, and the message goes in a `GroupMentionedMessage`. All of a message's
-  `@<group JID>` show the same name, so it can have one: `draftWith` leaves any other
-  group name as plain text and still notifies its people.
+  `@<group JID>` show the same name (WhatsApp Web maps names by JID), so further names
+  go under JIDs made up from the group's, `<digits>-<n>@g.us` (`model.GroupNameJID`,
+  `Draft.GroupNames`), which WhatsApp parses and shows like any group mention.
 - hypermeow doesn't parse a group's `<general_chat/>` (a community's General chat).
   `markGeneralChats` (`internal/wa/communities.go`) asks for the joined groups again
   through `DangerousInternals().SendGroupIQ` on connect and reads it from the raw nodes.
