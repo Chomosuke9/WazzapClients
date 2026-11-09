@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"cmp"
+	"fmt"
 	"image"
 	"image/png"
 	"os"
@@ -68,6 +69,9 @@ type Options struct {
 	// KlipyKey is the build's KLIPY app key for GIF search (gifs.go), or
 	// "" when users must enter their own.
 	KlipyKey string
+	// StallLog is the file that gets what held the UI goroutine whenever
+	// something does for seconds (stall.go), or "" for none.
+	StallLog string
 }
 
 // Run runs the app until it quits. It opens a window and, while a tray
@@ -137,10 +141,13 @@ func Run(b model.Backend, o Options) error {
 	h.startAuto()
 	h.applyRemote()
 	defer h.stopRemote()
+	stall := newStallWatch(o.StallLog)
 	for {
 		select {
 		case e := <-h.events:
+			stall.begin(fmt.Sprintf("window event %T", e))
 			closed, err := h.windowEvent(e)
+			stall.end()
 			h.ack <- struct{}{}
 			if closed {
 				h.closeWindow()
@@ -152,20 +159,33 @@ func Run(b model.Backend, o Options) error {
 				}
 			}
 		case <-h.wake:
+			stall.begin("backend events")
 			h.poll(true)
 			h.pollBackground()
+			stall.end()
 		case r := <-h.reqs:
-			if h.handle(r) {
+			stall.begin(fmt.Sprintf("request %d", r.kind))
+			quit := h.handle(r)
+			stall.end()
+			if quit {
 				return nil
 			}
 		case f := <-h.remoteCalls:
+			stall.begin("smartwatch request")
 			f()
+			stall.end()
 		case <-h.notesDue:
+			stall.begin("notifications")
 			h.flushNotes()
+			stall.end()
 		case opened := <-h.bgOpen:
+			stall.begin("background account opened")
 			h.bgOpened(opened)
+			stall.end()
 		case <-h.bgDue:
+			stall.begin("background accounts' tick")
 			h.bgTick()
+			stall.end()
 		}
 	}
 }

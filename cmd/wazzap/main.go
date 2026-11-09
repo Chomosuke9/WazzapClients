@@ -106,6 +106,7 @@ func main() {
 		// Shared by the demo, which has no data of its own worth keeping.
 		EmojiDir:     filepath.Join(*dataDir, "emoji"),
 		WallpaperDir: filepath.Join(*dataDir, "wallpapers"),
+		StallLog:     filepath.Join(*dataDir, "stalls.log"),
 		Accounts:     list,
 		Open:         open,
 		Version:      version,
