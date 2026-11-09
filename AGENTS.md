@@ -407,14 +407,19 @@ cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for prot
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
 cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory;
                    -scroll scrolls instead and prints frame times and the frame rate
-cmd/winres/        draws the app icon (icon.App) into the .exe's resources and installer/wazzap.ico;
-                   run `go generate ./cmd/wazzap` after changing the icon, and commit both
+cmd/winres/        draws the app icon (icon.App) into the .exe's resources, installer/wazzap.ico
+                   and installer/linux/icons; run `go generate ./cmd/wazzap` after changing the
+                   icon, and commit them all
 cmd/signrelease/   signs a release's SHA256SUMS with the update key (CI), or makes a new key
 cmd/mkpatch/       makes a release's update patches (bsdiff) from older releases' executables
                    (CI); a module of its own, so the app doesn't link its bsdiff
 cmd/notices/       writes THIRD_PARTY_NOTICES.md from the licenses of what cmd/wazzap links
                    and bundles; CI runs it with -check
-installer/         the Windows installer (Inno Setup), per user in %LocalAppData%\Programs
+installer/         the Windows installer (Inno Setup), per user in %LocalAppData%\Programs;
+                   installer/linux: the Linux tarball's install.sh, uninstall.sh and .desktop
+                   file, per user in ~/.local/share/WazzapClients (packaged in CI). The
+                   executable's name, wazzapclients, is the window's app ID (Gio's app.ID),
+                   which the .desktop file's name and StartupWMClass match
 internal/model/    Chat/Message/Event types and the Backend interface the UI talks to
 internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, communities,
                    settings), conversation and composer (an album's pictures as one grid in

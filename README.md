@@ -250,6 +250,15 @@ Prebuilt packages for **Windows** (amd64) and **Linux** (amd64) are on the
 
 - `WazzapClients-Setup.exe` installs the app for your user only. It doesn't need admin rights.
 - `WazzapClients-windows-amd64.exe` is the same app without an installer.
+- `WazzapClients-linux-amd64.tar.gz` installs the app for your user only, with a menu entry and icon, no root needed:
+
+  ```sh
+  tar xf WazzapClients-linux-amd64.tar.gz
+  ./WazzapClients/install.sh
+  ```
+
+  `~/.local/share/WazzapClients/uninstall.sh` removes it again.
+- `WazzapClients-linux-amd64` is the Linux app on its own.
 
 The app updates itself in the background and installs the new release when it restarts. To turn that off or update now, use **Settings > Help**.
 See [docs/releasing.md](docs/releasing.md) for how releases are made and signed.

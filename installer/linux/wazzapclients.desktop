@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=WazzapClients
+GenericName=WhatsApp client
+Comment=A lightweight WhatsApp desktop client
+Exec="@EXEC@"
+TryExec=@EXEC@
+Icon=wazzapclients
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=WhatsApp;chat;messages;
+StartupWMClass=wazzapclients

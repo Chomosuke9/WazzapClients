@@ -12,7 +12,8 @@ Versi Go mengikuti `go.mod`. Kedua target menerapkan patch go-text
 | --- | --- |
 | `WazzapClients-Setup.exe` | Installer Windows (Inno Setup, `installer/wazzap.iss`) |
 | `WazzapClients-windows-amd64.exe` | Aplikasi Windows portable, tanpa jendela console; juga file yang diunduh oleh tombol update |
-| `WazzapClients-linux-amd64` | Executable Linux |
+| `WazzapClients-linux-amd64.tar.gz` | Paket Linux: executable dengan `install.sh` dan `uninstall.sh` (`installer/linux`) |
+| `WazzapClients-linux-amd64` | Executable Linux; juga file yang diunduh oleh tombol update |
 | `SHA256SUMS`, `SHA256SUMS.sig` | Checksum semua file di atas dan patch update rilis ini, dan tanda tangan ed25519-nya (hanya di release) |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md` | Lisensi aplikasi (MPL-2.0) dan lisensi semua software pihak ketiga di dalamnya (hanya di release) |
 
@@ -43,6 +44,37 @@ Untuk membangunnya secara lokal, pasang [Inno Setup 6](https://jrsoftware.org/is
 build exe ke `bin/dist/WazzapClients-windows-amd64.exe`, lalu jalankan
 `iscc /DAppVersion=0.10.0 installer\wazzap.iss`.
 
+## Paket Linux
+
+`WazzapClients-linux-amd64.tar.gz` berisi folder `WazzapClients/`: executable
+`wazzapclients`, `install.sh`, `uninstall.sh`, file `.desktop`, ikon PNG, `LICENSE`, dan
+`THIRD_PARTY_NOTICES.md`. Seperti installer Windows, `install.sh` memasang aplikasi
+untuk user yang sedang login saja, tanpa root:
+
+```sh
+tar xf WazzapClients-linux-amd64.tar.gz
+./WazzapClients/install.sh
+```
+
+| Path | Isi |
+| --- | --- |
+| `~/.local/share/WazzapClients/` | `wazzapclients`, `uninstall.sh`, lisensi |
+| `~/.local/bin/wazzapclients` | Symlink ke executable |
+| `~/.local/share/applications/wazzapclients.desktop` | Entri menu aplikasi |
+| `~/.local/share/icons/hicolor/<ukuran>/apps/wazzapclients.png` | Ikon (32 sampai 256 px) |
+
+Folder aplikasi milik user, jadi update dari dalam aplikasi bisa menukar executable
+di sana. Updater tetap mengunduh `WazzapClients-linux-amd64` (atau patch-nya),
+bukan tarball; `os.Executable` di Linux memberi path asli, bukan symlink. Nama
+executable adalah app ID jendela di Wayland dan X11 (`app.ID` Gio), yang dicocokkan
+oleh nama file `.desktop` dan `StartupWMClass`, jadi jangan diubah. Update hanya
+mengganti executable: perubahan pada file `.desktop` atau ikon baru terpasang
+saat user menjalankan `install.sh` versi baru (aman dijalankan ulang; chat tetap).
+
+`~/.local/share/WazzapClients/uninstall.sh` menutup aplikasi, menghapus semua file di
+atas, lalu menanyakan apakah chat dan sesi WhatsApp (`~/.config/WazzapClients`) ikut
+dihapus. Defaultnya tidak. Ikon dibuat oleh `go generate ./cmd/wazzap` (`cmd/winres`).
+
 ## Update dari dalam aplikasi
 
 **Settings > Help** menampilkan versi aplikasi dan tombol **Check for updates**.
@@ -63,8 +95,9 @@ hanya di tray), aplikasi me-restart sendiri di background. Cek otomatis yang gag
   dan prerelease seperti `v1.2.3-rc1`, adalah development build.
 - Yang dicek adalah *latest release* GitHub, jadi draft dan prerelease tidak
   pernah ditawarkan.
-- Update butuh folder exe yang bisa ditulis. Installer memasang ke folder seperti
-  itu; untuk versi portable, letakkan exe di folder milik user.
+- Update butuh folder exe yang bisa ditulis. Installer Windows dan `install.sh`
+  memasang ke folder seperti itu; untuk versi portable, letakkan exe di folder milik
+  user.
 
 ### Patch update
 

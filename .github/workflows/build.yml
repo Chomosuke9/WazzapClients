@@ -193,6 +193,34 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # The executable with install.sh, which installs it for one user
+      # (installer/linux). Updates still download the executable alone.
+      - name: Package Linux tarball
+        if: runner.os == 'Linux'
+        run: |
+          pkg="$RUNNER_TEMP/pkg/WazzapClients"
+          mkdir -p "$pkg/icons"
+
+          cp bin/dist/WazzapClients-linux-amd64 "$pkg/wazzapclients"
+          cp installer/linux/install.sh installer/linux/uninstall.sh installer/linux/wazzapclients.desktop "$pkg/"
+          cp installer/linux/icons/*.png "$pkg/icons/"
+          cp LICENSE THIRD_PARTY_NOTICES.md "$pkg/"
+          chmod 755 "$pkg/wazzapclients" "$pkg/install.sh" "$pkg/uninstall.sh"
+
+          tar -C "$RUNNER_TEMP/pkg" --owner=0 --group=0 --numeric-owner \
+            -czf bin/dist/WazzapClients-linux-amd64.tar.gz WazzapClients
+
+          tar -tvzf bin/dist/WazzapClients-linux-amd64.tar.gz
+
+      - name: Upload Linux tarball
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: bin/dist/WazzapClients-linux-amd64.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Draft release
 
@@ -236,6 +264,12 @@ jobs:
           name: WazzapClients-linux-amd64
           path: dist
 
+      - name: Download Linux tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: WazzapClients-linux-amd64.tar.gz
+          path: dist
+
       - name: Show downloaded files
         run: |
           ls -lah dist
@@ -274,6 +308,7 @@ jobs:
             WazzapClients-windows-amd64.exe \
             WazzapClients-Setup.exe \
             WazzapClients-linux-amd64 \
+            WazzapClients-linux-amd64.tar.gz \
             *.bsdiff \
             > SHA256SUMS
 
@@ -359,6 +394,7 @@ jobs:
               dist/WazzapClients-windows-amd64.exe \
               dist/WazzapClients-Setup.exe \
               dist/WazzapClients-linux-amd64 \
+              dist/WazzapClients-linux-amd64.tar.gz \
               dist/SHA256SUMS \
               dist/SHA256SUMS.sig \
               LICENSE \
@@ -371,6 +407,7 @@ jobs:
               dist/WazzapClients-windows-amd64.exe \
               dist/WazzapClients-Setup.exe \
               dist/WazzapClients-linux-amd64 \
+              dist/WazzapClients-linux-amd64.tar.gz \
               dist/SHA256SUMS \
               dist/SHA256SUMS.sig \
               LICENSE \

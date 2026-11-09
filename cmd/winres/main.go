@@ -1,7 +1,8 @@
 // Command winres writes the Windows executable's resources: the icon that
 // Explorer, Start and the taskbar show (the running app draws its own, the
 // same icon.App) and the name in its version info. It also writes the
-// installer's icon. cmd/wazzap runs it with go generate:
+// installer's icon, and the PNG icons the Linux package installs
+// (installer/linux). cmd/wazzap runs it with go generate:
 //
 //	go generate ./cmd/wazzap
 //
@@ -10,9 +11,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"image"
+	"image/png"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/tc-hib/winres"
 	"github.com/tc-hib/winres/version"
@@ -23,6 +27,7 @@ import (
 func main() {
 	syso := flag.String("syso", "rsrc_windows_amd64.syso", "the object file go build links in")
 	ico := flag.String("ico", "../../installer/wazzap.ico", "the installer's icon")
+	linux := flag.String("linux", "../../installer/linux/icons", "the folder of the Linux package's icons")
 	flag.Parse()
 
 	// Every size Windows asks for, each drawn at its size rather than
@@ -55,6 +60,13 @@ func main() {
 
 	write(*syso, func(f *os.File) error { return rs.WriteObject(f, winres.ArchAMD64) })
 	write(*ico, func(f *os.File) error { return ic.SaveICO(f) })
+
+	// The hicolor theme's sizes that install.sh installs, also each
+	// drawn at its size.
+	for _, px := range []int{32, 48, 64, 128, 256} {
+		name := filepath.Join(*linux, fmt.Sprintf("wazzapclients-%d.png", px))
+		write(name, func(f *os.File) error { return png.Encode(f, icon.App(px)) })
+	}
 }
 
 func write(name string, fn func(*os.File) error) {
