@@ -198,9 +198,11 @@ type wallLook struct {
 	focus      f32.Point
 }
 
-// wallOf returns the wallpaper of a look on palette p (the scheme's); app
-// is the app's palette, whose wallpaper is the default one.
-func wallOf(p, app *Palette, dark bool, l chatLook) wallLook {
+// wallOf returns the wallpaper of a look on palette p (the scheme's). The
+// default one is the app's palette's, and under a palette (scheme.go) so is
+// a theme's, whose colors are WhatsApp's.
+func (u *UI) wallOf(p *Palette, l chatLook) wallLook {
+	app, dark := u.appPal, u.dark
 	def := wallLook{bg: p.ChatBg, doodle: p.Doodle, plain: p.Plain}
 	kind, arg, _ := strings.Cut(l.wall, ":")
 	switch kind {
@@ -212,6 +214,9 @@ func wallOf(p, app *Palette, dark bool, l chatLook) wallLook {
 		bg := app.Panel // white, or the dark theme's panel
 		return wallLook{bg: bg, doodle: bg, plain: true}
 	case "theme":
+		if schemeOf(u.scheme) != nil {
+			return wallLook{bg: app.ChatBg, doodle: app.Doodle}
+		}
 		for _, t := range chatThemes {
 			if t.base == arg && t.kind == vibrant {
 				c := t.colors(dark)
@@ -263,6 +268,37 @@ func themed(p *Palette, dark bool, t chatTheme) *Palette {
 	return &q
 }
 
+// themeHues are the hues a palette (scheme.go) gives a chat with one of
+// WhatsApp's themes, by the theme: the first its flavor has. The grey
+// themes, and one without a hue here, keep the palette's accent.
+var themeHues = map[string][]string{
+	"WhatsApp-Green": {"green"}, "Lime": {"green"}, "Charcoal-Green": {"green", "teal"},
+	"Emerald": {"teal", "green"}, "Merino-Teal": {"teal", "cyan", "green"},
+	"Sky-Blue": {"cyan", "sapphire", "blue"}, "Dark-Cerulean": {"sapphire", "blue"},
+	"Royal-Blue": {"blue"}, "Default-Blue": {"blue"},
+	"Pearl-Indigo": {"lavender", "purple", "blue"}, "Tyrian-Purple": {"purple", "pink"},
+	"Pink": {"pink", "purple", "red"}, "Persian-Plum": {"maroon", "red"}, "Red": {"red"},
+	"Sunrise-Orange": {"orange", "red"}, "Sunset-Orange": {"flamingo", "orange"}, "Brown": {"orange", "sand"},
+	"Cream": {"rosewater", "sand", "yellow"}, "Warm-Yellow": {"yellow", "gold"}, "Lemon": {"gold", "yellow"},
+}
+
+// themed returns the app's palette with a chat theme's colors: WhatsApp's,
+// or under a palette that palette with the theme's hue as its accent, so
+// the bubbles stay the palette's.
+func (u *UI) themed(t chatTheme) *Palette {
+	s := schemeOf(u.scheme)
+	if s == nil || t.id == "" {
+		return themed(u.pal, u.dark, t)
+	}
+	f := s.flavor(u.dark)
+	for _, id := range themeHues[t.base] {
+		if _, ok := f.hue(id); ok {
+			return appPalette(u.dark, u.scheme, "", id)
+		}
+	}
+	return u.pal
+}
+
 // lookPal is the palette of the last look drawn, kept so a frame doesn't
 // copy the palette again.
 type lookPal struct {
@@ -276,13 +312,11 @@ func (u *UI) lookPalette(l chatLook) *Palette {
 	if c := u.lookPal; c.pal != nil && c.look == l && c.base == u.pal {
 		return c.pal
 	}
-	p := themed(u.pal, u.dark, chatThemes[l.scheme])
+	p := u.themed(chatThemes[l.scheme])
 	if l.wall != "" {
-		w := wallOf(p, u.appPal, u.dark, l)
-		if p == u.pal {
-			q := *p
-			p = &q
-		}
+		w := u.wallOf(p, l)
+		q := *p // p may be the app's palette, or a palette's kept one
+		p = &q
 		p.ChatBg, p.Doodle, p.Plain, p.WallPhoto, p.WallFocus = w.bg, w.doodle, w.plain, w.photo, w.focus
 	}
 	u.lookPal = lookPal{l, u.pal, p}
@@ -590,8 +624,7 @@ func (u *UI) themeAction(gtx C, key, label string, art func(gtx C, r image.Recta
 // (WAWebChatThemeCanvas): its wallpaper, with a bubble of theirs and one
 // of yours at the bottom, framed in the accent when it's the chat's.
 func (u *UI) themeSwatch(gtx C, id string, i int, on bool) D {
-	p := u.pal
-	tp := themed(p, u.dark, chatThemes[i])
+	tp := u.themed(chatThemes[i])
 	c := u.btn("theme:" + itoa(i))
 	if c.Clicked(gtx) {
 		u.setChatTheme(id, i)
@@ -669,7 +702,11 @@ func (u *UI) bubbleRows(gtx C, id string, w int) []layout.Widget {
 	cols := max(2, (w+gap)/(cell.X+gap)&^1)
 	return grid(len(set), cell, gap, cols*(cell.X+gap)-gap, func(gtx C, j int) {
 		i := set[j]
-		if _, clicked := u.circle(gtx, "bubble:"+itoa(i), rgb(chatThemes[i].colors(u.dark).out), u.pal.Dialog, i == cur); clicked {
+		col := rgb(chatThemes[i].colors(u.dark).out)
+		if schemeOf(u.scheme) != nil {
+			col = u.themed(chatThemes[i]).BubbleOut
+		}
+		if _, clicked := u.circle(gtx, "bubble:"+itoa(i), col, u.pal.Dialog, i == cur); clicked {
 			if i == schemeIndex("WhatsApp-Green@Tonal") {
 				i = 0
 			}
@@ -739,7 +776,7 @@ func (u *UI) wallRows(gtx C, id string, w int) []layout.Widget {
 				u.setWall(id, wall)
 			}
 		}
-		lp := wallOf(u.pal, u.appPal, u.dark, chatLook{wall: wall})
+		lp := u.wallOf(u.pal, chatLook{wall: wall})
 		clickable(gtx, c, func(gtx C) D {
 			sz := gtx.Constraints.Max
 			u.swatchFrame(gtx, sz, wall == cur, u.hover(gtx, c), lp.bg)

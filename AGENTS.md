@@ -553,7 +553,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    instead of WhatsApp's colors,
                    a flavor each for the light and the dark theme, the Color grid then offering the
                    flavor's hues; `schemePalette` works a whole Palette out of a flavor's ~20 colors)
-                   in scheme.go, their colors in schemes.go; the
+                   in scheme.go, their colors in schemes.go. Under a palette a chat's theme is that
+                   palette with the theme's hue as the accent (`UI.themed`, `themeHues`), never
+                   WhatsApp's colors; the
                    info panel's own pages (starred messages, group permissions, member
                    changes) in infopages.go; editing a group's name and description in
                    place and its picture's menu (view, change, remove) in groupedit.go;

@@ -77,3 +77,34 @@ func TestSchemePref(t *testing.T) {
 		t.Error("WhatsApp's palette didn't come back")
 	}
 }
+
+// TestSchemeChatTheme gives a chat one of WhatsApp's themes under a palette:
+// it takes the palette's hue for that theme, not WhatsApp's colors.
+func TestSchemeChatTheme(t *testing.T) {
+	u := New(mock.New())
+	u.Start(func() {})
+	u.setTheme("dark")
+	indigo := schemeIndex("Pearl-Indigo")
+	u.setChatTheme("rina", indigo)
+	if p := u.lookPalette(u.lookOf("rina")); p.BubbleOut != rgb(chatThemes[indigo].dark.out) {
+		t.Errorf("WhatsApp's Pearl Indigo bubble = %v", p.BubbleOut)
+	}
+	u.setScheme("ayu")
+	u.setSchemeAccent(schemeOf("ayu"), "red")
+	app := u.pal
+	p := u.lookPalette(u.lookOf("rina"))
+	if p.Green != rgb(0xd2a6ff) { // Ayu has no lavender: its purple
+		t.Errorf("Pearl Indigo under Ayu accents with %v", p.Green)
+	}
+	if p.BubbleIn != app.BubbleIn || p.ChatBg != app.ChatBg || p.Doodle != app.Doodle || p.Text != app.Text {
+		t.Errorf("the chat left Ayu: bubble %v, wallpaper %v", p.BubbleIn, p.ChatBg)
+	}
+	if u.pal != app || app.Green != rgb(0xf07178) {
+		t.Errorf("the app's accent changed to %v", u.pal.Green)
+	}
+	// A grey theme keeps the palette's accent.
+	u.setChatTheme("rina", schemeIndex("Dune-Mono"))
+	if p := u.lookPalette(u.lookOf("rina")); p.BubbleOut != app.BubbleOut {
+		t.Errorf("Dune Mono under Ayu: bubble %v", p.BubbleOut)
+	}
+}
