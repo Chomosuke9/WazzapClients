@@ -3,13 +3,16 @@
 // instance per data directory, starting at login, the window's icon, and
 // opening WhatsApp's links (whatsapp://…) in the app.
 //
-// Only Windows has all of it. Elsewhere TrayStart fails, Lock always
-// succeeds, and closing the window quits as before.
+// Windows and Linux have it. On Linux the tray icon is a StatusNotifierItem,
+// which takes a panel that shows them (KDE's, waybar, GNOME with the
+// AppIndicator extension): without one TrayStart fails and closing the
+// window quits. Elsewhere TrayStart fails and Lock always succeeds.
 package desktop
 
 import (
 	"errors"
 	"image"
+	"time"
 )
 
 // ErrUnsupported reports a system without a tray icon.
@@ -29,4 +32,12 @@ type Tray struct {
 	// Link is called, on the tray's goroutine, with the link another
 	// instance was started to open (see Lock).
 	Link func(link string)
+	// Activation is called, before Open or Link, with the token that
+	// lets the window come to the front, when the click or the other
+	// instance's launch brought one (Wayland's xdg-activation).
+	Activation func(token string)
+	// Wait is how long TrayStart waits for the system's tray to come up
+	// before it gives up (Linux, where an app started at login can be
+	// there before the panel).
+	Wait time.Duration
 }

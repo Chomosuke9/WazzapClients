@@ -109,25 +109,37 @@ func Run(b model.Backend, o Options) error {
 		cmd = append([]string{exe}, o.Relaunch...)
 	}
 	if err := notify.Init(notify.Options{
-		AppID:    appID,
-		Name:     appName,
-		Icon:     encodePNG(appIcon(256)),
-		Dir:      o.NotifyDir,
-		Command:  cmd,
-		Activate: func(a notify.Activation) { h.request(request{kind: reqActivate, act: a}) },
+		AppID:   appID,
+		Name:    appName,
+		Icon:    encodePNG(appIcon(256)),
+		Dir:     o.NotifyDir,
+		Command: cmd,
+		Activate: func(a notify.Activation) {
+			if a.Token != "" {
+				app.SetActivationToken(a.Token)
+			}
+			h.request(request{kind: reqActivate, act: a})
+		},
 	}); err == nil {
 		h.notifyOK = true
 		h.notes.enabled = true
 		defer notify.Close()
 	}
 	setTooltip = desktop.SetTooltip
-	if err := desktop.TrayStart(desktop.Tray{
+	tray := desktop.Tray{
 		Name: appName,
 		Icon: icon.Tray,
 		Open: func() { h.request(request{kind: reqShow}) },
 		Quit: func() { h.request(request{kind: reqQuit}) },
 		Link: func(link string) { h.request(request{kind: reqLink, link: link}) },
-	}); err == nil {
+		// For the window's next raise (show), which the request after it asks for.
+		Activation: app.SetActivationToken,
+	}
+	if o.Hidden {
+		// Started at login, perhaps before the panel that shows the icon.
+		tray.Wait = 5 * time.Second
+	}
+	if err := desktop.TrayStart(tray); err == nil {
 		h.tray = true
 		defer desktop.TrayStop()
 	}

@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package desktop
 
@@ -42,6 +42,9 @@ func LinksRegistered() bool { return false }
 
 // LinksHandled reports false.
 func LinksHandled() bool { return false }
+
+// ClaimLinks reports false.
+func ClaimLinks() bool { return false }
 
 // OpenLinkSettings does nothing.
 func OpenLinkSettings() {}

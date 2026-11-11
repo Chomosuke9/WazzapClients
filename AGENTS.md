@@ -361,6 +361,20 @@ Gotchas already found in the pinned version (v0.10.x):
 - Files dropped on the window come through an OLE drop target (`desktop.EnableDrop`).
   OLE wants it registered on the window's own thread, so the window is subclassed and
   the registration posted to it; the callbacks run on that thread and only queue.
+  On Linux Gio's patch takes them (`app.SetDropHandler`): Wayland's data device, whose
+  offer is finished on the window's thread after its URIs are read off it, and X11's
+  XDND (`os_x11_dnd.go`).
+- A Wayland window can't raise itself: the compositor wants the activation token of
+  the user's action (xdg-activation). A notification click brings one
+  (`ActivationToken`), KDE's tray a `ProvideXdgActivationToken`, and a second launch
+  its `XDG_ACTIVATION_TOKEN`, sent over the instance's socket; each goes to
+  `app.SetActivationToken` (Gio's patch) before `host.show` raises. Without one the
+  window asks for a token itself, which Hyprland takes and others may only show as
+  a call for attention.
+- Linux has no tray without a StatusNotifierWatcher (GNOME without the AppIndicator
+  extension): `TrayStart` fails, and closing the window quits. Started at login the
+  app can be there before the panel, so `Tray.Wait` waits for it. A window can't be
+  kept out of screenshots there (`BlockCapture`), so that setting stays Windows'.
 - The server refuses native flow button answers (`InteractiveResponseMessage`) in groups
   with error 479. `PressButton` falls back to the older answer (`TemplateButtonReplyMessage`
   or `ListResponseMessage`), which still carries the button's or row's ID that bots read,
@@ -415,7 +429,7 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 ```
 cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
-cmd/memprobe/      Windows memory benchmark: clicks through stored or demo chats, prints memory;
+cmd/memprobe/      memory benchmark (Windows and Linux): clicks through stored or demo chats, prints memory;
                    -scroll scrolls instead and prints frame times and the frame rate
 cmd/winres/        draws the app icon (icon.App) into the .exe's resources, installer/wazzap.ico
                    and installer/linux/icons; run `go generate ./cmd/wazzap` after changing the
@@ -643,14 +657,23 @@ internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; osascript on
                    or kdialog), run on its own goroutine
 internal/memtrim/  gives memory back to the OS after 10 s without a frame (see ui.Run)
 internal/notify/   system notifications: WinRT toasts on Windows (replaced per chat, removed
-                   when read, Reply and Mark as read through a COM activator), notify-send
-                   or osascript elsewhere
+                   when read, Reply and Mark as read through a COM activator); on Linux the
+                   desktop's notification server over D-Bus (notify_linux.go: replaced and
+                   removed by the server's number, Mark as read as an action, Reply where the
+                   server has a reply box, as KDE's does); osascript on macOS
 internal/desktop/  tray icon, one instance per data directory, start at login, window icon
-                   (Windows; stubs elsewhere), whatsapp: links (links_windows.go: a ProgID
+                   (Windows and Linux; stubs elsewhere), whatsapp: links (links_windows.go: a ProgID
                    and Capabilities, so Settings > Default apps offers the app; a second
                    launch hands its link to the running one with WM_COPYDATA), and the system's light or dark theme (Settings >
                    Chats > Theme > System default, read again when the window gets focus),
-                   and the names of microphones and speakers (Windows)
+                   and the names of microphones and speakers. On Linux (desktop_linux.go,
+                   tray_linux.go): the tray icon is a StatusNotifierItem with a dbusmenu, over
+                   D-Bus; the instance holds a flock and listens on a socket in
+                   XDG_RUNTIME_DIR; start at login is ~/.config/autostart; links are a hidden
+                   desktop entry made the default of x-scheme-handler/whatsapp (xdg-mime);
+                   idle time comes from the compositor (ext-idle-notify-v1, on a small
+                   Wayland connection of its own, idle_linux.go) or GNOME's or KDE's session;
+                   devices from pactl; dropped files and raising the window from Gio's patch
 internal/update/   updates from GitHub releases (Settings > Help; automatic updates, on by
                    default, check every few hours and install without restarting, ui/update.go):
                    downloads a patch from the running version when the update-patches

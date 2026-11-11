@@ -1,9 +1,10 @@
-//go:build windows
+//go:build windows || linux
 
-// Command memprobe measures the app's memory on Windows. It opens stored
+// Command memprobe measures the app's memory on Windows and Linux. It opens stored
 // chats offline (no network) or demo data, visits every chat and page like
 // a user clicking through, and prints the process memory along the way:
-// the private working set is what Task Manager shows as "Memory".
+// the private working set is what Task Manager shows as "Memory" (on Linux,
+// the resident memory that is the process's own).
 //
 //	go run ./cmd/memprobe -data "$APPDATA/WazzapClients"
 //	go run ./cmd/memprobe -demo -heapprofile heap.pprof
@@ -24,9 +25,7 @@ import (
 	"runtime/pprof"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"gioui.org/app"
 	"gioui.org/op"
@@ -56,26 +55,12 @@ func (o *offline) Poll() []model.Event {
 	return ev
 }
 
-// PROCESS_MEMORY_COUNTERS_EX2
-type memCounters struct {
-	cb, pageFaults                  uint32
-	peakWS, ws                      uintptr
-	_, _, _, _                      uintptr
-	pagefile, peakPagefile, private uintptr
-	privateWS, sharedCommit         uint64
-}
-
-var getMemInfo = syscall.NewLazyDLL("kernel32.dll").NewProc("K32GetProcessMemoryInfo")
-
 func report(stage string) {
-	var c memCounters
-	c.cb = uint32(unsafe.Sizeof(c))
-	h, _ := syscall.GetCurrentProcess()
-	getMemInfo.Call(uintptr(h), uintptr(unsafe.Pointer(&c)), uintptr(c.cb))
+	private, ws, commit := memory()
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	fmt.Printf("%-12s private WS %4d MB | WS %4d MB | commit %4d MB | Go heap in use %3d MB, from OS %3d MB\n",
-		stage, c.privateWS>>20, c.ws>>20, c.private>>20, ms.HeapInuse>>20, (ms.HeapSys-ms.HeapReleased)>>20)
+		stage, private>>20, ws>>20, commit>>20, ms.HeapInuse>>20, (ms.HeapSys-ms.HeapReleased)>>20)
 }
 
 func main() {
@@ -355,18 +340,6 @@ func (t *frameTimes) report(pass int) {
 			float64(med)/1e6, float64(gaps[len(gaps)*95/100])/1e6, float64(gaps[len(gaps)-1])/1e6, late)
 	}
 	*t = frameTimes{}
-}
-
-var getProcessTimes = syscall.NewLazyDLL("kernel32.dll").NewProc("GetProcessTimes")
-
-// cpuTime returns the CPU time the process has used, user and kernel.
-func cpuTime() time.Duration {
-	var created, exited, kernel, user syscall.Filetime
-	h, _ := syscall.GetCurrentProcess()
-	getProcessTimes.Call(uintptr(h), uintptr(unsafe.Pointer(&created)), uintptr(unsafe.Pointer(&exited)),
-		uintptr(unsafe.Pointer(&kernel)), uintptr(unsafe.Pointer(&user)))
-	ticks := func(f syscall.Filetime) int64 { return int64(f.HighDateTime)<<32 | int64(f.LowDateTime) }
-	return time.Duration(ticks(kernel)+ticks(user)) * 100
 }
 
 func gcCount() uint32 {

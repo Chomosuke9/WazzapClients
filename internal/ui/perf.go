@@ -410,7 +410,13 @@ func (u *UI) memoryStats(gtx C) D {
 		rows = append(rows, layout.Rigid(func(gtx C) D { return u.layoutStat(gtx, title, value) }))
 	}
 	if s.private > 0 {
-		stat("In use (Task Manager)", mb(s.private))
+		// Linux has no one number every tool shows: this is the
+		// process's own resident memory (see memtrim).
+		name := "In use (Task Manager)"
+		if runtime.GOOS != "windows" {
+			name = "In use (private memory)"
+		}
+		stat(name, mb(s.private))
 	}
 	stat("Go heap in use", mb(s.heap))
 	stat("Go heap held from the system", mb(s.fromOS))

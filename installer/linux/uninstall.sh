@@ -18,6 +18,10 @@ if [ -L "$bin/wazzapclients" ] && [ "$(readlink "$bin/wazzapclients")" = "$app/w
 	rm -f "$bin/wazzapclients"
 fi
 rm -f "$data/applications/wazzapclients.desktop"
+# What the app's settings added: opening WhatsApp links (the default apps
+# list forgets an entry that's gone) and starting at login.
+rm -f "$data/applications/wazzapclients-links.desktop"
+rm -f "$config/autostart/wazzapclients.desktop"
 rm -f "$data"/icons/hicolor/*/apps/wazzapclients.png
 
 update-desktop-database "$data/applications" > /dev/null 2>&1 || true

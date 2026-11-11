@@ -32,6 +32,16 @@ What `gio.patch` does (marked `WazzapClients patch`):
   made-up events after the frame (Shift+F10 right-clicks the focused
   element). `MoveFocus` no longer panics on a focus that's gone. `widget`:
   `Clickable.NoFocus` keeps scrims out of Tab's way.
+- Linux desktop integration (`app/`), for `internal/desktop`:
+  `SetDropHandler` hears of files dragged from another program over a
+  window and dropped on it, on Wayland (`os_wayland.go`: the data device's
+  drag offers, which upstream throws away) and X11 (`os_x11_dnd.go`: XDND).
+  `SetActivationToken` and `Perform(system.ActionRaise)` on Wayland bring a
+  window to the front through xdg-activation, which upstream doesn't speak
+  (`wayland_xdg_activation.c` and `.h` are wayland-scanner's output for
+  wayland-protocols' `staging/xdg-activation/xdg-activation-v1.xml`,
+  generated like the files beside them, see `os_wayland.go`'s
+  `go:generate` lines).
 
 What `hypermeow.patch` does (marked `WazzapClients patch`):
 

@@ -1,11 +1,12 @@
 // Package notify shows the system's notifications: toasts in the Windows
-// notification center, notify-send on Linux and Notification Center on
-// macOS.
+// notification center, the desktop's notification server on Linux (over
+// D-Bus) and Notification Center on macOS.
 //
-// On Windows a notification can be replaced, removed once its chat is
-// read, and answered: clicking it, or its Reply and Mark as read buttons,
-// calls Options.Activate. Elsewhere notifications are shown and nothing
-// more.
+// On Windows and Linux a notification can be replaced, removed once its
+// chat is read, and answered: clicking it, or its Reply and Mark as read
+// buttons, calls Options.Activate (on Linux as far as the desktop's
+// notification server goes: only some have a reply box). Elsewhere
+// notifications are shown and nothing more.
 package notify
 
 import (
@@ -50,6 +51,9 @@ type Activation struct {
 	ID     string
 	Action Action
 	Text   string // the reply, for Reply
+	// Token lets the app's window come to the front for this click, where
+	// the system hands one out (Wayland's xdg-activation).
+	Token string
 }
 
 // Options configure Init.

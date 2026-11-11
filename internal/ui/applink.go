@@ -288,6 +288,12 @@ func (u *UI) claimLinks() {
 		u.toast("WhatsApp links already open in " + appName + ".")
 		return
 	}
+	// Linux lets an app choose itself; on Windows only the user can.
+	if desktop.ClaimLinks() {
+		u.linkBar.checked = false
+		u.toast("WhatsApp links now open in " + appName + ".")
+		return
+	}
 	desktop.OpenLinkSettings()
 	u.toast("Under WHATSAPP, choose " + appName + ", then come back.")
 }

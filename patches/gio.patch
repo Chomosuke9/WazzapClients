@@ -1,3 +1,1151 @@
+diff --git a/app/os.go b/app/os.go
+index 6da6d34..769b658 100644
+--- a/app/os.go
++++ b/app/os.go
+@@ -6,6 +6,8 @@ import (
+ 	"errors"
+ 	"image"
+ 	"image/color"
++	"sync/atomic"
++	"time"
+ 
+ 	"gioui.org/io/event"
+ 	"gioui.org/io/key"
+@@ -17,6 +19,52 @@ import (
+ 	"gioui.org/unit"
+ )
+ 
++// WazzapClients patch: files dropped on a window, and the token that lets
++// one come to the front.
++
++// DropHandler hears about files dragged from another program over a
++// window. Its functions run on the window's thread and must not wait for
++// the program's event loop.
++type DropHandler struct {
++	// Over is called when a drag of files comes over the window and when
++	// it leaves or ends.
++	Over func(on bool)
++	// Drop is called with the paths of the files dropped.
++	Drop func(paths []string)
++}
++
++var dropHandler atomic.Pointer[DropHandler]
++
++// SetDropHandler makes h hear about files dragged over every window (on
++// Wayland and X11), or nothing when h is nil.
++func SetDropHandler(h *DropHandler) { dropHandler.Store(h) }
++
++type activation struct {
++	token string
++	at    time.Time
++}
++
++var activationToken atomic.Pointer[activation]
++
++// SetActivationToken gives the next Perform(system.ActionRaise) the
++// token of the user's action that asked for it (a click on a notification
++// or tray icon, another program's launch), which a Wayland compositor
++// wants before it lets a window come to the front (xdg-activation). Without
++// one the window asks for a token itself, which the compositor may only
++// take as a call for attention.
++func SetActivationToken(token string) {
++	activationToken.Store(&activation{token: token, at: time.Now()})
++}
++
++// takeActivationToken returns the token set a moment ago, once.
++func takeActivationToken() string {
++	a := activationToken.Swap(nil)
++	if a == nil || time.Since(a.at) > 30*time.Second {
++		return ""
++	}
++	return a.token
++}
++
+ // errOutOfDate is reported when the GPU surface dimensions or properties no
+ // longer match the window.
+ var errOutOfDate = errors.New("app: GPU surface out of date")
+diff --git a/app/os_unix.go b/app/os_unix.go
+index d8215ac..e67ec27 100644
+--- a/app/os_unix.go
++++ b/app/os_unix.go
+@@ -6,6 +6,8 @@ package app
+ 
+ import (
+ 	"errors"
++	"net/url"
++	"strings"
+ 	"unsafe"
+ 
+ 	"gioui.org/io/pointer"
+@@ -39,6 +41,30 @@ func (w WaylandViewEvent) Valid() bool {
+ 	return w != (WaylandViewEvent{})
+ }
+ 
++// fileURIs returns the paths of the files in a text/uri-list, the form
++// files are dragged between programs in. WazzapClients patch.
++func fileURIs(list string) []string {
++	var paths []string
++	for _, line := range strings.Split(list, "\n") {
++		line = strings.TrimSpace(line)
++		if line == "" || strings.HasPrefix(line, "#") {
++			continue
++		}
++		if u, err := url.Parse(line); err == nil && u.Scheme == "file" && u.Path != "" {
++			paths = append(paths, u.Path)
++		}
++	}
++	return paths
++}
++
++// dragOver tells the drop handler that files are, or are no longer, being
++// dragged over a window. WazzapClients patch.
++func dragOver(on bool) {
++	if h := dropHandler.Load(); h != nil && h.Over != nil {
++		h.Over(on)
++	}
++}
++
+ func osMain() {
+ 	select {}
+ }
+diff --git a/app/os_wayland.c b/app/os_wayland.c
+index 4db5b0b..b258764 100644
+--- a/app/os_wayland.c
++++ b/app/os_wayland.c
+@@ -6,6 +6,7 @@
+ #include "wayland_xdg_shell.h"
+ #include "wayland_xdg_decoration.h"
+ #include "wayland_text_input.h"
++#include "wayland_xdg_activation.h"
+ #include "_cgo_export.h"
+ 
+ const struct wl_registry_listener gio_registry_listener = {
+@@ -120,3 +121,9 @@ const struct wl_data_source_listener gio_data_source_listener = {
+ 	.dnd_finished = gio_onDataSourceDNDFinished,
+ 	.action = gio_onDataSourceAction,
+ };
++
++// WazzapClients patch.
++const struct xdg_activation_token_v1_listener gio_activation_token_listener = {
++	// Cast away const parameter.
++	.done = (void (*)(void *, struct xdg_activation_token_v1 *, const char *))gio_onActivationTokenDone,
++};
+diff --git a/app/os_wayland.go b/app/os_wayland.go
+index 3c893a7..f6e5dca 100644
+--- a/app/os_wayland.go
++++ b/app/os_wayland.go
+@@ -14,6 +14,7 @@ import (
+ 	"os"
+ 	"os/exec"
+ 	"runtime"
++	"slices"
+ 	"strconv"
+ 	"sync"
+ 	"time"
+@@ -59,6 +60,7 @@ import (
+ #include "wayland_text_input.h"
+ #include "wayland_xdg_shell.h"
+ #include "wayland_xdg_decoration.h"
++#include "wayland_xdg_activation.h"
+ 
+ extern const struct wl_registry_listener gio_registry_listener;
+ extern const struct wl_surface_listener gio_surface_listener;
+@@ -76,6 +78,7 @@ extern const struct zwp_text_input_v3_listener gio_zwp_text_input_v3_listener;
+ extern const struct wl_data_device_listener gio_data_device_listener;
+ extern const struct wl_data_offer_listener gio_data_offer_listener;
+ extern const struct wl_data_source_listener gio_data_source_listener;
++extern const struct xdg_activation_token_v1_listener gio_activation_token_listener;
+ */
+ import "C"
+ 
+@@ -88,10 +91,13 @@ type wlDisplay struct {
+ 	shm               *C.struct_wl_shm
+ 	dataDeviceManager *C.struct_wl_data_device_manager
+ 	decor             *C.struct_zxdg_decoration_manager_v1
+-	seat              *wlSeat
+-	xkb               *xkb.Context
+-	outputMap         map[C.uint32_t]*C.struct_wl_output
+-	outputConfig      map[*C.struct_wl_output]*wlOutput
++	// WazzapClients patch: xdg-activation, which lets a window ask to come
++	// to the front.
++	activation   *C.struct_xdg_activation_v1
++	seat         *wlSeat
++	xkb          *xkb.Context
++	outputMap    map[C.uint32_t]*C.struct_wl_output
++	outputConfig map[*C.struct_wl_output]*wlOutput
+ 
+ 	// Notification pipe fds.
+ 	notify struct {
+@@ -132,6 +138,10 @@ type wlSeat struct {
+ 	offers map[*C.struct_wl_data_offer][]string
+ 	// clipboard is the wl_data_offer for the clipboard.
+ 	clipboard *C.struct_wl_data_offer
++	// WazzapClients patch: dnd is the wl_data_offer of the files being
++	// dragged over dndWin, if any.
++	dnd    *C.struct_wl_data_offer
++	dndWin *window
+ 	// mimeType is the chosen mime type of clipboard.
+ 	mimeType string
+ 	// source represents the clipboard content of the most recent
+@@ -218,6 +228,9 @@ type window struct {
+ 	inCompositor bool        // window is moving or being resized
+ 
+ 	clipReads chan transfer.DataEvent
++	// WazzapClients patch: the offers of dropped files that have been
++	// read, for the window's thread to finish.
++	dropDone chan *C.struct_wl_data_offer
+ 
+ 	wakeups chan struct{}
+ 
+@@ -360,6 +373,7 @@ func (d *wlDisplay) createNativeWindow(options []Option) (*window, error) {
+ 		ppsp:      ppdp,
+ 		wakeups:   make(chan struct{}, 1),
+ 		clipReads: make(chan transfer.DataEvent, 1),
++		dropDone:  make(chan *C.struct_wl_data_offer, 4),
+ 	}
+ 	w.surf = C.wl_compositor_create_surface(d.compositor)
+ 	if w.surf == nil {
+@@ -476,10 +490,11 @@ func gio_onSeatCapabilities(data unsafe.Pointer, seat *C.struct_wl_seat, caps C.
+ // content.
+ func (s *wlSeat) flushOffers() {
+ 	for o := range s.offers {
+-		if o == s.clipboard {
++		if o == s.clipboard || o == s.dnd {
+ 			continue
+ 		}
+-		// We're only interested in clipboard offers.
++		// We're only interested in clipboard offers (WazzapClients
++		// patch: and the files being dragged over a window).
+ 		delete(s.offers, o)
+ 		callbackDelete(unsafe.Pointer(o))
+ 		C.wl_data_offer_destroy(o)
+@@ -725,6 +740,9 @@ func gio_onRegistryGlobal(data unsafe.Pointer, reg *C.struct_wl_registry, name C
+ 		if d.seat != nil {
+ 			d.seat.initTextInput()
+ 		}
++	case "xdg_activation_v1":
++		// WazzapClients patch.
++		d.activation = (*C.struct_xdg_activation_v1)(C.wl_registry_bind(reg, name, &C.xdg_activation_v1_interface, 1))
+ 	case "wl_data_device_manager":
+ 		d.dataDeviceManager = (*C.struct_wl_data_device_manager)(C.wl_registry_bind(reg, name, &C.wl_data_device_manager_interface, 3))
+ 		d.bindDataDevice()
+@@ -753,15 +771,57 @@ func gio_onDataDeviceOffer(data unsafe.Pointer, dataDev *C.struct_wl_data_device
+ 	s.offers[id] = nil
+ }
+ 
++// WazzapClients patch: files dragged from another program. Entering, the
++// offer is taken if it has files; a drop reads their URIs off the window's
++// thread, which then finishes the offer.
++
++const uriListMime = "text/uri-list"
++
+ //export gio_onDataDeviceEnter
+ func gio_onDataDeviceEnter(data unsafe.Pointer, dataDev *C.struct_wl_data_device, serial C.uint32_t, surf *C.struct_wl_surface, x, y C.wl_fixed_t, id *C.struct_wl_data_offer) {
+ 	s := callbackLoad(data).(*wlSeat)
+ 	s.serial = serial
+-	s.flushOffers()
++	s.endDrag()
++	defer s.flushOffers()
++	if id == nil || surf == nil {
++		return
++	}
++	w, _ := callbackLoad(unsafe.Pointer(surf)).(*window)
++	if w == nil || dropHandler.Load() == nil || !slices.Contains(s.offers[id], uriListMime) {
++		C.wl_data_offer_accept(id, serial, nil)
++		return
++	}
++	s.dnd, s.dndWin = id, w
++	mime := C.CString(uriListMime)
++	defer C.free(unsafe.Pointer(mime))
++	C.wl_data_offer_accept(id, serial, mime)
++	C.wl_data_offer_set_actions(id, C.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY, C.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY)
++	dragOver(true)
++}
++
++// endDrag forgets the files being dragged, which never dropped.
++func (s *wlSeat) endDrag() {
++	if s.dnd == nil {
++		return
++	}
++	s.destroyOffer(s.dnd)
++	s.dnd, s.dndWin = nil, nil
++	dragOver(false)
++}
++
++func (s *wlSeat) destroyOffer(o *C.struct_wl_data_offer) {
++	if o == s.clipboard {
++		return
++	}
++	delete(s.offers, o)
++	callbackDelete(unsafe.Pointer(o))
++	C.wl_data_offer_destroy(o)
+ }
+ 
+ //export gio_onDataDeviceLeave
+ func gio_onDataDeviceLeave(data unsafe.Pointer, dataDev *C.struct_wl_data_device) {
++	s := callbackLoad(data).(*wlSeat)
++	s.endDrag()
+ }
+ 
+ //export gio_onDataDeviceMotion
+@@ -770,6 +830,45 @@ func gio_onDataDeviceMotion(data unsafe.Pointer, dataDev *C.struct_wl_data_devic
+ 
+ //export gio_onDataDeviceDrop
+ func gio_onDataDeviceDrop(data unsafe.Pointer, dataDev *C.struct_wl_data_device) {
++	s := callbackLoad(data).(*wlSeat)
++	offer, w := s.dnd, s.dndWin
++	if offer == nil {
++		return
++	}
++	// The offer lives on, out of flushOffers' and a leave's reach, until
++	// its files are read.
++	s.dnd, s.dndWin = nil, nil
++	delete(s.offers, offer)
++	callbackDelete(unsafe.Pointer(offer))
++	dragOver(false)
++	r, pw, err := os.Pipe()
++	if err != nil {
++		C.wl_data_offer_destroy(offer)
++		return
++	}
++	mime := C.CString(uriListMime)
++	C.wl_data_offer_receive(offer, mime, C.int(pw.Fd()))
++	C.free(unsafe.Pointer(mime))
++	// The offer's source got a copy of the write end; it writes once the
++	// request reaches it.
++	pw.Close()
++	C.wl_display_flush(s.disp.disp)
++	disp := s.disp
++	go func() {
++		data, _ := io.ReadAll(io.LimitReader(r, 4<<20))
++		r.Close()
++		paths := fileURIs(string(data))
++		if h := dropHandler.Load(); h != nil && h.Drop != nil && len(paths) > 0 {
++			h.Drop(paths)
++		}
++		select {
++		case w.dropDone <- offer:
++			disp.wakeup()
++		default:
++			// The window stopped taking them: it's gone, and its
++			// connection, with the offer, too.
++		}
++	}()
+ }
+ 
+ //export gio_onDataDeviceSelection
+@@ -1174,10 +1273,48 @@ func (w *window) Perform(actions system.Action) {
+ 		switch action {
+ 		case system.ActionClose:
+ 			w.requestClose()
++		case system.ActionRaise:
++			// WazzapClients patch.
++			w.raise()
+ 		}
+ 	})
+ }
+ 
++// raise asks the compositor to bring the window to the front
++// (xdg-activation), with the token of the user's action that led here
++// (SetActivationToken) or else one asked for now. WazzapClients patch.
++func (w *window) raise() {
++	act := w.disp.activation
++	if act == nil || w.surf == nil {
++		return
++	}
++	if token := takeActivationToken(); token != "" {
++		ctoken := C.CString(token)
++		defer C.free(unsafe.Pointer(ctoken))
++		C.xdg_activation_v1_activate(act, ctoken, w.surf)
++		return
++	}
++	t := C.xdg_activation_v1_get_activation_token(act)
++	callbackStore(unsafe.Pointer(t), w)
++	C.xdg_activation_token_v1_add_listener(t, &C.gio_activation_token_listener, unsafe.Pointer(t))
++	if s := w.disp.seat; s != nil {
++		C.xdg_activation_token_v1_set_serial(t, s.serial, s.seat)
++	}
++	C.xdg_activation_token_v1_set_surface(t, w.surf)
++	C.xdg_activation_token_v1_commit(t)
++}
++
++//export gio_onActivationTokenDone
++func gio_onActivationTokenDone(data unsafe.Pointer, t *C.struct_xdg_activation_token_v1, token *C.char) {
++	w, _ := callbackLoad(data).(*window)
++	callbackDelete(data)
++	C.xdg_activation_token_v1_destroy(t)
++	if w == nil || w.disp == nil || w.disp.activation == nil || w.surf == nil {
++		return
++	}
++	C.xdg_activation_v1_activate(w.disp.activation, token, w.surf)
++}
++
+ func (w *window) move(serial C.uint32_t) {
+ 	s := w.disp.seat
+ 	if w.inCompositor || s.pointerFocus != w {
+@@ -1418,6 +1555,10 @@ func (w *window) dispatch() {
+ 		return
+ 	}
+ 	select {
++	case offer := <-w.dropDone:
++		// WazzapClients patch: the dropped files have been read.
++		C.wl_data_offer_finish(offer)
++		C.wl_data_offer_destroy(offer)
+ 	case e := <-w.clipReads:
+ 		w.disp.readClipClose = nil
+ 		w.ProcessEvent(e)
+diff --git a/app/os_x11.go b/app/os_x11.go
+index c021403..cebc9af 100644
+--- a/app/os_x11.go
++++ b/app/os_x11.go
+@@ -119,6 +119,9 @@ type x11Window struct {
+ 	dispatchFns chan func()
+ 	handler     x11EventHandler
+ 	buf         [100]byte
++
++	// WazzapClients patch: see os_x11_dnd.go.
++	dnd xdnd
+ }
+ 
+ var (
+@@ -738,6 +741,11 @@ func (h *x11EventHandler) handleEvents() bool {
+ 			// redraw will be done by a later expose event
+ 		case C.SelectionNotify:
+ 			cevt := (*C.XSelectionEvent)(unsafe.Pointer(xev))
++			// WazzapClients patch: the files dropped on the window.
++			if cevt.selection == w.dnd.selection {
++				w.xdndReceive(cevt)
++				break
++			}
+ 			prop := w.atoms.clipboardContent
+ 			if cevt.property != prop {
+ 				break
+@@ -809,6 +817,10 @@ func (h *x11EventHandler) handleEvents() bool {
+ 			}
+ 		case C.ClientMessage: // extensions
+ 			cevt := (*C.XClientMessageEvent)(unsafe.Pointer(xev))
++			// WazzapClients patch: a drag from another program.
++			if w.xdndMessage(cevt) {
++				break
++			}
+ 			switch *(*C.long)(unsafe.Pointer(&cevt.data)) {
+ 			case C.long(w.atoms.evDelWindow):
+ 				if w.closing != nil {
+@@ -935,6 +947,8 @@ func newX11Window(gioWin *callbacks, options []Option) error {
+ 
+ 	// extensions
+ 	C.XSetWMProtocols(dpy, win, &w.atoms.evDelWindow, 1)
++	// WazzapClients patch.
++	w.xdndInit()
+ 
+ 	// IBus IME
+ 	if strings.Contains(os.Getenv("XMODIFIERS"), "@im=ibus") {
+diff --git a/app/os_x11_dnd.go b/app/os_x11_dnd.go
+new file mode 100644
+index 0000000..cea71b0
+--- /dev/null
++++ b/app/os_x11_dnd.go
+@@ -0,0 +1,186 @@
++// SPDX-License-Identifier: Unlicense OR MIT
++
++//go:build ((linux && !android) || freebsd || openbsd) && !nox11
++
++package app
++
++// WazzapClients patch: files dragged from another program onto the
++// window, by the XDND protocol (version 5), for SetDropHandler.
++//
++// The source sends client messages: XdndEnter with the types it offers,
++// XdndPosition as the pointer moves (each answered with XdndStatus, which
++// says whether a drop is welcome), then XdndLeave or XdndDrop. After a drop
++// the files' URIs are asked for as the XdndSelection selection, arrive in a
++// property of the window (SelectionNotify), and XdndFinished ends it.
++
++/*
++#include <stdlib.h>
++#include <X11/Xlib.h>
++#include <X11/Xatom.h>
++*/
++import "C"
++
++import "unsafe"
++
++type xdnd struct {
++	aware, enter, position, status, leave, drop, finished C.Atom
++	selection, typeList, actionCopy, uriList, data        C.Atom
++	// source is the window the drag comes from, and files whether it
++	// offers files.
++	source C.Window
++	files  bool
++}
++
++func (w *x11Window) xdndInit() {
++	d := &w.dnd
++	d.aware = w.atom("XdndAware", false)
++	d.enter = w.atom("XdndEnter", false)
++	d.position = w.atom("XdndPosition", false)
++	d.status = w.atom("XdndStatus", false)
++	d.leave = w.atom("XdndLeave", false)
++	d.drop = w.atom("XdndDrop", false)
++	d.finished = w.atom("XdndFinished", false)
++	d.selection = w.atom("XdndSelection", false)
++	d.typeList = w.atom("XdndTypeList", false)
++	d.actionCopy = w.atom("XdndActionCopy", false)
++	d.uriList = w.atom("text/uri-list", false)
++	d.data = w.atom("GIO_XDND_DATA", false)
++	// The property that says the window takes drops, and the version.
++	version := C.long(5)
++	C.XChangeProperty(w.x, w.xw, d.aware, C.XA_ATOM, 32, C.PropModeReplace,
++		(*C.uchar)(unsafe.Pointer(&version)), 1)
++}
++
++// xdndMessage handles a client message of a drag, and reports whether it
++// was one.
++func (w *x11Window) xdndMessage(ev *C.XClientMessageEvent) bool {
++	d := &w.dnd
++	l := (*[5]C.long)(unsafe.Pointer(&ev.data))
++	switch ev.message_type {
++	case d.enter:
++		d.source = C.Window(l[0])
++		d.files = false
++		if l[1]&1 == 0 {
++			// Up to three types come in the message itself.
++			for _, t := range l[2:] {
++				d.files = d.files || C.Atom(t) == d.uriList
++			}
++		} else {
++			d.files = w.xdndOffers(d.source)
++		}
++		d.files = d.files && dropHandler.Load() != nil
++		if d.files {
++			dragOver(true)
++		}
++	case d.position:
++		d.source = C.Window(l[0])
++		accept, action := C.long(0), C.long(0)
++		if d.files {
++			accept, action = 1, C.long(d.actionCopy)
++		}
++		w.xdndSend(d.status, accept, 0, 0, action)
++	case d.leave:
++		w.xdndEnd()
++	case d.drop:
++		d.source = C.Window(l[0])
++		if !d.files {
++			w.xdndSend(d.finished, 0, 0, 0, 0)
++			w.xdndEnd()
++			break
++		}
++		C.XConvertSelection(w.x, d.selection, d.uriList, d.data, w.xw, C.Time(l[2]))
++	default:
++		return false
++	}
++	return true
++}
++
++// xdndOffers reports whether the source's list of types, for a drag with
++// more than three, has files.
++func (w *x11Window) xdndOffers(source C.Window) bool {
++	var (
++		typ    C.Atom
++		format C.int
++		n, rem C.ulong
++		data   *C.uchar
++	)
++	st := C.XGetWindowProperty(w.x, source, w.dnd.typeList, 0, 1024, C.False, C.XA_ATOM,
++		&typ, &format, &n, &rem, &data)
++	if st != C.Success || data == nil {
++		return false
++	}
++	defer C.XFree(unsafe.Pointer(data))
++	if typ != C.XA_ATOM || format != 32 {
++		return false
++	}
++	// Xlib hands 32-bit items out as longs.
++	for _, a := range unsafe.Slice((*C.Atom)(unsafe.Pointer(data)), int(n)) {
++		if a == w.dnd.uriList {
++			return true
++		}
++	}
++	return false
++}
++
++// xdndReceive reads the dropped files' URIs, which the source wrote to
++// the window's property, and ends the drag.
++func (w *x11Window) xdndReceive(ev *C.XSelectionEvent) {
++	d := &w.dnd
++	ok := C.long(0)
++	if ev.property == d.data {
++		var (
++			typ    C.Atom
++			format C.int
++			n, rem C.ulong
++			data   *C.uchar
++		)
++		// The length is in 32-bit units: 4 MB of URIs at most.
++		st := C.XGetWindowProperty(w.x, w.xw, d.data, 0, 1<<20, C.True, C.AnyPropertyType,
++			&typ, &format, &n, &rem, &data)
++		if st == C.Success && data != nil {
++			if format == 8 {
++				paths := fileURIs(C.GoStringN((*C.char)(unsafe.Pointer(data)), C.int(n)))
++				if h := dropHandler.Load(); h != nil && h.Drop != nil && len(paths) > 0 {
++					ok = 1
++					h.Drop(paths)
++				}
++			}
++			C.XFree(unsafe.Pointer(data))
++		}
++	}
++	action := C.long(0)
++	if ok != 0 {
++		action = C.long(d.actionCopy)
++	}
++	w.xdndSend(d.finished, ok, action, 0, 0)
++	w.xdndEnd()
++}
++
++// xdndEnd forgets the drag.
++func (w *x11Window) xdndEnd() {
++	if w.dnd.files {
++		dragOver(false)
++	}
++	w.dnd.source, w.dnd.files = 0, false
++}
++
++// xdndSend sends the drag's source a message; its first item is always
++// this window.
++func (w *x11Window) xdndSend(msg C.Atom, l1, l2, l3, l4 C.long) {
++	if w.dnd.source == 0 {
++		return
++	}
++	var xev C.XEvent
++	ev := (*C.XClientMessageEvent)(unsafe.Pointer(&xev))
++	*ev = C.XClientMessageEvent{
++		_type:        C.ClientMessage,
++		display:      w.x,
++		window:       w.dnd.source,
++		message_type: msg,
++		format:       32,
++	}
++	l := (*[5]C.long)(unsafe.Pointer(&ev.data))
++	l[0], l[1], l[2], l[3], l[4] = C.long(w.xw), l1, l2, l3, l4
++	C.XSendEvent(w.x, w.dnd.source, C.False, C.NoEventMask, &xev)
++	C.XFlush(w.x)
++}
+diff --git a/app/wayland_xdg_activation.c b/app/wayland_xdg_activation.c
+new file mode 100644
+index 0000000..7c24ce3
+--- /dev/null
++++ b/app/wayland_xdg_activation.c
+@@ -0,0 +1,87 @@
++//go:build ((linux && !android) || freebsd) && !nowayland
++
++/* Generated by wayland-scanner 1.26.0 */
++
++/*
++ * Copyright © 2020 Aleix Pol Gonzalez <aleixpol@kde.org>
++ * Copyright © 2020 Carlos Garnacho <carlosg@gnome.org>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the next
++ * paragraph) shall be included in all copies or substantial portions of the
++ * Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#include <stdbool.h>
++#include <stdlib.h>
++#include <stdint.h>
++#include "wayland-util.h"
++
++#ifndef __has_attribute
++# define __has_attribute(x) 0  /* Compatibility with non-clang compilers. */
++#endif
++
++#if (__has_attribute(visibility) || defined(__GNUC__) && __GNUC__ >= 4)
++#define WL_PRIVATE __attribute__ ((visibility("hidden")))
++#else
++#define WL_PRIVATE
++#endif
++
++extern const struct wl_interface wl_seat_interface;
++extern const struct wl_interface wl_surface_interface;
++extern const struct wl_interface xdg_activation_token_v1_interface;
++
++static const struct wl_interface *xdg_activation_v1_types[] = {
++	NULL,
++	&xdg_activation_token_v1_interface,
++	NULL,
++	&wl_surface_interface,
++	NULL,
++	&wl_seat_interface,
++	&wl_surface_interface,
++};
++
++static const struct wl_message xdg_activation_v1_requests[] = {
++	{ "destroy", "", xdg_activation_v1_types + 0 },
++	{ "get_activation_token", "n", xdg_activation_v1_types + 1 },
++	{ "activate", "so", xdg_activation_v1_types + 2 },
++};
++
++WL_PRIVATE const struct wl_interface xdg_activation_v1_interface = {
++	"xdg_activation_v1", 1,
++	3, xdg_activation_v1_requests,
++	0, NULL,
++};
++
++static const struct wl_message xdg_activation_token_v1_requests[] = {
++	{ "set_serial", "uo", xdg_activation_v1_types + 4 },
++	{ "set_app_id", "s", xdg_activation_v1_types + 0 },
++	{ "set_surface", "o", xdg_activation_v1_types + 6 },
++	{ "commit", "", xdg_activation_v1_types + 0 },
++	{ "destroy", "", xdg_activation_v1_types + 0 },
++};
++
++static const struct wl_message xdg_activation_token_v1_events[] = {
++	{ "done", "s", xdg_activation_v1_types + 0 },
++};
++
++WL_PRIVATE const struct wl_interface xdg_activation_token_v1_interface = {
++	"xdg_activation_token_v1", 1,
++	5, xdg_activation_token_v1_requests,
++	1, xdg_activation_token_v1_events,
++};
++
+diff --git a/app/wayland_xdg_activation.h b/app/wayland_xdg_activation.h
+new file mode 100644
+index 0000000..33103a4
+--- /dev/null
++++ b/app/wayland_xdg_activation.h
+@@ -0,0 +1,415 @@
++/* Generated by wayland-scanner 1.26.0 */
++
++#ifndef XDG_ACTIVATION_V1_CLIENT_PROTOCOL_H
++#define XDG_ACTIVATION_V1_CLIENT_PROTOCOL_H
++
++#include <stdint.h>
++#include <stddef.h>
++#include "wayland-client.h"
++
++#ifdef  __cplusplus
++extern "C" {
++#endif
++
++/**
++ * @page page_xdg_activation_v1 The xdg_activation_v1 protocol
++ * Protocol for requesting activation of surfaces
++ *
++ * @section page_desc_xdg_activation_v1 Description
++ *
++ * The way for a client to pass focus to another toplevel is as follows.
++ *
++ * The client that intends to activate another toplevel uses the
++ * xdg_activation_v1.get_activation_token request to get an activation token.
++ * This token is then forwarded to the client, which is supposed to activate
++ * one of its surfaces, through a separate band of communication.
++ *
++ * One established way of doing this is through the XDG_ACTIVATION_TOKEN
++ * environment variable of a newly launched child process. The child process
++ * should unset the environment variable again right after reading it out in
++ * order to avoid propagating it to other child processes.
++ *
++ * Another established way exists for Applications implementing the D-Bus
++ * interface org.freedesktop.Application, which should get their token under
++ * activation-token on their platform_data.
++ *
++ * In general activation tokens may be transferred across clients through
++ * means not described in this protocol.
++ *
++ * The client to be activated will then pass the token
++ * it received to the xdg_activation_v1.activate request. The compositor can
++ * then use this token to decide how to react to the activation request.
++ *
++ * The token the activating client gets may be ineffective either already at
++ * the time it receives it, for example if it was not focused, for focus
++ * stealing prevention. The activating client will have no way to discover
++ * the validity of the token, and may still forward it to the to be activated
++ * client.
++ *
++ * The created activation token may optionally get information attached to it
++ * that can be used by the compositor to identify the application that we
++ * intend to activate. This can for example be used to display a visual hint
++ * about what application is being started.
++ *
++ * Warning! The protocol described in this file is currently in the testing
++ * phase. Backward compatible changes may be added together with the
++ * corresponding interface version bump. Backward incompatible changes can
++ * only be done by creating a new major version of the extension.
++ *
++ * @section page_ifaces_xdg_activation_v1 Interfaces
++ * - @subpage page_iface_xdg_activation_v1 - interface for activating surfaces
++ * - @subpage page_iface_xdg_activation_token_v1 - an exported activation handle
++ * @section page_copyright_xdg_activation_v1 Copyright
++ * <pre>
++ *
++ * Copyright © 2020 Aleix Pol Gonzalez <aleixpol@kde.org>
++ * Copyright © 2020 Carlos Garnacho <carlosg@gnome.org>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the next
++ * paragraph) shall be included in all copies or substantial portions of the
++ * Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ * </pre>
++ */
++struct wl_seat;
++struct wl_surface;
++struct xdg_activation_token_v1;
++struct xdg_activation_v1;
++
++#ifndef XDG_ACTIVATION_V1_INTERFACE
++#define XDG_ACTIVATION_V1_INTERFACE
++/**
++ * @page page_iface_xdg_activation_v1 xdg_activation_v1
++ * @section page_iface_xdg_activation_v1_desc Description
++ *
++ * A global interface used for informing the compositor about applications
++ * being activated or started, or for applications to request to be
++ * activated.
++ * @section page_iface_xdg_activation_v1_api API
++ * See @ref iface_xdg_activation_v1.
++ */
++/**
++ * @defgroup iface_xdg_activation_v1 The xdg_activation_v1 interface
++ *
++ * A global interface used for informing the compositor about applications
++ * being activated or started, or for applications to request to be
++ * activated.
++ */
++extern const struct wl_interface xdg_activation_v1_interface;
++#endif
++#ifndef XDG_ACTIVATION_TOKEN_V1_INTERFACE
++#define XDG_ACTIVATION_TOKEN_V1_INTERFACE
++/**
++ * @page page_iface_xdg_activation_token_v1 xdg_activation_token_v1
++ * @section page_iface_xdg_activation_token_v1_desc Description
++ *
++ * An object for setting up a token and receiving a token handle that can
++ * be passed as an activation token to another client.
++ *
++ * The object is created using the xdg_activation_v1.get_activation_token
++ * request. This object should then be populated with the app_id, surface
++ * and serial information and committed. The compositor shall then issue a
++ * done event with the token. In case the request's parameters are invalid,
++ * the compositor will provide an invalid token.
++ * @section page_iface_xdg_activation_token_v1_api API
++ * See @ref iface_xdg_activation_token_v1.
++ */
++/**
++ * @defgroup iface_xdg_activation_token_v1 The xdg_activation_token_v1 interface
++ *
++ * An object for setting up a token and receiving a token handle that can
++ * be passed as an activation token to another client.
++ *
++ * The object is created using the xdg_activation_v1.get_activation_token
++ * request. This object should then be populated with the app_id, surface
++ * and serial information and committed. The compositor shall then issue a
++ * done event with the token. In case the request's parameters are invalid,
++ * the compositor will provide an invalid token.
++ */
++extern const struct wl_interface xdg_activation_token_v1_interface;
++#endif
++
++#define XDG_ACTIVATION_V1_DESTROY 0
++#define XDG_ACTIVATION_V1_GET_ACTIVATION_TOKEN 1
++#define XDG_ACTIVATION_V1_ACTIVATE 2
++
++
++/**
++ * @ingroup iface_xdg_activation_v1
++ */
++#define XDG_ACTIVATION_V1_DESTROY_SINCE_VERSION 1
++/**
++ * @ingroup iface_xdg_activation_v1
++ */
++#define XDG_ACTIVATION_V1_GET_ACTIVATION_TOKEN_SINCE_VERSION 1
++/**
++ * @ingroup iface_xdg_activation_v1
++ */
++#define XDG_ACTIVATION_V1_ACTIVATE_SINCE_VERSION 1
++
++/** @ingroup iface_xdg_activation_v1 */
++static inline void
++xdg_activation_v1_set_user_data(struct xdg_activation_v1 *xdg_activation_v1, void *user_data)
++{
++	wl_proxy_set_user_data((struct wl_proxy *) xdg_activation_v1, user_data);
++}
++
++/** @ingroup iface_xdg_activation_v1 */
++static inline void *
++xdg_activation_v1_get_user_data(struct xdg_activation_v1 *xdg_activation_v1)
++{
++	return wl_proxy_get_user_data((struct wl_proxy *) xdg_activation_v1);
++}
++
++static inline uint32_t
++xdg_activation_v1_get_version(struct xdg_activation_v1 *xdg_activation_v1)
++{
++	return wl_proxy_get_version((struct wl_proxy *) xdg_activation_v1);
++}
++
++/**
++ * @ingroup iface_xdg_activation_v1
++ *
++ * Notify the compositor that the xdg_activation object will no longer be
++ * used.
++ *
++ * The child objects created via this interface are unaffected and should
++ * be destroyed separately.
++ */
++static inline void
++xdg_activation_v1_destroy(struct xdg_activation_v1 *xdg_activation_v1)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) xdg_activation_v1,
++			 XDG_ACTIVATION_V1_DESTROY, NULL, wl_proxy_get_version((struct wl_proxy *) xdg_activation_v1), WL_MARSHAL_FLAG_DESTROY);
++}
++
++/**
++ * @ingroup iface_xdg_activation_v1
++ *
++ * Creates an xdg_activation_token_v1 object that will provide
++ * the initiating client with a unique token for this activation. This
++ * token should be offered to the clients to be activated.
++ */
++static inline struct xdg_activation_token_v1 *
++xdg_activation_v1_get_activation_token(struct xdg_activation_v1 *xdg_activation_v1)
++{
++	struct wl_proxy *id;
++
++	id = wl_proxy_marshal_flags((struct wl_proxy *) xdg_activation_v1,
++			 XDG_ACTIVATION_V1_GET_ACTIVATION_TOKEN, &xdg_activation_token_v1_interface, wl_proxy_get_version((struct wl_proxy *) xdg_activation_v1), 0, NULL);
++
++	return (struct xdg_activation_token_v1 *) id;
++}
++
++/**
++ * @ingroup iface_xdg_activation_v1
++ *
++ * Requests surface activation. It's up to the compositor to display
++ * this information as desired, for example by placing the surface above
++ * the rest.
++ *
++ * The compositor may know who requested this by checking the activation
++ * token and might decide not to follow through with the activation if it's
++ * considered unwanted.
++ *
++ * Compositors can ignore unknown activation tokens when an invalid
++ * token is passed.
++ */
++static inline void
++xdg_activation_v1_activate(struct xdg_activation_v1 *xdg_activation_v1, const char *token, struct wl_surface *surface)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) xdg_activation_v1,
++			 XDG_ACTIVATION_V1_ACTIVATE, NULL, wl_proxy_get_version((struct wl_proxy *) xdg_activation_v1), 0, token, surface);
++}
++
++#ifndef XDG_ACTIVATION_TOKEN_V1_ERROR_ENUM
++#define XDG_ACTIVATION_TOKEN_V1_ERROR_ENUM
++enum xdg_activation_token_v1_error {
++	/**
++	 * The token has already been used previously
++	 */
++	XDG_ACTIVATION_TOKEN_V1_ERROR_ALREADY_USED = 0,
++};
++#endif /* XDG_ACTIVATION_TOKEN_V1_ERROR_ENUM */
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ * @struct xdg_activation_token_v1_listener
++ */
++struct xdg_activation_token_v1_listener {
++	/**
++	 * the exported activation token
++	 *
++	 * The 'done' event contains the unique token of this activation
++	 * request and notifies that the provider is done.
++	 * @param token the exported activation token
++	 */
++	void (*done)(void *data,
++		     struct xdg_activation_token_v1 *xdg_activation_token_v1,
++		     const char *token);
++};
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ */
++static inline int
++xdg_activation_token_v1_add_listener(struct xdg_activation_token_v1 *xdg_activation_token_v1,
++				     const struct xdg_activation_token_v1_listener *listener, void *data)
++{
++	return wl_proxy_add_listener((struct wl_proxy *) xdg_activation_token_v1,
++				     (void (**)(void)) listener, data);
++}
++
++#define XDG_ACTIVATION_TOKEN_V1_SET_SERIAL 0
++#define XDG_ACTIVATION_TOKEN_V1_SET_APP_ID 1
++#define XDG_ACTIVATION_TOKEN_V1_SET_SURFACE 2
++#define XDG_ACTIVATION_TOKEN_V1_COMMIT 3
++#define XDG_ACTIVATION_TOKEN_V1_DESTROY 4
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ */
++#define XDG_ACTIVATION_TOKEN_V1_DONE_SINCE_VERSION 1
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ */
++#define XDG_ACTIVATION_TOKEN_V1_SET_SERIAL_SINCE_VERSION 1
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ */
++#define XDG_ACTIVATION_TOKEN_V1_SET_APP_ID_SINCE_VERSION 1
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ */
++#define XDG_ACTIVATION_TOKEN_V1_SET_SURFACE_SINCE_VERSION 1
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ */
++#define XDG_ACTIVATION_TOKEN_V1_COMMIT_SINCE_VERSION 1
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ */
++#define XDG_ACTIVATION_TOKEN_V1_DESTROY_SINCE_VERSION 1
++
++/** @ingroup iface_xdg_activation_token_v1 */
++static inline void
++xdg_activation_token_v1_set_user_data(struct xdg_activation_token_v1 *xdg_activation_token_v1, void *user_data)
++{
++	wl_proxy_set_user_data((struct wl_proxy *) xdg_activation_token_v1, user_data);
++}
++
++/** @ingroup iface_xdg_activation_token_v1 */
++static inline void *
++xdg_activation_token_v1_get_user_data(struct xdg_activation_token_v1 *xdg_activation_token_v1)
++{
++	return wl_proxy_get_user_data((struct wl_proxy *) xdg_activation_token_v1);
++}
++
++static inline uint32_t
++xdg_activation_token_v1_get_version(struct xdg_activation_token_v1 *xdg_activation_token_v1)
++{
++	return wl_proxy_get_version((struct wl_proxy *) xdg_activation_token_v1);
++}
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ *
++ * Provides information about the seat and serial event that requested the
++ * token.
++ *
++ * The serial can come from an input or focus event. For instance, if a
++ * click triggers the launch of a third-party client, the launcher client
++ * should send a set_serial request with the serial and seat from the
++ * wl_pointer.button event.
++ *
++ * Some compositors might refuse to activate toplevels when the token
++ * doesn't have a valid and recent enough event serial.
++ *
++ * Must be sent before commit. This information is optional.
++ */
++static inline void
++xdg_activation_token_v1_set_serial(struct xdg_activation_token_v1 *xdg_activation_token_v1, uint32_t serial, struct wl_seat *seat)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) xdg_activation_token_v1,
++			 XDG_ACTIVATION_TOKEN_V1_SET_SERIAL, NULL, wl_proxy_get_version((struct wl_proxy *) xdg_activation_token_v1), 0, serial, seat);
++}
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ *
++ * The requesting client can specify an app_id to associate the token
++ * being created with it.
++ *
++ * Must be sent before commit. This information is optional.
++ */
++static inline void
++xdg_activation_token_v1_set_app_id(struct xdg_activation_token_v1 *xdg_activation_token_v1, const char *app_id)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) xdg_activation_token_v1,
++			 XDG_ACTIVATION_TOKEN_V1_SET_APP_ID, NULL, wl_proxy_get_version((struct wl_proxy *) xdg_activation_token_v1), 0, app_id);
++}
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ *
++ * This request sets the surface requesting the activation. Note, this is
++ * different from the surface that will be activated.
++ *
++ * Some compositors might refuse to activate toplevels when the token
++ * doesn't have a requesting surface.
++ *
++ * Must be sent before commit. This information is optional.
++ */
++static inline void
++xdg_activation_token_v1_set_surface(struct xdg_activation_token_v1 *xdg_activation_token_v1, struct wl_surface *surface)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) xdg_activation_token_v1,
++			 XDG_ACTIVATION_TOKEN_V1_SET_SURFACE, NULL, wl_proxy_get_version((struct wl_proxy *) xdg_activation_token_v1), 0, surface);
++}
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ *
++ * Requests an activation token based on the different parameters that
++ * have been offered through set_serial, set_surface and set_app_id.
++ */
++static inline void
++xdg_activation_token_v1_commit(struct xdg_activation_token_v1 *xdg_activation_token_v1)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) xdg_activation_token_v1,
++			 XDG_ACTIVATION_TOKEN_V1_COMMIT, NULL, wl_proxy_get_version((struct wl_proxy *) xdg_activation_token_v1), 0);
++}
++
++/**
++ * @ingroup iface_xdg_activation_token_v1
++ *
++ * Notify the compositor that the xdg_activation_token_v1 object will no
++ * longer be used. The received token stays valid.
++ */
++static inline void
++xdg_activation_token_v1_destroy(struct xdg_activation_token_v1 *xdg_activation_token_v1)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) xdg_activation_token_v1,
++			 XDG_ACTIVATION_TOKEN_V1_DESTROY, NULL, wl_proxy_get_version((struct wl_proxy *) xdg_activation_token_v1), WL_MARSHAL_FLAG_DESTROY);
++}
++
++#ifdef  __cplusplus
++}
++#endif
++
++#endif
 diff --git a/gpu/gpu.go b/gpu/gpu.go
 index bd8950f..bee71b8 100644
 --- a/gpu/gpu.go

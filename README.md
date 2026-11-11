@@ -232,7 +232,7 @@ them all at once, and `@` in a private chat, to mention the person you're talkin
 
 - 🌗 Light and dark themes, with WhatsApp's doodle wallpaper
 - 👥 Several linked accounts. Only the open one stays connected, which keeps memory low
-- 🔔 System notifications, with Reply and Mark as read on Windows
+- 🔔 System notifications, with Mark as read and (on Windows and KDE) Reply
 - 📝 Drafts that stay with each chat, @mentions, and a formatting toolbar (bold, italic, strikethrough, code)
 - 🎙️ Voice messages and videos played by the system's own decoders (no bundled codecs)
 - 📌 Pinned, archived and muted chats, Favourites and custom lists, disappearing messages, chat themes
@@ -282,6 +282,13 @@ Debian and Ubuntu); without it they open in your video player. They decode in
 software, which starts at once and keeps a laptop's second GPU asleep; run with
 `WAZZAP_HWDEC=1` to use the GPU's decoders (VA-API) instead.
 
+On Linux the app uses what the desktop already has, and goes without what's missing:
+the tray icon needs a panel that shows them (KDE, waybar and most bars; GNOME with the
+AppIndicator extension), and without one closing the window quits. Notifications go
+to the desktop's notification server, WhatsApp links are claimed with `xdg-mime`
+(xdg-utils), microphones and speakers are listed by `pactl`, and files can be dropped
+on the window on Wayland and X11.
+
 ```sh
 sh patches/apply.sh            # once after cloning: builds the patched go-text (see patches/)
 go run ./cmd/wazzap            # run the app and link it with a QR code
@@ -299,7 +306,7 @@ and in the user config directory on other platforms.
 ```
 cmd/wazzap/        the desktop app
 cmd/screenshot/    renders the UI headlessly to PNG, or next to a real WhatsApp screenshot
-cmd/memprobe/      memory and frame-time benchmark (Windows)
+cmd/memprobe/      memory and frame-time benchmark (Windows and Linux)
 internal/model/    what the UI sees: chats, messages, events, and the Backend interface
 internal/ui/       the Gio interface, from the chat list to the photo editor
 internal/wa/       hypermeow backend and the SQLite message store

@@ -122,3 +122,7 @@ func OpenLinkSettings() {
 	target, _ := windows.UTF16PtrFromString("ms-settings:defaultapps?registeredAppUser=" + linkApp)
 	windows.ShellExecute(0, verb, target, nil, nil, windows.SW_SHOWNORMAL)
 }
+
+// ClaimLinks reports false: on Windows only the user makes an app the
+// links' handler (OpenLinkSettings).
+func ClaimLinks() bool { return false }
