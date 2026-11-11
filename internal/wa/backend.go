@@ -223,6 +223,7 @@ func (b *Backend) Start(notify func()) {
 	b.mu.Unlock()
 	b.dropPendingStatuses(b.ctx)
 	go b.run()
+	go b.watchSleep()
 	go b.typing.run(b.ctx, b.sendTyping)
 	// WhatsApp rate-limits profile picture queries, so space them out.
 	go b.avatars.run(b.ctx, 250*time.Millisecond)
@@ -268,6 +269,15 @@ func (b *Backend) goWork(f func()) {
 func (b *Backend) useDevice(device *store.Device) {
 	cli := whatsmeow.NewClient(device, b.log.Sub("Client"))
 	cli.EnableAutoReconnect = true
+	// A first connect that fails (started at login before the network is
+	// up) retries like a lost connection, instead of staying offline.
+	cli.InitialAutoReconnect = true
+	// hypermeow waits 2 s longer after every failed try, without end: an
+	// hour offline made the next try minutes away. Ten seconds at most.
+	cli.AutoReconnectHook = func(error) bool {
+		cli.AutoReconnectErrors = min(cli.AutoReconnectErrors, maxReconnectTries)
+		return true
+	}
 	// Pins, mutes and archives only arrive through app state; the initial
 	// full sync must emit them too.
 	cli.EmitAppStateEventsOnFullSync = true
@@ -276,6 +286,52 @@ func (b *Backend) useDevice(device *store.Device) {
 	b.cliMu.Lock()
 	b.cli = cli
 	b.cliMu.Unlock()
+}
+
+// maxReconnectTries caps hypermeow's wait between tries to connect
+// again, 2 s for each failed one.
+const maxReconnectTries = 5
+
+func init() {
+	// One keepalive ping without an answer (10 s) means the connection is
+	// gone, as after the network changed: connect again then, instead of
+	// after hypermeow's three minutes of them.
+	whatsmeow.KeepAliveMaxFailTime = 15 * time.Second
+}
+
+// watchSleep reconnects when the computer wakes from sleep. The
+// connection is dead by then, but nothing says so: the kernel keeps the
+// socket for minutes, and hypermeow's keepalive timers run on the
+// monotonic clock, which stood still, so it took three minutes awake to
+// notice. A wall clock that jumped past a tick is the sign, on every OS.
+func (b *Backend) watchSleep() {
+	const tick = 5 * time.Second
+	t := time.NewTicker(tick)
+	defer t.Stop()
+	last := time.Now().Round(0) // wall clock only
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		case <-t.C:
+		}
+		now := time.Now().Round(0)
+		slept := now.Sub(last) > tick+20*time.Second
+		last = now
+		if !slept {
+			continue
+		}
+		cli := b.client()
+		if cli == nil || cli.Store.ID == nil {
+			continue
+		}
+		b.log.Infof("woke from sleep: reconnecting")
+		// The tries so far waited ever longer; start over.
+		cli.AutoReconnectErrors = 0
+		if cli.IsConnected() {
+			cli.ResetConnection() // emits Disconnected and reconnects
+		}
+	}
 }
 
 func (b *Backend) fail(format string, args ...any) {
@@ -1213,6 +1269,7 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		}
 		b.emit(model.MessageEvent{Msg: m, New: isNew})
 		b.emitChat(chat)
+		b.noteStatusReply(ctx, r)
 		if isNew {
 			b.autoDownload(m)
 		}
@@ -1268,7 +1325,8 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 			return
 		}
 	} else if isStatus(e.Chat) {
-		return // someone viewed one of yours
+		b.onStatusView(e) // someone viewed one of yours
+		return
 	}
 	switch e.Type {
 	case types.ReceiptTypeReadSelf:

@@ -815,6 +815,29 @@ type StatusUpdate struct {
 	// AudienceEmoji that audience's emoji, when they chose one of their own
 	// (close friends or a custom audience); empty otherwise.
 	Audience, AudienceEmoji string
+	// Views is how many people saw it, for one of your own (their read
+	// receipts; Backend.StatusViews lists them).
+	Views int
+}
+
+// StatusViewer is someone who saw one of your status updates.
+type StatusViewer struct {
+	ID, Name string
+	At       time.Time
+}
+
+// StatusReply is a reply to one of your status updates: a message in the
+// chat with whoever sent it.
+type StatusReply struct {
+	ID, Name string // who replied
+	Msg      *Message
+}
+
+// StatusViews is who saw one of your status updates, the latest first,
+// and the replies it got, the oldest first.
+type StatusViews struct {
+	Viewers []StatusViewer
+	Replies []StatusReply
 }
 
 // StatusThread is everything one contact posted in the last 24 hours,
@@ -1665,6 +1688,9 @@ type Backend interface {
 	Statuses() []*StatusThread
 	// ViewStatus marks a status update as seen.
 	ViewStatus(threadID, statusID string)
+	// StatusViews returns who saw one of your own status updates and the
+	// replies to it. A StatusEvent follows each new view or reply.
+	StatusViews(statusID string) StatusViews
 	// PostStatus posts a status update. It shows in your own thread at
 	// once (a StatusEvent follows) while it uploads and sends in the
 	// background; a NoticeEvent reports failure.

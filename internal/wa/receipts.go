@@ -28,6 +28,15 @@ const receiptsSchema = `CREATE TABLE IF NOT EXISTS wz_receipts (
 	PRIMARY KEY (chat, id, who)
 ) WITHOUT ROWID;`
 
+// statusRepliesSchema points at the replies to your status updates: the
+// messages, in their senders' chats, that quote one.
+const statusRepliesSchema = `CREATE TABLE IF NOT EXISTS wz_status_replies (
+	status TEXT NOT NULL, -- one of your status updates
+	chat   TEXT NOT NULL, -- the reply, a message of wz_messages
+	id     TEXT NOT NULL,
+	PRIMARY KEY (status, chat, id)
+) WITHOUT ROWID;`
+
 // personReceipt is one row of wz_receipts, in unix seconds.
 type personReceipt struct {
 	chat, id, who           string

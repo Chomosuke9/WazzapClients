@@ -87,6 +87,10 @@ func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedS
 func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) error {
 	if st.revoke != "" {
 		_, err := x.ExecContext(ctx, `DELETE FROM wz_status WHERE id = ?`, st.revoke)
+		if err == nil && st.fromMe {
+			_, _ = x.ExecContext(ctx, `DELETE FROM wz_receipts WHERE chat = ? AND id = ?`, statusChat, st.revoke)
+			_, _ = x.ExecContext(ctx, `DELETE FROM wz_status_replies WHERE status = ?`, st.revoke)
+		}
 		return err
 	}
 	var blob []byte
@@ -203,6 +207,12 @@ func (s *msgStore) dropStatuses(ctx context.Context, before time.Time) []string 
 			ids = append(ids, id)
 		}
 	}
+	rows.Close()
+	// Who saw them and replied goes with them.
+	for _, id := range ids {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_receipts WHERE chat = ? AND id = ?`, statusChat, id)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_status_replies WHERE status = ?`, id)
+	}
 	return ids
 }
 
@@ -289,6 +299,7 @@ func (b *Backend) Statuses() []*model.StatusThread {
 		return nil
 	}
 	mutes := b.statusMutes(ctx)
+	views := b.store.statusViewCounts(ctx)
 	byID := map[string]*model.StatusThread{}
 	skip := map[string]bool{}
 	var threads []*model.StatusThread
@@ -331,6 +342,7 @@ func (b *Backend) Statuses() []*model.StatusThread {
 		r.u.Sender = b.statusName(ctx, j, r.push)
 		if r.fromMe {
 			r.u.Sender = "You"
+			r.u.Views = views[r.u.ID]
 		}
 		t.Updates = append(t.Updates, r.u)
 	}
@@ -389,4 +401,104 @@ func (b *Backend) ViewStatus(threadID, statusID string) {
 			b.log.Debugf("mark status read: %v", err)
 		}
 	}()
+}
+
+// Who saw your status updates: their read receipts, kept in wz_receipts
+// under status@broadcast like a message's. Someone with read receipts off
+// sends none, and so isn't counted, as on WhatsApp.
+
+// onStatusView stores a read receipt of your own status updates.
+func (b *Backend) onStatusView(e *events.Receipt) {
+	if e.IsFromMe || e.Sender.IsEmpty() || (e.Type != types.ReceiptTypeRead && e.Type != types.ReceiptTypePlayed) {
+		return
+	}
+	ctx := b.ctx
+	who := b.canonical(ctx, e.Sender).String()
+	ts := e.Timestamp.Unix()
+	for _, id := range e.MessageIDs {
+		if err := b.store.putReceipt(ctx, b.db, personReceipt{chat: statusChat, id: string(id), who: who, read: ts}); err != nil {
+			b.log.Warnf("store status view: %v", err)
+			return
+		}
+	}
+	b.emit(model.StatusEvent{})
+}
+
+// statusViewCounts returns how many people saw each status update.
+func (s *msgStore) statusViewCounts(ctx context.Context) map[string]int {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, count(*) FROM wz_receipts WHERE chat = ? AND read != 0 GROUP BY id`, statusChat)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if rows.Scan(&id, &n) == nil {
+			out[id] = n
+		}
+	}
+	return out
+}
+
+// noteStatusReply remembers a message someone sent that quotes one of
+// your status updates, for StatusViews.
+func (b *Backend) noteStatusReply(ctx context.Context, r rawMsg) {
+	q := r.quote
+	if q == nil || q.id == "" || r.FromMe || q.remote != statusChat {
+		return
+	}
+	res, err := b.db.ExecContext(ctx, `INSERT OR IGNORE INTO wz_status_replies (status, chat, id)
+		SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM wz_status WHERE id = ?1 AND from_me = 1)`, q.id, r.ChatID, r.ID)
+	if err != nil {
+		b.log.Warnf("store status reply: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		b.emit(model.StatusEvent{})
+	}
+}
+
+// StatusViews implements model.Backend.
+func (b *Backend) StatusViews(statusID string) model.StatusViews {
+	ctx := b.ctx
+	var v model.StatusViews
+	for _, r := range b.store.receipts(ctx, statusChat, statusID) {
+		j, err := types.ParseJID(r.who)
+		if err != nil || r.read == 0 || b.isMe(j) {
+			continue
+		}
+		v.Viewers = append(v.Viewers, model.StatusViewer{ID: r.who, Name: b.statusName(ctx, j, ""), At: time.Unix(r.read, 0)})
+	}
+	sort.SliceStable(v.Viewers, func(i, j int) bool { return v.Viewers[i].At.After(v.Viewers[j].At) })
+
+	rows, err := b.db.QueryContext(ctx, `SELECT chat, id FROM wz_status_replies WHERE status = ?`, statusID)
+	if err != nil {
+		return v
+	}
+	var at [][2]string
+	for rows.Next() {
+		var chat, id string
+		if rows.Scan(&chat, &id) == nil {
+			at = append(at, [2]string{chat, id})
+		}
+	}
+	rows.Close()
+	for _, k := range at {
+		r, ok := b.store.message(ctx, k[0], k[1])
+		if !ok || r.Kind == model.KindDeleted {
+			continue
+		}
+		chat, _ := types.ParseJID(k[0])
+		m := b.resolve(ctx, r, chat.Server == types.GroupServer)
+		who := chat
+		if j, err := types.ParseJID(m.SenderID); err == nil && !j.IsEmpty() {
+			who = j
+		}
+		who = b.canonical(ctx, who) // as the viewers are named
+		v.Replies = append(v.Replies, model.StatusReply{ID: who.String(), Name: b.statusName(ctx, who, ""), Msg: m})
+	}
+	sort.SliceStable(v.Replies, func(i, j int) bool { return v.Replies[i].Msg.Time.Before(v.Replies[j].Msg.Time) })
+	return v
 }

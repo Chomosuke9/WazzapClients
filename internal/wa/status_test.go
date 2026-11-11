@@ -189,3 +189,52 @@ func TestStatusSeenElsewhere(t *testing.T) {
 		t.Errorf("participant = %q (%v), want %s", participant, err, poster)
 	}
 }
+
+// TestStatusViews checks that read receipts of your own status and the
+// messages quoting it are listed, and go when it expires.
+func TestStatusViews(t *testing.T) {
+	b := testBackend(t)
+	now := time.Now()
+	if err := b.store.putStatus(b.ctx, b.db, storedStatus{id: "mine", sender: "9@lid", fromMe: true, ts: now, c: content{text: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	view := func(who string, typ types.ReceiptType, fromMe bool, at time.Time) {
+		j, _ := types.ParseJID(who)
+		b.onReceipt(&events.Receipt{
+			MessageSource: types.MessageSource{Chat: types.StatusBroadcastJID, Sender: j, IsFromMe: fromMe},
+			MessageIDs:    []types.MessageID{"mine"}, Type: typ, Timestamp: at,
+		})
+	}
+	view("1@lid", types.ReceiptTypeRead, false, now.Add(-time.Minute))
+	view("2@lid", types.ReceiptTypeRead, false, now)
+	view("2@lid", types.ReceiptTypeRead, false, now.Add(time.Minute)) // again: the first time stays
+	view("3@lid", types.ReceiptTypeDelivered, false, now)
+
+	// A reply quotes the status from the replier's chat.
+	reply := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("nice"), ContextInfo: &waE2E.ContextInfo{
+		StanzaID: proto.String("mine"), RemoteJID: proto.String(statusChat), Participant: proto.String("9@lid"),
+		QuotedMessage: &waE2E.Message{Conversation: proto.String("hi")}}}}
+	chat, _ := types.ParseJID("1@lid")
+	b.onMessage(&events.Message{Info: types.MessageInfo{ID: "r1", Timestamp: now,
+		MessageSource: types.MessageSource{Chat: chat, Sender: chat}}, Message: reply})
+
+	v := b.StatusViews("mine")
+	if len(v.Viewers) != 2 || v.Viewers[0].ID != "2@lid" || !v.Viewers[0].At.Equal(time.Unix(now.Unix(), 0)) || v.Viewers[1].ID != "1@lid" {
+		t.Errorf("viewers = %+v", v.Viewers)
+	}
+	if len(v.Replies) != 1 || v.Replies[0].Msg.Text != "nice" || v.Replies[0].Msg.ChatID != "1@lid" {
+		t.Errorf("replies = %+v", v.Replies)
+	}
+	if th := b.Statuses(); len(th) != 1 || th[0].Updates[0].Views != 2 {
+		t.Errorf("statuses = %+v", th)
+	}
+
+	// Expired, its viewers and replies go with it.
+	if _, err := b.db.Exec(`UPDATE wz_status SET ts = ?`, now.Add(-2*statusTTL).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	b.Statuses()
+	if v := b.StatusViews("mine"); len(v.Viewers) != 0 || len(v.Replies) != 0 {
+		t.Errorf("after expiry: %+v", v)
+	}
+}
