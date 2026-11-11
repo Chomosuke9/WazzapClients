@@ -42,6 +42,12 @@ What `gio.patch` does (marked `WazzapClients patch`):
   wayland-protocols' `staging/xdg-activation/xdg-activation-v1.xml`,
   generated like the files beside them, see `os_wayland.go`'s
   `go:generate` lines).
+- `app/os_wayland.go`: a window draws only after the frame callback of
+  its last frame, configures included (upstream waited only while
+  animating). A hidden window (on another workspace) gets no callbacks and
+  its buffers aren't released, so the configures it got drew until
+  `eglSwapBuffers` blocked, and with it the event loop: the compositor's
+  pings went unanswered and Hyprland called the app unresponsive.
 
 What `hypermeow.patch` does (marked `WazzapClients patch`):
 

@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -68,6 +69,16 @@ type attachState struct {
 	renders chan *renderJob // edited photos being rendered
 
 	demoEdit string // cmd/screenshot's sample edit still to make: edit, crop or filter
+
+	pastes  chan pasteProbe // what a Ctrl+V found on the system clipboard
+	pasting bool            // a pasteProbe is on its way
+}
+
+// pasteProbe is what pasteFiles found on the system clipboard.
+type pasteProbe struct {
+	chatID string
+	paths  []string    // files copied in a file manager
+	img    image.Image // a picture, when there's no text
 }
 
 // attachFile is a file in the send view.
@@ -496,24 +507,55 @@ func (u *UI) attachPaths(paths []string) {
 	u.addFiles(u.selected.ID, files)
 }
 
-// pasteFiles attaches the files or the picture on the clipboard, and
-// reports whether there were any. Text comes first: apps like Word put a
-// picture of copied text on the clipboard too.
-func (u *UI) pasteFiles() bool {
-	if u.selected == nil || isChannelID(u.selected.ID) {
-		return false
+// pasteFiles looks for files or a picture on the system clipboard, on a
+// goroutine: reading the clipboard asks its owner for the data, and when
+// that's this app (text copied from a chat) the window's thread has to
+// answer, so the UI goroutine mustn't wait for it. takePaste handles what
+// it finds. Text comes first: apps like Word put a picture of copied text
+// on the clipboard too.
+func (u *UI) pasteFiles() {
+	a := &u.attach
+	if a.pastes == nil {
+		a.pastes = make(chan pasteProbe, 1)
 	}
-	if paths := osclip.Files(); len(paths) > 0 {
-		u.attachPaths(paths)
-		return true
+	if a.pasting {
+		return
 	}
-	if osclip.HasText() {
-		return false
+	a.pasting = true
+	chatID, out, notify := u.selected.ID, a.pastes, u.images.invalidate
+	go func() {
+		// Windows' clipboard is opened and closed by the same thread.
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		p := pasteProbe{chatID: chatID}
+		if p.paths = osclip.Files(); len(p.paths) == 0 && !osclip.HasText() {
+			p.img = osclip.Image()
+		}
+		out <- p
+		if notify != nil {
+			notify()
+		}
+	}()
+}
+
+// takePaste attaches the files or the picture pasteFiles found, or else
+// pastes the clipboard's text into the composer.
+func (u *UI) takePaste(gtx C, p pasteProbe) {
+	if u.selected == nil || u.selected.ID != p.chatID {
+		return
 	}
-	img := osclip.Image()
-	if img == nil {
-		return false
+	switch {
+	case len(p.paths) > 0:
+		u.attachPaths(p.paths)
+	case p.img != nil:
+		u.pasteImage(p.img)
+	case gtx.Focused(&u.conv.composer):
+		gtx.Execute(clipboard.ReadCmd{Tag: &u.conv.composer})
 	}
+}
+
+// pasteImage attaches a pasted picture, written to a temporary PNG.
+func (u *UI) pasteImage(img image.Image) {
 	a := &u.attach
 	if a.results == nil {
 		a.results = make(chan pickResult, 1)
@@ -532,7 +574,6 @@ func (u *UI) pasteFiles() bool {
 			notify()
 		}
 	}()
-	return true
 }
 
 // updatePaste attaches files and pictures pasted with Ctrl+V into the
@@ -550,6 +591,12 @@ func (u *UI) updatePaste(gtx C) {
 			}
 		}
 	}
+	select {
+	case p := <-u.attach.pastes:
+		u.attach.pasting = false
+		u.takePaste(gtx, p)
+	default:
+	}
 	filters := []event.Filter{key.Filter{Focus: &u.conv.composer, Name: "V", Required: key.ModShortcut}}
 	if len(u.attach.files) > 0 {
 		filters = append(filters, key.Filter{Focus: &u.attach.ed.canvas, Name: "V", Required: key.ModShortcut})
@@ -562,7 +609,10 @@ func (u *UI) updatePaste(gtx C) {
 		if ke, ok := ev.(key.Event); !ok || ke.State != key.Press {
 			continue
 		}
-		if !u.pasteFiles() && gtx.Focused(&u.conv.composer) {
+		switch {
+		case u.selected != nil && !isChannelID(u.selected.ID):
+			u.pasteFiles()
+		case gtx.Focused(&u.conv.composer):
 			gtx.Execute(clipboard.ReadCmd{Tag: &u.conv.composer})
 		}
 	}

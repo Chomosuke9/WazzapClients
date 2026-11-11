@@ -131,7 +131,7 @@ index 4db5b0b..b258764 100644
 +	.done = (void (*)(void *, struct xdg_activation_token_v1 *, const char *))gio_onActivationTokenDone,
 +};
 diff --git a/app/os_wayland.go b/app/os_wayland.go
-index 3c893a7..f6e5dca 100644
+index 3c893a7..e5a6b33 100644
 --- a/app/os_wayland.go
 +++ b/app/os_wayland.go
 @@ -14,6 +14,7 @@ import (
@@ -187,7 +187,17 @@ index 3c893a7..f6e5dca 100644
  	// mimeType is the chosen mime type of clipboard.
  	mimeType string
  	// source represents the clipboard content of the most recent
-@@ -218,6 +228,9 @@ type window struct {
+@@ -206,6 +216,9 @@ type window struct {
+ 
+ 	configured        bool
+ 	lastFrameCallback *C.struct_wl_callback
++	// redraw is a draw that must happen once lastFrameCallback comes
++	// (WazzapClients patch: see draw).
++	redraw bool
+ 
+ 	animating bool
+ 	// The most recent configure serial waiting to be ack'ed.
+@@ -218,6 +231,9 @@ type window struct {
  	inCompositor bool        // window is moving or being resized
  
  	clipReads chan transfer.DataEvent
@@ -197,7 +207,7 @@ index 3c893a7..f6e5dca 100644
  
  	wakeups chan struct{}
  
-@@ -360,6 +373,7 @@ func (d *wlDisplay) createNativeWindow(options []Option) (*window, error) {
+@@ -360,6 +376,7 @@ func (d *wlDisplay) createNativeWindow(options []Option) (*window, error) {
  		ppsp:      ppdp,
  		wakeups:   make(chan struct{}, 1),
  		clipReads: make(chan transfer.DataEvent, 1),
@@ -205,7 +215,7 @@ index 3c893a7..f6e5dca 100644
  	}
  	w.surf = C.wl_compositor_create_surface(d.compositor)
  	if w.surf == nil {
-@@ -476,10 +490,11 @@ func gio_onSeatCapabilities(data unsafe.Pointer, seat *C.struct_wl_seat, caps C.
+@@ -476,10 +493,11 @@ func gio_onSeatCapabilities(data unsafe.Pointer, seat *C.struct_wl_seat, caps C.
  // content.
  func (s *wlSeat) flushOffers() {
  	for o := range s.offers {
@@ -219,7 +229,7 @@ index 3c893a7..f6e5dca 100644
  		delete(s.offers, o)
  		callbackDelete(unsafe.Pointer(o))
  		C.wl_data_offer_destroy(o)
-@@ -725,6 +740,9 @@ func gio_onRegistryGlobal(data unsafe.Pointer, reg *C.struct_wl_registry, name C
+@@ -725,6 +743,9 @@ func gio_onRegistryGlobal(data unsafe.Pointer, reg *C.struct_wl_registry, name C
  		if d.seat != nil {
  			d.seat.initTextInput()
  		}
@@ -229,7 +239,7 @@ index 3c893a7..f6e5dca 100644
  	case "wl_data_device_manager":
  		d.dataDeviceManager = (*C.struct_wl_data_device_manager)(C.wl_registry_bind(reg, name, &C.wl_data_device_manager_interface, 3))
  		d.bindDataDevice()
-@@ -753,15 +771,57 @@ func gio_onDataDeviceOffer(data unsafe.Pointer, dataDev *C.struct_wl_data_device
+@@ -753,15 +774,57 @@ func gio_onDataDeviceOffer(data unsafe.Pointer, dataDev *C.struct_wl_data_device
  	s.offers[id] = nil
  }
  
@@ -288,7 +298,7 @@ index 3c893a7..f6e5dca 100644
  }
  
  //export gio_onDataDeviceMotion
-@@ -770,6 +830,45 @@ func gio_onDataDeviceMotion(data unsafe.Pointer, dataDev *C.struct_wl_data_devic
+@@ -770,6 +833,45 @@ func gio_onDataDeviceMotion(data unsafe.Pointer, dataDev *C.struct_wl_data_devic
  
  //export gio_onDataDeviceDrop
  func gio_onDataDeviceDrop(data unsafe.Pointer, dataDev *C.struct_wl_data_device) {
@@ -334,7 +344,7 @@ index 3c893a7..f6e5dca 100644
  }
  
  //export gio_onDataDeviceSelection
-@@ -1174,10 +1273,48 @@ func (w *window) Perform(actions system.Action) {
+@@ -1174,10 +1276,48 @@ func (w *window) Perform(actions system.Action) {
  		switch action {
  		case system.ActionClose:
  			w.requestClose()
@@ -383,7 +393,18 @@ index 3c893a7..f6e5dca 100644
  func (w *window) move(serial C.uint32_t) {
  	s := w.disp.seat
  	if w.inCompositor || s.pointerFocus != w {
-@@ -1418,6 +1555,10 @@ func (w *window) dispatch() {
+@@ -1395,7 +1535,9 @@ func gio_onFrameDone(data unsafe.Pointer, callback *C.struct_wl_callback, t C.ui
+ 	w := callbackLoad(data).(*window)
+ 	if w.lastFrameCallback == callback {
+ 		w.lastFrameCallback = nil
+-		w.draw(false)
++		sync := w.redraw
++		w.redraw = false
++		w.draw(sync)
+ 	}
+ }
+ 
+@@ -1418,6 +1560,10 @@ func (w *window) dispatch() {
  		return
  	}
  	select {
@@ -394,6 +415,40 @@ index 3c893a7..f6e5dca 100644
  	case e := <-w.clipReads:
  		w.disp.readClipClose = nil
  		w.ProcessEvent(e)
+@@ -1971,16 +2117,26 @@ func (w *window) draw(sync bool) {
+ 		w.ProcessEvent(ConfigEvent{Config: w.config})
+ 	}
+ 	anim := w.animating || w.fling.anim.Active()
+-	// Draw animation only when not waiting for frame callback.
+-	redrawAnim := anim && w.lastFrameCallback == nil
+-	if !redrawAnim && !sync {
++	// WazzapClients patch: draw only once the compositor has shown the last
++	// frame, animated or not. A hidden window (another workspace) gets no
++	// frame callbacks and its buffers aren't released, so the configures it
++	// still gets (focus, resizes) drew until eglSwapBuffers ran out of
++	// buffers and blocked, for as long as the window stayed hidden. That
++	// blocked the event loop too: pings went unanswered, and the compositor
++	// called the app unresponsive. A draw asked for meanwhile waits for the
++	// callback.
++	if w.lastFrameCallback != nil {
++		if sync {
++			w.redraw = true
++		}
+ 		return
+ 	}
+-	if anim {
+-		w.lastFrameCallback = C.wl_surface_frame(w.surf)
+-		// Use the surface as listener data for gio_onFrameDone.
+-		C.wl_callback_add_listener(w.lastFrameCallback, &C.gio_callback_listener, unsafe.Pointer(w.surf))
++	if !anim && !sync {
++		return
+ 	}
++	w.lastFrameCallback = C.wl_surface_frame(w.surf)
++	// Use the surface as listener data for gio_onFrameDone.
++	C.wl_callback_add_listener(w.lastFrameCallback, &C.gio_callback_listener, unsafe.Pointer(w.surf))
+ 	w.ProcessEvent(frameEvent{
+ 		FrameEvent: FrameEvent{
+ 			Now:    time.Now(),
 diff --git a/app/os_x11.go b/app/os_x11.go
 index c021403..cebc9af 100644
 --- a/app/os_x11.go

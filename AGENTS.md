@@ -258,6 +258,10 @@ Gotchas already found in the pinned version (v0.10.x):
 - Key events go to whoever asks for them first in a frame. `updatePaste` reads Ctrl+V
   before the composer does: files or a picture on the clipboard (`internal/osclip`)
   open the send view, and anything else is handed back with `clipboard.ReadCmd`.
+- On Linux `osclip` runs wl-paste or xclip, which asks the clipboard's owner for the
+  data. When that's this app (text copied from a chat), Gio's window thread has to answer, so
+  calling it from the UI goroutine deadlocked until Hyprland dropped the app. Ctrl+V reads
+  it on a goroutine (`pasteFiles`, then `takePaste`); never read the clipboard on the UI goroutine.
 - The slash command picker reads Up, Down, Tab and (when it picks) Enter before the
   composer does, in `slashKeys`, and only while it offers rows; otherwise the editor
   moves its caret with them as usual. In a command's text that takes @mentions
