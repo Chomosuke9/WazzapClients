@@ -48,6 +48,13 @@ What `gio.patch` does (marked `WazzapClients patch`):
   its buffers aren't released, so the configures it got drew until
   `eglSwapBuffers` blocked, and with it the event loop: the compositor's
   pings went unanswered and Hyprland called the app unresponsive.
+- Pasting after a paste that found nothing (`io/input/clipboard.go`,
+  `app/os_wayland.go`). A read of an empty clipboard never answers: the
+  router kept the editor waiting for it and never asked the driver again,
+  and the Wayland driver kept its read marked as under way, so pasting
+  stopped working until the app restarted. The router now asks the driver
+  on every read, the driver ends a read with nothing to read, and a read
+  whose owner never finishes writing gives up after 5 seconds.
 
 What `hypermeow.patch` does (marked `WazzapClients patch`):
 

@@ -131,7 +131,7 @@ index 4db5b0b..b258764 100644
 +	.done = (void (*)(void *, struct xdg_activation_token_v1 *, const char *))gio_onActivationTokenDone,
 +};
 diff --git a/app/os_wayland.go b/app/os_wayland.go
-index 3c893a7..e5a6b33 100644
+index 3c893a7..175d927 100644
 --- a/app/os_wayland.go
 +++ b/app/os_wayland.go
 @@ -14,6 +14,7 @@ import (
@@ -344,7 +344,29 @@ index 3c893a7..e5a6b33 100644
  }
  
  //export gio_onDataDeviceSelection
-@@ -1174,10 +1276,48 @@ func (w *window) Perform(actions system.Action) {
+@@ -1057,12 +1159,21 @@ func (w *window) ReadClipboard() {
+ 	w.disp.readClipClose = make(chan struct{})
+ 	r, err := w.disp.readClipboard()
+ 	if r == nil || err != nil {
++		// WazzapClients patch: nothing to read (an empty clipboard). Upstream
++		// left readClipClose set, and every later read returned above: one
++		// paste with nothing on the clipboard broke pasting for good.
++		w.disp.readClipClose = nil
+ 		return
+ 	}
+ 	// Don't let slow clipboard transfers block event loop.
+ 	go func() {
+ 		defer r.Close()
++		// WazzapClients patch: an owner that never finishes writing would
++		// keep readClipClose set, and the reads after it waiting, for good.
++		// Give up on it; the event still comes, so the next read can start.
++		t := time.AfterFunc(5*time.Second, func() { r.Close() })
+ 		data, _ := io.ReadAll(r)
++		t.Stop()
+ 		e := transfer.DataEvent{
+ 			Type: "application/text",
+ 			Open: func() io.ReadCloser {
+@@ -1174,10 +1285,48 @@ func (w *window) Perform(actions system.Action) {
  		switch action {
  		case system.ActionClose:
  			w.requestClose()
@@ -393,7 +415,7 @@ index 3c893a7..e5a6b33 100644
  func (w *window) move(serial C.uint32_t) {
  	s := w.disp.seat
  	if w.inCompositor || s.pointerFocus != w {
-@@ -1395,7 +1535,9 @@ func gio_onFrameDone(data unsafe.Pointer, callback *C.struct_wl_callback, t C.ui
+@@ -1395,7 +1544,9 @@ func gio_onFrameDone(data unsafe.Pointer, callback *C.struct_wl_callback, t C.ui
  	w := callbackLoad(data).(*window)
  	if w.lastFrameCallback == callback {
  		w.lastFrameCallback = nil
@@ -404,7 +426,7 @@ index 3c893a7..e5a6b33 100644
  	}
  }
  
-@@ -1418,6 +1560,10 @@ func (w *window) dispatch() {
+@@ -1418,6 +1569,10 @@ func (w *window) dispatch() {
  		return
  	}
  	select {
@@ -415,7 +437,7 @@ index 3c893a7..e5a6b33 100644
  	case e := <-w.clipReads:
  		w.disp.readClipClose = nil
  		w.ProcessEvent(e)
-@@ -1971,16 +2117,26 @@ func (w *window) draw(sync bool) {
+@@ -1971,16 +2126,26 @@ func (w *window) draw(sync bool) {
  		w.ProcessEvent(ConfigEvent{Config: w.config})
  	}
  	anim := w.animating || w.fling.anim.Active()
@@ -1225,6 +1247,24 @@ index bd8950f..bee71b8 100644
  				d.imageOps = d.imageOps[:0]
  				d.clearColor = mat.color.Opaque()
  				d.clear = true
+diff --git a/io/input/clipboard.go b/io/input/clipboard.go
+index 7741c8a..d9486ea 100644
+--- a/io/input/clipboard.go
++++ b/io/input/clipboard.go
+@@ -61,6 +61,13 @@ func (q *clipboardQueue) ProcessWriteClipboard(req clipboard.WriteCmd) {
+ }
+ 
+ func (q *clipboardQueue) ProcessReadClipboard(state clipboardState, tag event.Tag) clipboardState {
++	// WazzapClients patch: ask the driver again even when tag still waits
++	// for an earlier read. A read that found nothing (an empty clipboard)
++	// never answers, so tag stayed a receiver and upstream never asked
++	// again: one paste with nothing on the clipboard broke pasting into
++	// that editor for good. The driver ignores a read while one is under
++	// way.
++	q.requested = true
+ 	if slices.Contains(state.receivers, tag) {
+ 		return state
+ 	}
 diff --git a/io/input/key.go b/io/input/key.go
 index 4432d95..093b4b5 100644
 --- a/io/input/key.go
