@@ -64,7 +64,7 @@ func (u *UI) sideButtonsFor(gtx C, c *model.Chat, m *model.Message, before bool,
 	}
 	sb := sideButtons{
 		before: before,
-		react: !isChannelID(c.ID) && u.sendBlocked(c) == "" &&
+		react: u.sendBlocked(c) == "" &&
 			!(m.FromMe && (m.Receipt == model.Pending || m.Receipt == model.Failed)),
 		forward: m.Kind != model.KindViewOnce && (forwardsBeside(m) || hasLinkCard(m) || u.jumbo(c, m) != nil),
 	}

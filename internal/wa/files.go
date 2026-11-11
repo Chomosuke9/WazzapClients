@@ -464,7 +464,8 @@ func (b *Backend) uploadAndSend(jid types.JID, m *model.Message, up upload, msg 
 	}
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
 	defer cancel()
-	res, err := up.push(ctx, cli, m.Media)
+	channel := jid.Server == types.NewsletterServer
+	res, err := up.push(ctx, cli, m.Media, channel)
 	if err != nil {
 		fail(err)
 		return
@@ -473,11 +474,24 @@ func (b *Backend) uploadAndSend(jid types.JID, m *model.Message, up upload, msg 
 	if m.Album != "" {
 		b.waitAlbum(ctx, m.Album)
 	}
-	b.sendAsync(m.ChatID, jid, m.ID, msg) // stores it as it goes
+	// A channel's post names its upload by the handle the upload got.
+	b.sendAsyncExtra(m.ChatID, jid, m.ID, msg, nil, nil, res.Handle) // stores it as it goes
 }
 
-// push uploads the file, sent as media, to WhatsApp's servers.
-func (up *upload) push(ctx context.Context, cli *whatsmeow.Client, media model.Media) (whatsmeow.UploadResponse, error) {
+// push uploads the file, sent as media, to WhatsApp's servers: encrypted,
+// or as it is for a channel (whose posts anyone can download).
+func (up *upload) push(ctx context.Context, cli *whatsmeow.Client, media model.Media, channel bool) (whatsmeow.UploadResponse, error) {
+	if channel {
+		if up.data != nil {
+			return cli.UploadNewsletter(ctx, up.data, mediaTypes[media])
+		}
+		f, err := os.Open(up.path)
+		if err != nil {
+			return whatsmeow.UploadResponse{}, err
+		}
+		defer f.Close()
+		return cli.UploadNewsletterReader(ctx, f, mediaTypes[media])
+	}
 	if up.data != nil {
 		return cli.Upload(ctx, up.data, mediaTypes[media])
 	}
@@ -576,6 +590,9 @@ func uploaded(inner proto.Message, res whatsmeow.UploadResponse) {
 		e.URL, e.DirectPath, e.MediaKey, e.MediaKeyTimestamp = url, path, res.MediaKey, ts
 		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, size
 	case *waE2E.DocumentMessage:
+		e.URL, e.DirectPath, e.MediaKey, e.MediaKeyTimestamp = url, path, res.MediaKey, ts
+		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, size
+	case *waE2E.StickerMessage:
 		e.URL, e.DirectPath, e.MediaKey, e.MediaKeyTimestamp = url, path, res.MediaKey, ts
 		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, size
 	}

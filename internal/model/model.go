@@ -953,16 +953,26 @@ func (t *StatusThread) Viewed() bool {
 
 // Channel is a WhatsApp channel (newsletter), followed or suggested.
 type Channel struct {
-	ID        string
-	Name      string
+	ID          string
+	Name        string
+	Description string
+	// Invite is the code of the channel's link,
+	// https://whatsapp.com/channel/<Invite>; "" when not known.
+	Invite    string
 	Verified  bool
 	Followers int
 	Following bool
-	Muted     bool
-	Unread    int
-	Time      time.Time
-	Last      *Message
+	// Owner is set for a channel you own or administer: you can post in it.
+	Owner   bool
+	Muted   bool
+	Created time.Time
+	Unread  int
+	Time    time.Time
+	Last    *Message
 }
+
+// ChannelLink is the link of a channel whose invite code is code.
+func ChannelLink(code string) string { return "https://whatsapp.com/channel/" + code }
 
 // Community groups its linked groups. Announcements is the announcement
 // group's JID; Groups are the other linked groups the user is in.
@@ -1091,6 +1101,18 @@ type StatusEvent struct{}
 
 // ChannelsEvent reports that the followed or suggested channels changed.
 type ChannelsEvent struct{}
+
+// ChannelCreatedEvent answers CreateChannel: the new channel's ID, or Err.
+// A ChannelsEvent listing it comes first.
+type ChannelCreatedEvent struct {
+	ID  string
+	Err string
+}
+
+// OlderEvent reports that messages older than the oldest stored ones of a
+// chat arrived (a channel's earlier posts), so the chat can page further
+// back.
+type OlderEvent struct{ ChatID string }
 
 // ListsEvent says the custom chat lists or the chats in them changed;
 // Backend.Lists has them.
@@ -1353,38 +1375,40 @@ type DeletedEvent struct {
 	IDs    []string
 }
 
-func (ConnEvent) isEvent()         {}
-func (ChatsEvent) isEvent()        {}
-func (ChatEvent) isEvent()         {}
-func (MessageEvent) isEvent()      {}
-func (ReceiptEvent) isEvent()      {}
-func (TypingEvent) isEvent()       {}
-func (PresenceEvent) isEvent()     {}
-func (SyncEvent) isEvent()         {}
-func (CaughtUpEvent) isEvent()     {}
-func (AvatarEvent) isEvent()       {}
-func (MediaEvent) isEvent()        {}
-func (InfoEvent) isEvent()         {}
-func (LabelEvent) isEvent()        {}
-func (StatusEvent) isEvent()       {}
-func (ChannelsEvent) isEvent()     {}
-func (CommunitiesEvent) isEvent()  {}
-func (NoticeEvent) isEvent()       {}
-func (PhoneEvent) isEvent()        {}
-func (LinkEvent) isEvent()         {}
-func (GroupCreatedEvent) isEvent() {}
-func (StickersEvent) isEvent()     {}
-func (StickerPackEvent) isEvent()  {}
-func (DeletedEvent) isEvent()      {}
-func (SearchEvent) isEvent()       {}
-func (ListsEvent) isEvent()        {}
-func (GalleryEvent) isEvent()      {}
-func (MediaSummaryEvent) isEvent() {}
-func (SecurityCodeEvent) isEvent() {}
-func (AccountEvent) isEvent()      {}
-func (GroupEvent) isEvent()        {}
-func (InviteEvent) isEvent()       {}
-func (JoinedEvent) isEvent()       {}
+func (ConnEvent) isEvent()           {}
+func (ChatsEvent) isEvent()          {}
+func (ChatEvent) isEvent()           {}
+func (MessageEvent) isEvent()        {}
+func (ReceiptEvent) isEvent()        {}
+func (TypingEvent) isEvent()         {}
+func (PresenceEvent) isEvent()       {}
+func (SyncEvent) isEvent()           {}
+func (CaughtUpEvent) isEvent()       {}
+func (AvatarEvent) isEvent()         {}
+func (MediaEvent) isEvent()          {}
+func (InfoEvent) isEvent()           {}
+func (LabelEvent) isEvent()          {}
+func (StatusEvent) isEvent()         {}
+func (ChannelsEvent) isEvent()       {}
+func (ChannelCreatedEvent) isEvent() {}
+func (OlderEvent) isEvent()          {}
+func (CommunitiesEvent) isEvent()    {}
+func (NoticeEvent) isEvent()         {}
+func (PhoneEvent) isEvent()          {}
+func (LinkEvent) isEvent()           {}
+func (GroupCreatedEvent) isEvent()   {}
+func (StickersEvent) isEvent()       {}
+func (StickerPackEvent) isEvent()    {}
+func (DeletedEvent) isEvent()        {}
+func (SearchEvent) isEvent()         {}
+func (ListsEvent) isEvent()          {}
+func (GalleryEvent) isEvent()        {}
+func (MediaSummaryEvent) isEvent()   {}
+func (SecurityCodeEvent) isEvent()   {}
+func (AccountEvent) isEvent()        {}
+func (GroupEvent) isEvent()          {}
+func (InviteEvent) isEvent()         {}
+func (JoinedEvent) isEvent()         {}
 
 // StickerSet is a tab of the sticker picker.
 type StickerSet int
@@ -1711,6 +1735,23 @@ type Backend interface {
 	SuggestedChannels() []*Channel
 	// FollowChannel follows a suggested channel; a ChannelsEvent follows.
 	FollowChannel(id string)
+	// UnfollowChannel stops following a channel; a ChannelsEvent follows.
+	UnfollowChannel(id string)
+	// MuteChannel mutes a channel's notifications, or unmutes them; a
+	// ChannelsEvent follows.
+	MuteChannel(id string, muted bool)
+	// RefreshChannel fetches a channel's details (its description, link
+	// and follower count) in the background; a ChannelsEvent follows.
+	RefreshChannel(id string)
+	// DiscoverChannels fetches more channels to follow than
+	// SuggestedChannels lists at first; a ChannelsEvent follows.
+	DiscoverChannels()
+	// CreateChannel creates a channel of yours in the background; a
+	// ChannelCreatedEvent answers.
+	CreateChannel(name, description string)
+	// DeleteChannel deletes a channel you own, for everyone; a
+	// ChannelsEvent follows, or a NoticeEvent on failure.
+	DeleteChannel(id string)
 	// Communities lists the user's communities.
 	Communities() []*Community
 	// Account returns your profile and settings as last fetched. Fresh

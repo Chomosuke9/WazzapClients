@@ -186,8 +186,9 @@ func (u *UI) layoutConversation(gtx C) D {
 			// In ghost mode the ghost bar takes the composer's place.
 			ghost := u.ghostMode() && !u.conv.selecting && u.conv.selV == 0
 			switch gv := u.ghostFx.compose.step(gtx, ghost, durGhost); {
-			case isChannelID(c.ID):
-				// Channels are read-only.
+			case isChannelID(c.ID) && u.channelFooter(c) != nil:
+				// Only a channel's admins post; others may follow it here.
+				cd = u.channelFooter(c)(cgtx)
 			case gv > 0:
 				cd = u.layoutGhostSwap(cgtx, gv, ghost, base)
 			default:
@@ -273,6 +274,11 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 				if cm != nil {
 					// No calls in announcements; their community's groups instead.
 					calls = func(gtx C) D { return u.layoutCommunityButton(gtx, cm) }
+					divider = func(C) D { return D{} }
+				}
+				if isChannelID(c.ID) {
+					// Nobody calls a channel.
+					calls = func(C) D { return D{} }
 					divider = func(C) D { return D{} }
 				}
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
@@ -771,8 +777,12 @@ func (u *UI) encryptionNotice(gtx C, maxW int) D {
 	gtx.Constraints.Min.X = 0
 	return u.card(gtx, 8, p.Encryption, func(gtx C) D {
 		return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 7}.Layout(gtx, func(gtx C) D {
-			l := u.label(12.5, "🔒 Messages and calls are end-to-end encrypted. Only people in this chat can read, listen to, or share them.",
-				p.EncryptionText, labelOpts{align: text.Middle})
+			txt := "🔒 Messages and calls are end-to-end encrypted. Only people in this chat can read, listen to, or share them."
+			if u.selected != nil && isChannelID(u.selected.ID) {
+				// WhatsApp's note in a channel: its updates aren't encrypted.
+				txt = "🔒 This channel has added privacy for your profile and phone number."
+			}
+			l := u.label(12.5, txt, p.EncryptionText, labelOpts{align: text.Middle})
 			l.MaxLines = 0
 			return l.Layout(gtx)
 		})
@@ -864,7 +874,9 @@ func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color
 			layout.Rigid(layout.Spacer{Width: 4}.Layout))
 	}
 	children = append(children, layout.Rigid(u.label(12.5, m.Time.Format("15:04"), col).Layout))
-	if m.FromMe && m.Kind != model.KindDeleted {
+	// A channel's updates have no receipts: only one still going shows.
+	if m.FromMe && m.Kind != model.KindDeleted &&
+		(!isChannelID(m.ChatID) || m.Receipt == model.Pending || m.Receipt == model.Failed) {
 		ic, tc := receiptIcon(m.Receipt, u.pal, true)
 		if m.Receipt != model.Read && m.Receipt != model.Failed {
 			tc = col

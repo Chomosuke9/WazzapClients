@@ -33,6 +33,7 @@ const (
 	dialogAppLock // App lock's password and auto-lock (applock.go)
 	dialogPack    // a sticker pack (stickerpack.go)
 	dialogMyPacks // Your stickers: the packs added to the picker (stickermanage.go)
+	dialogChannel // Create channel (channelinfo.go)
 )
 
 type dialogButton struct {
@@ -218,6 +219,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.packPanel)
 	case dialogMyPacks:
 		panel = record(gtx, u.myPacksPanel)
+	case dialogChannel:
+		panel = record(gtx, u.createChannelPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

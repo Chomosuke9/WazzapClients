@@ -27,7 +27,10 @@ func (u *UI) convMenuItems(c *model.Chat) []menuItem {
 	var items []menuItem
 	add := func(it menuItem) { items = append(items, it) }
 	if isChannelID(id) {
-		add(menuItem{key: "close", ic: icCancel, label: "Close chat", run: u.closeChat})
+		if ch := u.channelByID(id); ch != nil {
+			return u.channelMenuItems(ch, true)
+		}
+		add(menuItem{key: "close", ic: icCancel, label: "Close channel", run: u.closeChat})
 		return items
 	}
 	if c.IsGroup {

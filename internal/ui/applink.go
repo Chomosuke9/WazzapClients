@@ -181,7 +181,7 @@ func (u *UI) linkResolved(e model.LinkEvent) {
 	case e.Err != "":
 		u.toast(e.Err)
 	case e.Kind == model.LinkChannel && e.Channel != nil:
-		if e.Channel.Following || u.channelByID(e.ID) != nil {
+		if e.Channel.Following || u.followedChannel(e.ID) != nil {
 			u.closeDialog()
 			u.openChannel(e.ID)
 			return
@@ -205,7 +205,7 @@ func (u *UI) followFromLink(id string) {
 // channelsChanged opens the channel followed from a link once it's in
 // the list.
 func (u *UI) channelsChanged() {
-	if u.followed != "" && u.channelByID(u.followed) != nil {
+	if u.followed != "" && u.followedChannel(u.followed) != nil {
 		u.openChannel(u.followed)
 		u.followed = ""
 	}
@@ -213,7 +213,7 @@ func (u *UI) channelsChanged() {
 
 // openChannel opens a followed channel on the Channels page.
 func (u *UI) openChannel(id string) {
-	ch := u.channelByID(id)
+	ch := u.followedChannel(id)
 	if ch == nil {
 		return
 	}

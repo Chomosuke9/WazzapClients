@@ -783,6 +783,10 @@ func (hb hostBackend) Poll() []model.Event { return hb.h.uiEvents() }
 // openFromNotification opens a chat on the Chats page.
 func (u *UI) openFromNotification(id string) {
 	u.applyEvents()
+	if isChannelID(id) {
+		u.openChannel(id)
+		return
+	}
 	c := u.chatByID(id)
 	if c == nil {
 		return

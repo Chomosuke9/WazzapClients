@@ -645,6 +645,13 @@ func (u *UI) Select(i int) {
 // SelectID opens the chat with the given ID.
 func (u *UI) SelectID(id string) {
 	u.applyEvents()
+	if ch := u.channelByID(id); ch != nil {
+		// A channel, followed or a suggestion's preview, opens on its page.
+		u.setPage(pageChannels)
+		u.open(channelChat(ch))
+		ch.Unread = 0
+		return
+	}
 	if c := u.chatByID(id); c != nil {
 		u.open(c)
 	}
@@ -704,7 +711,7 @@ func (u *UI) markSeen() bool {
 		return false
 	}
 	// An open channel is a copy (channelChat); new posts count in u.channels.
-	if ch := u.channelByID(c.ID); ch != nil && ch.Unread > 0 {
+	if ch := u.followedChannel(c.ID); ch != nil && ch.Unread > 0 {
 		ch.Unread = 0
 		c.Unread = 1
 	}
@@ -1052,7 +1059,7 @@ func (u *UI) update(gtx C) {
 	}
 	u.splitKeys(gtx)
 	u.updatePrivacy(gtx)
-	if u.conv.header.Clicked(gtx) && u.selected != nil && !isChannelID(u.selected.ID) {
+	if u.conv.header.Clicked(gtx) && u.selected != nil {
 		if u.info.open {
 			u.info.open = false
 		} else {
@@ -1367,6 +1374,12 @@ func (u *UI) applyEvents() {
 			u.myPacksChanged()
 		case model.StickerPackEvent:
 			u.packLoaded(e)
+		case model.ChannelCreatedEvent:
+			u.channelCreated(e)
+		case model.OlderEvent:
+			if u.selected != nil && u.selected.ID == e.ChatID {
+				u.conv.olderMore = true // pageMessages reads them as the list nears the top
+			}
 		case model.ChannelsEvent:
 			u.channels = u.backend.Channels()
 			u.suggested = u.backend.SuggestedChannels()
@@ -2200,6 +2213,20 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 		u.openPicView(u.selected.ID, u.selected.Name, kind, image.Rectangle{})
 		u.picView.anim.snap(true)
+	case "channelinfo":
+		// A channel's info panel (-ochat techdaily@newsletter).
+		u.openInfo(u.selected.ID)
+		u.info.anim.snap(true)
+		u.applyEvents()
+	case "channelnew", "channeladd":
+		// Create channel, and the Channels page's ⊕ menu.
+		u.setPage(pageChannels)
+		if name == "channelnew" {
+			u.openCreateChannel()
+			u.channel.newName.SetText("Morning notes")
+		} else {
+			u.ctx = ctxMenu{kind: ctxChannelAdd, at: u.mouse}
+		}
 	case "perms", "starred", "changes":
 		// The info panel's pages.
 		u.openInfo(u.selected.ID)

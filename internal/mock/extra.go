@@ -2,6 +2,7 @@ package mock
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -21,6 +22,8 @@ type extras struct {
 	privacy     model.StatusPrivacy
 	channels    []*model.Channel
 	suggested   []*model.Channel
+	discovered  bool // DiscoverChannels was called: every suggestion shows
+	created     int  // channels CreateChannel made
 	communities []*model.Community
 	infos       map[string]*model.ChatInfo
 	summaries   map[string]model.MediaSummaryEvent // canned info panel media
@@ -155,8 +158,59 @@ func (b *Backend) FollowChannel(id string) {
 	}
 }
 
-func (b *Backend) SuggestedChannels() []*model.Channel { return b.suggested }
-func (b *Backend) Communities() []*model.Community     { return b.communities }
+func (b *Backend) SuggestedChannels() []*model.Channel {
+	if b.discovered {
+		return b.suggested
+	}
+	return b.suggested[:min(len(b.suggested), 3)]
+}
+
+func (b *Backend) UnfollowChannel(id string) {
+	for i, ch := range b.channels {
+		if ch.ID == id {
+			ch.Following, ch.Owner = false, false
+			b.channels = slices.Delete(b.channels, i, i+1)
+			b.suggested = append([]*model.Channel{ch}, b.suggested...)
+			b.emit(model.ChannelsEvent{})
+			return
+		}
+	}
+}
+
+func (b *Backend) MuteChannel(id string, muted bool) {
+	for _, ch := range b.channels {
+		if ch.ID == id {
+			ch.Muted = muted
+		}
+	}
+	b.emit(model.ChannelsEvent{})
+}
+
+func (b *Backend) RefreshChannel(string) { b.emit(model.ChannelsEvent{}) }
+
+func (b *Backend) DiscoverChannels() {
+	b.discovered = true
+	b.emit(model.ChannelsEvent{})
+}
+
+func (b *Backend) CreateChannel(name, description string) {
+	b.created++
+	ch := &model.Channel{ID: fmt.Sprintf("mine%d@newsletter", b.created), Name: name, Description: description,
+		Invite: fmt.Sprintf("DemoChannelMine%d", b.created), Following: true, Owner: true, Followers: 1,
+		Created: b.now(), Time: b.now()}
+	ch.Last = &model.Message{ID: ch.ID + "-0", ChatID: ch.ID, FromMe: true, Kind: model.KindText,
+		Text: `You created this channel, "` + name + `"`, Time: ch.Created}
+	b.channels = append([]*model.Channel{ch}, b.channels...)
+	b.emit(model.ChannelsEvent{})
+	b.emit(model.ChannelCreatedEvent{ID: ch.ID})
+}
+
+func (b *Backend) DeleteChannel(id string) {
+	b.channels = slices.DeleteFunc(b.channels, func(ch *model.Channel) bool { return ch.ID == id && ch.Owner })
+	delete(b.msgs, id)
+	b.emit(model.ChannelsEvent{})
+}
+func (b *Backend) Communities() []*model.Community { return b.communities }
 
 // Info returns canned details, or builds them from the chat's messages.
 func (b *Backend) Info(chatID string) *model.ChatInfo {
@@ -305,6 +359,10 @@ func closeFriends(u *model.StatusUpdate) *model.StatusUpdate {
 	return u
 }
 
+func demoDate(y int, mo time.Month, d int) time.Time {
+	return time.Date(y, mo, d, 12, 0, 0, 0, time.Local)
+}
+
 // demoExtras fills statuses, channels and communities for the demo account.
 func demoExtras(at func(daysAgo, h, m int) time.Time) extras {
 	return extras{
@@ -330,14 +388,26 @@ func demoExtras(at func(daysAgo, h, m int) time.Time) extras {
 		},
 		channels: []*model.Channel{
 			{ID: "techdaily@newsletter", Name: "Tech Daily", Verified: true, Followers: 1200000, Following: true, Unread: 3, Time: at(0, 8, 0),
-				Last: &model.Message{Text: "The biggest launches of the week, in one thread 🧵", Time: at(0, 8, 0)}},
-			{ID: "resep@newsletter", Name: "Archipelago Recipes", Followers: 82000, Following: true, Time: at(1, 17, 30),
+				Description: "Launches, leaks and the stories behind them. New posts every morning.", Invite: "DemoChannelTech",
+				Created: demoDate(2024, 2, 11),
+				Last: &model.Message{Text: "The biggest launches of the week, in one thread 🧵", Time: at(0, 8, 0),
+					Reactions: []model.ReactionCount{{Emoji: "👍", Count: 1840}, {Emoji: "❤️", Count: 912}, {Emoji: "🔥", Count: 230}}}},
+			{ID: "resep@newsletter", Name: "Archipelago Recipes", Followers: 82000, Following: true, Muted: true, Time: at(1, 17, 30),
+				Description: "Home cooking from Sabang to Merauke.", Invite: "DemoChannelResep", Created: demoDate(2023, 11, 2),
 				Last: &model.Message{Media: model.MediaImage, Kind: model.KindImage, Text: "Authentic Padang rendang, step by step", Time: at(1, 17, 30)}},
+			{ID: "wazzapnews@newsletter", Name: "Wazzap Updates", Followers: 214, Following: true, Owner: true, Time: at(2, 20, 15),
+				Description: "What's new in WazzapClients.", Invite: "DemoChannelWazzap", Created: demoDate(2026, 9, 1),
+				Last: &model.Message{FromMe: true, Text: "Channels now load older posts as you scroll up.", Time: at(2, 20, 15),
+					Reactions: []model.ReactionCount{{Emoji: "🎉", Count: 12}}}},
 		},
 		suggested: []*model.Channel{
-			{ID: "whatsapp@newsletter", Name: "WhatsApp", Verified: true, Followers: 220000000},
-			{ID: "bola@newsletter", Name: "National Football", Followers: 540000},
+			{ID: "whatsapp@newsletter", Name: "WhatsApp", Verified: true, Followers: 220000000,
+				Description: "Official channel of WhatsApp."},
+			{ID: "bola@newsletter", Name: "National Football", Followers: 540000,
+				Description: "Scores, transfers and match highlights from the national league, every matchday."},
 			{ID: "gempa@newsletter", Name: "Earthquake Alerts", Verified: true, Followers: 3100000},
+			{ID: "kopi@newsletter", Name: "Coffee Atlas", Followers: 46000},
+			{ID: "kereta@newsletter", Name: "Rail Travel Tips", Verified: true, Followers: 128000},
 		},
 		communities: []*model.Community{
 			{ID: "alumni-hub@g.us", Name: "CS Alumni Hub", Announcements: "alumni-ann", Groups: []string{"uni", "jobs"}},

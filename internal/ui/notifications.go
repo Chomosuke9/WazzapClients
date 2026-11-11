@@ -222,8 +222,14 @@ func (n *notifier) flush() {
 
 // wanted reports whether new messages ms in chat id notify.
 func (n *notifier) wanted(id string, c chatInfo, known bool, ms []*model.Message) bool {
-	if isChannelID(id) || id == statusChatID {
+	if id == statusChatID {
 		return false
+	}
+	if isChannelID(id) {
+		// A followed channel's updates, unless it's muted (as channels
+		// are when followed on the phone).
+		ch := n.channel(id)
+		return ch != nil && ch.Following && !ch.Muted && prefOn(n.b, prefNotifyMessages)
 	}
 	group := c.group || strings.HasSuffix(id, "@g.us")
 	if group && !prefOn(n.b, prefNotifyGroups) || !group && !prefOn(n.b, prefNotifyMessages) {
@@ -241,6 +247,19 @@ func (n *notifier) wanted(id string, c chatInfo, known bool, ms []*model.Message
 	return false
 }
 
+// channel returns channel id as the backend has it, or nil.
+func (n *notifier) channel(id string) *model.Channel {
+	if !isChannelID(id) {
+		return nil
+	}
+	for _, ch := range n.b.Channels() {
+		if ch.ID == id {
+			return ch
+		}
+	}
+	return nil
+}
+
 // forMe reports whether m mentions you (or everyone) or replies to you.
 func (n *notifier) forMe(m *model.Message) bool { return m.ForMe(n.meID) }
 
@@ -248,6 +267,10 @@ func (n *notifier) forMe(m *model.Message) bool { return m.ForMe(n.meID) }
 // message is m, for count messages.
 func (n *notifier) notification(id string, c chatInfo, m *model.Message, count int) notify.Notification {
 	title := c.name
+	channel := isChannelID(id)
+	if ch := n.channel(id); ch != nil {
+		title = ch.Name
+	}
 	if title == "" {
 		title = id
 		if i := strings.IndexByte(id, '@'); i > 0 {
@@ -293,7 +316,7 @@ func (n *notifier) notification(id string, c chatInfo, m *model.Message, count i
 		Image:  img,
 		Time:   m.Time,
 		Silent: !prefOn(n.b, prefNotifySound),
-		Reply:  true,
+		Reply:  !channel, // only a channel's admins post
 	}
 }
 

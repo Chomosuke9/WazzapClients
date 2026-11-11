@@ -113,8 +113,37 @@ func (b *Backend) addChannelPosts() {
 		if ch.Last.Receipt == model.Pending {
 			ch.Last.Receipt = model.Read
 		}
-		b.msgs[ch.ID] = []*model.Message{ch.Last}
+		b.msgs[ch.ID] = append(demoPosts(ch.ID, ch.Last.Time), ch.Last)
 	}
+	for _, ch := range b.suggested {
+		// A suggestion opens to show what it posts before you follow it.
+		if posts := demoPosts(ch.ID, b.now().Add(-3*time.Hour)); len(posts) > 0 {
+			b.msgs[ch.ID] = posts
+		}
+	}
+}
+
+// demoPosts are a demo channel's posts before its last one, at.
+func demoPosts(id string, at time.Time) []*model.Message {
+	var texts []string
+	var reacts [][]model.ReactionCount
+	switch id {
+	case "techdaily@newsletter":
+		texts = []string{"Good morning! Here's what we're following today ☕",
+			"A new open-source text editor hit 10k stars in a week. We tried it.",
+			"Poll results: 62% of you still keep a notebook next to the keyboard 📓"}
+		reacts = [][]model.ReactionCount{{{Emoji: "👍", Count: 410}}, {{Emoji: "🔥", Count: 1200}, {Emoji: "😮", Count: 88}}, nil}
+	case "bola@newsletter":
+		texts = []string{"FULL TIME: 2-1! What a comeback in the second half ⚽",
+			"Transfer window: three signings confirmed so far. Thread below 👇"}
+		reacts = [][]model.ReactionCount{{{Emoji: "⚽", Count: 5200}, {Emoji: "❤️", Count: 1300}}, nil}
+	}
+	out := make([]*model.Message, len(texts))
+	for i, t := range texts {
+		out[i] = &model.Message{ID: fmt.Sprintf("%s-p%d", id, i), ChatID: id, Kind: model.KindText, Text: t,
+			Time: at.Add(-time.Duration(len(texts)-i) * 2 * time.Hour), Receipt: model.Read, Reactions: reacts[i]}
+	}
+	return out
 }
 
 func (b *Backend) Start(notify func()) {

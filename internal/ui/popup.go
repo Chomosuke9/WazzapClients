@@ -150,6 +150,8 @@ const (
 	ctxReact       // a message's reaction bar alone, from its React button (sidebuttons.go)
 	ctxPickMute    // mute durations for the chats picked (selectchats.go)
 	ctxChips       // the filter chips that didn't fit (chips.go)
+	ctxChannel     // a channel's row in the Channels page (channelinfo.go)
+	ctxChannelAdd  // the Channels page's ⊕
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -266,7 +268,7 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 	if m.FromMe && !deleted && !isChannelID(c.ID) && m.Receipt != model.Pending && m.Receipt != model.Failed {
 		add(menuItem{key: "info", ic: icInfo, label: "Message info", run: func() { u.openMsgInfo(m) }})
 	}
-	if m.CanEdit(u.now()) && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
+	if m.CanEdit(u.now()) && (!isChannelID(c.ID) || u.ownsChannel(c.ID)) && u.sendBlocked(c) == "" {
 		add(menuItem{key: "edit", ic: icEdit, label: "Edit", run: func() { u.startEdit(m) }})
 	}
 	if !deleted && !revoked && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
@@ -340,7 +342,7 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 
 // canReact reports whether m, in chat chatID, takes reactions.
 func canReact(chatID string, m *model.Message) bool {
-	return m.Kind != model.KindDeleted && m.Kind != model.KindWaiting && !isChannelID(chatID)
+	return m.Kind != model.KindDeleted && m.Kind != model.KindWaiting
 }
 
 // downloadable reports whether m's media is a file the bubble downloads
@@ -427,6 +429,12 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			if c := u.chatByID(m.chatID); c != nil {
 				items = u.listItems(c)
 			}
+		case ctxChannel:
+			if ch := u.channelByID(m.chatID); ch != nil {
+				items = u.channelMenuItems(ch, false)
+			}
+		case ctxChannelAdd:
+			items = u.channelAddItems()
 		case ctxConv:
 			if c := u.selected; c != nil && c.ID == m.chatID {
 				items = u.convMenuItems(c)

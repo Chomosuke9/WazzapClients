@@ -80,7 +80,14 @@ type Backend struct {
 
 	infoMu      sync.Mutex
 	infoFetched map[string]bool // info panels refreshed this session
-	abouts      aboutCache      // contacts' about texts (about.go)
+	// chanMu guards the channels whose older posts are being fetched
+	// (olderBusy), and those whose first post is here (olderDone).
+	chanMu               sync.Mutex
+	olderBusy, olderDone map[string]bool
+	// liveGen counts the chats opened: a channel's live updates stop being
+	// renewed once another chat opens (liveUpdates).
+	liveGen atomic.Int64
+	abouts  aboutCache // contacts' about texts (about.go)
 
 	statusPriv   statusPrivacy
 	searchMu     sync.Mutex
@@ -153,6 +160,8 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 		downloads:   newFetcher(),
 		subtitles:   make(map[string]string),
 		infoFetched: make(map[string]bool),
+		olderBusy:   make(map[string]bool),
+		olderDone:   make(map[string]bool),
 	}
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 	b.typing.wake = make(chan struct{}, 1)
@@ -536,11 +545,17 @@ func (b *Backend) chat(jid string) *model.Chat {
 
 func (b *Backend) Messages(chatID string, limit int) []*model.Message {
 	raw, err := b.store.messages(b.ctx, chatID, limit)
+	if err == nil && len(raw) < limit {
+		b.olderPosts(chatID) // a channel's earlier posts come from the server
+	}
 	return b.resolveMessages(chatID, raw, err)
 }
 
 func (b *Backend) MessagesBefore(chatID, id string, limit int) []*model.Message {
 	raw, err := b.store.messagesBefore(b.ctx, chatID, id, limit)
+	if err == nil && len(raw) < limit {
+		b.olderPosts(chatID)
+	}
 	return b.resolveMessages(chatID, raw, err)
 }
 
@@ -619,12 +634,9 @@ func (b *Backend) Open(chatID string) {
 		if err != nil {
 			return
 		}
+		b.liveGen.Add(1)
 		if isChannel(jid) {
-			_ = b.store.setField(ctx, chatID, "unread", 0)
-			if cli := b.client(); cli != nil && cli.IsConnected() {
-				b.fetchChannelPosts(ctx, cli, jid)
-			}
-			b.emit(model.ChannelsEvent{})
+			b.openChannel(ctx, jid)
 			return
 		}
 		c := b.chat(chatID)
@@ -761,6 +773,8 @@ func (b *Backend) handle(evt any) {
 		})
 	case *events.OfflineSyncCompleted:
 		b.emit(model.CaughtUpEvent{})
+	case *events.NewsletterJoin, *events.NewsletterLeave, *events.NewsletterMuteChange, *events.NewsletterLiveUpdate:
+		b.onChannelEvent(evt)
 	case *events.Disconnected, *events.KeepAliveTimeout:
 		b.emit(model.ConnEvent{State: model.StateOffline})
 	case *events.KeepAliveRestored:
@@ -1110,6 +1124,9 @@ func (b *Backend) onMessage(e *events.Message) {
 		b.onStatus(e)
 		return
 	}
+	if isChannel(e.Info.Chat) && b.onChannelMessage(e) {
+		return
+	}
 	b.noteTimer(ctx, e)
 	p, ok := b.parse(ctx, e)
 	if !ok || p.target != "" || p.msg.isCopy {
@@ -1255,6 +1272,9 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		}
 		if !exists && info.IsGroup {
 			go b.fetchGroupName(chatJID)
+		}
+		if isChannel(chatJID) && info.ServerID != 0 {
+			_ = b.store.putPost(ctx, chat, p.msg.ID, info.ServerID, nil)
 		}
 		if q := p.msg.quotedMedia; q != nil && b.store.fillViewOnce(ctx, chat, p.msg.quotedID, q) {
 			b.emitMessage(chat, p.msg.quotedID)

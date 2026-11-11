@@ -252,8 +252,10 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		var prep func(context.Context)
 		if link {
 			addLink(e, d.Link, d.LinkThumb)
-			if img := d.LinkImage; len(img.Data) > 0 {
-				// Its size makes the card wide at once (see describe).
+			if img := d.LinkImage; len(img.Data) > 0 && jid.Server != types.NewsletterServer {
+				// Its size makes the card wide at once (see describe). A
+				// channel's post keeps the small thumbnail: its uploads
+				// aren't encrypted, and this one would be.
 				e.ThumbnailWidth, e.ThumbnailHeight = proto.Uint32(uint32(img.W)), proto.Uint32(uint32(img.H))
 				prep = func(ctx context.Context) { b.uploadLinkImage(ctx, cli, e, img) }
 			}
@@ -327,6 +329,12 @@ func (b *Backend) sendAsyncOr(chatID string, jid types.JID, id string, msg *waE2
 
 // sendAsyncPrep is sendAsyncOr that runs prep, if not nil, before sending.
 func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg *waE2E.Message, fallbacks []*waE2E.Message, prep func(context.Context)) {
+	b.sendAsyncExtra(chatID, jid, id, msg, fallbacks, prep, "")
+}
+
+// sendAsyncExtra is sendAsyncPrep for a channel's post of a file uploaded
+// under mediaHandle.
+func (b *Backend) sendAsyncExtra(chatID string, jid types.JID, id string, msg *waE2E.Message, fallbacks []*waE2E.Message, prep func(context.Context), mediaHandle string) {
 	cli := b.client()
 	go func() {
 		if prep != nil {
@@ -336,7 +344,7 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg *wa
 			b.sendFailed(chatID, id, "Couldn't store the message payload.")
 			return
 		}
-		resp, err := b.sendMessage(b.ctx, cli, jid, msg, whatsmeow.SendRequestExtra{ID: id})
+		resp, err := b.sendMessage(b.ctx, cli, jid, msg, whatsmeow.SendRequestExtra{ID: id, MediaHandle: mediaHandle})
 		// SendMessage can add a message secret and other protocol metadata.
 		_ = b.store.setRawPayload(b.ctx, chatID, id, msg)
 		for _, fallback := range fallbacks {
@@ -357,6 +365,10 @@ func (b *Backend) sendAsyncPrep(chatID string, jid types.JID, id string, msg *wa
 		r := model.Sent
 		if b.isMeID(chatID) {
 			r = model.Read // nobody else to read it
+		}
+		if resp.ServerID != 0 && jid.Server == types.NewsletterServer {
+			// A post in your channel: reactions to it go by this ID.
+			_ = b.store.putPost(b.ctx, chatID, id, resp.ServerID, nil)
 		}
 		_ = b.store.setReceipt(b.ctx, chatID, []string{id}, r)
 		b.emit(model.ReceiptEvent{ChatID: chatID, IDs: []string{id}, Receipt: r})
@@ -464,12 +476,73 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	if data, err := os.ReadFile(b.mediaPath(src.ChatID, src.ID)); err == nil {
 		_ = os.WriteFile(b.mediaPath(chatID, m.ID), data, 0o600)
 	}
-	b.sendAsync(chatID, jid, m.ID, msg)
+	srcJID, _ := types.ParseJID(src.ChatID)
+	if part := mediaPart(msg); len(blob) > 0 && part != nil && (isChannel(srcJID) || isChannel(jid)) {
+		// A channel's files aren't encrypted and a chat's are: the copy
+		// needs the file uploaded again, the way its new chat takes it.
+		id := m.ID
+		go func() {
+			handle, err := b.reupload(ctx, cli, part, isChannel(jid))
+			if err != nil {
+				b.log.Warnf("upload the copy of %s again: %v", src.ID, err)
+				b.sendFailed(chatID, id, "Couldn't send the file.")
+				return
+			}
+			b.sendAsyncExtra(chatID, jid, id, msg, nil, nil, handle)
+		}()
+	} else {
+		b.sendAsync(chatID, jid, m.ID, msg)
+	}
 	if r, ok := b.store.message(ctx, chatID, m.ID); ok {
 		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, jid.Server == types.GroupServer)})
 	}
 	b.emitChat(chatID)
 	return true
+}
+
+// mediaPart returns the part of m that names its file, or nil.
+func mediaPart(m *waE2E.Message) whatsmeow.DownloadableMessage {
+	switch {
+	case m == nil:
+	case m.ImageMessage != nil:
+		return m.ImageMessage
+	case m.VideoMessage != nil:
+		return m.VideoMessage
+	case m.PtvMessage != nil:
+		return m.PtvMessage
+	case m.AudioMessage != nil:
+		return m.AudioMessage
+	case m.DocumentMessage != nil:
+		return m.DocumentMessage
+	case m.StickerMessage != nil:
+		return m.StickerMessage
+	}
+	return nil
+}
+
+// reupload downloads the file part names and uploads it again, for a
+// channel (as it is) or a chat (encrypted), and points part at the new
+// upload. It returns the upload's handle, which a channel's post names.
+func (b *Backend) reupload(ctx context.Context, cli *whatsmeow.Client, part whatsmeow.DownloadableMessage, channel bool) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	data, err := cli.Download(ctx, part)
+	if err != nil {
+		return "", err
+	}
+	var res whatsmeow.UploadResponse
+	if mt := whatsmeow.GetMediaType(part); channel {
+		res, err = cli.UploadNewsletter(ctx, data, mt)
+	} else {
+		res, err = cli.Upload(ctx, data, mt)
+	}
+	if err != nil {
+		return "", err
+	}
+	if pm, ok := part.(proto.Message); ok {
+		uploaded(pm, res)
+	}
+	return res.Handle, nil
 }
 
 // Forward implements model.Backend.
@@ -530,6 +603,10 @@ func (b *Backend) React(m *model.Message, emoji string) {
 	cli := b.connected()
 	jid, err := types.ParseJID(m.ChatID)
 	if cli == nil || err != nil {
+		return
+	}
+	if isChannel(jid) {
+		b.reactChannel(cli, jid, m, emoji)
 		return
 	}
 	_ = b.store.putReaction(b.ctx, b.db, m.ChatID, m.ID, reaction{who: meVoter, ts: b.sendTime().UnixMilli(), emoji: emoji})

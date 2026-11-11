@@ -50,11 +50,16 @@ func main() {
 	flag.Parse()
 	*embedding = *embedding || slices.Contains(flag.Args(), "/Embedding")
 	// Windows starts the handler of whatsapp: links with the link last
-	// (desktop.RegisterLinks).
+	// (desktop.RegisterLinks). WhatsApp's web links open the same way
+	// (wazzapclients https://whatsapp.com/channel/<code>).
 	link := ""
 	for _, a := range flag.Args() {
-		if strings.HasPrefix(strings.ToLower(a), "whatsapp:") {
-			link = a
+		l := strings.ToLower(a)
+		for _, prefix := range []string{"whatsapp:", "https://wa.me/", "https://api.whatsapp.com/",
+			"https://chat.whatsapp.com/", "https://whatsapp.com/channel/", "https://www.whatsapp.com/channel/"} {
+			if strings.HasPrefix(l, prefix) {
+				link = a
+			}
 		}
 	}
 	// A chat app idles most of the time; trade a little CPU during bursts

@@ -126,7 +126,13 @@ func (u *UI) showInfo(chatID, name string) {
 	}
 	u.info.chatID = chatID
 	u.info.name = name
-	u.info.data = u.backend.Info(chatID)
+	if isChannelID(chatID) {
+		// A channel's details come with it (channelByID), refreshed here.
+		u.info.data = nil
+		u.backend.RefreshChannel(chatID)
+	} else {
+		u.info.data = u.backend.Info(chatID)
+	}
 	if u.info.media.ChatID != chatID {
 		u.info.media = model.MediaSummaryEvent{ChatID: chatID}
 	}
@@ -182,8 +188,11 @@ func (u *UI) layoutInfo(gtx C) D {
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			title := "Contact info"
-			if c.IsGroup {
+			switch {
+			case c.IsGroup:
 				title = "Group info"
+			case isChannelID(c.ID):
+				title = "Channel info"
 			}
 			if u.info.sub != "" {
 				title = infoSubTitle(u.info.sub)
@@ -208,6 +217,9 @@ func (u *UI) layoutInfo(gtx C) D {
 // infoRows builds the panel's scrolling content.
 func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widget {
 	p := u.pal
+	if isChannelID(c.ID) {
+		return u.channelInfoRows(gtx, c)
+	}
 	if !info.IsGroup {
 		return u.contactRows(gtx, c, info)
 	}

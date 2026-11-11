@@ -108,7 +108,7 @@ func (b *Backend) PostStatus(p model.StatusPost) {
 		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
 		defer cancel()
 		msg, inner := fileMessage(m, up, p.Text, nil, false)
-		res, err := up.push(ctx, cli, m.Media)
+		res, err := up.push(ctx, cli, m.Media, false)
 		if err != nil {
 			b.statusFailed(st.id, err)
 			return

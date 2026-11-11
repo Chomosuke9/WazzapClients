@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,24 +15,29 @@ import (
 
 // channelMeta is a channel's row in wz_channels.
 type channelMeta struct {
-	jid, name, picture string
-	verified           bool
-	followers          int
-	following, owner   bool
-	muted              bool
-	created            time.Time
-	rank               int
+	jid, name, picture  string
+	description, invite string
+	verified            bool
+	followers           int
+	following, owner    bool
+	muted               bool
+	created             time.Time
+	// rank orders suggestions (1 first); 0 isn't one, and -1 keeps the
+	// stored rank (putChannel).
+	rank int
 }
 
 func metaFromNewsletter(n *types.NewsletterMetadata) channelMeta {
 	tm := n.ThreadMeta
 	m := channelMeta{
-		jid:       n.ID.String(),
-		name:      tm.Name.Text,
-		verified:  tm.VerificationState == types.NewsletterVerificationStateVerified,
-		followers: tm.SubscriberCount,
-		created:   tm.CreationTime.Time,
-		picture:   pictureURL(&tm.Preview),
+		jid:         n.ID.String(),
+		name:        tm.Name.Text,
+		description: tm.Description.Text,
+		invite:      tm.InviteCode,
+		verified:    tm.VerificationState == types.NewsletterVerificationStateVerified,
+		followers:   tm.SubscriberCount,
+		created:     tm.CreationTime.Time,
+		picture:     pictureURL(&tm.Preview),
 	}
 	if m.picture == "" {
 		m.picture = pictureURL(tm.Picture)
@@ -60,15 +64,28 @@ func pictureURL(p *types.ProfilePictureInfo) string {
 
 func (s *msgStore) putChannel(ctx context.Context, m channelMeta) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO wz_channels (jid, name, verified, followers, following, owner, muted, created, picture, rank)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_channels (jid, name, verified, followers, following, owner, muted, created, picture, rank,
+			description, invite)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, MAX(?, 0), ?, ?)
 		ON CONFLICT (jid) DO UPDATE SET name = excluded.name, verified = excluded.verified,
 			followers = excluded.followers, following = excluded.following, owner = excluded.owner,
-			muted = excluded.muted, created = excluded.created, rank = excluded.rank,
-			picture = CASE WHEN excluded.picture <> '' THEN excluded.picture ELSE wz_channels.picture END`,
+			muted = excluded.muted,
+			created = CASE WHEN excluded.created > 0 THEN excluded.created ELSE wz_channels.created END,
+			rank = CASE WHEN ? < 0 THEN wz_channels.rank ELSE excluded.rank END,
+			picture = CASE WHEN excluded.picture <> '' THEN excluded.picture ELSE wz_channels.picture END,
+			description = CASE WHEN excluded.description <> '' THEN excluded.description ELSE wz_channels.description END,
+			invite = CASE WHEN excluded.invite <> '' THEN excluded.invite ELSE wz_channels.invite END`,
 		m.jid, m.name, boolInt(m.verified), m.followers, boolInt(m.following), boolInt(m.owner), boolInt(m.muted),
-		m.created.Unix(), m.picture, m.rank)
+		createdUnix(m.created), m.picture, m.rank, m.description, m.invite, m.rank)
 	return err
+}
+
+// createdUnix is when a channel was made, in unix seconds; 0 when unknown.
+func createdUnix(t time.Time) int64 {
+	if t.IsZero() || t.Unix() <= 0 {
+		return 0
+	}
+	return t.Unix()
 }
 
 func (s *msgStore) channelPicture(ctx context.Context, jid string) string {
@@ -91,10 +108,9 @@ func (b *Backend) Channels() []*model.Channel {
 	for _, rc := range raw {
 		c := rc.Chat
 		m := metas[c.ID]
-		ch := &model.Channel{
-			ID: c.ID, Name: first(m.name, c.Name), Verified: m.verified, Followers: m.followers,
-			Following: true, Muted: m.muted, Unread: c.Unread, Time: c.Time, Last: c.Last,
-		}
+		ch := m.model()
+		ch.Name = first(m.name, c.Name)
+		ch.Following, ch.Unread, ch.Time, ch.Last = true, c.Unread, c.Time, c.Last
 		if ch.Last == nil && m.owner {
 			// WhatsApp shows this system message until the first post.
 			ch.Last = &model.Message{ChatID: c.ID, FromMe: true, Kind: model.KindText,
@@ -115,8 +131,17 @@ func sortChannels(cs []*model.Channel) {
 }
 
 func (s *msgStore) channelMetas(ctx context.Context, following bool) map[string]channelMeta {
-	rows, err := s.db.QueryContext(ctx, `SELECT jid, name, verified, followers, owner, muted, created, rank
-		FROM wz_channels WHERE following = ?`, boolInt(following))
+	return s.channelMetasWhere(ctx, `following = ?`, boolInt(following))
+}
+
+func (s *msgStore) channelMeta(ctx context.Context, jid string) (channelMeta, bool) {
+	m, ok := s.channelMetasWhere(ctx, `jid = ?`, jid)[jid]
+	return m, ok
+}
+
+func (s *msgStore) channelMetasWhere(ctx context.Context, where string, args ...any) map[string]channelMeta {
+	rows, err := s.db.QueryContext(ctx, `SELECT jid, name, verified, followers, following, owner, muted, created, rank,
+		description, invite FROM wz_channels WHERE `+where, args...)
 	out := map[string]channelMeta{}
 	if err != nil {
 		return out
@@ -124,18 +149,28 @@ func (s *msgStore) channelMetas(ctx context.Context, following bool) map[string]
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			m                      channelMeta
-			verified, owner, muted int
-			created                int64
+			m                                 channelMeta
+			verified, following, owner, muted int
+			created                           int64
 		)
-		if rows.Scan(&m.jid, &m.name, &verified, &m.followers, &owner, &muted, &created, &m.rank) != nil {
+		if rows.Scan(&m.jid, &m.name, &verified, &m.followers, &following, &owner, &muted, &created, &m.rank,
+			&m.description, &m.invite) != nil {
 			continue
 		}
-		m.verified, m.owner, m.muted, m.following = verified != 0, owner != 0, muted != 0, following
-		m.created = time.Unix(created, 0)
+		m.verified, m.following, m.owner, m.muted = verified != 0, following != 0, owner != 0, muted != 0
+		if created > 0 {
+			m.created = time.Unix(created, 0)
+		}
 		out[m.jid] = m
 	}
 	return out
+}
+
+// model is the channel m describes, without its chat's activity.
+func (m channelMeta) model() *model.Channel {
+	return &model.Channel{ID: m.jid, Name: m.name, Description: m.description, Invite: m.invite,
+		Verified: m.verified, Followers: m.followers, Following: m.following, Owner: m.owner,
+		Muted: m.muted, Created: m.created}
 }
 
 // SuggestedChannels implements model.Backend.
@@ -146,26 +181,10 @@ func (b *Backend) SuggestedChannels() []*model.Channel {
 		if m.rank <= 0 {
 			continue
 		}
-		out = append(out, &model.Channel{ID: m.jid, Name: m.name, Verified: m.verified, Followers: m.followers})
+		out = append(out, m.model())
 	}
 	sort.Slice(out, func(i, j int) bool { return metas[out[i].ID].rank < metas[out[j].ID].rank })
 	return out
-}
-
-// FollowChannel implements model.Backend.
-func (b *Backend) FollowChannel(id string) {
-	jid, err := types.ParseJID(id)
-	cli := b.client()
-	if err != nil || cli == nil || !cli.IsConnected() {
-		return
-	}
-	go func() {
-		if err := cli.FollowNewsletter(b.ctx, jid); err != nil {
-			b.log.Warnf("follow channel %s: %v", id, err)
-			return
-		}
-		b.refreshChannels()
-	}()
 }
 
 // refreshChannels loads followed channels, their latest posts and
@@ -183,52 +202,34 @@ func (b *Backend) refreshChannels() {
 		m := metaFromNewsletter(n)
 		m.following = true
 		followed[m.jid] = true
-		if err := b.store.putChannel(ctx, m); err != nil {
-			b.log.Warnf("store channel %s: %v", m.jid, err)
-			continue
-		}
-		_ = b.store.ensureChat(ctx, b.db, m.jid, false, m.name)
-		_ = b.store.setName(ctx, m.jid, m.name)
+		b.storeChannel(ctx, m)
 	}
 	_, _ = b.db.ExecContext(ctx, `UPDATE wz_channels SET following = 0 WHERE following = 1 AND jid NOT IN (`+
 		quoteList(keys(followed))+`)`)
 	b.emit(model.ChannelsEvent{})
 
 	for _, n := range list {
-		b.fetchChannelPosts(ctx, cli, n.ID)
+		b.fetchChannelPosts(ctx, cli, n.ID, 0)
 	}
 	b.emit(model.ChannelsEvent{})
-	b.fetchSuggestedChannels(ctx, cli, followed)
+	b.fetchSuggestedChannels(ctx, cli, followed, 20, 5)
+	// The list of followed channels leaves their follower counts out.
+	for _, n := range list {
+		b.refreshChannel(ctx, cli, n.ID)
+	}
+	b.emit(model.ChannelsEvent{})
 }
 
-// fetchChannelPosts stores a channel's latest posts.
-func (b *Backend) fetchChannelPosts(ctx context.Context, cli *whatsmeow.Client, jid types.JID) {
-	msgs, err := cli.GetNewsletterMessages(ctx, jid, &whatsmeow.GetNewsletterMessagesParams{Count: 30})
-	if err != nil {
-		b.log.Debugf("channel posts %s: %v", jid, err)
+// storeChannel stores a channel's details, and its chat, which holds its
+// posts.
+func (b *Backend) storeChannel(ctx context.Context, m channelMeta) {
+	if err := b.store.putChannel(ctx, m); err != nil {
+		b.log.Warnf("store channel %s: %v", m.jid, err)
 		return
 	}
-	chat := jid.String()
-	for _, nm := range msgs {
-		if nm.Message == nil {
-			continue
-		}
-		c := describe(nm.Message)
-		if c.text == "" && c.media == model.MediaNone {
-			continue
-		}
-		id := string(nm.MessageID)
-		if id == "" {
-			id = strconv.Itoa(int(nm.MessageServerID))
-		}
-		m := storedMsg{Message: &model.Message{
-			ID: id, ChatID: chat, Kind: c.kind, Media: c.media, Text: c.text, Time: nm.Timestamp, Receipt: model.Read,
-		}, senderJID: chat, rawPayload: marshal(nm.Message)}
-		if err := b.store.putMessage(ctx, b.db, m); err != nil {
-			b.log.Debugf("store channel post: %v", err)
-			continue
-		}
-		b.emitMessage(chat, id)
+	_ = b.store.ensureChat(ctx, b.db, m.jid, false, m.name)
+	if m.name != "" {
+		_ = b.store.setName(ctx, m.jid, m.name)
 	}
 }
 
@@ -236,8 +237,10 @@ func (b *Backend) fetchChannelPosts(ctx context.Context, cli *whatsmeow.Client, 
 // the ID but has no wrapper, so the reply is parsed loosely.
 const queryRecommendedChannels = "7263823273662354"
 
-func (b *Backend) fetchSuggestedChannels(ctx context.Context, cli *whatsmeow.Client, followed map[string]bool) {
-	input := map[string]any{"limit": 20}
+// fetchSuggestedChannels stores up to keep of limit channels WhatsApp
+// recommends, in its order, as the suggestions.
+func (b *Backend) fetchSuggestedChannels(ctx context.Context, cli *whatsmeow.Client, followed map[string]bool, limit, keep int) {
+	input := map[string]any{"limit": limit}
 	if cc := countryCode(cli); cc != "" {
 		input["country_codes"] = []string{cc}
 	}
@@ -262,7 +265,7 @@ func (b *Backend) fetchSuggestedChannels(ctx context.Context, cli *whatsmeow.Cli
 		rank++
 		m.following, m.rank = false, rank
 		_ = b.store.putChannel(ctx, m)
-		if rank == 5 {
+		if rank == keep {
 			break
 		}
 	}

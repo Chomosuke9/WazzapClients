@@ -62,7 +62,12 @@ func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, p
 	p := u.pal
 	c := u.btn("reactpill:" + ms[0].ChatID + "/" + ms[0].ID)
 	if c.Clicked(gtx) {
-		u.openReactions(ms)
+		if isChannelID(ms[0].ChatID) {
+			// Nobody sees who reacted to a channel's update: the pill reacts.
+			u.openPicker(pickReaction, ms[0])
+		} else {
+			u.openReactions(ms)
+		}
 	}
 	pill := record(gtx, func(gtx C) D {
 		gtx.Constraints.Min = image.Point{}

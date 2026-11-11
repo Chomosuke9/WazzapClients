@@ -262,6 +262,11 @@ Gotchas already found in the pinned version (v0.10.x):
   data. When that's this app (text copied from a chat), Gio's window thread has to answer, so
   calling it from the UI goroutine deadlocked until Hyprland dropped the app. Ctrl+V reads
   it on a goroutine (`pasteFiles`, then `takePaste`); never read the clipboard on the UI goroutine.
+- Upstream Gio never answers a `clipboard.ReadCmd` when the clipboard is empty, and then
+  ignored every later read from the same tag: one Ctrl+V with nothing copied broke pasting
+  until a restart. `patches/gio.patch` fixes the router and the Wayland driver. On Hyprland,
+  test the real window with `hyprctl dispatch "hl.dsp.send_shortcut({mods='CTRL', key='V',
+  window='address:0x…'})"` (the Lua config's syntax) and `grim`.
 - The slash command picker reads Up, Down, Tab and (when it picks) Enter before the
   composer does, in `slashKeys`, and only while it offers rows; otherwise the editor
   moves its caret with them as usual. In a command's text that takes @mentions
@@ -424,6 +429,21 @@ Gotchas already found in the pinned version (v0.10.x):
   reads the database. Started with `goWork`, it's what `Close` cancels and waits for:
   a `meta` read from a closed database reads as "", which started the once-only app
   state resync over. A check closes its backend seconds after connecting.
+- A channel (newsletter) is nothing like a chat on the wire (`internal/wa/channelposts.go`).
+  Its posts come unencrypted, as `<message>` stanzas while you follow it and in pages from
+  `GetNewsletterMessages`, and are named by a server ID (kept in `wz_channel_posts`) for
+  reactions, view receipts and paging. Nobody sees who reacted: the server sends counts per
+  emoji (with fetched posts, and in `NewsletterLiveUpdate`s, granted 90 s at a time, so
+  `liveUpdates` renews them while the channel is open), and the message's reaction column
+  is made from them plus your own reaction (`postSummary`), never by `putReaction`. An edit
+  comes as the new content under the post's ID with `NewsletterMeta.EditTS`, a delete as
+  `edit="8"` with an empty body (`onChannelMessage`). The server keeps about a month of
+  updates and answers an older page with nothing; your own channels' older posts are only
+  what arrived live. Files are uploaded as they are (`UploadNewsletter`, its handle sent as
+  `MediaHandle`), so a forward between a channel and a chat uploads the file again
+  (`reupload`). The list of followed channels has no follower counts: `refreshChannel`
+  asks for each. In the UI `channelByID` also finds suggested channels (they open as a
+  preview with a Follow bar); use `followedChannel` where it must be one you follow.
 - GIF search follows KLIPY's integration requirements (docs.klipy.com): requests and
   media loads go from the app straight to KLIPY with the app key in the URL (it isn't
   a secret, but release builds get it from the `KLIPY_KEY` secret through
@@ -595,6 +615,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    the pointer; the title bar's eye and Ctrl+Shift+P, once the Privacy mode
                    toggle on the Extra features page is on) in privacy.go: `u.hiding` sets `u.secret`, which
                    `u.label`, `layoutSpans`, `drawAvatar` and `messageImage` read;
+                   channels (channels.go: the list, suggestions that open as a preview,
+                   Discover more) and what you do with one (channelinfo.go: its menus, info
+                   panel, the Follow bar, Create channel; mute, unfollow, delete, reacting to
+                   updates, posting in your own);
                    the accounts that run in the background (connected, or checked every
                    few minutes) in background.go, and the account switcher, its background
                    mode menu and the accounts' settings pages (Settings > Account) in
@@ -629,6 +653,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    (LIMIT_SHARING, kept with its info; it can't be set) in about.go;
                    a chat's disappearing-messages timer (wz_chats.ephemeral, for the
                    avatars' timer badge) in timer.go;
+                   channels' details and suggestions (wz_channels) in channels.go, their posts,
+                   reaction counts, live updates and actions in channelposts.go;
                    the links only the server resolves (channels, business messages,
                    contact QR codes; `ResolveLink`) in links.go;
                    status privacy and your audiences (the status_privacy app state action),
@@ -890,6 +916,8 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
 # the Chat theme dialog's pages theme, themebubble, themewall, themecolor, and accent (the App theme color Red);
+# channels: channelinfo (-ochat techdaily@newsletter, or wazzapnews@newsletter for one of your own, bola@newsletter for a
+# suggestion's preview; convmenu and msgmenu work there too), channelnew (Create channel), channeladd (the ⊕ menu);
 # custom mentions: mentions (a group's page), custommention, newmention (its name's error), custompick (the picker offering them);
 # privatemention (the picker in a private chat: -ochat rina);
 # a group's info being edited: groupname, groupdesc, groupphoto (its picture's menu); picview (the chat's picture, big); the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
