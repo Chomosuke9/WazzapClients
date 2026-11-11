@@ -29,7 +29,7 @@ import (
 
 // appPrefs are the preferences that belong to the app rather than to an
 // account: they carry over when another account opens.
-var appPrefs = append([]string{prefTheme, prefAccent, prefDoodles, prefEnterSend, prefBackground, prefListWidth, prefListHidden, prefZoom,
+var appPrefs = append([]string{prefTheme, prefAccent, prefScheme, prefSchemeAccent, prefDoodles, prefEnterSend, prefBackground, prefListWidth, prefListHidden, prefZoom,
 	prefPrivacy, prefPrivacyToggle, prefNoCapture, prefVolume, prefVoiceRate, prefEmojiStyle, prefEmojiStill,
 	prefKlipy, prefKlipyKey, prefKlipyID, prefKlipyFavs, prefAutoUpdate, prefEmojiTone, prefAppLock, prefAppLockAfter,
 	prefRemote, prefRemoteToken, prefRemoteAll, prefRemotePort}, append(perfPrefs, stickerPrefs...)...)

@@ -548,7 +548,12 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    wallpaper (cropped around a point you pick on its Photo position page,
                    only the part that shows decoded) in wallphoto.go, their tables
                    read from WhatsApp Web's modules in chatthemes.go, and the App theme color
-                   (Settings > Appearance > App theme, the accent across the app) in apptheme.go; the
+                   (Settings > Appearance > App theme, the accent across the app) in apptheme.go; palettes
+                   (the same page's Palette: Catppuccin, Tokyo Night, Gruvbox, Everforest, Solarized or Ayu
+                   instead of WhatsApp's colors,
+                   a flavor each for the light and the dark theme, the Color grid then offering the
+                   flavor's hues; `schemePalette` works a whole Palette out of a flavor's ~20 colors)
+                   in scheme.go, their colors in schemes.go; the
                    info panel's own pages (starred messages, group permissions, member
                    changes) in infopages.go; editing a group's name and description in
                    place and its picture's menu (view, change, remove) in groupedit.go;
@@ -894,6 +899,10 @@ go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 
 # Draw emojis in another Emoji style (2d_anim_alone, 2d_anim or 3d) from the pictures the
 # app downloaded (none are downloaded here; the missing ones draw 2D):
 go run ./cmd/screenshot -emoji 3d -emojidir "$APPDATA/WazzapClients/emoji"
+# Draw with a palette (catppuccin, catppuccin-macchiato, catppuccin-frappe, tokyonight,
+# tokyonight-storm, tokyonight-moon, gruvbox, everforest, solarized, ayu), or palette:hue for another of its accents; the
+# overlay palette is the App theme page with Catppuccin chosen:
+go run ./cmd/screenshot -scheme tokyonight:red -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \
     -data "$APPDATA/WazzapClients" -view channels

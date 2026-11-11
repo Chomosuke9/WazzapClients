@@ -56,6 +56,7 @@ func main() {
 	emojiStyle := flag.String("emoji", "", "draw emojis in this Emoji style (2d_anim_alone, 2d_anim or 3d) from the pictures in -emojidir")
 	emojiDir := flag.String("emojidir", "", "with -emoji, a folder of downloaded emojis (the app's <data>/emoji)")
 	emojiFont := flag.String("emojifont", "internal/ui/testdata/NotoColorEmoji.ttf", "the emoji font (the app downloads it; run from the repository's root)")
+	flag.StringVar(&scheme, "scheme", "", "draw with this palette (catppuccin, catppuccin-macchiato, catppuccin-frappe, tokyonight, tokyonight-storm, tokyonight-moon, gruvbox, everforest, solarized, ayu), or palette:hue for another of its accents")
 	flag.Parse()
 	if err := ui.LoadEmojiFont(*emojiFont); err != nil {
 		log.Fatal(err)
@@ -117,6 +118,7 @@ func main() {
 		fmt.Sscanf(*at, "%d,%d", &x, &y)
 		u := ui.New(mock.New())
 		u.Start(func() {})
+		setScheme(u)
 		u.SetDark(true)
 		u.SelectID(*overlayChat)
 		u.ShowOverlay(*overlay, x, y)
@@ -166,6 +168,7 @@ func main() {
 		} else {
 			u.Start(func() {})
 		}
+		setScheme(u)
 		u.SetDark(s.dark)
 		if s.chat != "" {
 			u.SelectID(s.chat)
@@ -222,6 +225,7 @@ func compareShot(path, crop, win string, rightAligned bool, chat, chatName, cont
 		u.Start(func() {})
 		u.SelectID(chat)
 	}
+	setScheme(u)
 	u.SetDark(true)
 	switch view {
 	case "chats":
@@ -314,4 +318,14 @@ func writePNG(path string, img image.Image) error {
 	}
 	defer f.Close()
 	return png.Encode(f, img)
+}
+
+// scheme is the -scheme flag: a palette, or palette:hue.
+var scheme string
+
+// setScheme gives a UI the -scheme flag's palette.
+func setScheme(u *ui.UI) {
+	if id, hue, _ := strings.Cut(scheme, ":"); id != "" {
+		u.SetScheme(id, hue)
+	}
 }

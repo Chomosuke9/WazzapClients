@@ -198,24 +198,18 @@ type wallLook struct {
 	focus      f32.Point
 }
 
-// wallOf returns the wallpaper of a look on palette p (the scheme's).
-func wallOf(p *Palette, dark bool, l chatLook) wallLook {
+// wallOf returns the wallpaper of a look on palette p (the scheme's); app
+// is the app's palette, whose wallpaper is the default one.
+func wallOf(p, app *Palette, dark bool, l chatLook) wallLook {
 	def := wallLook{bg: p.ChatBg, doodle: p.Doodle, plain: p.Plain}
 	kind, arg, _ := strings.Cut(l.wall, ":")
 	switch kind {
 	case "":
 		return def
 	case "default":
-		base := &lightPalette
-		if dark {
-			base = &darkPalette
-		}
-		return wallLook{bg: base.ChatBg, doodle: base.Doodle}
+		return wallLook{bg: app.ChatBg, doodle: app.Doodle}
 	case "plain":
-		bg := rgb(0xffffff)
-		if dark {
-			bg = rgb(0x161717)
-		}
+		bg := app.Panel // white, or the dark theme's panel
 		return wallLook{bg: bg, doodle: bg, plain: true}
 	case "theme":
 		for _, t := range chatThemes {
@@ -284,7 +278,7 @@ func (u *UI) lookPalette(l chatLook) *Palette {
 	}
 	p := themed(u.pal, u.dark, chatThemes[l.scheme])
 	if l.wall != "" {
-		w := wallOf(p, u.dark, l)
+		w := wallOf(p, u.appPal, u.dark, l)
 		if p == u.pal {
 			q := *p
 			p = &q
@@ -745,7 +739,7 @@ func (u *UI) wallRows(gtx C, id string, w int) []layout.Widget {
 				u.setWall(id, wall)
 			}
 		}
-		lp := wallOf(u.pal, u.dark, chatLook{wall: wall})
+		lp := wallOf(u.pal, u.appPal, u.dark, chatLook{wall: wall})
 		clickable(gtx, c, func(gtx C) D {
 			sz := gtx.Constraints.Max
 			u.swatchFrame(gtx, sz, wall == cur, u.hover(gtx, c), lp.bg)

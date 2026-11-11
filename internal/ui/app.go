@@ -195,18 +195,21 @@ type UI struct {
 		key string
 		at  time.Time
 	}
-	pendingCopy string              // clipboard text waiting for a frame
-	themes      map[string]chatLook // chats' themes and wallpapers, as read from prefs
-	lookPal     lookPal             // the palette of the last chat look drawn
-	accent      string              // the App theme color (prefAccent)
-	themeUI     themeUI             // the Chat theme dialog's page
-	gallery     galleryState        // the Media panel (gallery.go)
-	secCode     secCode             // the security code the encryption dialog shows
-	link        groupLink           // the invite link the link dialog shows
-	textSel     textSelection       // selected message text
-	focus       any                 // editor to focus next frame (see requestFocus)
-	focusReq    bool
-	kb          kbState // keyboard use: focus traps, arrows (keyboard.go)
+	pendingCopy  string              // clipboard text waiting for a frame
+	themes       map[string]chatLook // chats' themes and wallpapers, as read from prefs
+	lookPal      lookPal             // the palette of the last chat look drawn
+	accent       string              // the App theme color (prefAccent)
+	scheme       string              // the palette (prefScheme, scheme.go) and
+	schemeAccent string              // the hue of it picked as the accent
+	appPal       *Palette            // the app's palette, whatever theme the open chat has
+	themeUI      themeUI             // the Chat theme dialog's page
+	gallery      galleryState        // the Media panel (gallery.go)
+	secCode      secCode             // the security code the encryption dialog shows
+	link         groupLink           // the invite link the link dialog shows
+	textSel      textSelection       // selected message text
+	focus        any                 // editor to focus next frame (see requestFocus)
+	focusReq     bool
+	kb           kbState // keyboard use: focus traps, arrows (keyboard.go)
 
 	anims    animStore                     // keyed fades: hovers, new messages, reactions
 	follows  followerStore                 // keyed glides: a poll's bars
@@ -615,11 +618,8 @@ func (u *UI) SelectName(name string) {
 // SetDark switches between the light and dark palettes.
 func (u *UI) SetDark(dark bool) {
 	u.dark = dark
-	if dark {
-		u.pal = withAccent(&darkPalette, true, u.accent)
-	} else {
-		u.pal = withAccent(&lightPalette, false, u.accent)
-	}
+	u.pal = appPalette(dark, u.scheme, u.accent, u.schemeAccent)
+	u.appPal = u.pal
 	u.th.Palette.Fg = u.pal.Text
 	u.th.Palette.Bg = u.pal.Panel
 	richBlocks.m = nil // spans carry palette colors (mentions, links)
@@ -2162,6 +2162,10 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openConvMenu()
 	case "accent":
 		u.setAccent("Red") // the App theme color Red
+	case "palette":
+		// The App theme page with the Catppuccin palette.
+		u.setScheme("catppuccin")
+		u.ShowPage("apptheme")
 	case "theme", "themebubble", "themewall", "themecolor":
 		// The Chat theme dialog's pages, the chat in Pearl Indigo.
 		u.openChatTheme(u.selected)

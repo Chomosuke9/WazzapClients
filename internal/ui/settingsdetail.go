@@ -262,7 +262,7 @@ func (u *UI) settingsPage() []settingsSection {
 			{key: "system", kind: setRadio, title: "System default", on: t != "light" && t != "dark", run: func() { u.setTheme("") }},
 			{key: "light", kind: setRadio, title: "Light", on: t == "light", run: func() { u.setTheme("light") }},
 			{key: "dark", kind: setRadio, title: "Dark", on: t == "dark", run: func() { u.setTheme("dark") }},
-		}}, {title: "Color", rows: []settingRow{{key: "accent", kind: setCustom, w: u.accentRows()}}}}
+		}}, {title: "Palette", rows: u.schemeRows()}, {title: "Color", rows: []settingRow{{key: "accent", kind: setCustom, w: u.accentRows()}}}}
 	case "camera", "mic", "speaker":
 		return u.deviceChoices(s.sub)
 	}
@@ -315,7 +315,7 @@ func (u *UI) categoryPage(k int) []settingsSection {
 		return []settingsSection{{rows: []settingRow{
 			{key: "chattheme", ic: icWallpaper, title: "Chat theme", sub: "Bubbles and wallpaper of every chat",
 				trailing: icChevronRight, run: func() { u.openChatTheme(nil) }},
-			{key: "theme", ic: icPalette, title: "App theme", sub: themeNames[u.backend.Pref(prefTheme)],
+			{key: "theme", ic: icPalette, title: "App theme", sub: u.themeSummary(),
 				trailing: icChevronRight, run: func() { u.openSettingsSub("theme") }},
 			{key: prefDoodles, kind: setToggle, title: "Wallpaper doodles", sub: "Draw doodles on the chat background",
 				on: u.doodles, run: func() { u.doodles = !u.doodles; setPref(b, prefDoodles, u.doodles) }},
@@ -776,6 +776,16 @@ func (u *UI) blockedContacts() []settingsSection {
 // themeNames names the values of prefTheme.
 var themeNames = map[string]string{"": "System default", "light": "Light", "dark": "Dark"}
 
+// themeSummary is what the App theme row says: the theme and, when one is
+// chosen, the palette.
+func (u *UI) themeSummary() string {
+	t := themeNames[u.backend.Pref(prefTheme)]
+	if s := schemeOf(u.scheme); s != nil {
+		t += " · " + s.name
+	}
+	return t
+}
+
 // systemDark asks the system for its theme (tests pin it).
 var systemDark = desktop.SystemDark
 
@@ -801,8 +811,9 @@ func (u *UI) applyTheme() {
 			dark = d
 		}
 	}
-	if a := u.backend.Pref(prefAccent); dark != u.dark || u.pal == nil || a != u.accent {
-		u.accent = a
+	a, s, sa := u.backend.Pref(prefAccent), u.backend.Pref(prefScheme), u.backend.Pref(prefSchemeAccent)
+	if dark != u.dark || u.pal == nil || a != u.accent || s != u.scheme || sa != u.schemeAccent {
+		u.accent, u.scheme, u.schemeAccent = a, s, sa
 		u.SetDark(dark)
 	}
 }

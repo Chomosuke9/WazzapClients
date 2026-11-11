@@ -80,6 +80,9 @@ func (u *UI) setAccent(id string) {
 // accentRows is the App theme page's Color grid.
 func (u *UI) accentRows() layout.Widget {
 	return func(gtx C) D {
+		if s := schemeOf(u.scheme); s != nil {
+			return u.hueRows(gtx, s)
+		}
 		cur := u.accent
 		if cur == "" {
 			cur = accentColors[0].base
@@ -104,4 +107,28 @@ func (u *UI) accentRows() layout.Widget {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 		})
 	}
+}
+
+// hueRows is the Color grid under a palette: its flavor's own hues.
+func (u *UI) hueRows(gtx C, s *scheme) D {
+	f := s.flavor(u.dark)
+	cur := u.schemeAccent
+	if _, ok := f.hue(cur); !ok {
+		cur = s.accent
+	}
+	cell, gap := image.Pt(gtx.Dp(72), gtx.Dp(72)), gtx.Dp(12)
+	w := gtx.Constraints.Max.X - gtx.Dp(32)
+	rows := grid(len(f.hues), cell, gap, w, func(gtx C, i int) {
+		h := f.hues[i]
+		if _, clicked := u.circle(gtx, "hue:"+h.id, rgb(h.c), u.pal.Panel, h.id == cur); clicked {
+			u.setSchemeAccent(s, h.id)
+		}
+	})
+	children := make([]layout.FlexChild, len(rows))
+	for i, r := range rows {
+		children[i] = layout.Rigid(r)
+	}
+	return layout.Inset{Left: 16, Right: 16, Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	})
 }
