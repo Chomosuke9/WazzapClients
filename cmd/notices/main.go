@@ -88,8 +88,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Some distributions keep Go's license outside GOROOT (Arch Linux:
+	// /usr/share/licenses/go). Without it the notices would lose Go's
+	// license and differ from the ones CI makes.
+	goLicense := readLicenses(goroot, []string{"LICENSE"})
+	if len(goLicense) == 0 {
+		goLicense = readLicenses("/usr/share/licenses/go", []string{"LICENSE"})
+	}
+	if len(goLicense) == 0 {
+		log.Fatalf("Go's LICENSE isn't in %s", goroot)
+	}
 	comps = append(comps, component{name: "Go standard library and runtime", source: "https://go.dev",
-		files: readLicenses(goroot, []string{"LICENSE"})})
+		files: goLicense})
 
 	mods, err := modules()
 	if err != nil {
