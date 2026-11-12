@@ -1435,6 +1435,9 @@ func (u *UI) setChats(chats []*model.Chat) {
 }
 
 func (u *UI) upsertChat(c *model.Chat) {
+	if isChannelID(c.ID) {
+		return // channels have a page of their own
+	}
 	for i, old := range u.chats {
 		if old.ID == c.ID {
 			keepLive(c, old)
@@ -1452,6 +1455,21 @@ func (u *UI) upsertChat(c *model.Chat) {
 	u.sidebar.order.pending = true
 }
 
+// quietMessage reports whether m shows in its chat without being the
+// chat's latest activity: a security code change, which WhatsApp doesn't
+// move the chat up for or show in its preview.
+func quietMessage(m *model.Message) bool {
+	return m.Kind == model.KindSystem && m.Notice == model.NoticeSecurity
+}
+
+// listSent puts the open chat in the chat list when m, just sent in it,
+// is its first message. A channel stays on its own page.
+func (u *UI) listSent(m *model.Message) {
+	if u.chatByID(m.ChatID) == nil && u.selected != nil && u.selected.ID == m.ChatID && !isChannelID(m.ChatID) {
+		u.chats = append(u.chats, u.selected)
+	}
+}
+
 func (u *UI) sortChats() {
 	sort.SliceStable(u.chats, func(i, j int) bool {
 		a, b := u.chats[i], u.chats[j]
@@ -1467,7 +1485,7 @@ func (u *UI) sortChats() {
 
 func (u *UI) upsertMessage(m *model.Message) {
 	c := u.chatByID(m.ChatID)
-	if c != nil && (c.Last == nil || c.Last.ID == m.ID || !m.Time.Before(c.Last.Time)) {
+	if c != nil && !quietMessage(m) && (c.Last == nil || c.Last.ID == m.ID || !m.Time.Before(c.Last.Time)) {
 		c.Last = m
 		if m.Time.After(c.Time) {
 			c.Time = m.Time

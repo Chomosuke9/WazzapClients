@@ -333,6 +333,12 @@ Gotchas already found in the pinned version (v0.10.x):
   is stored as a `KindWaiting` placeholder, "Waiting for this message". hypermeow sends a
   retry receipt, and the decrypted copy that comes back under the same ID replaces it in
   `putMessage` (and counts as new then); one that shows nothing drops it (`dropWaiting`).
+- A contact's security code changing is a system message (`E2E_IDENTITY_CHANGED`) that
+  WhatsApp shows in the chat without making it the chat's activity. It's stored with
+  `wz_messages.quiet` set (`quietStub`): it never bumps `last_ts`, is never the list's last
+  message (`chatQuery`) and doesn't list a chat (`listed`); the UI skips it the same way
+  (`quietMessage`). History sync brings one for nearly every contact: counted, they
+  listed ~2000 empty chats.
 - Status privacy is the `status_privacy` app state action (regular_high, index
   `["status_privacy"]`): a mode, the people of that mode's list only, and every
   audience of your own (`customLists`, the chosen one `isSelected`). The other

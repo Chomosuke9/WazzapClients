@@ -215,9 +215,7 @@ func (u *UI) sendRecorded(s recorded) {
 	if m == nil {
 		return
 	}
-	if u.chatByID(m.ChatID) == nil && u.selected != nil && u.selected.ID == m.ChatID {
-		u.chats = append(u.chats, u.selected)
-	}
+	u.listSent(m)
 	u.upsertMessage(m)
 	if u.selected != nil && u.selected.ID == m.ChatID {
 		u.scrollMessages(layout.Position{})

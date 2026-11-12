@@ -628,9 +628,7 @@ func (h slashHost) PickImage(done func(path string)) {
 
 func (h slashHost) Sent(m *model.Message) {
 	u := h.u
-	if u.chatByID(m.ChatID) == nil && u.selected != nil && u.selected.ID == m.ChatID {
-		u.chats = append(u.chats, u.selected)
-	}
+	u.listSent(m)
 	u.upsertMessage(m)
 }
 

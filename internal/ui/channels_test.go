@@ -3,6 +3,7 @@ package ui
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -132,5 +133,30 @@ func TestChannelActions(t *testing.T) {
 	u.applyEvents()
 	if len(u.suggested) <= before {
 		t.Errorf("Discover more listed %d suggestions, had %d", len(u.suggested), before)
+	}
+}
+
+// TestChannelsOffChatList checks that posting in your own channel doesn't
+// put it in the chat list, and that a contact's security code changing
+// neither moves their chat up nor becomes its preview.
+func TestChannelsOffChatList(t *testing.T) {
+	st := newSlashTest(t, "rina")
+	u := st.u
+	u.openChannel("wazzapnews@newsletter")
+	st.frame()
+	m := &model.Message{ID: "post", ChatID: "wazzapnews@newsletter", FromMe: true, Text: "hello", Time: testNow()}
+	u.listSent(m)
+	u.upsertMessage(m)
+	u.upsertChat(&model.Chat{ID: "wazzapnews@newsletter", Name: "Wazzap Updates"})
+	if u.chatByID("wazzapnews@newsletter") != nil {
+		t.Errorf("your channel went into the chat list")
+	}
+
+	rina := u.chatByID("rina")
+	last, at := rina.Last, rina.Time
+	u.upsertMessage(&model.Message{ID: "sec", ChatID: "rina", Kind: model.KindSystem, Notice: model.NoticeSecurity,
+		Text: "Your security code with Rina changed", Time: testNow().Add(time.Hour)})
+	if rina.Last != last || !rina.Time.Equal(at) {
+		t.Errorf("a security code change became Rina's latest activity: last %+v at %v", rina.Last, rina.Time)
 	}
 }

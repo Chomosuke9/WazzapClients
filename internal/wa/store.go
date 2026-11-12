@@ -204,6 +204,10 @@ var migrations = []string{
 	// A channel's description and the code of its link (channels.go).
 	`ALTER TABLE wz_channels ADD COLUMN description TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_channels ADD COLUMN invite TEXT NOT NULL DEFAULT ''`,
+	// 1 for a message that isn't the chat's activity (a security code
+	// change, quietStub): it's never the chat's last message in the list,
+	// moves it up or lists it.
+	`ALTER TABLE wz_messages ADD COLUMN quiet INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -218,6 +222,9 @@ func (s *msgStore) init(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, m); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err
 		}
+	}
+	if err := s.quietOldStubs(ctx); err != nil {
+		return fmt.Errorf("quiet old security code changes: %w", err)
 	}
 	if err := s.keepOldReactions(ctx); err != nil {
 		return fmt.Errorf("keep old reactions: %w", err)
@@ -384,7 +391,7 @@ func (s *msgStore) setField(ctx context.Context, jid, field string, v any) error
 // listed reports whether a chat shows in the chat list (see chats).
 func (s *msgStore) listed(ctx context.Context, jid string) bool {
 	var ok bool
-	_ = s.db.QueryRowContext(ctx, `SELECT last_ts > 0 OR EXISTS (SELECT 1 FROM wz_messages WHERE chat = ?1)
+	_ = s.db.QueryRowContext(ctx, `SELECT last_ts > 0 OR EXISTS (SELECT 1 FROM wz_messages WHERE chat = ?1 AND quiet = 0)
 		FROM wz_chats WHERE jid = ?1`, jid).Scan(&ok)
 	return ok
 }
@@ -458,12 +465,13 @@ type storedMsg struct {
 // deleted. A copy that stood in for the message gives way to it (copies.go).
 func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error {
 	var err error
+	quiet := m.Kind == model.KindSystem && quietStub(m.rawPayload)
 	if m.isCopy {
 		err = s.putCopy(ctx, x, m)
 	} else {
 		_, err = x.ExecContext(ctx, `
-		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, whisper, kept, raw_payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO wz_messages (chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, whisper, kept, raw_payload, quiet)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chat, id) DO UPDATE SET
 			sender_push = excluded.sender_push, kind = excluded.kind, media = excluded.media,
 			text = CASE WHEN wz_messages.edited != 0 OR wz_messages.edit_payload IS NOT NULL
@@ -477,13 +485,63 @@ func (s *msgStore) putMessage(ctx context.Context, x execer, m storedMsg) error 
 				ELSE COALESCE(wz_messages.raw_payload, excluded.raw_payload) END
 		WHERE wz_messages.kind != ?`,
 			m.ChatID, m.ID, m.senderJID, m.senderPush, boolInt(m.FromMe), m.Time.Unix(), int(m.Kind), int(m.Media),
-			m.Text, int(m.Receipt), m.whisper, boolInt(m.Kept), m.rawPayload, int(model.KindDeleted))
+			m.Text, int(m.Receipt), m.whisper, boolInt(m.Kept), m.rawPayload, boolInt(quiet), int(model.KindDeleted))
 	}
-	if err != nil {
+	if err != nil || quiet {
 		return err
 	}
 	_, err = x.ExecContext(ctx, `UPDATE wz_chats SET last_ts = MAX(last_ts, ?) WHERE jid = ?`, m.Time.Unix(), m.ChatID)
 	return err
+}
+
+// quietOldStubs marks the security code changes stored before the quiet
+// column existed quiet, once, and takes back the activity they gave their
+// chats: a chat whose last_ts came from one goes back to its newest other
+// message, or to unlisted when it has none.
+func (s *msgStore) quietOldStubs(ctx context.Context) error {
+	const done = "quiet_stubs_marked"
+	if s.meta(ctx, done) != "" {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, raw_payload FROM wz_messages WHERE kind = ? AND quiet = 0`,
+		int(model.KindSystem))
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		var raw []byte
+		if rows.Scan(&id, &raw) == nil && quietStub(raw) {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE wz_messages SET quiet = 1 WHERE rowid = ?`, id); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE wz_chats SET last_ts = COALESCE(
+			(SELECT MAX(ts) FROM wz_messages WHERE chat = wz_chats.jid AND quiet = 0), 0)
+		WHERE last_ts > 0 AND last_ts <= (SELECT MAX(ts) FROM wz_messages WHERE chat = wz_chats.jid AND quiet = 1)
+			AND last_ts > COALESCE((SELECT MAX(ts) FROM wz_messages WHERE chat = wz_chats.jid AND quiet = 0), 0)`)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO wz_meta (key, value) VALUES (?, '1')
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, done); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // fillViewOnce gives a view once message whose media never came here the
@@ -915,7 +973,7 @@ var chatQuery = fmt.Sprintf(`
 		CASE WHEN instr(m.text, '@') > 0 THEN m.edit_payload END
 	FROM wz_chats c
 	LEFT JOIN wz_messages m ON m.rowid = (
-		SELECT rowid FROM wz_messages WHERE chat = c.jid ORDER BY ts DESC, rowid DESC LIMIT 1
+		SELECT rowid FROM wz_messages WHERE chat = c.jid AND quiet = 0 ORDER BY ts DESC, rowid DESC LIMIT 1
 	)`, model.MediaVideo, model.MediaGIF, model.MediaVoice, model.MediaAudio, model.KindSystem)
 
 func scanChat(sc scanner, now time.Time) (rawChat, error) {

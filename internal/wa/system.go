@@ -98,6 +98,15 @@ func readStub(raw []byte) (stubType, []string, bool) {
 	return w.GetMessageStubType(), w.GetMessageStubParameters(), true
 }
 
+// quietStub reports whether a system message's stub is a contact's
+// security code changing, which WhatsApp shows in the chat without making
+// it the chat's latest activity: it doesn't move the chat up, show in its
+// preview or bring back a chat with nothing else in it.
+func quietStub(raw []byte) bool {
+	t, _, ok := readStub(raw)
+	return ok && t == waWeb.WebMessageInfo_E2E_IDENTITY_CHANGED
+}
+
 // historyStub turns a history sync stub of chat into a system message,
 // or reports false for one the chat doesn't show. It may query the device
 // store: never call it inside a msgStore transaction.
@@ -161,7 +170,9 @@ func (b *Backend) putSystem(ctx context.Context, m storedMsg) {
 	if r, ok := b.store.message(ctx, chat, m.ID); ok {
 		b.emit(model.MessageEvent{Msg: b.resolve(ctx, r, isGroup)})
 	}
-	b.emitChat(chat)
+	if !quietStub(m.rawPayload) || b.store.listed(ctx, chat) {
+		b.emitChat(chat)
+	}
 }
 
 // liveSystem stores a live change of chat as stub t with params.

@@ -206,9 +206,7 @@ func (u *UI) sendComposer() {
 	u.conv.reply = nil
 	u.conv.mentions = nil
 	if m := u.backend.Send(u.selected.ID, d); m != nil {
-		if u.chatByID(m.ChatID) == nil {
-			u.chats = append(u.chats, u.selected)
-		}
+		u.listSent(m)
 		u.upsertMessage(m)
 	}
 	u.scrollMessages(layout.Position{}) // jump to the newest message

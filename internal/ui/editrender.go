@@ -332,9 +332,7 @@ func (u *UI) flushOutbox() {
 			att := it.att
 			u.backend.PostStatus(model.StatusPost{GroupID: statusGroup(it.chatID), Text: it.draft.Text, File: &att})
 		} else if m := u.backend.SendFile(it.chatID, it.att, it.draft); m != nil {
-			if u.chatByID(m.ChatID) == nil && u.selected != nil && u.selected.ID == m.ChatID {
-				u.chats = append(u.chats, u.selected)
-			}
+			u.listSent(m)
 			u.upsertMessage(m)
 		}
 		if it.temp {
