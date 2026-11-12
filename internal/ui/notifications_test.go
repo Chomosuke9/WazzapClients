@@ -167,3 +167,22 @@ func TestNotificationText(t *testing.T) {
 		}
 	}
 }
+
+// TestNotifyChannels checks that a new post in a followed, unmuted channel
+// notifies under the channel's name without a reply, and that a muted
+// channel stays quiet.
+func TestNotifyChannels(t *testing.T) {
+	nt := newNotifyTest(t)
+	nt.receive("techdaily@newsletter", "", "New launch notes")
+	got := nt.flush(t)
+	if len(got) != 1 {
+		t.Fatalf("a followed channel's post shows %d notifications, want 1", len(got))
+	}
+	if got[0].Title != "Tech Daily" || got[0].Reply {
+		t.Errorf("notification = title %q, reply %v; want Tech Daily, no reply", got[0].Title, got[0].Reply)
+	}
+	nt.receive("resep@newsletter", "", "Muted channel post")
+	if got := nt.flush(t); len(got) != 0 {
+		t.Errorf("a muted channel notified: %+v", got)
+	}
+}
