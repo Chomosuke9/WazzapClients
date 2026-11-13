@@ -109,6 +109,8 @@ type Backend struct {
 	// background is set while the account isn't the open one
 	// (SetBackground).
 	background atomic.Bool
+	// keepPrefs are the preferences a logout keeps (KeepPrefs).
+	keepPrefs atomic.Pointer[[]string]
 	// work is what runs after each connect (see handle); Close waits for
 	// it, since it reads the database. workMu guards closed, so nothing
 	// starts once Close waits.
@@ -259,6 +261,9 @@ func (b *Backend) SetBackground(on bool) {
 		go b.sendPresence(cli)
 	}
 }
+
+// KeepPrefs implements model.PrefKeeper.
+func (b *Backend) KeepPrefs(keys []string) { b.keepPrefs.Store(&keys) }
 
 // goWork runs f on a goroutine that Close waits for, unless the backend
 // is closing.
@@ -505,14 +510,7 @@ func (b *Backend) Close() {
 // starts linking again.
 func (b *Backend) resetSession() {
 	b.client().Disconnect()
-	history := b.Pref(model.PrefHistorySync) // the login screen still shows it
-	b.snippetMu.Lock()
-	if err := b.store.wipe(b.ctx); err != nil {
-		b.log.Errorf("wipe message store: %v", err)
-	}
-	b.cleanSnippetMedia()
-	b.snippetMu.Unlock()
-	b.SetPref(model.PrefHistorySync, history)
+	b.wipeData()
 	b.names.clear()
 	b.emit(model.ChatsEvent{})
 	b.useDevice(b.container.NewDevice())
@@ -521,6 +519,25 @@ func (b *Backend) resetSession() {
 		return
 	}
 	b.pair()
+}
+
+// wipeData deletes what the account stored, but not the history sync
+// choice, which the login screen still shows, nor the app's preferences
+// (KeepPrefs), which aren't the account's to lose: the theme went back
+// to the default when an account was logged out.
+func (b *Backend) wipeData() {
+	keep := []string{"pref:" + model.PrefHistorySync}
+	if app := b.keepPrefs.Load(); app != nil {
+		for _, k := range *app {
+			keep = append(keep, "pref:"+k)
+		}
+	}
+	b.snippetMu.Lock()
+	defer b.snippetMu.Unlock()
+	if err := b.store.wipe(b.ctx, keep...); err != nil {
+		b.log.Errorf("wipe message store: %v", err)
+	}
+	b.cleanSnippetMedia()
 }
 
 func (b *Backend) Chats() []*model.Chat {

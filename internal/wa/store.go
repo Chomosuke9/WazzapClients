@@ -293,12 +293,25 @@ func (s *msgStore) failStale(ctx context.Context) error {
 	return err
 }
 
-func (s *msgStore) wipe(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats; DELETE FROM wz_meta;
+func (s *msgStore) wipe(ctx context.Context, keep ...string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats;
 		DELETE FROM wz_status; DELETE FROM wz_channels; DELETE FROM wz_channel_posts; DELETE FROM wz_lists; DELETE FROM wz_list_chats; DELETE FROM wz_stickers;
 		DELETE FROM wz_sticker_packs; DELETE FROM wz_pack_stickers;
 		DELETE FROM wz_edits; DELETE FROM wz_votes; DELETE FROM wz_reactions; DELETE FROM wz_sticker_reacts; DELETE FROM wz_snippets;
 		DELETE FROM wz_receipts; DELETE FROM wz_status_replies;`)
+	if err != nil {
+		return err
+	}
+	// The meta rows named in keep stay (the app's preferences).
+	args := make([]any, len(keep))
+	for i, k := range keep {
+		args[i] = k
+	}
+	q := `DELETE FROM wz_meta`
+	if len(keep) > 0 {
+		q += ` WHERE key NOT IN (?` + strings.Repeat(", ?", len(keep)-1) + `)`
+	}
+	_, err = s.db.ExecContext(ctx, q, args...)
 	return err
 }
 

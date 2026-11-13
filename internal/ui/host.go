@@ -766,6 +766,10 @@ func withAuto(b model.Backend) (model.Backend, *auto.Backend) {
 			return x, a
 		}
 	}
+	// A logout wipes the account's data, but not the app's preferences.
+	if k, ok := b.(model.PrefKeeper); ok {
+		k.KeepPrefs(appPrefs)
+	}
 	a := auto.Wrap(b, func() time.Time { return timeNow() })
 	return a, a
 }

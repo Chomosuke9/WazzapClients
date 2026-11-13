@@ -1830,6 +1830,15 @@ type Backgrounder interface {
 	SetBackground(on bool)
 }
 
+// PrefKeeper is implemented by backends that wipe their data when the
+// account logs out or the phone unlinks it.
+type PrefKeeper interface {
+	// KeepPrefs names the preferences that outlive the account's data:
+	// the app's own (the theme, the zoom...), which the next account to
+	// open takes over.
+	KeepPrefs(keys []string)
+}
+
 // SearchKey is the form of a text that message search compares: case
 // folded (so K matches k and the Kelvin sign, σ matches Σ and ς), without
 // the formatting markers (*_~`) and mention marks that the chat doesn't

@@ -182,6 +182,13 @@ func (a *Backend) SetBackground(on bool) {
 	}
 }
 
+// KeepPrefs passes on to the backend it wraps (model.PrefKeeper).
+func (a *Backend) KeepPrefs(keys []string) {
+	if b, ok := a.Backend.(model.PrefKeeper); ok {
+		b.KeepPrefs(keys)
+	}
+}
+
 // Cancel takes the job with id off the queue, and reports whether it was
 // still on it.
 func (a *Backend) Cancel(id string) bool {
