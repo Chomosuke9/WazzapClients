@@ -377,6 +377,20 @@ Gotchas already found in the pinned version (v0.10.x):
   replies go to the first, and the copy can come much later or, in history sync, before it.
   `parse` files a copy under the message's ID, in `copy_payload`, and `mediaBlob` downloads
   the HD file from it (`internal/wa/copies.go`).
+- A sticker reaction is a `stickerMessage` of its own whose `messageContextInfo` points to the
+  message it reacts to (a `STICKER_ANNOTATION` association, 11); taking it back is deleting
+  that sticker message for everyone. It's no message here: `parse` files it under the message,
+  in `wz_sticker_reacts` (`internal/wa/stickerreact.go`), its file downloads under the chat and
+  its own ID (`mediaBlob`), and `msgColumns` reads a message's with a subquery
+  (`Message.Stickers`, each person's latest). Phones show up to three
+  in a row along the bubble's bottom edge, from its edge or from the emoji pill, the newest
+  first and in front; a new one pops in while the others move over (`stickerReactions`,
+  `internal/ui/stickerreact.go`; read off screenshots of an unreleased feature, and other
+  screenshots had them on the bubble's corners). The first and third lean clockwise, the middle
+  one the other way, and their corners are rounded.
+  WhatsApp shows none in a channel, in a community's announcements or on a sticker message
+  (`takesStickers`), and its phones can't give one yet, so the reaction picker's Sticker tab is
+  an extra feature (`prefStickerReact`).
 - Websites send WhatsApp links (wa.me, api.whatsapp.com) on to `whatsapp://send?phone=…`
   and invites to `whatsapp://chat?code=…`; Windows starts the scheme's handler with the
   link as the last argument. Apps can't make themselves the default: Windows keeps the
@@ -535,7 +549,7 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    Snippets, the snippets /snippet send offers in the slash picker, their {variables}
                    and /catch's payload dialog) in snippets.go; and
                    the Extra features settings page in extras.go (the app's own features,
-                   such as slash commands, Extended mentions (one switch for @admin, custom mentions, @Tim frontend: people you
+                   such as slash commands, Sticker reactions (the reaction picker's Sticker tab), Extended mentions (one switch for @admin, custom mentions, @Tim frontend: people you
                    pick in a group, named and mentioned like @admin, in custommention.go, and mentions in private chats, of the other person only), the Privacy mode toggle, Block screen
                    recording and Raw photos: each off until turned on), and
                    its Ethically gray features page (Edit history, Keep deleted messages, Replay view
@@ -554,7 +568,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    who saw one of your own status updates and the replies to it (the eye under
                    it in the viewer, and its "Viewed by" sheet) in statusviews.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
-                   opens at in unread.go; the round React and Forward buttons beside a
+                   opens at in unread.go; sticker reactions (a row of stickers along
+                   the bubble's bottom edge, the reaction picker's Sticker tab, and their rows in who reacted)
+                   in stickerreact.go; the round React and Forward buttons beside a
                    hovered message (React opens the reaction bar alone) in sidebuttons.go;
                    the ⌄ button that goes back to the newest message
                    (with the unread count) and the day pinned at the top while a chat
@@ -648,6 +664,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    /catch shows, and edit_payload), in payload.go;
                    albums (an albumMessage, then each picture pointing back to it) in album.go;
                    the copies WhatsApp sends of a message in HD (filed under it) in copies.go;
+                   sticker reactions (sticker messages filed under the message they react
+                   to, wz_sticker_reacts) in stickerreact.go;
                    polls, locations, contact cards and events (cards in bubbles) and the
                    votes and event answers they get (wz_votes) in polls.go;
                    system messages (model.KindSystem), stored with a waWeb stub as their
@@ -917,7 +935,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), statusviews (your status's Viewed by sheet), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
-# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), stickerreact (sticker reactions on the chat's last messages), stickerreactors (who gave them), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;

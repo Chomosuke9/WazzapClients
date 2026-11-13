@@ -56,6 +56,7 @@ func reactionKey(m *model.Message) string {
 func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, pop animKey) D {
 	defer u.emojiIn(emojiReactions)()
 	counts, total := reactionCounts(ms)
+	u.conv.pill = image.Rectangle{}
 	if total == 0 {
 		return dims
 	}
@@ -112,6 +113,7 @@ func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, p
 	fillRRect(gtx, image.Rect(x-ring, py-ring, x+pill.size.X+ring, py+pill.size.Y+ring), pill.size.Y/2+ring, p.ChatBg)
 	pill.at(gtx, x, py)
 	fx.Pop()
+	u.conv.pill = image.Rect(x, py, x+pill.size.X, py+pill.size.Y)
 	dims.Size.Y = py + pill.size.Y + ring
 	return dims
 }
@@ -131,10 +133,12 @@ type reactionsPopup struct {
 	anim    tween
 }
 
-// reactorRow is one person's reaction, to msg.
+// reactorRow is one person's reaction, to msg. A sticker reaction's has
+// the sticker, as a message, and stickerTab as its emoji.
 type reactorRow struct {
 	model.Reactor
-	msg *model.Message
+	msg     *model.Message
+	sticker *model.Message
 }
 
 func (r *reactionsPopup) isOpen() bool { return r.msgs != nil && !r.closing }
@@ -153,7 +157,10 @@ func (u *UI) loadReactors() {
 	r.list = r.list[:0]
 	for _, m := range r.msgs {
 		for _, x := range u.backend.Reactors(m) {
-			r.list = append(r.list, reactorRow{x, m})
+			r.list = append(r.list, reactorRow{Reactor: x, msg: m})
+		}
+		if u.takesStickers(m) {
+			r.list = append(r.list, stickerReactors(m)...)
 		}
 	}
 	slices.SortStableFunc(r.list, func(a, b reactorRow) int {
@@ -216,7 +223,13 @@ func (u *UI) layoutReactions(gtx C) {
 	}
 	if r.isOpen() {
 		for _, x := range r.list {
-			if x.Me && u.btn("reactor:me/"+x.msg.ID).Clicked(gtx) {
+			switch {
+			case !x.Me:
+			case x.sticker != nil:
+				if u.btn("reactor:mysticker/" + x.msg.ID).Clicked(gtx) {
+					u.backend.ReactSticker(x.msg, nil)
+				}
+			case u.btn("reactor:me/" + x.msg.ID).Clicked(gtx):
 				u.backend.React(x.msg, "")
 			}
 		}
@@ -298,7 +311,11 @@ func (u *UI) reactionsPanel(gtx C) D {
 	}
 	tabs := []layout.FlexChild{tab("", "All "+itoa(len(r.list)))}
 	for _, e := range emojis {
-		tabs = append(tabs, tab(e, e+" "+itoa(count[e])))
+		title := e
+		if e == stickerTab {
+			title = "Stickers"
+		}
+		tabs = append(tabs, tab(e, title+" "+itoa(count[e])))
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
@@ -327,8 +344,8 @@ func (u *UI) reactionsPanel(gtx C) D {
 	)
 }
 
-// reactorRow is one person: their picture and name, and their emoji on
-// the right. Yours says "Click to remove" and takes it back.
+// reactorRow is one person: their picture and name, and their emoji (or
+// sticker) on the right. Yours says "Click to remove" and takes it back.
 func (u *UI) reactorRow(gtx C, x reactorRow) D {
 	p := u.pal
 	content := func(gtx C, hover float32) D {
@@ -340,7 +357,14 @@ func (u *UI) reactorRow(gtx C, x reactorRow) D {
 		t := op.Offset(image.Pt(gtx.Dp(16), (sz.Y-gtx.Dp(40))/2)).Push(gtx.Ops)
 		u.avatar(gtx, x.ID, x.Name, false, 40)
 		t.Pop()
-		emoji := record(gtx, u.label(22, x.Emoji, p.Text).Layout)
+		emoji := record(gtx, func(gtx C) D {
+			if x.sticker == nil {
+				return u.label(22, x.Emoji, p.Text).Layout(gtx)
+			}
+			side := gtx.Dp(44)
+			u.stickerPicture(gtx, x.sticker, side)
+			return D{Size: image.Pt(side, side)}
+		})
 		emoji.at(gtx, sz.X-gtx.Dp(20)-emoji.size.X, (sz.Y-emoji.size.Y)/2)
 		left := gtx.Dp(16 + 40 + 14)
 		tgtx := gtx
@@ -363,5 +387,8 @@ func (u *UI) reactorRow(gtx C, x reactorRow) D {
 		return content(gtx, 0)
 	}
 	c := u.btn("reactor:me/" + x.msg.ID)
+	if x.sticker != nil {
+		c = u.btn("reactor:mysticker/" + x.msg.ID)
+	}
 	return clickable(gtx, c, func(gtx C) D { return content(gtx, u.hover(gtx, c)) })
 }

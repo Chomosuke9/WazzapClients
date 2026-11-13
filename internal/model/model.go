@@ -155,6 +155,9 @@ type Message struct {
 	// given first, and MyReaction is yours ("" for none).
 	Reactions  []ReactionCount
 	MyReaction string
+	// Stickers are the stickers people reacted to the message with, each
+	// person's latest, oldest first.
+	Stickers []StickerReaction
 	// Starred and Pinned mirror the message menu's Star and Pin.
 	Starred, Pinned bool
 	// Disappears is set on a message sent with a disappearing messages
@@ -344,6 +347,38 @@ func (m *Message) ReactionTotal() int {
 		n += r.Count
 	}
 	return n
+}
+
+// StickerReaction is a sticker someone reacted to a message with: a
+// sticker message of its own on the wire, which points to the message and
+// shows on its bubble's corner instead of in the chat.
+type StickerReaction struct {
+	// ID is the sticker message's own: Backend.MediaData has its file
+	// under the chat and this ID, and deleting it takes the reaction back.
+	ID string
+	// SenderID is who reacted (their JID, yours when Me) and Sender their
+	// name ("You" when Me).
+	SenderID, Sender string
+	Me               bool
+	Lottie           bool // a Lottie sticker (see Message.Lottie)
+	Time             time.Time
+}
+
+// Message is the reaction's sticker as a sticker message of the chat
+// chatID, for what draws and plays stickers.
+func (r StickerReaction) Message(chatID string) *Message {
+	return &Message{ID: r.ID, ChatID: chatID, Kind: KindSticker, Media: MediaSticker, Lottie: r.Lottie,
+		FromMe: r.Me, SenderID: r.SenderID, Sender: r.Sender, Time: r.Time}
+}
+
+// MySticker returns your sticker reaction to m, if you gave one.
+func (m *Message) MySticker() (StickerReaction, bool) {
+	for _, r := range m.Stickers {
+		if r.Me {
+			return r, true
+		}
+	}
+	return StickerReaction{}, false
 }
 
 // Reactor is one person's reaction to a message. ID is their JID (yours
@@ -1552,6 +1587,10 @@ type Backend interface {
 	Forward(msgs []*Message, chatIDs []string)
 	// React sets (or, with "", removes) your reaction to a message.
 	React(m *Message, emoji string)
+	// ReactSticker reacts to a message with a sticker (one received
+	// before or from the picker, as SendSticker takes), in place of the
+	// sticker you reacted with before; nil takes yours back.
+	ReactSticker(m *Message, sticker *Message)
 	// Reactors lists who reacted to a message and with what: you first,
 	// then the newest first.
 	Reactors(m *Message) []Reactor

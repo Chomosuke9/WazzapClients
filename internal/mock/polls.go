@@ -79,6 +79,7 @@ func (b *Backend) recount(m *model.Message) {
 func deepCopy(m *model.Message) *model.Message {
 	cp := *m
 	cp.Reactions = slices.Clone(m.Reactions)
+	cp.Stickers = slices.Clone(m.Stickers)
 	if m.Poll != nil {
 		p := *m.Poll
 		p.Options = slices.Clone(p.Options)

@@ -1,6 +1,12 @@
 package mock
 
 import (
+	"bytes"
+	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"slices"
 	"strings"
 	"time"
@@ -125,4 +131,111 @@ func (b *Backend) Reactors(m *model.Message) []model.Reactor {
 		return b.Time.Compare(a.Time)
 	})
 	return rs
+}
+
+// ReactSticker gives m your sticker reaction, or (nil) takes it back.
+func (b *Backend) ReactSticker(m *model.Message, sticker *model.Message) {
+	x := b.find(m)
+	if x == nil {
+		return
+	}
+	rs := slices.DeleteFunc(slices.Clone(x.Stickers), func(r model.StickerReaction) bool { return r.Me })
+	if sticker != nil {
+		b.stickerReacts++
+		r := model.StickerReaction{ID: fmt.Sprintf("%s-react-%d", x.ID, b.stickerReacts), SenderID: "me@lid", Sender: "You", Me: true,
+			Lottie: sticker.Lottie, Time: b.now()}
+		b.mu.Lock()
+		if data := b.media[key(sticker)]; data != nil {
+			b.media[x.ChatID+"/"+r.ID] = data
+		}
+		b.mu.Unlock()
+		rs = append(rs, r)
+	}
+	b.update(x, func(x *model.Message) { x.Stickers = rs })
+}
+
+// DemoStickerReactions reacts with stickers to messages of the chat, for
+// previews: one to the last message from you, three (yours last) to the
+// last from someone else, and three to the first with emoji reactions.
+// The demo has no sticker files, so the stickers are drawn here.
+func (b *Backend) DemoStickerReactions(chatID string) {
+	var in, out, emojis *model.Message
+	for _, m := range b.msgs[chatID] {
+		switch {
+		case m.Kind == model.KindDeleted:
+		case len(m.Reactions) > 0 && emojis == nil:
+			emojis = m
+		case m.FromMe:
+			out = m
+		default:
+			in = m
+		}
+	}
+	people := []model.StickerReaction{{SenderID: chatID, Sender: "Someone"}, {SenderID: "sari@lid", Sender: "Sari"},
+		{SenderID: "me@lid", Sender: "You", Me: true}}
+	if c := b.chat(chatID); c != nil && !c.IsGroup {
+		people[0].Sender = c.Name
+	} else if in != nil && in.SenderID != "" {
+		people[0].SenderID, people[0].Sender = in.SenderID, in.Sender
+	}
+	react := func(x *model.Message, n int) {
+		if x == nil {
+			return
+		}
+		for i, r := range people[:n] {
+			b.stickerReacts++
+			r.ID, r.Time = fmt.Sprintf("%s-react-%d", x.ID, b.stickerReacts), b.now().Add(time.Duration(i)*time.Second-time.Minute)
+			b.mu.Lock()
+			if b.media == nil {
+				b.media = map[string][]byte{}
+			}
+			b.media[x.ChatID+"/"+r.ID] = demoSticker(demoStickerColors[i], i > 0)
+			b.mu.Unlock()
+			b.update(x, func(x *model.Message) { x.Stickers = append(x.Stickers, r) })
+		}
+	}
+	react(out, 1)
+	react(in, 3)
+	react(emojis, 3)
+}
+
+// demoStickerColors tell the demo's stickers apart.
+var demoStickerColors = [...]color.NRGBA{{60, 200, 110, 255}, {240, 180, 50, 255}, {120, 130, 240, 255}}
+
+// demoSticker draws a sticker as a PNG: a grinning face, cut out or
+// (square) on a background that fills the picture.
+func demoSticker(face color.NRGBA, square bool) []byte {
+	const n = 128
+	img := image.NewNRGBA(image.Rect(0, 0, n, n))
+	disc := func(cx, cy, r float64, c color.NRGBA) {
+		for y := 0; y < n; y++ {
+			for x := 0; x < n; x++ {
+				if dx, dy := float64(x)+0.5-cx, float64(y)+0.5-cy; dx*dx+dy*dy <= r*r {
+					img.SetNRGBA(x, y, c)
+				}
+			}
+		}
+	}
+	white, dark := color.NRGBA{255, 255, 255, 255}, color.NRGBA{40, 44, 52, 255}
+	if square {
+		// A picture sticker: it fills its square.
+		draw.Draw(img, img.Bounds(), image.NewUniform(color.NRGBA{face.B, face.R / 2, face.G, 255}), image.Point{}, draw.Src)
+	}
+	disc(64, 64, 62, white) // the sticker's white edge
+	disc(64, 64, 56, face)
+	disc(64, 78, 30, dark) // an open grin: a disc cut by the face above it
+	for y := 0; y < 76; y++ {
+		for x := 0; x < n; x++ {
+			if img.NRGBAAt(x, y) == dark {
+				img.SetNRGBA(x, y, face)
+			}
+		}
+	}
+	for _, cx := range []float64{44, 84} {
+		disc(cx, 48, 13, white)
+		disc(cx+2, 50, 6, dark)
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
 }

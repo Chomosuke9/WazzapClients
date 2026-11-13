@@ -43,6 +43,8 @@ type Backend struct {
 	votes map[string][]model.Vote
 	// reactors are who reacted to messages, by chat and message ID.
 	reactors map[string][]model.Reactor
+	// stickerReacts counts the sticker reactions given, for their IDs.
+	stickerReacts int
 	extras
 	packs packs // sticker packs opened and added (packs.go)
 

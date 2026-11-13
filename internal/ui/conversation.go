@@ -936,7 +936,9 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 		dims = u.layoutBubble(gtx, c, m, r.first, maxW)
 	}
 	u.conv.cardH = dims.Size.Y
-	return u.reactionPill(gtx, dims, []*model.Message{m}, m.FromMe, u.announcementsOf(c) != nil, pop)
+	bubble := dims.Size
+	dims = u.reactionPill(gtx, dims, []*model.Message{m}, m.FromMe, u.announcementsOf(c) != nil, pop)
+	return u.stickerReactions(gtx, []*model.Message{m}, bubble, dims, m.FromMe)
 }
 
 // layoutBubble draws one message bubble, sized to its content.

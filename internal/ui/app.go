@@ -223,6 +223,7 @@ type UI struct {
 	codes   shortcodes   // :emoji: names typed in the composer (shortcode.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
 	extendedMentions, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
+	stickerReact                                                          bool // the reaction picker has a Sticker tab
 	// Custom mentions (custommention.go): each group's as read from its
 	// preference, and a count of the changes to them.
 	customMentions    map[string][]customMention
@@ -283,6 +284,9 @@ type UI struct {
 		// cardH is the height of the last message laid out, without the
 		// reaction pill that hangs under it.
 		cardH int
+		// pill is where reactionPill drew the last message's emojis, in
+		// its bubble; empty without any (stickerReactions goes around it).
+		pill image.Rectangle
 
 		reply            *model.Message // message being replied to
 		edit             msgEdit        // the message being edited (edit.go)
@@ -339,7 +343,10 @@ type UI struct {
 		takeoverH    int               // and that room in px
 		heights      map[int]int       // row heights laid out last frame, by index
 		reactions    map[string]string // reaction shown per message, to pop new ones
-		expanded     map[string]int    // "Read more" clicks per message
+		// stickerSpots is where each sticker reaction was last drawn, by
+		// its ID (stickerreact.go).
+		stickerSpots map[string]*stickerSpot
+		expanded     map[string]int // "Read more" clicks per message
 
 		outgoingTyping string // chat receiving our typing presence
 
@@ -1585,7 +1592,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "keptmenu" (a message kept in the chat), "report" (Report's question for the last message received), "emoji", "sticker", "gifs" (the GIF tab with demo results), "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer) and "linkloading" (the card while it loads), "delete", "select", "edit" (your last message in the composer to edit), "recording" (a voice message
 // being recorded) and "recordingpaused" (paused, to play back), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
-// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "skintone" (the picker's tones under its tone button), "emojitones" (👍's tones, a right click at -at in the panel), "attach", "poll", "newevent" (the attach menu's Create event), "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "stickerreact" (sticker reactions on the chat's last messages), "stickerreactors" (who gave them), "reactpicker" (the reaction picker), "skintone" (the picker's tones under its tone button), "emojitones" (👍's tones, a right click at -at in the panel), "attach", "poll", "newevent" (the attach menu's Create event), "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
 // $WAZZAP_DEMO_SEARCH), its first list's chip "listchip" and the New list dialog "newlist"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
@@ -1855,6 +1862,32 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 				u.openVotes(m)
 				u.msgInfo.anim.snap(true)
 				break
+			}
+		}
+	case "reactpicker":
+		// The picker a message's React opens, with its Sticker tab.
+		if lastIn != nil {
+			u.stickerReact = true // as with the extra feature on
+			u.openPicker(pickReaction, lastIn)
+			u.picker.anim.snap(true)
+		}
+	case "stickerreact", "stickerreactors":
+		// Sticker reactions on the chat's last messages, and who gave them.
+		raw := u.backend
+		if u.auto != nil {
+			raw = u.auto.Backend // the demo's, under the wrapper
+		}
+		if d, ok := raw.(interface{ DemoStickerReactions(string) }); ok && u.selected != nil {
+			d.DemoStickerReactions(u.selected.ID)
+			u.applyEvents()
+		}
+		if name == "stickerreactors" && lastOut != nil {
+			for _, m := range u.msgs {
+				if m.ID == lastOut.ID {
+					u.mouse = image.Pt(x, y)
+					u.openReactions([]*model.Message{m})
+					u.reacts.anim.snap(true)
+				}
 			}
 		}
 	case "reactions":

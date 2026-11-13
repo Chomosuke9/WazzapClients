@@ -596,6 +596,12 @@ func (a *Backend) React(m *model.Message, emoji string) {
 	}
 }
 
+func (a *Backend) ReactSticker(m *model.Message, sticker *model.Message) {
+	if !a.refused() {
+		a.Backend.ReactSticker(m, sticker)
+	}
+}
+
 func (a *Backend) VotePoll(m *model.Message, options []int) {
 	if !a.refused() {
 		a.Backend.VotePoll(m, options)

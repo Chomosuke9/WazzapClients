@@ -285,5 +285,7 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 	content.Add(gtx.Ops)
 	t.Pop()
 	dims := D{Size: image.Pt(w, h)}
-	return u.reactionPill(gtx, dims, ms, out, false, animKey{}), tiles
+	bubble := dims.Size
+	dims = u.reactionPill(gtx, dims, ms, out, false, animKey{})
+	return u.stickerReactions(gtx, ms, bubble, dims, out), tiles
 }

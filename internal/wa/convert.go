@@ -20,6 +20,7 @@ type parsed struct {
 
 	target   string // message ID a reaction/revoke/edit/pin applies to
 	reaction *reaction
+	sticker  *stickerReact // a sticker reacting to target (stickerreact.go)
 	revoke   bool
 	// revokedBy is the group admin who deleted someone else's message
 	// (revoke), or "" when its sender did.
@@ -433,6 +434,17 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	}
 
 	c := describe(m)
+	if id := first(annotates(evt.RawMessage), annotates(m)); id != "" && id != evt.Info.ID && c.media == model.MediaSticker {
+		// A sticker reaction is no message of its own (stickerreact.go).
+		raw := evt.RawMessage
+		if raw == nil {
+			raw = m
+		}
+		p.target = id
+		p.sticker = &stickerReact{sid: evt.Info.ID, who: b.reactorOf(ctx, evt.Info.Sender, evt.Info.IsFromMe),
+			ts: evt.Info.Timestamp.UnixMilli(), lottie: c.lottie, payload: marshal(raw)}
+		return p, true
+	}
 	viewOnce := isViewOnce(m)
 	if viewOnce {
 		// The pill that opens it, whatever came inside; the media only

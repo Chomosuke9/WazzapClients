@@ -1241,6 +1241,11 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		if p.reaction != nil {
 			_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
 		}
+		if p.sticker != nil {
+			if err := b.store.putStickerReact(ctx, b.db, chat, p.target, *p.sticker); err != nil {
+				b.log.Warnf("sticker reaction to %s in %s: %v", p.target, chat, err)
+			}
+		}
 	default:
 		name := ""
 		chatJID, _ := types.ParseJID(chat)
@@ -1306,6 +1311,11 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 // content and is only flagged; your own deletes (from another device)
 // still remove it.
 func (b *Backend) revoke(ctx context.Context, chat string, p parsed) {
+	if parent := b.store.dropStickerReact(ctx, chat, p.target); parent != "" {
+		// A sticker reaction taken back (stickerreact.go).
+		b.emitMessage(chat, parent)
+		return
+	}
 	if !p.msg.FromMe && b.Pref(model.PrefKeepDeleted) == "on" {
 		at := p.msg.Time
 		if at.IsZero() {
@@ -1615,6 +1625,8 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				_ = b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload)
 			case p.reaction != nil:
 				_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
+			case p.sticker != nil:
+				_ = b.store.putStickerReact(ctx, b.db, chat, p.target, *p.sticker)
 			}
 		}
 	}

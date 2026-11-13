@@ -1182,11 +1182,12 @@ func (s *msgStore) deleteMessage(ctx context.Context, chat, id string) error {
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_receipts WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2;
-		DELETE FROM wz_reactions WHERE chat = ?1 AND id = ?2`, chat, id)
+		DELETE FROM wz_reactions WHERE chat = ?1 AND id = ?2;
+		DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND parent = ?2`, chat, id)
 	return err
 }
 
-// dropOrphanEdits deletes the versions, receipts, votes and reactions of
+// dropOrphanEdits deletes the versions, receipts, votes and reactions (sticker ones too) of
 // chat ?1's messages that are gone.
 const dropOrphanEdits = `DELETE FROM wz_edits WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_edits.chat AND m.id = wz_edits.id);
@@ -1195,7 +1196,9 @@ const dropOrphanEdits = `DELETE FROM wz_edits WHERE chat = ?1 AND NOT EXISTS
 	DELETE FROM wz_votes WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_votes.chat AND m.id = wz_votes.id);
 	DELETE FROM wz_reactions WHERE chat = ?1 AND NOT EXISTS
-	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_reactions.chat AND m.id = wz_reactions.id)`
+	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_reactions.chat AND m.id = wz_reactions.id);
+	DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND NOT EXISTS
+	(SELECT 1 FROM wz_messages m WHERE m.chat = rchat AND m.id = parent)`
 
 // clearChat deletes the chat's unstarred messages sent at or before upTo
 // (unix seconds), or all of them when upTo is 0.

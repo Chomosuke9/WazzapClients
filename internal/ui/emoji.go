@@ -135,6 +135,14 @@ type emojiPicker struct {
 	tabSel    switcher[pickTab]
 }
 
+// stickerReacts reports whether the picker reacts to a message that takes
+// a sticker as a reaction (stickerreact.go), with that extra feature on:
+// it then has a Sticker tab.
+func (u *UI) stickerReacts() bool {
+	e := &u.picker
+	return u.stickerReact && e.mode == pickReaction && e.target != nil && u.takesStickers(e.target)
+}
+
 // shown reports whether the picker is open or still fading out.
 func (e *emojiPicker) shown() bool { return e.open || e.anim.v > 0 }
 
@@ -358,7 +366,7 @@ func (u *UI) layoutPicker(gtx C, anchor image.Point, maxW int) {
 	case tabSticker:
 		u.layoutStickerTab(pg)
 	}
-	if e.mode == pickComposer {
+	if e.mode == pickComposer || u.stickerReacts() {
 		u.pickerTabs(pg)
 	}
 	// On top of everything in the panel, passing events through, so it
@@ -474,13 +482,18 @@ func (u *UI) layoutEmojiTab(gtx C) D {
 }
 
 // pickerTabs is the Emoji / GIF / Sticker switch floating at the bottom.
+// A reaction has no GIF tab.
 func (u *UI) pickerTabs(gtx C) {
 	e := &u.picker
 	p := u.pal
-	for i := range 3 {
-		if u.btn("ptab:" + itoa(i+1)).Clicked(gtx) {
-			e.tab = pickTab(i)
-			if e.tab != tabGIF {
+	tabs := []pickTab{tabEmoji, tabGIF, tabSticker}
+	if e.mode != pickComposer {
+		tabs = []pickTab{tabEmoji, tabSticker}
+	}
+	for _, i := range tabs {
+		if u.btn("ptab:" + itoa(int(i)+1)).Clicked(gtx) {
+			e.tab = i
+			if e.tab != tabGIF && e.mode == pickComposer {
 				e.composerTab = e.tab
 			}
 			if e.tab == tabSticker {
@@ -491,38 +504,37 @@ func (u *UI) pickerTabs(gtx C) {
 	}
 	e.tabSel.step(gtx, e.tab, durSwitch)
 	segW, h := gtx.Dp(77), gtx.Dp(33)
-	w := 3 * segW
+	w := len(tabs) * segW
 	sz := gtx.Constraints.Max
 	x, y := (sz.X-w)/2, sz.Y-h-gtx.Dp(10)
 	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 	borderRRect(gtx, image.Rect(0, 0, w, h), h/2, p.Picker, p.PickerTabBorder)
-	for i := range 3 {
-		i := i
-		t := op.Offset(image.Pt(i*segW, 0)).Push(gtx.Ops)
+	for n, i := range tabs {
+		t := op.Offset(image.Pt(n*segW, 0)).Push(gtx.Ops)
 		cg := gtx
 		cg.Constraints = layout.Exact(image.Pt(segW, h))
-		cl := u.btn("ptab:" + itoa(i+1))
+		cl := u.btn("ptab:" + itoa(int(i)+1))
 		clickable(cg, cl, func(gtx C) D {
 			r := image.Rect(1, 1, segW-1, h-1)
-			a := max(e.tabSel.of(pickTab(i)), 0.5*u.hover(gtx, cl))
+			a := max(e.tabSel.of(i), 0.5*u.hover(gtx, cl))
 			if a > 0 {
 				rr := clip.RRect{Rect: r}
-				switch i {
+				switch n {
 				case 0:
 					rr.NW, rr.SW = h/2, h/2
-				case 2:
+				case len(tabs) - 1:
 					rr.NE, rr.SE = h/2, h/2
 				}
 				paintRRect(gtx, rr, faded(p.PickerTab, a))
 			}
-			a = e.tabSel.of(pickTab(i))
+			a = e.tabSel.of(i)
 			glyph := func(col color.NRGBA) {
 				switch i {
-				case 0:
+				case tabEmoji:
 					centerIn2(gtx, segW, h, iconW(icEmoji, 22, col))
-				case 1:
+				case tabGIF:
 					centerIn2(gtx, segW, h, u.label(12.5, "GIF", col, labelOpts{weight: font.Bold, maxLines: 1}).Layout)
-				case 2:
+				case tabSticker:
 					centerIn2(gtx, segW, h, iconW(icSticker, 21, col))
 				}
 			}
@@ -531,8 +543,8 @@ func (u *UI) pickerTabs(gtx C) {
 			return D{Size: image.Pt(segW, h)}
 		})
 		t.Pop()
-		if i > 0 {
-			fillRect(gtx, image.Rect(i*segW, 0, i*segW+max(1, gtx.Dp(1)), h), p.PickerTabBorder)
+		if n > 0 {
+			fillRect(gtx, image.Rect(n*segW, 0, n*segW+max(1, gtx.Dp(1)), h), p.PickerTabBorder)
 		}
 	}
 }
@@ -670,6 +682,13 @@ func (u *UI) layoutStickerTab(gtx C) D {
 	for _, s := range stickers {
 		if e.mode == pickMedia && u.btn("sticker:"+s.ChatID+"/"+s.ID).Clicked(gtx) {
 			u.placeSticker(gtx, s)
+			u.closePicker()
+			return D{}
+		}
+		if e.mode == pickReaction && u.btn("sticker:"+s.ChatID+"/"+s.ID).Clicked(gtx) {
+			if e.target != nil {
+				u.backend.ReactSticker(e.target, s)
+			}
 			u.closePicker()
 			return D{}
 		}

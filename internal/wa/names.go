@@ -333,6 +333,7 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 	if m.FromMe && m.Receipt >= model.Sent && !isGroup && b.isMeID(m.ChatID) {
 		m.Receipt = model.Read // you've read what you sent yourself
 	}
+	b.nameStickers(ctx, m)
 	if isGroup && !m.FromMe && r.senderJID != "" {
 		m.Sender = b.senderNameStr(ctx, r.senderJID, r.senderPush)
 		if l, ok := b.memberLabelOf(ctx, m.ChatID, r.senderJID); ok {

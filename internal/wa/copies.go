@@ -194,6 +194,7 @@ func (s *msgStore) foldCopy(ctx context.Context, x execer, m storedMsg, id strin
 	_, err = x.ExecContext(ctx, `DELETE FROM wz_messages WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_receipts WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_reactions WHERE chat = ?1 AND id = ?2;
+		DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND parent = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2`, m.ChatID, id)
 	return err
