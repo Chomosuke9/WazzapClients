@@ -230,6 +230,9 @@ type Message struct {
 	// or the group it came to, in a status update: a card in its bubble
 	// (Text is empty). Nil on every other message.
 	StatusMention *StatusMention
+	// Rich is an AI's answer in sections (rich.go), drawn instead of Text,
+	// which holds it as plain text. Nil on every other message.
+	Rich *RichResponse
 }
 
 // StatusMention is the status update a message says mentioned you or a

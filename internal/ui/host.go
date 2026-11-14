@@ -814,6 +814,7 @@ func dropCaches() {
 	glyphs = map[glyphKey]*glyphRec{}
 	previews.m = nil
 	richBlocks.m = nil
+	mdParsed.m, mdTexts.m, codeSpans.m = nil, nil, nil
 	readMoreCuts.m = nil
 	icon.FlushCache()
 	dropShapes()

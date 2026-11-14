@@ -6,6 +6,7 @@ import (
 	"image/draw"
 	_ "image/jpeg"
 	_ "image/png"
+	"strings"
 	"sync"
 	"time"
 
@@ -207,6 +208,17 @@ func (c *imageCache) getWith(key string, load func() []byte, decode func([]byte)
 func (c *imageCache) forget(key string) {
 	c.mu.Lock()
 	c.remove(key)
+	c.mu.Unlock()
+}
+
+// forgetPrefix drops every entry whose key starts with prefix.
+func (c *imageCache) forgetPrefix(prefix string) {
+	c.mu.Lock()
+	for k := range c.m {
+		if strings.HasPrefix(k, prefix) {
+			c.remove(k)
+		}
+	}
 	c.mu.Unlock()
 }
 

@@ -41,6 +41,7 @@ func (r *rawMsg) fill(raw, edit []byte) {
 	m.Duration = c.duration
 	m.Link = c.link
 	m.StatusMention = c.mention
+	m.Rich = c.rich
 	c.file.apply(m)
 	if m.Kind == model.KindImage {
 		m.Album = albumOf(pm)
@@ -62,6 +63,9 @@ func (r *rawMsg) fill(raw, edit []byte) {
 		ctx = ec.ctx
 		if ec.extra.Event != nil {
 			c.extra.Event = ec.extra.Event
+		}
+		if ec.rich != nil {
+			m.Rich = ec.rich
 		}
 	}
 	c.extra.apply(m)

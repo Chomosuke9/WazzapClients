@@ -529,8 +529,13 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 // is called for each span (or each line of one) after it is drawn. carets,
 // if set, receives the text's caret positions.
 func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, onSpan func(gtx C, idx int, d D), carets *[]styledtext.Caret) D {
+	return u.layoutSpansLH(gtx, spans, deco, 22, onSpan, carets)
+}
+
+// layoutSpansLH is layoutSpans with lines lineH tall.
+func (u *UI) layoutSpansLH(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, lineH unit.Sp, onSpan func(gtx C, idx int, d D), carets *[]styledtext.Caret) D {
 	st := styledtext.Text(u.th.Shaper, spans...)
-	st.LineHeight, st.LineHeightScale = 22, 1
+	st.LineHeight, st.LineHeightScale = lineH, 1
 	if hide := u.secret; hide > 0 {
 		return u.layoutHiddenSpans(gtx, st, hide, onSpan, carets)
 	}

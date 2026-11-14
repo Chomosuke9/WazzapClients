@@ -42,20 +42,26 @@ type Palette struct {
 	// Plain is a wallpaper without doodles (a minimal chat theme), and
 	// WallPhoto a photo chosen as the chat's wallpaper (chattheme.go),
 	// cropped around WallFocus (wallphoto.go).
-	Plain                        bool
-	WallPhoto                    string
-	WallFocus                    f32.Point
-	QuoteIn, QuoteOut            color.NRGBA
-	BubbleLine, BubbleButton     color.NRGBA // dividers and text of message buttons
-	CodeBg                       color.NRGBA // behind `inline code`
-	MentionPill                  color.NRGBA // behind mentions of you
-	Selection                    color.NRGBA // behind selected text
-	DateChip, DateChipText       color.NRGBA
-	UnreadBand                   color.NRGBA // behind "N unread messages" (unread.go)
-	Encryption, EncryptionText   color.NRGBA
-	Composer, ComposerHint       color.NRGBA
-	GroupAvatar, GroupAvatarIcon color.NRGBA
-	UserAvatar, UserAvatarIcon   color.NRGBA
+	Plain                    bool
+	WallPhoto                string
+	WallFocus                f32.Point
+	QuoteIn, QuoteOut        color.NRGBA
+	BubbleLine, BubbleButton color.NRGBA // dividers and text of message buttons
+	CodeBg                   color.NRGBA // behind `inline code`
+	// An AI's answer (richresponse.go): its code blocks, their text by
+	// token, and its tables' header row and lines.
+	CodeBlock, CodeText                 color.NRGBA
+	CodeKeyword, CodeMethod, CodeString color.NRGBA
+	CodeNumber, CodeComment             color.NRGBA
+	TableHead, TableLine                color.NRGBA
+	MentionPill                         color.NRGBA // behind mentions of you
+	Selection                           color.NRGBA // behind selected text
+	DateChip, DateChipText              color.NRGBA
+	UnreadBand                          color.NRGBA // behind "N unread messages" (unread.go)
+	Encryption, EncryptionText          color.NRGBA
+	Composer, ComposerHint              color.NRGBA
+	GroupAvatar, GroupAvatarIcon        color.NRGBA
+	UserAvatar, UserAvatarIcon          color.NRGBA
 	// AvatarBgs is behind the initial of someone without a picture, which is
 	// drawn in their color from Senders; personTint picks both. GeneralAvatar
 	// is behind a community's General chat's speech bubble.
@@ -161,7 +167,11 @@ var darkPalette = Palette{
 	Scrim: argb(0x000000, 0x93), Dialog: rgb(0x1d1f1f),
 	Toast: rgb(0xeeeeee), ToastText: rgb(0x0a0a0a),
 	BubbleLine: argb(0xffffff, 0x14), BubbleButton: rgb(0x53bdeb),
-	CodeBg:      argb(0xffffff, 0x12),
+	CodeBg:    argb(0xffffff, 0x12),
+	CodeBlock: rgb(0x0e0f0f), CodeText: rgb(0xd4d4d4),
+	CodeKeyword: rgb(0x569cd6), CodeMethod: rgb(0xdcdcaa), CodeString: rgb(0xce9178),
+	CodeNumber: rgb(0xb5cea8), CodeComment: rgb(0x6a9955),
+	TableHead: rgb(0x161717), TableLine: argb(0xffffff, 0x24),
 	MentionPill: argb(0x21c063, 0x24),
 	Selection:   rgb(0x1e3a9e),
 }
@@ -215,7 +225,11 @@ var lightPalette = Palette{
 	Scrim: argb(0x000000, 0x93), Dialog: rgb(0xffffff),
 	Toast: rgb(0x242626), ToastText: rgb(0xffffff),
 	BubbleLine: argb(0x000000, 0x14), BubbleButton: rgb(0x027eb5),
-	CodeBg:      argb(0x000000, 0x0f),
+	CodeBg:    argb(0x000000, 0x0f),
+	CodeBlock: rgb(0xf6f8fa), CodeText: rgb(0x1f2328),
+	CodeKeyword: rgb(0x0550ae), CodeMethod: rgb(0x8250df), CodeString: rgb(0x0a3069),
+	CodeNumber: rgb(0x0550ae), CodeComment: rgb(0x6e7781),
+	TableHead: argb(0x000000, 0x0c), TableLine: argb(0x000000, 0x1f),
 	MentionPill: argb(0x1daa61, 0x22),
 	Selection:   rgb(0xb3d4fc),
 }

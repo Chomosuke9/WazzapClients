@@ -393,6 +393,16 @@ Gotchas already found in the pinned version (v0.10.x):
   replies go to the first, and the copy can come much later or, in history sync, before it.
   `parse` files a copy under the message's ID, in `copy_payload`, and `mediaBlob` downloads
   the HD file from it (`internal/wa/copies.go`).
+- Meta AI's answers are `richResponseMessage`s; a forwarded one comes in a
+  `botForwardedMessage`, which `unwrapOnce` opens like any envelope. What's drawn is
+  `unifiedResponse.data`, JSON of sections: markdown in WhatsApp's markup (*bold*,
+  _italic_) with markdown's blocks, code split into highlighted tokens, tables and
+  formulas; `submessages` (plain markdown, **bold**) only when it's missing. A formula
+  is a black PNG on the CDN, encrypted as a picture ("WhatsApp Image Keys"): its keys
+  are in the outer `messageContextInfo.botMetadata.unifiedResponseMutation`, under the
+  SHA-256 (hex) of its URL. It downloads through `MediaData` under a `model.RichMedia`
+  ID, is tinted to the text's color, and shows as text until then (`richresponse.go`
+  in `internal/wa` and `internal/ui`).
 - A sticker reaction is a `stickerMessage` of its own whose `messageContextInfo` points to the
   message it reacts to (a `STICKER_ANNOTATION` association, 11); taking it back is deleting
   that sticker message for everyone. It's no message here: `parse` files it under the message,
@@ -640,7 +650,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    frame rate; app prefs read into `perf`) in stickers.go; video notes (a circle like a sticker, without a bubble,
                    muted and looping through `gifFrame` once the file is here, a click plays them
                    with sound and a progress ring) in roundvideo.go; a text of one to three emojis
-                   alone, drawn big without a bubble like a sticker, in jumbo.go; the Emoji style
+                   alone, drawn big without a bubble like a sticker, in jumbo.go; an AI's answer
+                   (Meta AI's rich responses: headings, lists, code blocks with a copy button,
+                   tables and formulas) in richresponse.go; the Emoji style
                    (Settings > Chats: 2D, built in; 2D animated, with an Animated emojis page of
                    switches for where they play: message text, big emojis, quotes, reactions, the
                    chat list, the picker and everywhere else, the parts that draw them marking
@@ -685,6 +697,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    the copies WhatsApp sends of a message in HD (filed under it) in copies.go;
                    sticker reactions (sticker messages filed under the message they react
                    to, wz_sticker_reacts) in stickerreact.go;
+                   Meta AI's answers (richResponseMessage, forwarded ones too) and the keys
+                   of their formulas' pictures in richresponse.go;
                    polls, locations, contact cards and events (cards in bubbles) and the
                    votes and event answers they get (wz_votes) in polls.go;
                    system messages (model.KindSystem), stored with a waWeb stub as their

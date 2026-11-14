@@ -55,6 +55,7 @@ type content struct {
 	linkPic  []byte // the link preview's JPEG
 	extra    extraInfo
 	mention  *model.StatusMention // a status mention message (statusmention.go)
+	rich     *model.RichResponse  // an AI's answer (richresponse.go)
 }
 
 // keptThumb is the thumbnail a message with content c shows: a link
@@ -128,6 +129,8 @@ func unwrapOnce(m *waE2E.Message) *waE2E.Message {
 		return m.GetGroupStatusMessageV2().GetMessage()
 	case m.GetGroupMentionedMessage().GetMessage() != nil:
 		return m.GetGroupMentionedMessage().GetMessage()
+	case m.GetBotForwardedMessage().GetMessage() != nil:
+		return m.GetBotForwardedMessage().GetMessage() // a forwarded AI answer
 	}
 	return nil
 }
@@ -189,6 +192,7 @@ func albumOf(m *waE2E.Message) string {
 }
 
 func describe(m *waE2E.Message) content {
+	outer := m
 	m = unwrap(m)
 	if sm := statusMentionOf(m); sm != nil {
 		return content{mention: sm}
@@ -305,6 +309,8 @@ func describe(m *waE2E.Message) content {
 	case m.GetGroupInviteMessage() != nil:
 		e := m.GetGroupInviteMessage()
 		return content{text: "Group invite: " + e.GetGroupName(), ctx: e.GetContextInfo()}
+	case m.GetRichResponseMessage() != nil:
+		return richContent(outer, m.GetRichResponseMessage())
 	}
 	return content{}
 }
@@ -476,6 +482,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	msg.Time = evt.Info.Timestamp
 	msg.Link = c.link
 	msg.StatusMention = c.mention
+	msg.Rich = c.rich
 	msg.Thumb = c.keptThumb()
 	if c.kind == model.KindImage {
 		msg.Album = first(albumOf(evt.RawMessage), albumOf(m))

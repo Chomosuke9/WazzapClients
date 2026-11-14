@@ -753,6 +753,12 @@ func (s *msgStore) mediaBlob(ctx context.Context, chat, id string) (media model.
 		blob, err = s.stickerBlob(ctx, id)
 		return model.MediaSticker, blob, err
 	}
+	if msgID, name, ok := model.SplitRichMedia(id); ok {
+		// A formula's picture in an AI's answer (richresponse.go).
+		var raw []byte
+		err = s.db.QueryRowContext(ctx, `SELECT raw_payload FROM wz_messages WHERE chat = ? AND id = ?`, chat, msgID).Scan(&raw)
+		return model.MediaImage, richMediaBlob(raw, name), err
+	}
 	var raw, cp []byte
 	err = s.db.QueryRowContext(ctx, `SELECT media, raw_payload, copy_payload FROM wz_messages WHERE chat = ? AND id = ?`, chat, id).
 		Scan(&media, &raw, &cp)

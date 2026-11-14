@@ -33,6 +33,9 @@ func hasAttachment(m *model.Message) bool {
 	if m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported || m.Kind == model.KindViewOnce {
 		return false
 	}
+	if m.Rich != nil {
+		return true // an AI's answer (richresponse.go)
+	}
 	switch m.Media {
 	case model.MediaDocument, model.MediaVoice, model.MediaAudio:
 		return true
@@ -186,6 +189,9 @@ type bubbleColors struct {
 // wide. Its last row is metaH high and leaves metaW free at its right end
 // for the timestamp.
 func (u *UI) layoutAttachment(gtx C, c *model.Chat, m *model.Message, maxW, metaW, metaH int, cols bubbleColors) D {
+	if m.Rich != nil {
+		return u.layoutRichResponse(gtx, m, maxW, metaW, metaH, cols)
+	}
 	if hasCard(m) {
 		return u.layoutCard(gtx, m, maxW, metaW, metaH, cols)
 	}

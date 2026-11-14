@@ -536,6 +536,7 @@ func demo(now time.Time) []*demoChat {
 			txt(false, day(9, 17, 45), "Happy birthday!! 🎉🎂"), txt(true, day(9, 18, 0), "Thank you Sari!!"),
 		}},
 		{ID: "bank", Name: "Kevin Pratama", Presence: "last seen recently", Messages: []*model.Message{
+			aiAnswer(day(15, 8, 52)),
 			txt(false, day(15, 9, 0), "Ok noted"),
 		}},
 

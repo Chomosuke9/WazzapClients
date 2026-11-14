@@ -1322,6 +1322,9 @@ func (u *UI) applyEvents() {
 			}
 		case model.MediaEvent:
 			u.images.forget("m:" + e.ChatID + "/" + e.MsgID)
+			if _, _, ok := model.SplitRichMedia(e.MsgID); ok {
+				u.images.forgetPrefix(formulaKey(e.ChatID, e.MsgID)) // a formula's picture, in each tint
+			}
 			if e.ChatID == statusChatID {
 				u.images.forget("sm:" + e.MsgID)
 			}
