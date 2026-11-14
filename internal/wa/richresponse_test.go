@@ -142,3 +142,48 @@ func TestMarkdownToWA(t *testing.T) {
 		}
 	}
 }
+
+// TestRichMessage sends markdown as a rich message: it reads back as the
+// same sections, with a plain markdown submessage, and names no AI.
+func TestRichMessage(t *testing.T) {
+	src := "# Plan\n- *Bold* and _it_\n\n```go\nfunc f() {}\n```\n\n| A | B |\n| --- | --- |\n| *x* | y |\nAfter"
+	ci := &waE2E.ContextInfo{StanzaID: proto.String("q1")}
+	m := richMessage(model.RichFromMarkdown(src), ci)
+	if m == nil {
+		t.Fatal("no message")
+	}
+	r := m.GetBotForwardedMessage().GetMessage().GetRichResponseMessage()
+	if r.GetContextInfo().GetForwardedAiBotMessageInfo() != nil || r.GetContextInfo().GetIsForwarded() ||
+		m.GetMessageContextInfo().GetBotMetadata() != nil || len(m.GetMessageContextInfo().GetMessageSecret()) != 32 {
+		t.Errorf("it names an AI or lacks a secret: %v", m)
+	}
+	want := "# Plan\n- **Bold** and *it*\n\n```go\nfunc f() {}\n```\n\n| A | B |\n| --- | --- |\n| **x** | y |\n\nAfter"
+	if got := r.GetSubmessages()[0].GetMessageText(); got != want {
+		t.Errorf("submessage %q, want %q", got, want)
+	}
+	c := describe(m)
+	if c.rich == nil || len(c.rich.Sections) != 4 || c.ctx.GetStanzaID() != "q1" {
+		t.Fatalf("read back %+v (quote %q)", c.rich, c.ctx.GetStanzaID())
+	}
+	s := c.rich.Sections
+	if s[0].Text != "# Plan\n- *Bold* and _it_" || s[1].Lang != "go" || s[1].Code[0].Text != "func f() {}" ||
+		s[2].Rows[1].Cells[0] != "*x*" || s[3].Text != "After" {
+		t.Errorf("sections %+v", s)
+	}
+	if richMessage(model.RichFromMarkdown(" \n "), nil) != nil {
+		t.Error("blank text made a message")
+	}
+}
+
+func TestWAToMarkdown(t *testing.T) {
+	for in, want := range map[string]string{
+		"*bold* _it_ ~gone~": "**bold** *it* ~~gone~~",
+		"`*code*` *b*":       "`*code*` **b**",
+		"* item and 2*3":     "* item and 2*3",
+		"snake_case_name":    "snake_case_name",
+	} {
+		if got := waToMarkdown(in); got != want {
+			t.Errorf("waToMarkdown(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

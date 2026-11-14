@@ -160,7 +160,7 @@ func TestWhisperConsentCancel(t *testing.T) {
 					st.frame()
 				}
 				click("dialog:1") // a late click must not activate the canceled step
-				if st.u.dialog.isOpen() || extraOn(st.b, pref) || st.u.grayCmds["whisper"] {
+				if st.u.dialog.isOpen() || extraOn(st.b, pref) || st.u.cmdSwitches["whisper"] {
 					t.Fatal("canceling enabled whisper or left the dialog open")
 				}
 				for range 30 {

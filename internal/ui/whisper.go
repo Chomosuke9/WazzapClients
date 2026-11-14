@@ -58,7 +58,7 @@ func (u *UI) blockWhisperFallback() bool {
 	}
 	var problem string
 	switch {
-	case !u.slash.on || !u.grayCmds["whisper"]:
+	case !u.slash.on || !u.cmdSwitches["whisper"]:
 		problem = "Enable Slash commands and /whisper in Extra features first."
 	case u.selected == nil || !u.selected.IsGroup || u.postingStatus():
 		problem = "/whisper works only in group chats."

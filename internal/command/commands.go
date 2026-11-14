@@ -78,6 +78,14 @@ var All = []*Command{
 		Preview: previewCalc,
 	},
 	{
+		Name: "rich", Description: "Sends markdown as a rich message, like Meta AI's: headings, lists, code blocks and tables",
+		Switch: true,
+		Options: []Option{{Name: "text", Description: "WhatsApp formatting plus # headings, - [x] checkboxes, > quotes, ---, [links](url), ``` code and | tables |; Shift+Enter for new lines",
+			Kind: Text, Required: true}},
+		Run:     runRich,
+		Preview: previewRich,
+	},
+	{
 		Name: "schedule", Description: "Sends a message later, even with the window closed",
 		Options: []Option{
 			{Name: "when", Description: "Like 21:00, 30m, 2h, tomorrow 08:00, fri 18:00 or 25/12 09:00", Kind: When,
@@ -502,6 +510,40 @@ func raffleText(line string, winners []model.Member, pool int) (string, []string
 	}
 	b.WriteString("\n_Drawn at random from " + plural(pool, "member") + "._")
 	return b.String(), ids
+}
+
+// runRich sends its text as a rich message (model.Draft.Rich).
+func runRich(c *Context) error {
+	text := c.Text("text")
+	if model.RichFromMarkdown(text) == nil {
+		return errors.New("Type what to send after /rich.")
+	}
+	d := c.Draft(text)
+	d.Reply, d.Rich = c.Reply, true
+	if m := c.Backend.Send(c.Chat.ID, d); m != nil {
+		c.Sent(m)
+	}
+	return nil
+}
+
+// previewRich says what the rich message is made of.
+func previewRich(in *Input) (string, bool) {
+	rr := model.RichFromMarkdown(in.Text("text"))
+	if rr == nil {
+		return "", false
+	}
+	var parts []string
+	for _, s := range rr.Sections {
+		switch s.Kind {
+		case model.RichMarkdown:
+			parts = append(parts, "text")
+		case model.RichCode:
+			parts = append(parts, strings.TrimSpace(s.Lang+" code"))
+		case model.RichTable:
+			parts = append(parts, "a table")
+		}
+	}
+	return "Sends a rich message: " + strings.Join(parts, ", "), true
 }
 
 // lastAnswer is the answer of the last /calc, which "ans" stands for. Only

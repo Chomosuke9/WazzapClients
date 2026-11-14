@@ -1,6 +1,7 @@
 package wa
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -396,4 +397,113 @@ func richInlineText(s model.RichSection) string {
 	}
 	b.WriteString(rest)
 	return b.String()
+}
+
+// A rich message of your own (model.Draft.Rich) goes as an answer
+// forwarded from nowhere: a richResponseMessage in a botForwardedMessage,
+// which WhatsApp's apps draw when a person sends it, but with no bot named
+// (forwardedAiBotMessageInfo), no forwarding marks and no bot's signature
+// (botMetadata.verificationMetadata), so nothing says an AI wrote it. Its
+// formulas stay text: the pictures would be ours to draw and upload.
+
+// richMessage is the message that sends rr, its context ci (a reply, its
+// mentions), or nil.
+func richMessage(rr *model.RichResponse, ci *waE2E.ContextInfo) *waE2E.Message {
+	if rr == nil {
+		return nil
+	}
+	type obj = map[string]any
+	var sections []obj
+	var plain []string // the whole as plain markdown, for the submessage
+	for _, s := range rr.Sections {
+		var prim obj
+		switch s.Kind {
+		case model.RichMarkdown:
+			prim = obj{"__typename": "GenAIMarkdownTextUXPrimitive", "text": s.Text}
+			plain = append(plain, waToMarkdown(s.Text))
+		case model.RichCode:
+			var blocks []obj
+			var code strings.Builder
+			for _, t := range s.Code {
+				blocks = append(blocks, obj{"content": t.Text, "type": codeTypes[t.Kind]})
+				code.WriteString(t.Text)
+			}
+			prim = obj{"__typename": "GenAICodeUXPrimitive", "language": s.Lang, "code_blocks": blocks}
+			plain = append(plain, "```"+s.Lang+"\n"+strings.Trim(code.String(), "\n")+"\n```")
+		case model.RichTable:
+			var rows []obj
+			var lines []string
+			for i, r := range s.Rows {
+				cells := make([]string, len(r.Cells))
+				var mdCells []obj
+				for j, c := range r.Cells {
+					cells[j] = waToMarkdown(c)
+					mdCells = append(mdCells, obj{"text": c})
+				}
+				rows = append(rows, obj{"is_header": r.Header, "cells": cells, "markdown_cells": mdCells})
+				lines = append(lines, "| "+strings.Join(cells, " | ")+" |")
+				if i == 0 {
+					lines = append(lines, "|"+strings.Repeat(" --- |", len(cells)))
+				}
+			}
+			prim = obj{"__typename": "GenATableUXPrimitive", "rows": rows}
+			plain = append(plain, strings.Join(lines, "\n"))
+		default:
+			continue
+		}
+		sections = append(sections, obj{"view_model": obj{"__typename": "GenAISingleLayoutViewModel", "primitive": prim}})
+	}
+	if len(sections) == 0 {
+		return nil
+	}
+	id := make([]byte, 16)
+	secret := make([]byte, 32)
+	_, _ = rand.Read(id)
+	_, _ = rand.Read(secret)
+	data, err := json.Marshal(obj{"response_id": hex.EncodeToString(id), "sections": sections})
+	if err != nil {
+		return nil
+	}
+	return &waE2E.Message{
+		MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: secret},
+		BotForwardedMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+			RichResponseMessage: &waE2E.AIRichResponseMessage{
+				MessageType: waAICommonDeprecated.AIRichResponseMessageType_AI_RICH_RESPONSE_TYPE_STANDARD.Enum(),
+				Submessages: []*waAICommonDeprecated.AIRichResponseSubMessage{{
+					MessageType: waAICommonDeprecated.AIRichResponseSubMessageType_AI_RICH_RESPONSE_TEXT.Enum(),
+					MessageText: proto.String(strings.Join(plain, "\n\n")),
+				}},
+				UnifiedResponse: &waAICommon.AIRichResponseUnifiedResponse{Data: data},
+				ContextInfo:     ci,
+			},
+		}},
+	}
+}
+
+// codeTypes are the unified response's names of the code token kinds.
+var codeTypes = map[model.CodeKind]string{
+	model.CodePlain: "DEFAULT", model.CodeKeyword: "KEYWORD", model.CodeMethod: "METHOD",
+	model.CodeString: "STR", model.CodeNumber: "NUMBER", model.CodeComment: "COMMENT",
+}
+
+var (
+	waBold   = regexp.MustCompile(`(^|[^\w*])\*(\S(?:[^*\n]*?\S)?)\*`)
+	waItalic = regexp.MustCompile(`(^|[^\w_])_(\S(?:[^_\n]*?\S)?)_`)
+	waStrike = regexp.MustCompile(`(^|[^\w~])~(\S(?:[^~\n]*?\S)?)~`)
+)
+
+// waToMarkdown is markdownToWA's reverse: *bold* becomes **bold**, _italic_
+// *italic* and ~struck~ ~~struck~~, outside `code`.
+func waToMarkdown(s string) string {
+	if !strings.ContainsAny(s, "*_~") {
+		return s
+	}
+	parts := strings.Split(s, "`")
+	for i := 0; i < len(parts); i += 2 {
+		p := waBold.ReplaceAllString(parts[i], "${1}\x01${2}\x01")
+		p = waItalic.ReplaceAllString(p, "${1}*${2}*")
+		p = waStrike.ReplaceAllString(p, "${1}~~${2}~~")
+		parts[i] = strings.ReplaceAll(p, "\x01", "**")
+	}
+	return strings.Join(parts, "`")
 }

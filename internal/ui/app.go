@@ -234,8 +234,9 @@ type UI struct {
 	// is drawn now it hides, 0 to 1.
 	privacy privacyState
 	secret  float32
-	// grayCmds are the gray commands turned on, by name (extras.go).
-	grayCmds map[string]bool
+	// cmdSwitches are the commands with a switch of their own (gray ones
+	// and Switch ones) turned on, by name (extras.go).
+	cmdSwitches map[string]bool
 	// cmdsOpen shows the list of commands on the Extra features page.
 	cmdsOpen bool
 	ghostFx  ghostAnims // ghost mode coming and going (ghost.go)
@@ -2156,7 +2157,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			delete(u.slash.notes, u.selected.ID)
 			u.msgsVer++
 		case "ghost":
-			u.grayCmds["ghost"] = true // a gray command, off by default
+			u.cmdSwitches["ghost"] = true // a gray command, off by default
 			set("/ghost ")
 			u.sendComposer()
 		}

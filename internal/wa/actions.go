@@ -227,6 +227,15 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		Receipt: model.Pending,
 	}
 	sm := storedMsg{Message: m}
+	if d.Rich {
+		// A rich message (richresponse.go), or plain text should the
+		// server refuse it.
+		ci := b.draftContext(chatID, d, m)
+		if rich := richMessage(model.RichFromMarkdown(d.Text), ci); rich != nil {
+			plain := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(d.Text), ContextInfo: ci}}
+			return b.storeAndSend(jid, sm, rich, plain)
+		}
+	}
 	msg := &waE2E.Message{Conversation: proto.String(d.Text)}
 	link := d.Link.Shown(d.Text)
 	if link {
