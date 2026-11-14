@@ -575,6 +575,9 @@ func mediaLabel(m *model.Message) string {
 	if m.Kind == model.KindViewOnce {
 		return viewOnceLabel(m)
 	}
+	if m.StatusMention != nil && m.Text == "" {
+		return statusMentionNote(m.StatusMention)
+	}
 	if m.Text != "" && m.Media != model.MediaVoice && m.Media != model.MediaAudio {
 		return m.Text
 	}
@@ -700,6 +703,8 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 			children = append(children, layout.Rigid(func(gtx C) D { return u.viewOnceMark(gtx, 18, p.TextSecondary) }),
 				layout.Rigid(layout.Spacer{Width: 4}.Layout))
 			txt = mediaLabel(last)
+		case last.StatusMention != nil:
+			txt = "@ " + statusMentionNote(last.StatusMention)
 		case last.Media != model.MediaNone:
 			col := p.TextSecondary
 			if last.Media == model.MediaVoice && !last.FromMe && c.Unread > 0 {

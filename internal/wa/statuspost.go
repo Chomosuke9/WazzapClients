@@ -143,8 +143,8 @@ func (b *Backend) storeStatus(st storedStatus) bool {
 	return true
 }
 
-// sendStatus sends a status update to the contacts your status privacy
-// lets see it (hypermeow works them out for status@broadcast).
+// sendStatus sends a status update to the audience your status privacy
+// chose (statusAudience).
 func (b *Backend) sendStatus(cli *whatsmeow.Client, id string, msg *waE2E.Message, group string) {
 	if !cli.IsConnected() {
 		b.statusFailed(id, errors.New("offline"))
@@ -157,11 +157,13 @@ func (b *Backend) sendStatus(cli *whatsmeow.Client, id string, msg *waE2E.Messag
 		msg, extra = groupStatusMessage(msg)
 		extra.ID = id
 	} else {
-		meta, err := b.statusAudience(b.ctx, cli)
+		meta, recipients, err := b.statusAudience(b.ctx)
 		if err != nil {
 			b.statusFailed(id, err)
 			return
 		}
+		extra.StatusRecipients = recipients
+		b.log.Infof("posting status %s to %d people", id, len(recipients))
 		if meta != nil {
 			ci := describe(msg).ctx
 			if ci == nil {
@@ -192,8 +194,8 @@ func (b *Backend) statusFailed(id string, err error) {
 	b.dropStatus(b.ctx, id)
 	text := "Couldn't post your status."
 	if errors.Is(err, errStatusAudience) {
-		text = "Your status wasn't posted: WhatsApp would have shared it with people outside the audience you chose. " +
-			"Choose your status audience again on your phone, then try again."
+		text = "Your status wasn't posted: the audience you chose has nobody in it, or hasn't synced from your phone yet. " +
+			"Check Status privacy, then try again."
 	}
 	b.emit(model.NoticeEvent{Text: text})
 	b.emit(model.StatusEvent{})

@@ -124,3 +124,45 @@ func TestStatusAudienceLabel(t *testing.T) {
 		t.Errorf("audiences = %v", got)
 	}
 }
+
+// TestStatusAudienceRecipients checks who a status of yours goes to: the
+// chosen audience's people, not the server's list. With an audience of
+// your own chosen, the server still kept an old Only share with list of
+// one person, and a status went to that person alone.
+func TestStatusAudienceRecipients(t *testing.T) {
+	b := testBackend(t)
+	if meta, to, err := b.statusAudience(b.ctx); meta != nil || to != nil || err != nil {
+		t.Fatalf("before any sync: %v %v %v", meta, to, err)
+	}
+	allow := waSyncAction.StatusPrivacyAction_ALLOW_LIST
+	b.onStatusPrivacy(&waSyncAction.StatusPrivacyAction{Mode: allow.Enum(), UserJID: []string{"9@s.whatsapp.net"}})
+	custom := waSyncAction.StatusPrivacyAction_CUSTOM_LIST
+	list := func(selected bool) *waSyncAction.StatusPrivacyAction {
+		return &waSyncAction.StatusPrivacyAction{Mode: custom.Enum(), CustomLists: []*waSyncAction.StatusPrivacyAction_CustomList{
+			{ListID: proto.String("L1"), Name: proto.String("Friends"), Emoji: proto.String("♾️"), IsSelected: proto.Bool(selected),
+				UserJID: []string{"3@s.whatsapp.net", "4@s.whatsapp.net", "3@s.whatsapp.net"}},
+		}}
+	}
+	b.onStatusPrivacy(list(true))
+	meta, to, err := b.statusAudience(b.ctx)
+	if err != nil || len(to) != 2 || to[0].User != "3" || to[1].User != "4" || meta.GetListName() != "Friends" {
+		t.Fatalf("custom list: %v %v %v", meta, to, err)
+	}
+
+	// Only share with: its one person, as chosen.
+	b.onStatusPrivacy(&waSyncAction.StatusPrivacyAction{Mode: allow.Enum(), UserJID: []string{"9@s.whatsapp.net"}})
+	if _, to, err := b.statusAudience(b.ctx); err != nil || len(to) != 1 || to[0].User != "9" {
+		t.Fatalf("only share with: %v %v", to, err)
+	}
+
+	// An audience of your own that isn't there, or nobody: nothing goes,
+	// rather than every contact.
+	b.onStatusPrivacy(list(false))
+	if _, _, err := b.statusAudience(b.ctx); err != errStatusAudience {
+		t.Errorf("unknown audience: %v", err)
+	}
+	b.onStatusPrivacy(&waSyncAction.StatusPrivacyAction{Mode: allow.Enum()})
+	if _, _, err := b.statusAudience(b.ctx); err != errStatusAudience {
+		t.Errorf("empty audience: %v", err)
+	}
+}

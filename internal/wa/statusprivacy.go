@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	whatsmeow "github.com/polymorfa/hypermeow"
 	"github.com/polymorfa/hypermeow/appstate"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waSyncAction"
@@ -382,63 +381,77 @@ func newListID() string {
 	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
 }
 
-// errStatusAudience means a status would reach someone outside the
-// audience you chose.
-var errStatusAudience = errors.New("status recipients outside the chosen audience")
+// errStatusAudience means the audience you chose has nobody in it, or
+// isn't known well enough to send to.
+var errStatusAudience = errors.New("status audience empty or unknown")
 
-// statusAudience checks, before a status update goes out, that it reaches
-// only the audience you chose. hypermeow sends it to the list WhatsApp's
-// server keeps (GetStatusPrivacy), which may lag behind the setting synced
-// from the phone, or not know audiences of your own. If anyone outside the
-// chosen audience would get it, it returns errStatusAudience. For close
-// friends and audiences of your own it also returns what tells the people
-// who get it which audience it was shared with.
-func (b *Backend) statusAudience(ctx context.Context, cli *whatsmeow.Client) (*waE2E.ContextInfo_StatusAudienceMetadata, error) {
+// statusAudience works out who a status update of yours goes to: the
+// audience chosen in the setting synced from the phone, sent to with
+// SendRequestExtra.StatusRecipients (hypermeow's patch), as the phone does.
+// Left to itself hypermeow sends to the list WhatsApp's server keeps
+// (GetStatusPrivacy), which knows only My contacts, My contacts except and
+// Only share with: with close friends or an audience of your own chosen,
+// it is whichever of those was chosen last, and a status went to the one
+// person on an old Only share with list. Before the setting synced it
+// returns no recipients, and the server's list stands. For close friends
+// and audiences of your own it also returns what tells the people who get
+// it which audience it was shared with.
+func (b *Backend) statusAudience(ctx context.Context) (*waE2E.ContextInfo_StatusAudienceMetadata, []types.JID, error) {
 	p := b.syncedStatusPrivacy(ctx)
 	if p == nil {
-		return nil, nil // not synced yet: the server's list, as always
+		return nil, nil, nil // not synced yet: the server's list, as always
 	}
-	recipients, err := cli.DangerousInternals().GetStatusBroadcastRecipients(ctx)
-	if err != nil {
-		return nil, err
+	if p.Audience != model.AudienceContacts && !p.Knows(p.Audience) {
+		return nil, nil, errStatusAudience
 	}
-	allowed := map[string]bool{}
-	allow := func(ids []string) {
-		for _, id := range ids {
-			allowed[id] = true
-		}
-	}
+	var ids []string
 	var meta *waE2E.ContextInfo_StatusAudienceMetadata
 	switch p.Audience {
 	case model.AudienceContacts, model.AudienceExcept:
-		for _, c := range b.Contacts() {
-			allowed[c.ID] = true
+		if p.Audience == model.AudienceContacts && modeOf(b.statusPrivacyAction(ctx)) != waSyncAction.StatusPrivacyAction_CONTACTS {
+			// An audience of your own this app doesn't know (its list
+			// never synced): don't share with every contact instead.
+			return nil, nil, errStatusAudience
 		}
+		except := map[string]bool{}
 		if p.Audience == model.AudienceExcept {
 			for _, id := range p.Except {
-				delete(allowed, id)
+				except[id] = true
+			}
+		}
+		for _, c := range b.Contacts() {
+			if !except[c.ID] {
+				ids = append(ids, c.ID)
 			}
 		}
 	case model.AudienceOnly:
-		allow(p.Only)
+		ids = p.Only
 	case model.AudienceClose:
-		allow(p.Close)
+		ids = p.Close
 		meta = &waE2E.ContextInfo_StatusAudienceMetadata{AudienceType: waE2E.ContextInfo_StatusAudienceMetadata_CLOSE_FRIENDS.Enum()}
 	case model.AudienceList:
 		l := p.List(p.ListID)
-		allow(l.Members)
+		ids = l.Members
 		meta = &waE2E.ContextInfo_StatusAudienceMetadata{ListName: proto.String(l.Name), ListEmoji: proto.String(l.Emoji)}
 	}
-	for _, r := range recipients {
-		if b.isMe(r) {
+	seen := map[types.JID]bool{}
+	var to []types.JID
+	for _, id := range ids {
+		j, err := types.ParseJID(id)
+		if err != nil || j.IsEmpty() {
 			continue
 		}
-		if !allowed[b.canonical(ctx, r).String()] {
-			b.log.Warnf("status would reach %s, outside the audience (%d)", r, p.Audience)
-			return nil, errStatusAudience
+		j = b.canonical(ctx, j.ToNonAD())
+		if seen[j] || b.isMe(j) {
+			continue
 		}
+		seen[j] = true
+		to = append(to, j)
 	}
-	return meta, nil
+	if len(to) == 0 {
+		return nil, nil, errStatusAudience
+	}
+	return meta, to, nil
 }
 
 // audienceLabel is how an update shows the audience it was shared with:

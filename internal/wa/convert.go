@@ -54,6 +54,7 @@ type content struct {
 	link     *model.LinkPreview
 	linkPic  []byte // the link preview's JPEG
 	extra    extraInfo
+	mention  *model.StatusMention // a status mention message (statusmention.go)
 }
 
 // keptThumb is the thumbnail a message with content c shows: a link
@@ -189,6 +190,9 @@ func albumOf(m *waE2E.Message) string {
 
 func describe(m *waE2E.Message) content {
 	m = unwrap(m)
+	if sm := statusMentionOf(m); sm != nil {
+		return content{mention: sm}
+	}
 	switch {
 	case m.GetConversation() != "":
 		return content{text: m.GetConversation(), extra: extraInfo{Pack: linkedPack(m.GetConversation())}}
@@ -453,7 +457,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		if c.media != model.MediaImage && c.media != model.MediaVideo && c.media != model.MediaVoice {
 			c.media = model.MediaNone
 		}
-	} else if c.text == "" && c.media == model.MediaNone && c.buttons.empty() {
+	} else if c.text == "" && c.media == model.MediaNone && c.buttons.empty() && c.mention == nil {
 		if !hasContent(m) {
 			return p, false
 		}
@@ -471,6 +475,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	msg.Text = c.text
 	msg.Time = evt.Info.Timestamp
 	msg.Link = c.link
+	msg.StatusMention = c.mention
 	msg.Thumb = c.keptThumb()
 	if c.kind == model.KindImage {
 		msg.Album = first(albumOf(evt.RawMessage), albumOf(m))

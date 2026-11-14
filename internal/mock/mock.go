@@ -87,6 +87,7 @@ func New() *Backend {
 		return time.Date(y, mo, dd, h, m, 0, 0, now.Location())
 	})
 	b.addChannelPosts()
+	b.demoStatusMentions()
 	b.demoVotes()
 	b.demoReactions()
 	b.seedReactors()
@@ -102,6 +103,27 @@ func New() *Backend {
 	}
 	b.lists = []*model.ChatList{{ID: "l1", Name: "Family", Chats: []string{"family", "mom"}}, {ID: "l2", Name: "Work"}}
 	return b
+}
+
+// demoStatusMentions gives the demo's status mentions their statuses, and
+// the statuses the messages that say they mentioned someone.
+func (b *Backend) demoStatusMentions() {
+	for chat, msgs := range b.msgs {
+		for _, m := range msgs {
+			sm := m.StatusMention
+			if sm == nil {
+				continue
+			}
+			for _, t := range b.statuses {
+				for _, up := range t.Updates {
+					if up.ID == sm.StatusID {
+						sm.Found, sm.Media, sm.Text, sm.Thumb, sm.Background = true, up.Media, up.Text, up.Thumb, up.Background
+						up.MentionChat, up.MentionMsg = chat, m.ID
+					}
+				}
+			}
+		}
+	}
 }
 
 // addChannelPosts makes each channel's last post openable.
@@ -401,6 +423,8 @@ func demo(now time.Time) []*demoChat {
 			grp("Andre", day(0, 9, 4), "Webhook payload from yesterday's failed upload:\n```json\n"+demoPayload+"\n```"),
 			grp("Dewi", day(0, 9, 12), "⁨\u2063@all⁩ demo for the client moves to 3pm"),
 			grp("Dewi", day(0, 9, 13), "⁨\u2062@admin⁩ can someone approve the staging deploy?"),
+			// Dewi's status mentioned the group (demoStatusMentions).
+			{Sender: "Dewi", Time: day(0, 9, 14), StatusMention: &model.StatusMention{StatusID: "s-d1", Group: true}},
 			grp("Clara", day(0, 9, 30), "Release candidate is up on staging. ⁨\u2063@Me Myself⁩ can you check the release notes? ⁨@Bima⁩ too"),
 			{Sender: "Bima", SenderID: "bima", Kind: model.KindSticker, Media: model.MediaSticker, Time: day(0, 9, 31),
 				Quote: &model.Quote{Sender: "Clara", Text: "Release candidate is up on staging. ⁨\u2063@Me Myself⁩ can you check the release notes? ⁨@Bima⁩ too"}},

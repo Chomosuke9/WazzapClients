@@ -544,11 +544,11 @@ func (b *Backend) unuploaded(hash string) *waE2E.StickerMessage {
 // rescanUnsupported gives the messages stored as unsupported what they
 // show, now that the app supports more, once per supportVersion.
 func (s *msgStore) rescanUnsupported(ctx context.Context) error {
-	const supportVersion = "1" // sticker packs
+	const supportVersion = "2" // sticker packs, status mentions
 	if s.meta(ctx, "unsupported_rescan") == supportVersion {
 		return nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT rowid, raw_payload FROM wz_messages WHERE kind = ? AND raw_payload IS NOT NULL`,
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, chat, id, raw_payload FROM wz_messages WHERE kind = ? AND raw_payload IS NOT NULL`,
 		int(model.KindUnsupported))
 	if err != nil {
 		return err
@@ -557,16 +557,18 @@ func (s *msgStore) rescanUnsupported(ctx context.Context) error {
 		rowid       int64
 		kind, media int
 		text        string
+		chat, id    string
+		mention     *model.StatusMention
 	}
 	var fixes []fix
 	for rows.Next() {
 		var f fix
 		var raw []byte
-		if rows.Scan(&f.rowid, &raw) != nil {
+		if rows.Scan(&f.rowid, &f.chat, &f.id, &raw) != nil {
 			continue
 		}
-		if c, m := describeRaw(raw); m != nil && (c.media != model.MediaNone || c.text != "") {
-			f.kind, f.media, f.text = int(c.kind), int(c.media), c.text
+		if c, m := describeRaw(raw); m != nil && (c.media != model.MediaNone || c.text != "" || c.mention != nil) {
+			f.kind, f.media, f.text, f.mention = int(c.kind), int(c.media), c.text, c.mention
 			fixes = append(fixes, f)
 		}
 	}
@@ -575,6 +577,10 @@ func (s *msgStore) rescanUnsupported(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET kind = ?, media = ?, text = ? WHERE rowid = ?`,
 			f.kind, f.media, f.text, f.rowid); err != nil {
 			return err
+		}
+		if f.mention != nil {
+			_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO wz_status_mentions (status, chat, id) VALUES (?, ?, ?)`,
+				f.mention.StatusID, f.chat, f.id)
 		}
 	}
 	return s.setMetaValue(ctx, "unsupported_rescan", supportVersion)

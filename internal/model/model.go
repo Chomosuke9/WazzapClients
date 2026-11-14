@@ -226,6 +226,25 @@ type Message struct {
 	Whisper []string
 	// Notice is what a system message (KindSystem) is about.
 	Notice Notice
+	// StatusMention is set on a message saying its sender mentioned you,
+	// or the group it came to, in a status update: a card in its bubble
+	// (Text is empty). Nil on every other message.
+	StatusMention *StatusMention
+}
+
+// StatusMention is the status update a message says mentioned you or a
+// group of yours, privately: only those mentioned learn of it.
+type StatusMention struct {
+	StatusID string
+	// Group is set when the group was mentioned; otherwise you were.
+	Group bool
+	// Found is set while the status is kept (a day after it was posted):
+	// Media, Text and Background are what it shows and Thumb its picture.
+	Found      bool
+	Media      Media
+	Text       string
+	Thumb      []byte
+	Background uint32
 }
 
 // StickerPack is a pack of stickers: one a sticker app made (shared in a
@@ -853,12 +872,20 @@ type StatusUpdate struct {
 	// Views is how many people saw it, for one of your own (their read
 	// receipts; Backend.StatusViews lists them).
 	Views int
+	// MentionChat and MentionMsg are the message that says it mentioned
+	// you or a group of yours ("Mentioned privately"); empty when it
+	// mentioned neither.
+	MentionChat, MentionMsg string
+	// Liked is set on someone else's update once you liked it.
+	Liked bool
 }
 
 // StatusViewer is someone who saw one of your status updates.
 type StatusViewer struct {
 	ID, Name string
 	At       time.Time
+	// Reaction is the emoji they reacted with (a like is a heart), or "".
+	Reaction string
 }
 
 // StatusReply is a reply to one of your status updates: a message in the
@@ -1751,6 +1778,9 @@ type Backend interface {
 	Statuses() []*StatusThread
 	// ViewStatus marks a status update as seen.
 	ViewStatus(threadID, statusID string)
+	// LikeStatus likes someone's status update (the viewer's heart), or
+	// takes the like back. Only its poster learns of it.
+	LikeStatus(statusID string, like bool)
 	// StatusViews returns who saw one of your own status updates and the
 	// replies to it. A StatusEvent follows each new view or reply.
 	StatusViews(statusID string) StatusViews

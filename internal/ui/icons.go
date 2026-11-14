@@ -77,6 +77,7 @@ var (
 	icMail          = icon.Mail
 	icList          = icon.FormatListBulleted
 	icHeart         = icon.Favorite
+	icHeartFill     = icon.FavoriteFill
 	icAddToList     = icon.SwitchAccount
 	icClear         = icon.DoNotDisturbOn
 	icThumbDown     = icon.ThumbDown

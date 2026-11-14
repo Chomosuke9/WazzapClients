@@ -1636,6 +1636,19 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	switch name {
 	case "snippet", "snippets", "snippetedit", "catch":
 		u.showSnippetPreview(name)
+	case "statusmention", "statusmentioned":
+		// A status mention's card (-ochat work), or the status it names.
+		for _, m := range u.msgs {
+			if m.StatusMention == nil {
+				continue
+			}
+			if name == "statusmention" {
+				u.jumpTo(m.ID)
+			} else {
+				u.openMentionedStatus(m)
+			}
+			break
+		}
 	case "privacy", "privacystatus", "privacycommunities":
 		// Privacy mode, on the chats, Status or Communities page.
 		switch name {

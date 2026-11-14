@@ -95,7 +95,7 @@ func (u *UI) layoutStatusViews(gtx C, up *model.StatusUpdate, frame image.Rectan
 		s.open = false
 	}
 
-	// The eye, centered under the update.
+	// The eye, centered at the bottom of the update.
 	pill := record(gtx, func(gtx C) D {
 		gtx.Constraints.Min = image.Point{}
 		return clickable(gtx, &s.btn, func(gtx C) D {
@@ -109,7 +109,7 @@ func (u *UI) layoutStatusViews(gtx C, up *model.StatusUpdate, frame image.Rectan
 			})
 		})
 	})
-	pill.at(gtx, frame.Min.X+(frame.Dx()-pill.size.X)/2, frame.Max.Y+gtx.Dp(14))
+	pill.at(gtx, frame.Min.X+(frame.Dx()-pill.size.X)/2, sz.Y-gtx.Dp(32)-pill.size.Y)
 
 	a := s.anim.step(gtx, s.open && v.isOpen(), durDialog)
 	if a == 0 {
@@ -154,7 +154,11 @@ func (u *UI) layoutStatusViews(gtx C, up *model.StatusUpdate, frame image.Rectan
 	if len(d.Replies) > 0 {
 		heading(countOf(len(d.Replies), "reply", "replies"))
 		for i, r := range d.Replies {
-			rows = append(rows, u.statusViewRow("st:reply:"+itoa(i), r.ID, r.Name, mediaLabel(r.Msg), func() {
+			react := ""
+			if j := slices.IndexFunc(d.Viewers, func(x model.StatusViewer) bool { return x.ID == r.ID }); j >= 0 {
+				react = d.Viewers[j].Reaction
+			}
+			rows = append(rows, u.statusViewRow("st:reply:"+itoa(i), r.ID, r.Name, mediaLabel(r.Msg), react, func() {
 				if u.openChatByID(r.Msg.ChatID) {
 					v.close()
 					u.jumpTo(r.Msg.ID)
@@ -172,7 +176,7 @@ func (u *UI) layoutStatusViews(gtx C, up *model.StatusUpdate, frame image.Rectan
 	if len(viewers) > 0 {
 		heading(countOf(len(viewers), "view", "views"))
 		for _, r := range viewers {
-			rows = append(rows, u.statusViewRow("st:view:"+r.ID, r.ID, r.Name, viewedAgo(r.At, u.now()), func() {
+			rows = append(rows, u.statusViewRow("st:view:"+r.ID, r.ID, r.Name, viewedAgo(r.At, u.now()), r.Reaction, func() {
 				if u.openChatByID(r.ID) {
 					v.close()
 				}
@@ -202,7 +206,7 @@ func (u *UI) layoutStatusViews(gtx C, up *model.StatusUpdate, frame image.Rectan
 
 // statusViewRow is a person in the sheet: their picture, name, and when
 // they saw the update or what they replied. A click runs open.
-func (u *UI) statusViewRow(key, id, name, sub string, open func()) layout.Widget {
+func (u *UI) statusViewRow(key, id, name, sub, reaction string, open func()) layout.Widget {
 	return func(gtx C) D {
 		p := u.pal
 		c := u.btn(key)
@@ -225,6 +229,16 @@ func (u *UI) statusViewRow(key, id, name, sub string, open func()) layout.Widget
 							layout.Rigid(u.label(16, name, p.Text, labelOpts{maxLines: 1}).Layout),
 							layout.Rigid(layout.Spacer{Height: 2}.Layout),
 							layout.Rigid(u.label(14, previewText(sub), p.TextSecondary, labelOpts{maxLines: 1}).Layout))
+					}),
+					layout.Rigid(func(gtx C) D {
+						// Their like (a heart) or other reaction.
+						switch {
+						case reaction == "":
+							return D{}
+						case isLike(reaction):
+							return layout.Inset{Left: 12}.Layout(gtx, iconW(icHeartFill, 22, likeRed))
+						}
+						return layout.Inset{Left: 12}.Layout(gtx, u.label(20, reaction, p.Text, labelOpts{maxLines: 1}).Layout)
 					}))
 			})
 		})

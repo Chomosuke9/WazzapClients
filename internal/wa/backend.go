@@ -1312,6 +1312,7 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		b.emit(model.MessageEvent{Msg: m, New: isNew})
 		b.emitChat(chat)
 		b.noteStatusReply(ctx, r)
+		b.noteStatusMention(ctx, r)
 		if isNew {
 			b.autoDownload(m)
 		}

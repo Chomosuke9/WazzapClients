@@ -18,6 +18,35 @@ index 3069e6d..b9ac023 100644
  	info, err := cli.parseMessageInfo(node)
  	if err != nil {
  		cli.Log.Warnf("Failed to parse message: %v", err)
+diff --git a/send.go b/send.go
+index fb35eeb..ab6ac02 100644
+--- a/send.go
++++ b/send.go
+@@ -167,6 +167,14 @@ type SendRequestExtra struct {
+ 	Meta *types.MsgMetaInfo
+ 	// use this only if you know what you are doing
+ 	AdditionalNodes *[]waBinary.Node
++
++	// WazzapClients patch: StatusRecipients, when sending to
++	// status@broadcast, are the only people it goes to (with your own
++	// devices), like WhatsApp's statusJidList, instead of the list the
++	// server keeps, which knows neither close friends nor audiences of your
++	// own: a status goes to the audience chosen on the phone, and a
++	// reaction to someone's status to its poster alone.
++	StatusRecipients []types.JID
+ }
+ 
+ // SendMessage sends the given message.
+@@ -327,6 +335,9 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
+ 				// Why is this set to PN?
+ 				extraParams.addressingMode = types.AddressingModePN
+ 			}
++		} else if to == types.StatusBroadcastJID && len(req.StatusRecipients) > 0 {
++			// WazzapClients patch: see SendRequestExtra.StatusRecipients.
++			groupParticipants = append(slices.Clone(req.StatusRecipients), cli.getOwnID().ToNonAD())
+ 		} else {
+ 			groupParticipants, err = cli.getBroadcastListParticipants(ctx, to)
+ 			if err != nil {
 diff --git a/status_patch_test.go b/status_patch_test.go
 new file mode 100644
 index 0000000..3d9d55c

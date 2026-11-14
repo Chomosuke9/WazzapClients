@@ -349,17 +349,33 @@ Gotchas already found in the pinned version (v0.10.x):
   for it. Hiding a contact's statuses is `userStatusMute` (`["userStatusMute",
   jid]`). WhatsApp Web takes a mutation of any version up to the newest it
   knows, so the versions sent stay low.
-- hypermeow sends a status to the list WhatsApp's server keeps (`GetStatusPrivacy`),
-  not to the synced setting, and can't be given recipients. `statusAudience`
-  refuses to post when anyone outside the chosen audience would get it, and
-  labels close friends and custom audiences (`ContextInfo.statusAudienceMetadata`,
-  which viewers show as a chip on the picture). WhatsApp shows the statuses of
+- hypermeow sends to status@broadcast's list as WhatsApp's server keeps it
+  (`GetStatusPrivacy`), which knows only My contacts, except and Only share with:
+  with close friends or an audience of your own chosen, it's whichever of those
+  was chosen last, and a status once reached the one person on an old Only share
+  with list. `statusAudience` works the recipients out from the synced setting
+  and passes them as `SendRequestExtra.StatusRecipients` (the patch); before the
+  setting syncs, the server's list stands. It labels close friends and custom
+  audiences (`ContextInfo.statusAudienceMetadata`, which viewers show as a chip on
+  the picture). WhatsApp shows the statuses of
   saved contacts only (`savedContact`).
 - Who saw your status is their read receipts of it (`from="status@broadcast"`, the
   viewer as participant), kept in `wz_receipts` under `status@broadcast`
   (`onStatusView`); a reply is a message in the replier's chat whose quote's
   `remoteJid` is `status@broadcast`, pointed at from `wz_status_replies` as it arrives
   (`noteStatusReply`; replies from history sync aren't). Both go when the status expires.
+- A status that mentions you or a group doesn't say so itself: the poster's phone sends
+  a `statusMentionMessage` (to your chat with them) or `groupStatusMentionMessage` (to the
+  group), a `STATUS_MENTION_MESSAGE` protocol message whose key names the status
+  (`internal/wa/statusmention.go`). It's stored as a text message with
+  `Message.StatusMention` (a card, `internal/ui/statusmention.go`) and pointed at from
+  `wz_status_mentions`, which gives the viewer its "Mentioned privately" link.
+- Liking a status (the viewer's heart) sends a `reactionMessage` to `status@broadcast`
+  whose key names the status and its poster, to the poster alone: hypermeow sent to
+  status@broadcast's whole audience, so its patch adds `SendRequestExtra.StatusRecipients`
+  (`internal/wa/statuslike.go`). Reactions to statuses (your likes from the phone, others'
+  likes of yours, shown in Viewed by) are kept in `wz_reactions` under status@broadcast.
+  Status messages the app doesn't show are logged with their fields.
 - After sleep the connection is dead, but the kernel keeps the socket for minutes and
   hypermeow's keepalive runs on the monotonic clock, which stood still: it took three
   minutes awake to reconnect. `watchSleep` (`internal/wa/backend.go`) sees the wall
@@ -565,6 +581,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    your own's name and emoji, sliding in over the Status list like New chat) and
                    a contact's Hide/Unhide menu in statusprivacy.go; the Status list's Hidden
                    section (contacts you hid) in status.go;
+                   status mentions (a status's poster mentioning you or the group: a card in
+                   the chat that opens the status, and the viewer's "Mentioned privately") in
+                   statusmention.go;
                    who saw one of your own status updates and the replies to it (the eye under
                    it in the viewer, and its "Viewed by" sheet) in statusviews.go;
                    animation helpers in anim.go; the "N unread messages" divider a chat
@@ -682,6 +701,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    the links only the server resolves (channels, business messages,
                    contact QR codes; `ResolveLink`) in links.go;
                    status privacy and your audiences (the status_privacy app state action),
+                   the messages that say a status mentioned you or a group (wz_status_mentions)
+                   in statusmention.go;
                    hidden statuses (userStatusMute) and the check that a status reaches only
                    the chosen audience in statusprivacy.go;
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
@@ -934,7 +955,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
-# group: -ochat work), statusviews (your status's Viewed by sheet), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
+# group: -ochat work), statusviews (your status's Viewed by sheet), statusmention and statusmentioned (a status mention's card, and the status it opens: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
 # delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), stickerreact (sticker reactions on the chat's last messages), stickerreactors (who gave them), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,

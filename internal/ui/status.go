@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"gioui.org/f32"
@@ -13,12 +14,14 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
 type statusState struct {
@@ -397,6 +400,7 @@ type statusViewer struct {
 	index    int
 	shownAt  time.Time
 	closeBtn widget.Clickable
+	backBtn  widget.Clickable
 	prev     widget.Clickable
 	next     widget.Clickable
 	pauseBtn widget.Clickable
@@ -411,7 +415,14 @@ type statusViewer struct {
 	vidHeld  bool          // the video is paused while the timer waits
 	reply    widget.Editor
 	send     widget.Clickable
-	views    statusViews // who saw your own update (statusviews.go)
+	// The reply bar's emoji button opens the quick reactions (reacts), and
+	// its heart sends ❤️.
+	emojiBtn, heartBtn widget.Clickable
+	reacts             bool
+	reactAnim          tween
+	mention            widget.Clickable // "Mentioned privately"
+	backdrop           tween            // the blurred update behind it fading in
+	views              statusViews      // who saw your own update (statusviews.go)
 }
 
 // statusDuration is how long a picture or text update stays on screen. A
@@ -419,19 +430,26 @@ type statusViewer struct {
 const statusDuration = 6 * time.Second
 
 func (v *statusViewer) show(t *model.StatusThread) {
-	v.video.stop()
-	v.thread, v.closing = t, false
-	v.index = 0
 	// Start at the first unseen update, like WhatsApp.
+	at := 0
 	for i, up := range t.Updates {
 		if !up.Viewed {
-			v.index = i
+			at = i
 			break
 		}
 	}
+	v.showAt(t, at)
+}
+
+// showAt opens the viewer on t's i-th update.
+func (v *statusViewer) showAt(t *model.StatusThread, i int) {
+	v.video.stop()
+	v.thread, v.closing = t, false
+	v.index = i
 	v.shownAt, v.zp, v.frac, v.held, v.paused = time.Time{}, zoomPan{}, 0, 0, false
 	v.reply.SingleLine, v.reply.Submit = true, true
 	v.views.open, v.views.loaded = false, false
+	v.reacts = false
 	v.reply.SetText("")
 }
 
@@ -500,18 +518,26 @@ func (u *UI) statusVideoDownloaded(e model.MediaEvent) {
 // sendStatusReply sends the typed reply to the poster, quoting the update.
 func (u *UI) sendStatusReply() {
 	v := &u.status.viewer
+	if u.sendStatusText(trimSpace(v.reply.Text())) {
+		v.reply.SetText("")
+		u.requestFocus(nil)
+	}
+}
+
+// sendStatusText sends txt to the poster of the update shown, quoting it,
+// and reports whether it went.
+func (u *UI) sendStatusText(txt string) bool {
+	v := &u.status.viewer
 	t := v.thread
-	txt := trimSpace(v.reply.Text())
 	if !v.isOpen() || t.Mine || t.Group || txt == "" {
-		return
+		return false
 	}
 	m := u.backend.Send(t.ID, model.Draft{Text: txt, Reply: statusMsg(t, t.Updates[v.index])})
-	v.reply.SetText("")
-	u.requestFocus(nil)
 	if m != nil {
 		u.upsertMessage(m)
 		u.toast("Reply sent")
 	}
+	return true
 }
 
 // statusTick runs the update's timer: a video's own position, or the time
@@ -588,7 +614,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		}
 	}
 	if v.isOpen() {
-		if v.closeBtn.Clicked(gtx) {
+		if v.closeBtn.Clicked(gtx) || v.backBtn.Clicked(gtx) {
 			v.close()
 		}
 		if v.next.Clicked(gtx) {
@@ -648,7 +674,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	if v.isOpen() {
 		u.syncStatusVideo(t, up)
 		// Its menu, and the dialog Hide asks in, hold it too.
-		hold := v.paused || v.zp.zoomed() || v.replying(gtx) || u.ctx.isOpen() || u.dialog.isOpen() || v.views.open
+		hold := v.paused || v.zp.zoomed() || v.replying(gtx) || v.reacts || u.ctx.isOpen() || u.dialog.isOpen() || v.views.open
 		if u.statusTick(gtx, now, hold) {
 			advance(1)
 			gtx.Execute(op.InvalidateCmd{})
@@ -666,6 +692,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	// that size, and Gio keeps its texture for good.
 	e := easeOut(a)
 	fillRect(gtx, image.Rectangle{Max: sz}, faded(p.StatusBg, e))
+	u.statusBackdrop(gtx, up, a == 1 && v.isOpen())
 	// Clicks on the left third go back, anywhere else forward.
 	if v.isOpen() {
 		third := sz.X / 3
@@ -679,39 +706,37 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		t.Pop()
 	}
 
-	// The update itself, centered in a portrait frame, with the reply box
-	// under it for someone else's status.
-	replyH := 0
-	if !t.Group {
-		replyH = gtx.Dp(64)
-	}
-	frameH := sz.Y - gtx.Dp(120) - replyH
-	frameW := min(sz.X-gtx.Dp(40), frameH*9/16)
-	frame := image.Rect((sz.X-frameW)/2, gtx.Dp(92), (sz.X+frameW)/2, gtx.Dp(92)+frameH)
+	// The update fills a portrait frame as tall as the window, like
+	// WhatsApp's, with its controls over it and the reply bar across its
+	// bottom.
+	frameW := min(sz.X-gtx.Dp(40), sz.Y*9/16)
+	frame := image.Rect((sz.X-frameW)/2, 0, (sz.X+frameW)/2, sz.Y)
 	zoom := pushFx(gtx, 1, scaleAt(frame.Min.Add(frame.Size().Div(2)), lerp(0.3, 1, e)))
 	u.layoutStatusContent(gtx, t, up, frame, &v.zp)
 	zoom.Pop()
 	defer pushFx(gtx, e, f32.Affine2D{}).Pop()
-	if up.Audience != "" && !v.zp.zoomed() {
-		// The audience its poster shared it with, on the picture's corner.
-		chip := record(gtx, func(gtx C) D {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(max(0, frame.Dx()-gtx.Dp(24)), frame.Dy())}
-			return background(gtx, argb(0x000000, 0x90), 14, func(gtx C) D {
-				return layout.Inset{Left: 10, Right: 12, Top: 5, Bottom: 5}.Layout(gtx,
-					u.label(13.5, up.AudienceEmoji+" "+up.Audience, rgb(0xffffff), labelOpts{weight: font.Medium, maxLines: 1}).Layout)
-			})
-		})
-		chip.at(gtx, frame.Min.X+gtx.Dp(12), frame.Min.Y+gtx.Dp(12))
+	zoomed := v.zp.zoomed()
+	white := rgb(0xffffff)
+	reply := !t.Mine && !t.Group
+	barH := gtx.Dp(44)
+	barTop := sz.Y - gtx.Dp(32) - barH
+	if !zoomed {
+		// Shades that keep the controls and the caption readable.
+		shade(gtx, image.Rect(frame.Min.X, frame.Min.Y, frame.Max.X, frame.Min.Y+gtx.Dp(130)), 0x90, 0)
+		if up.Text != "" && up.Media != model.MediaNone || reply || t.Mine && !t.Group {
+			shade(gtx, image.Rect(frame.Min.X, barTop-gtx.Dp(110), frame.Max.X, frame.Max.Y), 0, 0xa0)
+		}
 	}
 
 	// Progress segments across the top of the frame.
 	n := len(t.Updates)
 	gap := gtx.Dp(4)
-	segW := (frame.Dx() - (n-1)*gap) / n
-	y := gtx.Dp(20)
+	inset := gtx.Dp(12)
+	segW := (frame.Dx() - 2*inset - (n-1)*gap) / n
+	y := gtx.Dp(22)
 	h := max(2, gtx.Dp(3))
 	for i := 0; i < n; i++ {
-		x := frame.Min.X + i*(segW+gap)
+		x := frame.Min.X + inset + i*(segW+gap)
 		r := image.Rect(x, y, x+segW, y+h)
 		fillRRect(gtx, r, h/2, argb(0xffffff, 0x60))
 		done := float32(0)
@@ -722,11 +747,43 @@ func (u *UI) layoutStatusViewer(gtx C) {
 			done = v.frac
 		}
 		if done > 0 {
-			fillRRect(gtx, image.Rect(x, y, x+int(float32(segW)*done), y+h), h/2, rgb(0xffffff))
+			fillRRect(gtx, image.Rect(x, y, x+int(float32(segW)*done), y+h), h/2, white)
 		}
 	}
 
-	// Poster and time, pause and mute, and the close button.
+	// The buttons on the header's right, right to left: the menu, the
+	// volume (with its slider under it while hovered) and pause.
+	cy := gtx.Dp(71) // the header's middle
+	bx := frame.Max.X - gtx.Dp(6)
+	headBtn := func(c *widget.Clickable, ic *icon.Icon, size unit.Dp) {
+		bx -= gtx.Dp(48)
+		defer op.Offset(image.Pt(bx, cy-gtx.Dp(24))).Push(gtx.Ops).Pop()
+		bg := gtx
+		bg.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(48), gtx.Dp(48))}
+		u.iconButton(bg, c, ic, 48, size, white)
+	}
+	if reply {
+		c := u.btn("st:viewermenu")
+		if c.Clicked(gtx) {
+			u.ctx = ctxMenu{kind: ctxStatusRow, chatID: t.ID, at: u.mouse}
+		}
+		headBtn(c, icMenu, 24)
+	}
+	if v.video.player != nil {
+		ic := icVolumeFill
+		if !u.soundOn(v.video.muted) {
+			ic = icVolumeOffFill
+		}
+		headBtn(&v.muteBtn, ic, 24)
+		u.statusVolume(gtx, image.Rect(bx, cy-gtx.Dp(24), bx+gtx.Dp(48), cy+gtx.Dp(24)))
+	}
+	ic := icPauseFill
+	if v.paused {
+		ic = icPlayFill
+	}
+	headBtn(&v.pauseBtn, ic, 24)
+
+	// Poster and time on the left.
 	name := t.Name
 	id := t.ID
 	if t.Mine {
@@ -735,120 +792,293 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	if t.Group {
 		name = t.Name + " · " + up.Sender
 	}
-	white := rgb(0xffffff)
-	hdr := op.Offset(image.Pt(frame.Min.X, y+h+gtx.Dp(14))).Push(gtx.Ops)
-	hg := gtx
-	hg.Constraints = layout.Constraints{Max: image.Pt(frame.Dx(), gtx.Dp(48))}
-	layout.Flex{Alignment: layout.Middle}.Layout(hg,
-		layout.Rigid(func(gtx C) D { return u.avatar(gtx, id, name, t.Group, 40) }),
-		layout.Rigid(layout.Spacer{Width: 12}.Layout),
-		layout.Flexed(1, func(gtx C) D {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(u.label(16, name, white, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
-				layout.Rigid(func(gtx C) D {
-					dim := argb(0xffffff, 0xb0)
-					line := []layout.FlexChild{layout.Rigid(u.label(13.5, statusTime(up.Time, u.now()), dim).Layout)}
-					if !up.Revoked.IsZero() {
-						// Kept with Keep deleted messages (extras.go).
-						line = append(line,
-							layout.Rigid(layout.Spacer{Width: 8}.Layout),
-							layout.Rigid(iconW(icBlock, 14, u.pal.Danger)),
-							layout.Rigid(layout.Spacer{Width: 2}.Layout),
-							layout.Rigid(u.label(13.5, "Deleted", u.pal.Danger).Layout))
-					}
-					return layout.Flex{Alignment: layout.Middle}.Layout(gtx, line...)
-				}),
-			)
-		}),
-		layout.Rigid(func(gtx C) D {
-			if t.Mine || t.Group {
-				return D{}
-			}
-			c := u.btn("st:viewermenu")
-			if c.Clicked(gtx) {
-				u.ctx = ctxMenu{kind: ctxStatusRow, chatID: t.ID, at: u.mouse}
-			}
-			return u.iconButton(gtx, c, icMenu, 40, 24, white)
-		}),
-		layout.Rigid(func(gtx C) D {
-			ic := icPauseFill
-			if v.paused {
-				ic = icPlayFill
-			}
-			return u.iconButton(gtx, &v.pauseBtn, ic, 40, 24, white)
-		}),
-		layout.Rigid(func(gtx C) D {
-			if v.video.player == nil {
-				return D{}
-			}
-			ic := icVolumeFill
-			if !u.soundOn(v.video.muted) {
-				ic = icVolumeOffFill
-			}
-			return u.iconButton(gtx, &v.muteBtn, ic, 40, 22, white)
-		}),
-		layout.Rigid(func(gtx C) D {
-			if v.video.player == nil {
-				return D{}
-			}
-			w, h := gtx.Dp(72), gtx.Dp(40)
-			defer op.Offset(image.Pt(gtx.Dp(4), h/2)).Push(gtx.Ops).Pop()
-			u.layoutVolume(gtx, &v.video, w)
-			return D{Size: image.Pt(w+gtx.Dp(12), h)}
-		}),
-	)
-	hdr.Pop()
-	cb := op.Offset(image.Pt(sz.X-gtx.Dp(64), gtx.Dp(16))).Push(gtx.Ops)
-	u.iconButton(gtx, &v.closeBtn, icClose, 48, 30, white)
-	cb.Pop()
+	ax := frame.Min.X + inset
+	av := op.Offset(image.Pt(ax, cy-gtx.Dp(20))).Push(gtx.Ops)
+	u.avatar(gtx, id, name, t.Group, 40)
+	av.Pop()
+	x0 := ax + gtx.Dp(52)
+	tg := gtx
+	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, bx-gtx.Dp(4)-x0), gtx.Dp(60))}
+	nm := record(tg, u.label(16, name, white, labelOpts{maxLines: 1}).Layout)
+	sub := record(tg, func(gtx C) D { return u.statusSubtitle(gtx, up) })
+	top := cy - (nm.size.Y+sub.size.Y)/2
+	nm.at(gtx, x0, top)
+	sub.at(gtx, x0, top+nm.size.Y)
 
-	if !t.Mine && !t.Group {
-		u.layoutStatusReply(gtx, image.Rect(frame.Min.X, frame.Max.Y+gtx.Dp(14), frame.Max.X, frame.Max.Y+gtx.Dp(14)+gtx.Dp(48)))
+	if up.Audience != "" && !zoomed {
+		// The audience its poster shared it with, under the header.
+		chip := record(gtx, func(gtx C) D {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(0, frame.Dx()-2*inset), frame.Dy())}
+			return background(gtx, argb(0x000000, 0x90), 14, func(gtx C) D {
+				return layout.Inset{Left: 10, Right: 12, Top: 5, Bottom: 5}.Layout(gtx,
+					u.label(13.5, up.AudienceEmoji+" "+up.Audience, white, labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+			})
+		})
+		chip.at(gtx, frame.Min.X+inset, cy+gtx.Dp(32))
+	}
+
+	// The caption, over the bottom of the picture.
+	if up.Text != "" && up.Media != model.MediaNone && !zoomed {
+		bottom := frame.Max.Y - gtx.Dp(24)
+		switch {
+		case reply:
+			bottom = barTop - gtx.Dp(10)
+		case t.Mine && !t.Group:
+			bottom = sz.Y - gtx.Dp(32) - gtx.Dp(38) - gtx.Dp(12) // over the eye
+		}
+		capW := max(0, frame.Dx()-gtx.Dp(32))
+		cap := record(gtx, func(gtx C) D {
+			gtx.Constraints = layout.Constraints{Min: image.Pt(capW, 0), Max: image.Pt(capW, frame.Dy()/2)}
+			l := u.label(16, up.Text, white, labelOpts{weight: font.SemiBold, align: text.Middle})
+			l.MaxLines = 4
+			return l.Layout(gtx)
+		})
+		cap.at(gtx, frame.Min.X+gtx.Dp(16), bottom-cap.size.Y)
+	}
+
+	// Back and close, in the window's corners.
+	for _, b := range []struct {
+		c  *widget.Clickable
+		ic *icon.Icon
+		x  int
+	}{{&v.backBtn, icBack, gtx.Dp(18)}, {&v.closeBtn, icClose, sz.X - gtx.Dp(54)}} {
+		t := op.Offset(image.Pt(b.x, gtx.Dp(7))).Push(gtx.Ops)
+		bg := gtx
+		bg.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(48), gtx.Dp(48))}
+		u.iconButton(bg, b.c, b.ic, 48, 26, white)
+		t.Pop()
+	}
+
+	if reply {
+		u.layoutStatusReply(gtx, frame.Min.X+frame.Dx()/2, barTop, barH)
 	}
 	if t.Mine && !t.Group {
 		u.layoutStatusViews(gtx, up, frame)
 	}
 }
 
-// layoutStatusReply draws the "Type a reply…" box in r, with a send
-// button once there is text.
-func (u *UI) layoutStatusReply(gtx C, r image.Rectangle) {
+// shade fills r with black fading from alpha a0 at its top to a1 at its
+// bottom.
+func shade(gtx C, r image.Rectangle, a0, a1 uint8) {
+	defer clip.Rect(r).Push(gtx.Ops).Pop()
+	paint.LinearGradientOp{
+		Stop1: f32.Pt(0, float32(r.Min.Y)), Color1: argb(0x000000, a0),
+		Stop2: f32.Pt(0, float32(r.Max.Y)), Color2: argb(0x000000, a1),
+	}.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
+}
+
+// statusBackdrop draws the update blurred across the window once the
+// viewer is open (on), under a veil that lifts as it fades in.
+func (u *UI) statusBackdrop(gtx C, up *model.StatusUpdate, on bool) {
+	v := &u.status.viewer
+	if !on {
+		v.backdrop = tween{}
+		return
+	}
+	k := easeOut(v.backdrop.step(gtx, true, 2*durDialog))
+	r := image.Rectangle{Max: gtx.Constraints.Max}
+	switch {
+	case len(up.Thumb) > 0:
+		th := up.Thumb
+		e := u.images.getBlurred("st:"+up.ID, func() []byte { return th })
+		if e.state != imgReady {
+			return
+		}
+		paintCover(gtx, e.op, e.size, r)
+	case up.Media == model.MediaNone && up.Background != 0:
+		fillRect(gtx, r, argbColor(up.Background))
+	default:
+		return
+	}
+	fillRect(gtx, r, faded(u.pal.StatusBg, lerp(1, 0.72, k)))
+}
+
+// statusSubtitle is the line under the poster's name: when the update was
+// posted, whether it was deleted (kept with Keep deleted messages) and
+// whether it mentioned you or a group of yours, which leads to the
+// message that says so.
+func (u *UI) statusSubtitle(gtx C, up *model.StatusUpdate) D {
+	v := &u.status.viewer
+	dim := argb(0xffffff, 0xd8)
+	const size = 13.5
+	line := []layout.FlexChild{layout.Rigid(u.label(size, statusTime(up.Time, u.now()), dim, labelOpts{maxLines: 1}).Layout)}
+	dot := layout.Rigid(u.label(size, " • ", dim, labelOpts{maxLines: 1}).Layout)
+	if !up.Revoked.IsZero() {
+		// Kept with Keep deleted messages (extras.go).
+		line = append(line, dot,
+			layout.Rigid(iconW(icBlock, 14, u.pal.Danger)),
+			layout.Rigid(layout.Spacer{Width: 2}.Layout),
+			layout.Rigid(u.label(size, "Deleted", u.pal.Danger, labelOpts{maxLines: 1}).Layout))
+	}
+	if up.MentionMsg != "" {
+		if v.mention.Clicked(gtx) && v.isOpen() {
+			u.openStatusMention(up)
+		}
+		line = append(line, dot, layout.Rigid(func(gtx C) D {
+			return clickable(gtx, &v.mention, func(gtx C) D {
+				chev := gtx.Dp(18)
+				lg := gtx
+				lg.Constraints.Min.X = 0
+				lg.Constraints.Max.X = max(0, gtx.Constraints.Max.X-chev)
+				l := record(lg, u.label(size, "@ Mentioned privately", dim, labelOpts{maxLines: 1}).Layout)
+				l.at(gtx, 0, 0)
+				t := op.Offset(image.Pt(l.size.X+gtx.Dp(2), (l.size.Y-gtx.Dp(16))/2)).Push(gtx.Ops)
+				drawIcon(gtx, icChevronRight, 16, dim)
+				t.Pop()
+				return D{Size: image.Pt(l.size.X+chev, l.size.Y)}
+			})
+		}))
+	}
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx, line...)
+}
+
+// statusVolume shows the video's volume slider under its button (btn)
+// while the pointer is over either, or drags it.
+func (u *UI) statusVolume(gtx C, btn image.Rectangle) {
+	vv := &u.status.viewer.video
+	cx := btn.Min.X + btn.Dx()/2
+	pill := image.Rect(cx-gtx.Dp(56), btn.Max.Y+gtx.Dp(4), cx+gtx.Dp(56), btn.Max.Y+gtx.Dp(36))
+	show := u.hovered["st:vol"] || vv.vol.dragging
+	area := btn
+	if show {
+		area = area.Union(pill)
+	}
+	func() {
+		defer op.Offset(area.Min).Push(gtx.Ops).Pop()
+		u.hoverArea(gtx, "st:vol", area.Size())
+	}()
+	if !show {
+		return
+	}
+	fillRRect(gtx, pill, pill.Dy()/2, argb(0x1f1f1f, 0xe8))
+	defer op.Offset(image.Pt(pill.Min.X+gtx.Dp(16), pill.Min.Y+pill.Dy()/2)).Push(gtx.Ops).Pop()
+	u.layoutVolume(gtx, vv, pill.Dx()-gtx.Dp(32))
+}
+
+// likeRed is the heart of a liked status.
+var likeRed = rgb(0xff3b5c)
+
+// isLike reports whether a reaction to a status is a like: a heart.
+func isLike(emoji string) bool { return strings.HasPrefix(emoji, "❤") }
+
+// toggleStatusLike likes the update shown, or takes the like back.
+func (u *UI) toggleStatusLike() {
+	v := &u.status.viewer
+	t := v.thread
+	if !v.isOpen() || t.Mine || t.Group {
+		return
+	}
+	up := t.Updates[v.index]
+	up.Liked = !up.Liked
+	u.backend.LikeStatus(up.ID, up.Liked)
+}
+
+// statusQuickReactions are the emojis the reply bar's emoji button
+// offers, as WhatsApp's phones do: one sends it as a reply.
+var statusQuickReactions = []string{"😂", "😮", "😍", "😢", "👏", "🔥", "🎉", "💯"}
+
+// layoutStatusReply draws the reply bar centered on cx, h px tall from
+// top: the quick reactions' button, the "Type a reply…" box, and the
+// heart that likes the update, or the send button once there is text.
+func (u *UI) layoutStatusReply(gtx C, cx, top, h int) {
 	v := &u.status.viewer
 	p := u.pal
-	fillRRect(gtx, r, r.Dy()/2, mix(p.StatusBg, rgb(0xffffff), 0.14))
-	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-	gtx.Constraints = layout.Exact(r.Size())
-	// A click on the box types, rather than going to the next update.
-	box := u.btn("st:replybox")
-	if noFocus(box).Clicked(gtx) {
-		gtx.Execute(key.FocusCmd{Tag: &v.reply})
+	white := rgb(0xffffff)
+	sz := gtx.Constraints.Max
+	if v.isOpen() {
+		if v.emojiBtn.Clicked(gtx) {
+			v.reacts = !v.reacts
+		}
+		if v.heartBtn.Clicked(gtx) {
+			u.toggleStatusLike()
+		}
+		for i, em := range statusQuickReactions {
+			if u.btn("st:qr:" + itoa(i)).Clicked(gtx) {
+				v.reacts = false
+				u.sendStatusText(em)
+			}
+		}
 	}
-	noFocus(box).Layout(gtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
-	typed := trimSpace(v.reply.Text()) != ""
-	layout.Inset{Left: 20, Right: 4}.Layout(gtx, func(gtx C) D {
-		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-			layout.Flexed(1, func(gtx C) D {
-				return vcenter(gtx, gtx.Constraints.Max.Y, func(gtx C) D {
-					gtx.Constraints.Min.X = gtx.Constraints.Max.X
-					e := material.Editor(u.th, &v.reply, "Type a reply…")
-					e.TextSize = 16
-					e.Color = rgb(0xffffff)
-					e.HintColor = argb(0xffffff, 0x99)
-					e.SelectionColor = argb(0x53bdeb, 0x60)
-					return e.Layout(gtx)
+	btn := gtx.Dp(44)
+	inputW := max(gtx.Dp(120), min(gtx.Dp(760), sz.X-gtx.Dp(32)-2*btn-gtx.Dp(24)))
+	rowW := btn + gtx.Dp(16) + inputW + gtx.Dp(8) + btn
+	x0 := max(gtx.Dp(16), cx-rowW/2)
+	place := func(x int, w func(gtx C) D) {
+		defer op.Offset(image.Pt(x, top+(h-btn)/2)).Push(gtx.Ops).Pop()
+		bg := gtx
+		bg.Constraints = layout.Constraints{Max: image.Pt(btn, btn)}
+		w(bg)
+	}
+	place(x0, func(gtx C) D { return u.iconButton(gtx, &v.emojiBtn, icEmoji, 44, 26, white) })
+
+	r := image.Rect(x0+btn+gtx.Dp(16), top, x0+btn+gtx.Dp(16)+inputW, top+h)
+	fillRRect(gtx, r, gtx.Dp(8), argb(0x262626, 0xd8))
+	func() {
+		defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+		gtx := gtx
+		gtx.Constraints = layout.Exact(r.Size())
+		// A click on the box types, rather than going to the next update.
+		box := u.btn("st:replybox")
+		if noFocus(box).Clicked(gtx) {
+			gtx.Execute(key.FocusCmd{Tag: &v.reply})
+		}
+		noFocus(box).Layout(gtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		layout.Inset{Left: 16, Right: 12}.Layout(gtx, func(gtx C) D {
+			return vcenter(gtx, gtx.Constraints.Max.Y, func(gtx C) D {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				e := material.Editor(u.th, &v.reply, "Type a reply…")
+				e.TextSize = 16
+				e.Color = white
+				e.HintColor = argb(0xffffff, 0xb0)
+				e.SelectionColor = argb(0x53bdeb, 0x60)
+				return e.Layout(gtx)
+			})
+		})
+	}()
+
+	hx := r.Max.X + gtx.Dp(8)
+	if trimSpace(v.reply.Text()) != "" {
+		place(hx, func(gtx C) D {
+			return clickable(gtx, &v.send, func(gtx C) D {
+				fillCircle(gtx, image.Pt(btn/2, btn/2), btn/2, p.Green)
+				return centerIn(gtx, btn, iconW(icSend, 21, p.OnGreen))
+			})
+		})
+	} else {
+		up := v.thread.Updates[v.index]
+		ic, col := icHeart, white
+		if up.Liked {
+			ic, col = icHeartFill, likeRed
+		}
+		place(hx, func(gtx C) D { return u.iconButton(gtx, &v.heartBtn, ic, 44, 26, col) })
+	}
+
+	// The quick reactions, in a pill over the emoji button.
+	a := v.reactAnim.step(gtx, v.reacts && v.isOpen(), durPopIn)
+	if a == 0 {
+		return
+	}
+	cell := gtx.Dp(44)
+	pad := gtx.Dp(6)
+	pill := image.Rect(x0, top-gtx.Dp(10)-cell-2*pad, x0+len(statusQuickReactions)*cell+2*pad, top-gtx.Dp(10))
+	pill = pill.Add(image.Pt(0, int(float32(gtx.Dp(8))*(1-easeOut(a)))))
+	withOpacity(gtx, easeOut(a), func() {
+		fillRRect(gtx, pill, pill.Dy()/2, argb(0x262626, 0xf0))
+		for i, em := range statusQuickReactions {
+			c := u.btn("st:qr:" + itoa(i))
+			func() {
+				defer op.Offset(image.Pt(pill.Min.X+pad+i*cell, pill.Min.Y+pad)).Push(gtx.Ops).Pop()
+				cg := gtx
+				cg.Constraints = layout.Exact(image.Pt(cell, cell))
+				clickable(cg, c, func(gtx C) D {
+					if hv := u.hover(gtx, c); hv > 0 {
+						fillCircle(gtx, image.Pt(cell/2, cell/2), cell/2, faded(argb(0xffffff, 0x30), hv))
+					}
+					return centerIn(gtx, cell, u.label(24, em, white, labelOpts{maxLines: 1}).Layout)
 				})
-			}),
-			layout.Rigid(func(gtx C) D {
-				sz := gtx.Dp(40)
-				if !typed {
-					return D{Size: image.Pt(sz, sz)}
-				}
-				return clickable(gtx, &v.send, func(gtx C) D {
-					fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, p.Green)
-					return centerIn(gtx, sz, iconW(icSend, 21, p.OnGreen))
-				})
-			}),
-		)
+			}()
+		}
 	})
 }
 
@@ -856,7 +1086,7 @@ func (u *UI) layoutStatusReply(gtx C, r image.Rectangle) {
 // downloaded, zoomed and panned by zp), its video, or its text on the
 // chosen background.
 func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusUpdate, r image.Rectangle, zp *zoomPan) {
-	defer clip.UniformRRect(r, gtx.Dp(12)).Push(gtx.Ops).Pop()
+	defer clip.UniformRRect(r, gtx.Dp(8)).Push(gtx.Ops).Pop()
 	if up.Media == model.MediaNone {
 		bg := argbColor(up.Background)
 		if up.Background == 0 {
@@ -908,20 +1138,6 @@ func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusU
 	}
 	if vid && u.status.viewer.isOpen() {
 		u.layoutStatusVideoCenter(gtx, t, up, r.Min.Add(r.Size().Div(2)))
-	}
-	if up.Text != "" && !zp.zoomed() {
-		cap := record(gtx, func(gtx C) D {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(r.Dx(), r.Dy())}
-			return background(gtx, argb(0x000000, 0x80), 0, func(gtx C) D {
-				gtx.Constraints.Min.X = r.Dx()
-				return layout.UniformInset(14).Layout(gtx, func(gtx C) D {
-					l := u.label(16, up.Text, rgb(0xffffff), labelOpts{align: text.Middle})
-					l.MaxLines = 4
-					return l.Layout(gtx)
-				})
-			})
-		})
-		cap.at(gtx, r.Min.X, r.Max.Y-cap.size.Y)
 	}
 }
 

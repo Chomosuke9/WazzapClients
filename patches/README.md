@@ -4,7 +4,7 @@
 text library) to use far less memory for fonts, and lets the app swap emoji
 pictures. `gio.patch` patches Gio (`gioui.org`) so it lets go of pictures it
 drew. `hypermeow.patch` patches hypermeow (`github.com/polymorfa/hypermeow`)
-so it decrypts status updates. `go.mod` replaces the modules with
+so it decrypts status updates and can send to some of status@broadcast. `go.mod` replaces the modules with
 `third_party/typesetting`, `third_party/gio` and `third_party/hypermeow`,
 which `apply.sh` builds from the Go module cache and are not checked in:
 
@@ -65,6 +65,13 @@ What `hypermeow.patch` does (marked `WazzapClients patch`):
   status arrived. One with `<enc>` now goes through `handleEncryptedMessage`;
   the node keeps its tag, so the ack is still `class="status"`.
   `status_patch_test.go` checks it. Drop the patch once hypermeow does this.
+- `send.go`: `SendRequestExtra.StatusRecipients`. A message to
+  `status@broadcast` went to the list the server keeps (`GetStatusPrivacy`),
+  which knows only My contacts, My contacts except and Only share with; with
+  it set, it goes to those people (and your own devices) alone, like
+  WhatsApp's `statusJidList`. A status goes to the audience chosen on the
+  phone this way (`statusAudience`), and a like, a reaction, to its poster
+  alone (`internal/wa/statuslike.go`).
 
 After `go get github.com/polymorfa/hypermeow@main` run `apply.sh` again; if
 the hunk no longer applies, regenerate the patch as below.

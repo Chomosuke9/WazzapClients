@@ -40,6 +40,7 @@ func (r *rawMsg) fill(raw, edit []byte) {
 	m.Lottie = c.lottie
 	m.Duration = c.duration
 	m.Link = c.link
+	m.StatusMention = c.mention
 	c.file.apply(m)
 	if m.Kind == model.KindImage {
 		m.Album = albumOf(pm)

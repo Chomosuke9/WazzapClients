@@ -1201,6 +1201,12 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		contentW = max(contentW, link.size.X)
 	}
 
+	var smc part // a status mention's card
+	if m.StatusMention != nil {
+		sw := min(inner, max(contentW, u.statusMentionWidth(cgtx, c, m)))
+		smc = record(cgtx, func(gtx C) D { return u.layoutStatusMentionCard(gtx, c, m, sw, quoteBg, textCol, secondary) })
+		contentW = max(contentW, smc.size.X)
+	}
 	var quote part
 	if m.Quote != nil {
 		qm := u.quotedMessage(m.Quote)
@@ -1224,6 +1230,12 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		if u.viewer.open && u.viewer.viewOnce && u.viewer.msgID == m.ID && u.viewer.anim.at.IsZero() {
 			u.viewer.origin = u.viewerOrigin(gtx, voButton, size)
 		}
+	}
+	if smc.size.X > 0 && smc.size.X < contentW {
+		smc = record(cgtx, func(gtx C) D { return u.layoutStatusMentionCard(gtx, c, m, contentW, quoteBg, textCol, secondary) })
+	}
+	if u.btn("smention:"+m.ID).Clicked(gtx) && m.StatusMention != nil {
+		u.openMentionedStatus(m)
 	}
 	if link.size.X > 0 && link.size.X < contentW {
 		link = record(cgtx, func(gtx C) D { return u.layoutLinkCard(gtx, m, contentW, 7, quoteBg, textCol, secondary) })
@@ -1291,6 +1303,16 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if link.size.Y > 0 {
 		link.at(gtx, 0, y)
 		y += link.size.Y + gtx.Dp(5)
+	}
+	if smc.size.Y > 0 {
+		smc.at(gtx, 0, y)
+		func() {
+			defer op.Offset(image.Pt(0, y)).Push(gtx.Ops).Pop()
+			sg := gtx
+			sg.Constraints = layout.Exact(smc.size)
+			clickable(sg, u.btn("smention:"+m.ID), func(gtx C) D { return D{Size: smc.size} })
+		}()
+		y += smc.size.Y + gtx.Dp(4)
 	}
 	if att.size.Y > 0 {
 		att.at(gtx, 0, y)

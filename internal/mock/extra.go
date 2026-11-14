@@ -43,6 +43,18 @@ func (b *Backend) ViewStatus(threadID, statusID string) {
 	b.emit(model.StatusEvent{})
 }
 
+// LikeStatus likes or unlikes a demo status update.
+func (b *Backend) LikeStatus(statusID string, like bool) {
+	for _, t := range b.statuses {
+		for _, u := range t.Updates {
+			if u.ID == statusID && !t.Mine {
+				u.Liked = like
+			}
+		}
+	}
+	b.emit(model.StatusEvent{})
+}
+
 // StatusViews returns demo viewers of your own updates, and a reply.
 func (b *Backend) StatusViews(statusID string) model.StatusViews {
 	var v model.StatusViews
@@ -53,7 +65,7 @@ func (b *Backend) StatusViews(statusID string) model.StatusViews {
 			}
 			now := b.now()
 			people := []model.StatusViewer{
-				{ID: "rina", Name: "Rina Kartika", At: now.Add(-2 * time.Minute)},
+				{ID: "rina", Name: "Rina Kartika", At: now.Add(-2 * time.Minute), Reaction: "❤️"},
 				{ID: "budi", Name: "Budi Santoso", At: now.Add(-5 * time.Minute)},
 				{ID: "dewi", Name: "Dewi Lestari", At: now.Add(-14 * time.Minute)},
 				{ID: "clara", Name: "Clara Wijaya", At: now.Add(-47 * time.Minute)},

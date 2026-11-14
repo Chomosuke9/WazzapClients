@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -90,6 +91,10 @@ func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) err
 		if err == nil && st.fromMe {
 			_, _ = x.ExecContext(ctx, `DELETE FROM wz_receipts WHERE chat = ? AND id = ?`, statusChat, st.revoke)
 			_, _ = x.ExecContext(ctx, `DELETE FROM wz_status_replies WHERE status = ?`, st.revoke)
+		}
+		if err == nil {
+			_, _ = x.ExecContext(ctx, `DELETE FROM wz_status_mentions WHERE status = ?`, st.revoke)
+			_, _ = x.ExecContext(ctx, `DELETE FROM wz_reactions WHERE chat = ? AND id = ?`, statusChat, st.revoke)
 		}
 		return err
 	}
@@ -208,10 +213,16 @@ func (s *msgStore) dropStatuses(ctx context.Context, before time.Time) []string 
 		}
 	}
 	rows.Close()
+	// So do the mentions of them, and those of statuses that never came
+	// (the poster hid them from you), once their message is as old.
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_status_mentions WHERE NOT EXISTS (SELECT 1 FROM wz_messages m
+		WHERE m.chat = wz_status_mentions.chat AND m.id = wz_status_mentions.id AND m.ts >= ?)`, before.Unix())
 	// Who saw them and replied goes with them.
 	for _, id := range ids {
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_receipts WHERE chat = ? AND id = ?`, statusChat, id)
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_status_replies WHERE status = ?`, id)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_status_mentions WHERE status = ?`, id)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM wz_reactions WHERE chat = ? AND id = ?`, statusChat, id)
 	}
 	return ids
 }
@@ -256,8 +267,15 @@ func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statu
 }
 
 func (b *Backend) onStatus(e *events.Message) {
+	if r := unwrap(e.Message).GetReactionMessage(); r != nil {
+		b.onStatusReaction(e, r)
+		return
+	}
 	st, ok := b.parseStatus(b.ctx, e)
 	if !ok {
+		if m := unwrap(e.Message); m != nil && m.GetProtocolMessage() == nil {
+			b.log.Infof("status message %s from %s not shown: %s", e.Info.ID, e.Info.Sender, fieldNames(m))
+		}
 		return
 	}
 	// Like revoke: with Keep deleted messages on, someone else's deleted
@@ -300,6 +318,8 @@ func (b *Backend) Statuses() []*model.StatusThread {
 	}
 	mutes := b.statusMutes(ctx)
 	views := b.store.statusViewCounts(ctx)
+	mentions := b.store.statusMentions(ctx)
+	likes := b.store.statusLikes(ctx)
 	byID := map[string]*model.StatusThread{}
 	skip := map[string]bool{}
 	var threads []*model.StatusThread
@@ -343,6 +363,10 @@ func (b *Backend) Statuses() []*model.StatusThread {
 		if r.fromMe {
 			r.u.Sender = "You"
 			r.u.Views = views[r.u.ID]
+		}
+		r.u.Liked = likes[r.u.ID] && !r.fromMe
+		if k, ok := mentions[r.u.ID]; ok {
+			r.u.MentionChat, r.u.MentionMsg = k[0], k[1]
 		}
 		t.Updates = append(t.Updates, r.u)
 	}
@@ -470,6 +494,22 @@ func (b *Backend) StatusViews(statusID string) model.StatusViews {
 			continue
 		}
 		v.Viewers = append(v.Viewers, model.StatusViewer{ID: r.who, Name: b.statusName(ctx, j, ""), At: time.Unix(r.read, 0)})
+	}
+	// Who reacted (liked it): beside their view, or as one when their
+	// read receipt didn't come (read receipts off).
+	if rs, err := b.store.reactions(ctx, b.db, statusChat, statusID); err == nil {
+		for _, r := range rs {
+			i := slices.IndexFunc(v.Viewers, func(x model.StatusViewer) bool { return x.ID == r.who })
+			if i >= 0 {
+				v.Viewers[i].Reaction = r.emoji
+				continue
+			}
+			j, err := types.ParseJID(r.who)
+			if err != nil || r.who == meVoter || r.who == oldReactor {
+				continue
+			}
+			v.Viewers = append(v.Viewers, model.StatusViewer{ID: r.who, Name: b.statusName(ctx, j, ""), At: time.UnixMilli(r.ts), Reaction: r.emoji})
+		}
 	}
 	sort.SliceStable(v.Viewers, func(i, j int) bool { return v.Viewers[i].At.After(v.Viewers[j].At) })
 
