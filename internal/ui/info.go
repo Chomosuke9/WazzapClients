@@ -804,7 +804,7 @@ func (u *UI) memberAvatar(gtx C, m model.Member) D {
 		id, name = u.meID, u.meName()
 	}
 	for _, t := range u.statuses {
-		if (t.Mine && m.Me) || (!t.Mine && t.ID == m.ID) {
+		if (t.Mine && m.Me) || (!t.Mine && !t.Unlisted && t.ID == m.ID) {
 			return u.ringedAvatar(gtx, t, id, name, 51)
 		}
 	}

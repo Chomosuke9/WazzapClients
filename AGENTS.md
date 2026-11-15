@@ -369,11 +369,16 @@ Gotchas already found in the pinned version (v0.10.x):
   group), a `STATUS_MENTION_MESSAGE` protocol message whose key names the status
   (`internal/wa/statusmention.go`). It's stored as a text message with
   `Message.StatusMention` (a card, `internal/ui/statusmention.go`) and pointed at from
-  `wz_status_mentions`, which gives the viewer its "Mentioned privately" link.
+  `wz_status_mentions`, which gives the viewer its "Mentioned privately" link. The
+  poster often isn't a saved contact, whose statuses `Statuses` leaves out: the ones
+  that mention come in a thread marked `Unlisted`, which only the card opens (the
+  Status list, the rail's dot and avatar rings skip it).
 - Liking a status (the viewer's heart) sends a `reactionMessage` to `status@broadcast`
   whose key names the status and its poster, to the poster alone: hypermeow sent to
   status@broadcast's whole audience, so its patch adds `SendRequestExtra.StatusRecipients`
-  (`internal/wa/statuslike.go`). Reactions to statuses (your likes from the phone, others'
+  (`internal/wa/statuslike.go`). The server answers a status send whose recipients mix
+  phone numbers and LIDs with error 400, so the patch's `statusLIDs` turns them all,
+  your own account too, into LIDs. Reactions to statuses (your likes from the phone, others'
   likes of yours, shown in Viewed by) are kept in `wz_reactions` under status@broadcast.
   Status messages the app doesn't show are logged with their fields.
 - After sleep the connection is dead, but the kernel keeps the socket for minutes and

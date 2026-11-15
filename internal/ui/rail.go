@@ -66,7 +66,7 @@ func (u *UI) layoutRail(gtx C) D {
 	statusUnseen := false
 	for _, t := range u.statuses {
 		// Not for hidden contacts, nor for your own updates in a group's.
-		if !t.Mine && !t.Muted && !t.Viewed() && !t.Latest().FromMe && t.Latest().Time.After(u.statusSeen) {
+		if !t.Mine && !t.Muted && !t.Unlisted && !t.Viewed() && !t.Latest().FromMe && t.Latest().Time.After(u.statusSeen) {
 			statusUnseen = true
 		}
 	}

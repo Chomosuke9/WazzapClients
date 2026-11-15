@@ -19,7 +19,7 @@ index 3069e6d..b9ac023 100644
  	if err != nil {
  		cli.Log.Warnf("Failed to parse message: %v", err)
 diff --git a/send.go b/send.go
-index fb35eeb..ab6ac02 100644
+index fb35eeb..72dce13 100644
 --- a/send.go
 +++ b/send.go
 @@ -167,6 +167,14 @@ type SendRequestExtra struct {
@@ -47,12 +47,104 @@ index fb35eeb..ab6ac02 100644
  		} else {
  			groupParticipants, err = cli.getBroadcastListParticipants(ctx, to)
  			if err != nil {
+@@ -334,6 +345,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
+ 				return
+ 			}
+ 		}
++		if to == types.StatusBroadcastJID {
++			// WazzapClients patch: see statusLIDs.
++			groupParticipants = cli.statusLIDs(ctx, groupParticipants)
++		}
+ 		resp.DebugTimings.GetParticipants = time.Since(start)
+ 	} else if to.Server == types.HiddenUserServer {
+ 		ownID = cli.getOwnLID()
+diff --git a/status_patch.go b/status_patch.go
+new file mode 100644
+index 0000000..025ea64
+--- /dev/null
++++ b/status_patch.go
+@@ -0,0 +1,75 @@
++package whatsmeow
++
++import (
++	"context"
++
++	"github.com/polymorfa/hypermeow/types"
++)
++
++// WazzapClients patch: statusLIDs turns the people a message to
++// status@broadcast goes to, your own account among them, into LIDs. The
++// server answers a list that mixes phone numbers and LIDs with error 400,
++// and statuses are addressed by LID now: a like, to its poster's LID and
++// your own phone number, never went. The LIDs come from the store, the
++// missing ones from the server; someone who has none is left out. An
++// account without a LID of its own keeps the list as it is.
++func (cli *Client) statusLIDs(ctx context.Context, list []types.JID) []types.JID {
++	ownLID := cli.getOwnLID().ToNonAD()
++	if ownLID.IsEmpty() {
++		return list
++	}
++	ownPN := cli.getOwnID().ToNonAD()
++	var pns []types.JID
++	for _, jid := range list {
++		if jid.Server == types.DefaultUserServer && jid.User != ownPN.User {
++			pns = append(pns, jid.ToNonAD())
++		}
++	}
++	lids := map[types.JID]types.JID{}
++	if len(pns) > 0 {
++		known, err := cli.Store.LIDs.GetManyLIDsForPNs(ctx, pns)
++		if err != nil {
++			cli.Log.Warnf("Failed to get LIDs of status recipients: %v", err)
++		}
++		var missing []types.JID
++		for _, pn := range pns {
++			if lid := known[pn]; !lid.IsEmpty() {
++				lids[pn] = lid.ToNonAD()
++			} else {
++				missing = append(missing, pn)
++			}
++		}
++		if len(missing) > 0 {
++			info, err := cli.GetUserInfo(ctx, missing)
++			if err != nil {
++				cli.Log.Warnf("Failed to ask for LIDs of %d status recipients: %v", len(missing), err)
++			}
++			for _, pn := range missing {
++				if lid := info[pn].LID.ToNonAD(); !lid.IsEmpty() {
++					lids[pn] = lid
++				}
++			}
++		}
++	}
++	out := make([]types.JID, 0, len(list)+1)
++	seen := map[types.JID]bool{ownLID: true}
++	for _, jid := range list {
++		jid = jid.ToNonAD()
++		switch {
++		case jid.User == ownPN.User && jid.Server == types.DefaultUserServer:
++			continue // added below, as a LID
++		case jid.Server == types.DefaultUserServer:
++			lid, ok := lids[jid]
++			if !ok {
++				cli.Log.Warnf("Leaving %s out of a status send: no LID", jid)
++				continue
++			}
++			jid = lid
++		}
++		if !seen[jid] {
++			seen[jid] = true
++			out = append(out, jid)
++		}
++	}
++	return append(out, ownLID)
++}
 diff --git a/status_patch_test.go b/status_patch_test.go
 new file mode 100644
-index 0000000..3d9d55c
+index 0000000..32a1983
 --- /dev/null
 +++ b/status_patch_test.go
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,60 @@
 +package whatsmeow
 +
 +import (
@@ -97,5 +189,19 @@ index 0000000..3d9d55c
 +	}
 +	if got.Info.Chat != types.StatusBroadcastJID || got.Info.Sender != poster || got.Info.ID != "A5B5650DBD9398A7C84ECCFA9FFB35A2" {
 +		t.Errorf("wrong info: chat %s, sender %s, id %s", got.Info.Chat, got.Info.Sender, got.Info.ID)
++	}
++}
++
++// WazzapClients patch: a status goes to LIDs alone, your own included;
++// the server refuses a list that mixes them with phone numbers.
++func TestStatusRecipientsAreLIDs(t *testing.T) {
++	me := types.NewJID("628000000001", types.DefaultUserServer)
++	me.Device = 5
++	ownLID := types.NewJID("100000000001", types.HiddenUserServer)
++	cli := NewClient(&store.Device{ID: &me, LID: ownLID}, waLog.Noop)
++	poster := types.NewJID("52416300998887", types.HiddenUserServer)
++	got := cli.statusLIDs(t.Context(), []types.JID{poster, me.ToNonAD(), poster})
++	if len(got) != 2 || got[0] != poster || got[1] != ownLID {
++		t.Errorf("recipients %v, want %v and %v", got, poster, ownLID)
 +	}
 +}

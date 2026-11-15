@@ -72,6 +72,12 @@ What `hypermeow.patch` does (marked `WazzapClients patch`):
   WhatsApp's `statusJidList`. A status goes to the audience chosen on the
   phone this way (`statusAudience`), and a like, a reaction, to its poster
   alone (`internal/wa/statuslike.go`).
+- `status_patch.go`, `send.go`: a message to `status@broadcast` goes to LIDs
+  alone, your own account's included (`statusLIDs`). The server answers a
+  list that mixes phone numbers and LIDs with error 400 (whatsmeow issue
+  1293), and hypermeow added your own phone number to every list: a like,
+  sent to its poster's LID, never went. LIDs come from the store, missing
+  ones from the server (one usync); someone without one is left out.
 
 After `go get github.com/polymorfa/hypermeow@main` run `apply.sh` again; if
 the hunk no longer applies, regenerate the patch as below.

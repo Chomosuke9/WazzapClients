@@ -321,7 +321,7 @@ func (b *Backend) Statuses() []*model.StatusThread {
 	mentions := b.store.statusMentions(ctx)
 	likes := b.store.statusLikes(ctx)
 	byID := map[string]*model.StatusThread{}
-	skip := map[string]bool{}
+	unsaved := map[string]bool{}
 	var threads []*model.StatusThread
 	for _, r := range rows {
 		id := r.sender
@@ -330,8 +330,19 @@ func (b *Backend) Statuses() []*model.StatusThread {
 		} else if r.fromMe {
 			id = "me"
 		}
-		if skip[id] {
-			continue
+		if r.group == "" && !r.fromMe {
+			un, ok := unsaved[id]
+			if !ok {
+				j, _ := types.ParseJID(r.sender)
+				un = !b.savedContact(ctx, j)
+				unsaved[id] = un
+			}
+			// WhatsApp shows the status updates of your saved contacts
+			// only, but for one that mentioned you or a group of yours,
+			// which its card in the chat opens.
+			if _, mentioned := mentions[r.u.ID]; un && !mentioned {
+				continue
+			}
 		}
 		t := byID[id]
 		if t == nil {
@@ -340,12 +351,7 @@ func (b *Backend) Statuses() []*model.StatusThread {
 				j, _ := types.ParseJID(r.sender)
 				t.Name = b.statusName(ctx, j, r.push)
 				if r.group == "" {
-					if !b.savedContact(ctx, j) {
-						// WhatsApp shows the status updates of your
-						// saved contacts only.
-						skip[id] = true
-						continue
-					}
+					t.Unlisted = unsaved[id]
 					_, t.Muted = mutes[r.sender]
 				}
 			}

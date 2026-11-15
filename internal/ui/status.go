@@ -62,7 +62,7 @@ func (u *UI) layoutStatusList(gtx C) D {
 	var mine *model.StatusThread
 	var recent, viewed, hidden []*model.StatusThread
 	for _, t := range u.statuses {
-		if u.status.groupID != "" && (!t.Group || t.ID != u.status.groupID) {
+		if t.Unlisted || u.status.groupID != "" && (!t.Group || t.ID != u.status.groupID) {
 			continue
 		}
 		switch {
@@ -334,7 +334,7 @@ func (u *UI) listStatus(c *model.Chat) *model.StatusThread {
 			continue
 		}
 		if t.ID == c.ID && t.Group == c.IsGroup {
-			if t.Muted || t.Viewed() {
+			if t.Muted || t.Unlisted || t.Viewed() {
 				return nil
 			}
 			return t

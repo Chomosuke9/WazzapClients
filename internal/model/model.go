@@ -908,12 +908,16 @@ type StatusViews struct {
 // StatusThread is everything one contact posted in the last 24 hours,
 // oldest first.
 type StatusThread struct {
-	ID      string // poster or group JID
-	Group   bool
-	Name    string
-	Mine    bool
-	Muted   bool // hidden: listed apart, under Hidden (MuteStatus)
-	Updates []*StatusUpdate
+	ID    string // poster or group JID
+	Group bool
+	Name  string
+	Mine  bool
+	Muted bool // hidden: listed apart, under Hidden (MuteStatus)
+	// Unlisted threads show nowhere: the updates of someone who isn't a
+	// saved contact that mentioned you or a group of yours, which only
+	// the mention's card opens.
+	Unlisted bool
+	Updates  []*StatusUpdate
 }
 
 // Last returns the newest update.
