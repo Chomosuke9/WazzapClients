@@ -807,6 +807,7 @@ func (u *UI) shutdown() {
 	u.hideViewer()
 	u.status.viewer.close()
 	u.players.stopAll()
+	u.stopResting()
 }
 
 // dropCaches empties the package's caches of what windows drew.

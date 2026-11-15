@@ -89,6 +89,8 @@ type UI struct {
 	// idle is how long the user hasn't touched the keyboard or mouse
 	// (desktop.IdleTime); nil, in tests, is never idle.
 	idle func() time.Duration
+	// rest stops animations while the user is idle (resting.go).
+	rest resting
 
 	chats      []*model.Chat
 	selected   *model.Chat
@@ -762,6 +764,7 @@ func (u *UI) Layout(gtx C) D {
 // layoutWindow draws the window's contents at the zoom.
 func (u *UI) layoutWindow(gtx C) D {
 	trimShapes()
+	u.updateResting(gtx.Now)
 	u.refreshEmoji(gtx)
 	u.emojiAnims.setScale(gtx.Metric.PxPerSp)
 	u.applyEvents()

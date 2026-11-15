@@ -105,6 +105,10 @@ func (u *UI) previewFrame(key string, maxSide int, load func() []byte) (paint.Im
 
 func (u *UI) animFrame(key string, maxSide int, preview bool, load func() []byte) (paint.ImageOp, bool) {
 	ps := &u.players
+	if u.rest.on {
+		// Not drawn, its player stops at the end of the frame.
+		return paint.ImageOp{}, false
+	}
 	p := ps.m[key]
 	if p == nil {
 		n, limit := len(ps.m)-ps.previews-ps.effects, perf.stickers

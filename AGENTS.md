@@ -871,6 +871,11 @@ from `gtx.Now`; a moving one asks for the next frame, and nothing asks at rest
 - Settings > Performance > Animations (`perf.animations`) makes `tween` and `follower`
   jump to their end. New animations built on them obey it for free; anything that
   steps itself from `gtx.Now` (the typing dots, the jump-to-message glide) checks it.
+- Once the user hasn't touched the keyboard or mouse for `idleAfter` (a minute), GIFs,
+  video notes, animated stickers and animated emojis show a still picture until the
+  next input (`u.rest`, `resting.go`): `animFrame`, `gifFrame` and `drawEmojiAnim`
+  refuse, so new things that play on their own should go through them or check
+  `u.rest.on`. A video note playing with sound goes on.
 - `tween` is an on/off progress (a popup opening, a panel sliding) that turns around
   midway without jumping. `follower` glides a number to a new target (tab underlines),
   and `switcher` moves a highlight between items (the open chat, the active rail
