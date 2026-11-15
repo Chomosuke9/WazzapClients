@@ -65,6 +65,9 @@ func (u *UI) gifImage(m *model.Message, img *imgEntry, maxPx int) *imgEntry {
 func (u *UI) gifFrame(m *model.Message, maxPx int) *imgEntry {
 	ps := &u.players
 	key := m.ChatID + "/" + m.ID
+	if u.rest.on && key != ps.sound {
+		return nil // its player closes at the end of the frame
+	}
 	g := ps.gifs[key]
 	if g == nil {
 		if ps.gifFetch[key] != 0 || len(ps.gifs) >= maxGIFs && key != ps.sound {

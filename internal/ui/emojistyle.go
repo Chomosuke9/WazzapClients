@@ -633,7 +633,7 @@ var (
 // animation is downloaded and decoded, when the set has none, or when the
 // budget is spent.
 func (u *UI) drawEmojiAnim(gtx C, name string, side int, at image.Point) bool {
-	if side <= 0 || !emojiStore.Ready(emojiset.Animated, name) {
+	if side <= 0 || u.rest.on || !emojiStore.Ready(emojiset.Animated, name) {
 		return false
 	}
 	as := &u.emojiAnims
