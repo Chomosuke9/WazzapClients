@@ -943,17 +943,17 @@ func (u *UI) statusVolume(gtx C, btn image.Rectangle) {
 	area := btn
 	if show {
 		area = area.Union(pill)
+		fillRRect(gtx, pill, pill.Dy()/2, argb(0x1f1f1f, 0xe8))
+		func() {
+			defer op.Offset(image.Pt(pill.Min.X+gtx.Dp(16), pill.Min.Y+pill.Dy()/2)).Push(gtx.Ops).Pop()
+			u.layoutVolume(gtx, vv, pill.Dx()-gtx.Dp(32))
+		}()
 	}
-	func() {
-		defer op.Offset(area.Min).Push(gtx.Ops).Pop()
-		u.hoverArea(gtx, "st:vol", area.Size())
-	}()
-	if !show {
-		return
-	}
-	fillRRect(gtx, pill, pill.Dy()/2, argb(0x1f1f1f, 0xe8))
-	defer op.Offset(image.Pt(pill.Min.X+gtx.Dp(16), pill.Min.Y+pill.Dy()/2)).Push(gtx.Ops).Pop()
-	u.layoutVolume(gtx, vv, pill.Dx()-gtx.Dp(32))
+	// The hover area goes over the slider: under it, the slider's input
+	// area would block it, and the pill closed as the pointer reached it.
+	// It passes events through, so the slider still gets them.
+	defer op.Offset(area.Min).Push(gtx.Ops).Pop()
+	u.hoverArea(gtx, "st:vol", area.Size())
 }
 
 // likeRed is the heart of a liked status.
