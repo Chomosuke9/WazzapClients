@@ -16,6 +16,7 @@ import (
 	_ "golang.org/x/image/webp" // stickers
 
 	"github.com/chomosuke9/wazzapclients/internal/lottie"
+	"github.com/chomosuke9/wazzapclients/internal/offheap"
 	"github.com/chomosuke9/wazzapclients/internal/photo"
 	"github.com/chomosuke9/wazzapclients/internal/webpanim"
 )
@@ -185,6 +186,7 @@ func (c *imageCache) getWith(key string, load func() []byte, decode func([]byte)
 		// replaces it.
 		done := &imgEntry{state: imgMissing, empty: len(data) == 0, loadedAt: time.Now()}
 		if img != nil {
+			img = outsideHeap(img)
 			done = &imgEntry{state: imgReady, op: paint.NewImageOp(img), size: img.Bounds().Size(),
 				animated: animated, loadedAt: done.loadedAt}
 			done.bytes = 4 * done.size.X * done.size.Y
@@ -201,6 +203,27 @@ func (c *imageCache) getWith(key string, load func() []byte, decode func([]byte)
 		}
 	}()
 	return e
+}
+
+// offheapMin is the size in bytes from which a cached picture's pixels are
+// kept outside the Go heap: the system hands that memory out in 64 KB
+// steps of address space, so smaller ones (profile pictures) stay in it.
+const offheapMin = 64 << 10
+
+// outsideHeap returns img with its pixels outside the Go heap. The cache
+// keeps its pictures a long time, and in the heap each MB of them let the
+// GC leave as much garbage again or more before it collects (2 MB at the
+// GC target of 200 that Settings > Performance offers): a full cache of
+// 128 MB made room for 256 MB of garbage. The ImageOp made from the
+// picture keeps it, and so its pixels, reachable.
+func outsideHeap(img image.Image) image.Image {
+	src, ok := img.(*image.RGBA)
+	if !ok || len(src.Pix) < offheapMin || src.Stride != 4*src.Rect.Dx() {
+		return img
+	}
+	dst := offheap.NewRGBA(image.Rectangle{Max: src.Rect.Size()})
+	copy(dst.Pix, src.Pix)
+	return dst
 }
 
 // forget drops key so the next get reloads it.
