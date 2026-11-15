@@ -403,12 +403,6 @@ Gotchas already found in the pinned version (v0.10.x):
   SHA-256 (hex) of its URL. It downloads through `MediaData` under a `model.RichMedia`
   ID, is tinted to the text's color, and shows as text until then (`richresponse.go`
   in `internal/wa` and `internal/ui`).
-  `/rich` (a `Switch` command: its own switch on the Extra features page, not a gray
-  one) sends markdown the same way (`model.Draft.Rich`, `model.RichFromMarkdown`,
-  `richMessage`): a botForwardedMessage with no bot named, no forwarding marks and no
-  `verificationMetadata` (Meta's signature, which only its bot can make), its formulas
-  left as text, and plain text as the fallback should the server refuse it. Whether
-  every app draws one without the signature is only known from trying.
 - A sticker reaction is a `stickerMessage` of its own whose `messageContextInfo` points to the
   message it reacts to (a `STICKER_ANNOTATION` association, 11); taking it back is deleting
   that sticker message for everyone. It's no message here: `parse` files it under the message,

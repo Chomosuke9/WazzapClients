@@ -79,9 +79,6 @@ type Command struct {
 	// reading without read receipts). Each needs a switch of its own, under
 	// the Extra features page's "Ethically gray features".
 	Gray bool
-	// Switch commands do something WhatsApp's apps don't, though nobody
-	// would mind; each has a switch of its own on the Extra features page.
-	Switch bool
 	// Files commands take the files of the send view when they're typed
 	// as a caption there (Context.Files). Others leave the files be.
 	Files bool

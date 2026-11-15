@@ -110,9 +110,12 @@ func parseMarkdownNow(s string) []mdBlock {
 		switch {
 		case trim == "":
 			gap, para = true, false
-		case strings.HasPrefix(trim, "```") && !strings.Contains(trim[3:], "```"):
-			// A fence; ```code``` on one line is text in WhatsApp's markup.
+		case strings.HasPrefix(trim, "```"):
 			lang := strings.TrimSpace(trim[3:])
+			if j := strings.Index(lang, "```"); j >= 0 {
+				add(mdBlock{kind: mdCode, text: lang[:j]}) // ```code``` on one line
+				continue
+			}
 			var code []string
 			for i++; i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "```"); i++ {
 				code = append(code, lines[i])

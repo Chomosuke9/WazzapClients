@@ -4,12 +4,10 @@ import (
 	"image"
 	"testing"
 
-	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
 
-	"github.com/chomosuke9/wazzapclients/internal/command"
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -109,27 +107,5 @@ func TestRichAnswerBubble(t *testing.T) {
 	math := u.mdSpans(gtx, m, "is ￼0￼", []model.RichLatex{{Expr: "H_2O"}}, richSize, u.pal.Text)
 	if n := len(math.spans); n != 2 || math.spans[1].Content != "H₂O" || len(math.pics) != 0 {
 		t.Errorf("a formula without a picture: %+v", math.spans)
-	}
-}
-
-// TestSlashRich sends a rich message with /rich, which only its switch on
-// the Extra features page offers.
-func TestSlashRich(t *testing.T) {
-	st := newSlashTest(t, "rina")
-	if st.u.commandOn(command.Lookup("rich")) {
-		t.Fatal("/rich is on before its switch")
-	}
-	st.b.SetPref(grayCmdPref("rich"), "on")
-	st.u.loadExtras()
-	before := len(st.b.Messages("rina", 1000))
-	st.typeText("/rich # Title\n```go\nx := 1\n```")
-	st.press(key.NameReturn)
-	msgs := st.b.Messages("rina", 1000)
-	if len(msgs) != before+1 {
-		t.Fatalf("%d messages sent", len(msgs)-before)
-	}
-	m := msgs[len(msgs)-1]
-	if m.Rich == nil || len(m.Rich.Sections) != 2 || m.Rich.Sections[1].Kind != model.RichCode {
-		t.Fatalf("sent %+v", m.Rich)
 	}
 }

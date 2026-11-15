@@ -24,15 +24,12 @@ const (
 	prefStickerReact     = "sticker_react"  // reacting with a sticker (stickerreact.go)
 )
 
-// grayCmdPref is the preference that turns on a command with a switch of
-// its own: a gray one, or a Switch one.
+// grayCmdPref is the preference that turns on a gray command.
 func grayCmdPref(name string) string { return "cmd_" + name }
 
-// commandOn reports whether a command can be used: a gray or Switch one
-// only once its own switch is on.
-func (u *UI) commandOn(c *command.Command) bool {
-	return !c.Gray && !c.Switch || u.cmdSwitches[c.Name]
-}
+// commandOn reports whether a command can be used: a gray one only once
+// its own switch is on.
+func (u *UI) commandOn(c *command.Command) bool { return !c.Gray || u.grayCmds[c.Name] }
 
 // extraOn reports whether an extra feature is turned on.
 func extraOn(b model.Backend, key string) bool { return b != nil && b.Pref(key) == "on" }
@@ -56,10 +53,10 @@ func (u *UI) loadExtras() {
 	u.keepDeleted = extraOn(b, model.PrefKeepDeleted)
 	u.viewOnceReplay = extraOn(b, model.PrefViewOnceReplay)
 	u.loadGIFPrefs()
-	u.cmdSwitches = map[string]bool{}
+	u.grayCmds = map[string]bool{}
 	for _, c := range command.All {
-		if (c.Gray || c.Switch) && extraOn(b, grayCmdPref(c.Name)) {
-			u.cmdSwitches[c.Name] = true
+		if c.Gray && extraOn(b, grayCmdPref(c.Name)) {
+			u.grayCmds[c.Name] = true
 		}
 	}
 	// A window opening in ghost mode shows it at once.
@@ -79,7 +76,6 @@ var commandIcons = map[string]*icon.Icon{
 	"sticker":     icSticker,
 	"purge":       icDeleteSweep,
 	"raffle":      icCasino,
-	"rich":        icon.Code,
 	"calc":        icCalculate,
 	"schedule":    icScheduleSend,
 	"scheduled":   icClock,
@@ -165,7 +161,6 @@ func (u *UI) extrasSettings() []settingsSection {
 			u.extraToggle(prefStickerReact, "Sticker reactions", "React to a message with a sticker, from the Sticker tab of the reaction picker",
 				&u.stickerReact, nil),
 		}, note: "WhatsApp's phones show sticker reactions but don't let people give them yet. The ones others give always show."},
-		u.richSettings(),
 		u.gifSettings(),
 		u.remoteSettings(),
 		{rows: []settingRow{{key: "gray", ic: icExtensionGray, title: "Ethically gray features",
@@ -175,7 +170,7 @@ func (u *UI) extrasSettings() []settingsSection {
 	if u.slash.on {
 		var cmds []*command.Command
 		for _, c := range command.All {
-			if !c.Gray && !c.Switch { // these have a switch of their own
+			if !c.Gray { // gray ones have a switch of their own
 				cmds = append(cmds, c)
 			}
 		}
@@ -202,27 +197,6 @@ func (u *UI) extrasSettings() []settingsSection {
 	return secs
 }
 
-// richSettings has the switches of the Switch commands, like /rich.
-func (u *UI) richSettings() settingsSection {
-	sec := settingsSection{title: "Messages"}
-	for _, c := range command.All {
-		if !c.Switch {
-			continue
-		}
-		flag := u.cmdSwitches[c.Name]
-		sec.rows = append(sec.rows, u.extraToggle(grayCmdPref(c.Name), "/"+c.Name, c.Description, &flag, func() {
-			u.cmdSwitches[c.Name] = flag
-			u.slash.cacheOK = false // the picker offers it, or stops
-			u.conv.richFor = ""
-		}))
-	}
-	sec.note = "Rich messages show on WhatsApp's phones and computers as a forwarded AI answer would, without naming an AI. Older apps may show the text alone."
-	if !u.slash.on {
-		sec.note += " /rich also needs Slash commands, above."
-	}
-	return sec
-}
-
 // graySettings is the Ethically gray features page: features that let you
 // see or do what the people you talk to wouldn't expect.
 func (u *UI) graySettings() []settingsSection {
@@ -242,9 +216,9 @@ func (u *UI) graySettings() []settingsSection {
 		if !c.Gray {
 			continue
 		}
-		flag := u.cmdSwitches[c.Name]
+		flag := u.grayCmds[c.Name]
 		cmds.rows = append(cmds.rows, u.grayToggle(grayCmdPref(c.Name), "/"+c.Name, c.Description, &flag, func() {
-			u.cmdSwitches[c.Name] = flag
+			u.grayCmds[c.Name] = flag
 			u.slash.cacheOK = false // the picker offers it, or stops
 			u.conv.richFor = ""
 			if c.Name == "ghost" && !flag && u.ghostMode() {

@@ -604,10 +604,6 @@ type Draft struct {
 	// LinkImage is the picture big, for the wide card WhatsApp shows above
 	// the title, or empty.
 	LinkImage LinkImage
-	// Rich sends Text, in WhatsApp's markup with markdown's blocks, as a
-	// rich message: laid out like an AI's answer (RichFromMarkdown), without
-	// a link preview.
-	Rich bool
 }
 
 // GroupNameJID is the JID that a message's text mentions, as "@<JID>", for

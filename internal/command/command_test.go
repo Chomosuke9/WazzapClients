@@ -140,7 +140,7 @@ func TestMatching(t *testing.T) {
 	for _, c := range Matching("", false) {
 		outside = append(outside, c.Name)
 	}
-	if strings.Join(outside, " ") != "sticker purge calc rich schedule scheduled afk ghost snippet catch" {
+	if strings.Join(outside, " ") != "sticker purge calc schedule scheduled afk ghost snippet catch" {
 		t.Errorf("outside groups: %v", outside)
 	}
 	if got := Matching("d", true); len(got) != 2 {
