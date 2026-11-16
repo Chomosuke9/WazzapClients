@@ -37,6 +37,14 @@ type findRow struct {
 // listQuery is the chat list's search query, trimmed.
 func (u *UI) listQuery() string { return trimSpace(u.sidebar.search.Text()) }
 
+// clearListSearch closes the search: the chat list shows again.
+func (u *UI) clearListSearch() {
+	u.sidebar.search.SetText("")
+	if u.selected != nil {
+		u.requestFocus(&u.conv.composer)
+	}
+}
+
 // runListSearch starts a message search when the query changed.
 func (u *UI) runListSearch(q string) {
 	f := &u.sidebar.find

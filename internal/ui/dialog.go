@@ -25,7 +25,7 @@ const (
 	dialogForward
 	dialogPoll
 	dialogInvite  // a group's invite link (invite.go)
-	dialogTheme   // a chat's theme (chatmenu.go); title is the chat's ID
+	dialogTheme   // every chat's theme (chattheme.go); title is lookAll
 	dialogEdits   // an edited message's earlier texts (edit.go)
 	dialogPayload // a message's payload (/catch, snippets.go)
 	dialogList    // a bot's list of choices (listpick.go)

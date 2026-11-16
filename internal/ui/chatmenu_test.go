@@ -172,3 +172,34 @@ func TestAppAccent(t *testing.T) {
 		t.Error("WhatsApp's green isn't the plain palette")
 	}
 }
+
+// TestChatThemeReset opens a chat's Chat theme panel, changes its look and
+// resets it to every chat's.
+func TestChatThemeReset(t *testing.T) {
+	u := New(mock.New())
+	u.Start(func() {})
+	u.applyEvents()
+	u.SelectID("family")
+	pink := schemeIndex("Pink")
+	u.setChatTheme(lookAll, pink)
+	u.openChatTheme(u.selected)
+	if !u.themeUI.open || u.dialog.isOpen() {
+		t.Fatal("a chat's theme should open as a panel")
+	}
+	u.setChatTheme("family", 0) // Default, apart from every chat's
+	l := u.lookOf("family")
+	l.bare = true
+	u.setLook("family", l)
+	u.themes = nil
+	if got := u.lookOf("family"); got != (chatLook{bare: true}) {
+		t.Fatalf("look = %+v, want Default without doodles", got)
+	}
+	u.resetLook("family")
+	if got := u.lookOf("family"); got != (chatLook{scheme: pink}) {
+		t.Errorf("after the reset look = %+v, want every chat's Pink", got)
+	}
+	u.escape()
+	if u.themeUI.open || u.selected == nil {
+		t.Error("Esc should close the panel alone")
+	}
+}

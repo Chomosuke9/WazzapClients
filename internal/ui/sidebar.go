@@ -94,6 +94,16 @@ func (u *UI) layoutSearch(gtx C) D {
 							e.HintColor = p.TextSecondary
 							return e.Layout(gtx)
 						}),
+						layout.Rigid(func(gtx C) D {
+							if u.sidebar.search.Text() == "" {
+								return D{}
+							}
+							c := u.btn("search:clear")
+							if c.Clicked(gtx) {
+								u.clearListSearch()
+							}
+							return u.iconButton(gtx, c, icClose, 32, 20, p.TextSecondary)
+						}),
 					)
 				})
 			})

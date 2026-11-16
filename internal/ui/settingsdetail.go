@@ -894,7 +894,7 @@ func shortcutSettings(enterSend bool) []settingsSection {
 			k("Delete the selected drawing or text", "Delete"),
 		}},
 		{title: "Everywhere", rows: []settingRow{
-			k("Close a menu, dialog, panel or reply", "Esc"),
+			k("Close a menu, dialog, panel or reply, then the search, then the chat", "Esc"),
 			k("Show or hide the chat list", mod, "Shift", "L"),
 			k("Turn privacy mode on or off (Extra features)", mod, "Shift", "P"),
 			k("Zoom in", mod, "+"),

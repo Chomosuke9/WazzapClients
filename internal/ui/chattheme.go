@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,9 +16,11 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	"gioui.org/widget"
 
 	"github.com/chomosuke9/wazzapclients/internal/filepick"
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
 // Chat themes, as WhatsApp has them (WhatsApp Web's ChatTheme*.stylex and
@@ -80,6 +83,7 @@ const (
 type chatLook struct {
 	scheme int
 	wall   string // "" follows the scheme
+	bare   bool   // no doodles on the wallpaper
 }
 
 // oldChatThemes are the themes kept before WhatsApp's and the ones they
@@ -119,7 +123,8 @@ func (u *UI) lookOf(id string) chatLook {
 		l = u.lookOf(lookAll)
 	} else {
 		scheme, wall, _ := strings.Cut(v, "|")
-		l = chatLook{schemeIndex(scheme), wall}
+		wall, bare, _ := strings.Cut(wall, "|")
+		l = chatLook{schemeIndex(scheme), wall, bare != ""}
 	}
 	u.themes[id] = l
 	return l
@@ -128,8 +133,11 @@ func (u *UI) lookOf(id string) chatLook {
 // setLook keeps chat id's look.
 func (u *UI) setLook(id string, l chatLook) {
 	v := chatThemes[l.scheme].id
-	if l.wall != "" {
+	if l.wall != "" || l.bare {
 		v += "|" + l.wall
+	}
+	if l.bare {
+		v += "|bare"
 	}
 	if v == "" && id != lookAll && u.backend.Pref(prefChatTheme+lookAll) != "" {
 		v = "|" // the app's look, not every chat's
@@ -144,7 +152,17 @@ func (u *UI) chatThemeOf(id string) int { return u.lookOf(id).scheme }
 
 // setChatTheme gives a chat one of the Themes: its scheme, and the
 // wallpaper that goes with it.
-func (u *UI) setChatTheme(id string, i int) { u.setLook(id, chatLook{scheme: i}) }
+func (u *UI) setChatTheme(id string, i int) {
+	u.setLook(id, chatLook{scheme: i, bare: u.lookOf(id).bare})
+}
+
+// resetLook gives chat id the default look again: every chat's, or for
+// lookAll the app's own.
+func (u *UI) resetLook(id string) {
+	u.backend.SetPref(prefChatTheme+id, "")
+	u.themes = nil
+	u.lookPal = lookPal{}
+}
 
 // setBubbles changes a chat's bubbles and keeps its wallpaper.
 func (u *UI) setBubbles(id string, i int) {
@@ -313,11 +331,11 @@ func (u *UI) lookPalette(l chatLook) *Palette {
 		return c.pal
 	}
 	p := u.themed(chatThemes[l.scheme])
-	if l.wall != "" {
+	if l.wall != "" || l.bare {
 		w := u.wallOf(p, l)
 		q := *p // p may be the app's palette, or a palette's kept one
 		p = &q
-		p.ChatBg, p.Doodle, p.Plain, p.WallPhoto, p.WallFocus = w.bg, w.doodle, w.plain, w.photo, w.focus
+		p.ChatBg, p.Doodle, p.Plain, p.WallPhoto, p.WallFocus = w.bg, w.doodle, w.plain || l.bare, w.photo, w.focus
 	}
 	u.lookPal = lookPal{l, u.pal, p}
 	return p
@@ -353,13 +371,19 @@ func (u *UI) layoutWallpaper(gtx C) {
 	u.conv.wallpaper.layout(gtx, p.ChatBg, p.Doodle, u.doodles && !p.Plain)
 }
 
-// The Chat theme dialog.
+// Chat theme: a panel beside the open chat, in the info panel's place,
+// like WhatsApp's; every chat's (Settings) is a dialog of the same pages.
 
-// themeUI is the open Chat theme dialog's page.
+// themeUI is the open Chat theme panel or dialog's page.
 type themeUI struct {
-	page    string // "", "bubble", "wall", "color" or "pos"
-	picking bool   // the photo dialog is open
-	picked  chan pickedWall
+	open     bool // the panel, for chatID
+	chatID   string
+	fromInfo bool // opened from the info panel: closing goes back to it
+	anim     tween
+	list     widget.List
+	page     string // "", "all", "bubble", "wall", "color" or "pos"
+	picking  bool   // the photo dialog is open
+	picked   chan pickedWall
 	// The Photo position page: the photo's size there, and the focus
 	// being dragged (drawn by the wallpaper too, saved on release).
 	posSize   image.Point
@@ -377,13 +401,68 @@ type pickedWall struct {
 	err          error
 }
 
+// shown reports whether the panel is open or still sliding away.
+func (t *themeUI) shown() bool { return t.open || t.anim.v > 0 }
+
+// openChatTheme opens c's Chat theme panel in place of the info, search or
+// Message info panel, or with c nil the dialog of every chat's theme.
 func (u *UI) openChatTheme(c *model.Chat) {
-	id := lookAll
-	if c != nil {
-		id = c.ID
+	t := &u.themeUI
+	u.themeGo("")
+	if c == nil {
+		u.dialog = dialogState{kind: dialogTheme, title: lookAll}
+		return
 	}
-	u.themeUI.page = ""
-	u.dialog = dialogState{kind: dialogTheme, title: id}
+	t.fromInfo = u.info.open && u.info.chatID == c.ID
+	if u.info.open || u.search.open || u.msgInfo.open {
+		u.hideInfo()
+		u.hideChatSearch()
+		u.hideMsgInfo()
+		t.anim.snap(true)
+	}
+	t.open, t.chatID = true, c.ID
+}
+
+// hideChatTheme closes the panel at once, for when the chat or page
+// changes under it, or another panel takes its place.
+func (u *UI) hideChatTheme() {
+	u.themeUI.open = false
+	u.themeUI.anim.snap(false)
+}
+
+// themeGo opens a page of the Chat theme panel or dialog.
+func (u *UI) themeGo(page string) {
+	u.themeUI.page = page
+	u.themeUI.list.Position = layout.Position{}
+	u.dialog.list.Position = layout.Position{}
+}
+
+// themeBack goes back a page, or from the first one closes the panel (to
+// the info panel it was opened from).
+func (u *UI) themeBack() {
+	t := &u.themeUI
+	if t.page != "" {
+		u.themeGo(map[string]string{"color": "wall", "pos": "wall"}[t.page])
+		return
+	}
+	if !t.open {
+		return
+	}
+	if t.fromInfo {
+		u.hideChatTheme()
+		u.openInfo(t.chatID)
+		u.info.anim.snap(true)
+		return
+	}
+	t.open = false
+}
+
+// themeBg is the background the theme pages are drawn on.
+func (u *UI) themeBg() color.NRGBA {
+	if u.themeUI.open {
+		return u.pal.Panel
+	}
+	return u.pal.Dialog
 }
 
 // pickWallPhoto opens the system's file dialog for a photo to be chat
@@ -440,36 +519,96 @@ func (u *UI) updateWallPick() {
 		case r.path != "":
 			// The photo's position next, from the middle.
 			u.setWall(r.chatID, photoWallValue(r.path, wallFocusCenter))
-			u.themeUI.page = "pos"
-			u.dialog.list.Position = layout.Position{}
+			u.themeGo("pos")
 		}
 	default:
 	}
 }
 
-// themePanel is the Chat theme dialog: the Themes, and the Chat bubble,
-// Wallpaper and Color pages. A pick shows at once.
+// themePages handles the pages' buttons and returns the open page's title
+// and rows, laid out for width w.
+func (u *UI) themePages(gtx C, id string, w int) (string, []layout.Widget) {
+	t := &u.themeUI
+	u.updateWallPick()
+	if u.btn("theme:back").Clicked(gtx) {
+		u.themeBack()
+	}
+	if u.btn("theme:reset").Clicked(gtx) {
+		u.resetLook(id)
+		u.themeGo("")
+	}
+	for _, pg := range []string{"all", "bubble", "wall", "color"} {
+		if u.btn("theme:go:" + pg).Clicked(gtx) {
+			u.themeGo(pg)
+		}
+	}
+	if u.btn("theme:gallery").Clicked(gtx) {
+		u.pickWallPhoto(id)
+	}
+	switch t.page {
+	case "all":
+		return "Themes", u.allThemeRows(gtx, id, w)
+	case "bubble":
+		return "Chat bubble", u.bubbleRows(gtx, id, w)
+	case "wall":
+		return "Wallpaper", u.wallRows(gtx, id, w)
+	case "color":
+		return "Color", u.colorRows(gtx, id, w)
+	case "pos":
+		return "Photo position", u.wallPosRows(gtx, id, w)
+	}
+	if id == lookAll {
+		return "Chat theme for all chats", u.themeRows(gtx, id, w)
+	}
+	return "Chat theme", u.themeRows(gtx, id, w)
+}
+
+// themeReset is the header's button that gives the default look back.
+func (u *UI) themeReset(gtx C) D {
+	return u.iconButton(gtx, u.btn("theme:reset"), icRefresh, 40, 24, u.pal.Icon)
+}
+
+// layoutChatTheme is the Chat theme panel beside the chat: a back arrow,
+// the page's title and the reset button, then the page. A pick shows at
+// once in the chat.
+func (u *UI) layoutChatTheme(gtx C) D {
+	p := u.pal
+	t := &u.themeUI
+	dims := fill(gtx, p.Panel)
+	t.list.Axis = layout.Vertical
+	title, rows := u.themePages(gtx, t.chatID, gtx.Constraints.Max.X-gtx.Dp(48))
+	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D {
+			return vcenter(gtx, gtx.Dp(64), func(gtx C) D {
+				return layout.Inset{Left: 11.5, Right: 14}.Layout(gtx, func(gtx C) D {
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("theme:back"), icBack, 40, 24, p.IconStrong) }),
+						layout.Rigid(layout.Spacer{Width: 10}.Layout),
+						layout.Flexed(1, u.label(16.5, title, p.Text, labelOpts{maxLines: 1}).Layout),
+						layout.Rigid(u.themeReset),
+					)
+				})
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: 12}.Layout),
+		layout.Flexed(1, func(gtx C) D {
+			return u.scrollList(gtx, &t.list, len(rows), func(gtx C, i int) D {
+				return layout.Inset{Left: 24, Right: 24}.Layout(gtx, rows[i])
+			})
+		}),
+	)
+	return dims
+}
+
+// themePanel is the Chat theme dialog (every chat's theme): the pages the
+// panel shows.
 func (u *UI) themePanel(gtx C) D {
 	d := &u.dialog
 	p := u.pal
 	t := &u.themeUI
 	id := d.title
-	u.updateWallPick()
 	if u.btn("theme:done").Clicked(gtx) {
 		u.closeDialog()
-	}
-	if u.btn("theme:back").Clicked(gtx) {
-		t.page = map[string]string{"color": "wall", "pos": "wall"}[t.page]
-		d.list.Position = layout.Position{}
-	}
-	for _, pg := range []string{"bubble", "wall", "color"} {
-		if u.btn("theme:go:" + pg).Clicked(gtx) {
-			t.page = pg
-			d.list.Position = layout.Position{}
-		}
-	}
-	if u.btn("theme:gallery").Clicked(gtx) {
-		u.pickWallPhoto(id)
 	}
 	d.list.Axis = layout.Vertical
 	tile, gap := gtx.Dp(82), gtx.Dp(8)
@@ -477,28 +616,10 @@ func (u *UI) themePanel(gtx C) D {
 	w := min(cols*tile+(cols-1)*gap+gtx.Dp(48), gtx.Constraints.Max.X-gtx.Dp(32))
 	h := min(gtx.Dp(640), gtx.Constraints.Max.Y-gtx.Dp(48))
 	gtx.Constraints = layout.Exact(image.Pt(w, h))
-	inner := w - gtx.Dp(48)
-
-	var rows []layout.Widget
-	title := "Chat theme"
-	switch t.page {
-	case "bubble":
-		title, rows = "Chat bubble", u.bubbleRows(gtx, id, inner)
-	case "wall":
-		title, rows = "Wallpaper", u.wallRows(gtx, id, inner)
-	case "color":
-		title, rows = "Color", u.colorRows(gtx, id, inner)
-	case "pos":
-		title, rows = "Photo position", u.wallPosRows(gtx, id, inner)
-	default:
-		if id == lookAll {
-			title = "Chat theme for all chats"
-		}
-		rows = u.themeRows(gtx, id, inner)
-	}
+	title, rows := u.themePages(gtx, id, w-gtx.Dp(48))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Left: 12, Right: 24, Top: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
+			return layout.Inset{Left: 12, Right: 16, Top: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx C) D {
 						if t.page == "" {
@@ -506,7 +627,8 @@ func (u *UI) themePanel(gtx C) D {
 						}
 						return u.iconButton(gtx, u.btn("theme:back"), icBack, 40, 24, p.Icon)
 					}),
-					layout.Rigid(u.label(19.5, title, p.Text, labelOpts{weight: font.Medium}).Layout),
+					layout.Flexed(1, u.label(19.5, title, p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+					layout.Rigid(u.themeReset),
 				)
 			})
 		}),
@@ -525,7 +647,7 @@ func (u *UI) themePanel(gtx C) D {
 	)
 }
 
-// heading is a section's title in the dialog.
+// heading is a section's title on a theme page.
 func (u *UI) themeHeading(s string) layout.Widget {
 	return func(gtx C) D {
 		return layout.Inset{Top: 8, Bottom: 12}.Layout(gtx, u.label(15, s, u.pal.TextSecondary, labelOpts{weight: font.Medium}).Layout)
@@ -553,32 +675,9 @@ func grid(n int, cell image.Point, gap, w int, draw func(gtx C, i int)) []layout
 	return rows
 }
 
-// themeRows is the dialog's first page: Chat bubble and Wallpaper, then
-// WhatsApp's Themes (Default and the themes without a photo wallpaper,
-// then those with one, drawn in their colors).
-func (u *UI) themeRows(gtx C, id string, w int) []layout.Widget {
-	l := u.lookOf(id)
-	lp := u.lookPalette(l)
-	rows := []layout.Widget{func(gtx C) D {
-		return layout.Inset{Top: 4, Bottom: 16}.Layout(gtx, func(gtx C) D {
-			return layout.Flex{Spacing: layout.SpaceAround}.Layout(gtx,
-				layout.Rigid(func(gtx C) D {
-					return u.themeAction(gtx, "theme:go:bubble", "Chat bubble", func(gtx C, r image.Rectangle) {
-						b := image.Rectangle{Min: r.Min.Add(image.Pt(r.Dx()/2-gtx.Dp(18), r.Dy()/2-gtx.Dp(11))), Max: r.Min.Add(image.Pt(r.Dx()/2+gtx.Dp(18), r.Dy()/2+gtx.Dp(11)))}
-						fillRRect(gtx, b, gtx.Dp(6), lp.BubbleOut)
-					})
-				}),
-				layout.Rigid(func(gtx C) D {
-					return u.themeAction(gtx, "theme:go:wall", "Wallpaper", func(gtx C, r image.Rectangle) {
-						b := image.Rectangle{Min: r.Min.Add(image.Pt(r.Dx()/2-gtx.Dp(12), r.Dy()/2-gtx.Dp(16))), Max: r.Min.Add(image.Pt(r.Dx()/2+gtx.Dp(12), r.Dy()/2+gtx.Dp(16)))}
-						fillRRect(gtx, b, gtx.Dp(5), lp.ChatBg)
-					})
-				}),
-			)
-		})
-	}}
-	rows = append(rows, u.themeHeading("Themes"))
-	var plain, stock []int
+// themeSets are WhatsApp's Themes in the order they're offered: Default
+// and the themes without a photo wallpaper, then those with one.
+func themeSets() (plain, stock []int) {
 	for i, t := range chatThemes {
 		switch {
 		case i == 0, !t.stock:
@@ -587,21 +686,144 @@ func (u *UI) themeRows(gtx C, id string, w int) []layout.Widget {
 			stock = append(stock, i)
 		}
 	}
+	return plain, stock
+}
+
+// themeTiles lays the themes set out three to a row.
+func (u *UI) themeTiles(gtx C, id string, set []int, w int) []layout.Widget {
+	l := u.lookOf(id)
 	cur := -1
 	if l.wall == "" {
 		cur = l.scheme
 	}
-	cell, gap := image.Pt(gtx.Dp(82), gtx.Dp(82)), gtx.Dp(8)
-	for _, set := range [][]int{plain, stock} {
-		rows = append(rows, grid(len(set), cell, gap, w, func(gtx C, j int) {
-			i := set[j]
-			u.themeSwatch(gtx, id, i, i == cur)
-		})...)
-		rows = append(rows, func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(12))} })
-	}
-	return append(rows, func(gtx C) D {
-		return layout.Inset{Bottom: 8}.Layout(gtx, u.label(13.5, "The chat color and wallpaper will both change.", u.pal.TextSecondary).Layout)
+	gap := gtx.Dp(12)
+	cw := (w - 2*gap) / 3
+	return grid(len(set), image.Pt(cw, cw*2/3), gap, w, func(gtx C, j int) {
+		u.themeSwatch(gtx, id, set[j], set[j] == cur)
 	})
+}
+
+// themeRows is the first page, as WhatsApp's panel: six Themes and See
+// all, the doodles' switch, then Customize: Chat bubble and Wallpaper.
+func (u *UI) themeRows(gtx C, id string, w int) []layout.Widget {
+	p := u.pal
+	l := u.lookOf(id)
+	lp := u.lookPalette(l)
+	plain, stock := themeSets()
+	set := append(append([]int{}, plain[:min(3, len(plain))]...), stock[:min(3, len(stock))]...)
+	if l.wall == "" && !slices.Contains(set, l.scheme) && len(set) > 1 {
+		set[1] = l.scheme // the chat's own theme is always among them
+	}
+	if u.btn("theme:doodles").Clicked(gtx) {
+		l.bare = !l.bare
+		u.setLook(id, l)
+	}
+	rows := []layout.Widget{func(gtx C) D {
+		return layout.Inset{Top: 8, Bottom: 18}.Layout(gtx, func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx C) D {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(u.label(16.5, "Themes", p.Text, labelOpts{weight: font.Medium}).Layout),
+						layout.Rigid(layout.Spacer{Height: 3}.Layout),
+						layout.Rigid(u.label(13.5, "The chat color and wallpaper will both change.", p.TextSecondary, labelOpts{maxLines: 2}).Layout),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Width: 12}.Layout),
+				layout.Rigid(func(gtx C) D {
+					c := u.btn("theme:go:all")
+					return clickable(gtx, c, func(gtx C) D {
+						m := op.Record(gtx.Ops)
+						d := layout.Inset{Left: 16, Right: 16, Top: 8, Bottom: 8}.Layout(gtx,
+							u.label(14, "See all", p.Green, labelOpts{weight: font.Medium, maxLines: 1}).Layout)
+						call := m.Stop()
+						borderRRect(gtx, image.Rectangle{Max: d.Size}, d.Size.Y/2, mix(u.themeBg(), p.Hover, u.hover(gtx, c)), p.ChipBorder)
+						call.Add(gtx.Ops)
+						return d
+					})
+				}),
+			)
+		})
+	}}
+	rows = append(rows, u.themeTiles(gtx, id, set, w)...)
+	rows = append(rows,
+		func(gtx C) D {
+			return layout.Inset{Top: 6}.Layout(gtx, func(gtx C) D {
+				return u.themeRow(gtx, "theme:doodles", icDoodles, "WhatsApp doodles", func(gtx C) D {
+					return u.themeSwitch(gtx, "theme:doodles", !l.bare)
+				})
+			})
+		},
+		func(gtx C) D {
+			sz := image.Pt(gtx.Constraints.Max.X, gtx.Dp(41))
+			fillRect(gtx, image.Rect(0, gtx.Dp(20), sz.X, gtx.Dp(20)+max(1, gtx.Dp(1))), p.Divider)
+			return D{Size: sz}
+		},
+		func(gtx C) D {
+			return layout.Inset{Top: 4, Bottom: 8}.Layout(gtx, u.label(16.5, "Customize", p.Text, labelOpts{weight: font.Medium}).Layout)
+		},
+		func(gtx C) D {
+			return u.themeRow(gtx, "theme:go:bubble", icBubble, "Chat bubble", func(gtx C) D {
+				s := gtx.Dp(30)
+				fillCircle(gtx, image.Pt(s/2, s/2), s/2, lp.BubbleOut)
+				return D{Size: image.Pt(s, s)}
+			})
+		},
+		func(gtx C) D {
+			return u.themeRow(gtx, "theme:go:wall", icWallpaper, "Wallpaper", func(gtx C) D {
+				s := gtx.Dp(30)
+				r := image.Rect(0, 0, s, s)
+				fillRRect(gtx, r, gtx.Dp(7), p.ChipBorder)
+				fillRRect(gtx, r.Inset(max(1, gtx.Dp(1))), gtx.Dp(6), lp.ChatBg)
+				return D{Size: image.Pt(s, s)}
+			})
+		},
+	)
+	return rows
+}
+
+// allThemeRows is See all's page: every Theme.
+func (u *UI) allThemeRows(gtx C, id string, w int) []layout.Widget {
+	plain, stock := themeSets()
+	return u.themeTiles(gtx, id, append(plain, stock...), w)
+}
+
+// themeRow is a row of the first page: an icon, its name, and at the
+// right edge a switch or a sample of what the row changes.
+func (u *UI) themeRow(gtx C, key string, ic *icon.Icon, label string, trailing layout.Widget) D {
+	p := u.pal
+	c := u.btn(key)
+	return clickable(gtx, c, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		m := op.Record(gtx.Ops)
+		d := vcenter(gtx, gtx.Dp(56), func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(layout.Spacer{Width: 8}.Layout),
+				layout.Rigid(iconW(ic, 24, p.Icon)),
+				layout.Rigid(layout.Spacer{Width: 22}.Layout),
+				layout.Flexed(1, u.label(16, label, p.Text, labelOpts{maxLines: 1}).Layout),
+				layout.Rigid(trailing),
+				layout.Rigid(layout.Spacer{Width: 8}.Layout),
+			)
+		})
+		call := m.Stop()
+		if h := u.hover(gtx, c); h > 0 {
+			fillRRect(gtx, image.Rectangle{Max: d.Size}, gtx.Dp(10), faded(p.RowHover, h))
+		}
+		call.Add(gtx.Ops)
+		return d
+	})
+}
+
+// themeSwitch draws a switch, its knob sliding when it changes.
+func (u *UI) themeSwitch(gtx C, key string, on bool) D {
+	p := u.pal
+	v := smooth(u.follows.toggle(gtx, key, on, durHoverIn))
+	w, h := gtx.Dp(38), gtx.Dp(22)
+	fillRRect(gtx, image.Rect(0, 0, w, h), h/2, mix(p.TextSecondary, p.Green, v))
+	r := h/2 - gtx.Dp(3)
+	x := lerpInt(h/2, w-h/2, v)
+	fillCircle(gtx, image.Pt(x, h/2), r, u.themeBg())
+	return D{Size: image.Pt(w, h)}
 }
 
 // themeAction is a big button of the dialog's: a rounded box with art in
@@ -621,9 +843,10 @@ func (u *UI) themeAction(gtx C, key, label string, art func(gtx C, r image.Recta
 }
 
 // themeSwatch is one of the Themes as WhatsApp's picker draws it
-// (WAWebChatThemeCanvas): its wallpaper, with a bubble of theirs and one
-// of yours at the bottom, framed in the accent when it's the chat's.
+// (WAWebChatThemeCanvas): its wallpaper with a bubble of theirs and one
+// of yours on it, ringed with a check when it's the chat's.
 func (u *UI) themeSwatch(gtx C, id string, i int, on bool) D {
+	p := u.pal
 	tp := u.themed(chatThemes[i])
 	c := u.btn("theme:" + itoa(i))
 	if c.Clicked(gtx) {
@@ -631,13 +854,31 @@ func (u *UI) themeSwatch(gtx C, id string, i int, on bool) D {
 	}
 	return clickable(gtx, c, func(gtx C) D {
 		sz := gtx.Constraints.Max
-		u.swatchFrame(gtx, sz, on, u.hover(gtx, c), tp.ChatBg)
-		bub := image.Pt(gtx.Dp(36), gtx.Dp(10))
-		pad, gap := gtx.Dp(8), gtx.Dp(2)
-		out := image.Rectangle{Min: image.Pt(sz.X-pad-bub.X, sz.Y-gtx.Dp(4)-bub.Y), Max: image.Pt(sz.X-pad, sz.Y-gtx.Dp(4))}
-		in := image.Rectangle{Min: image.Pt(pad, out.Min.Y-gap-bub.Y), Max: image.Pt(pad+bub.X, out.Min.Y-gap)}
-		fillRRect(gtx, in, gtx.Dp(4), tp.BubbleIn)
-		fillRRect(gtx, out, gtx.Dp(4), tp.BubbleOut)
+		r := image.Rectangle{Max: sz}
+		rad := gtx.Dp(14)
+		if on {
+			bw := gtx.Dp(2)
+			fillRRect(gtx, r, rad, p.Text)
+			fillRRect(gtx, r.Inset(bw), rad-bw, u.themeBg())
+			fillRRect(gtx, r.Inset(2*bw), rad-2*bw, tp.ChatBg)
+		} else {
+			bw := max(1, gtx.Dp(1))
+			fillRRect(gtx, r, rad, mix(p.ChipBorder, p.TextSecondary, u.hover(gtx, c)))
+			fillRRect(gtx, r.Inset(bw), rad-bw, tp.ChatBg)
+		}
+		bub := image.Pt(sz.X*27/100, sz.Y*19/100)
+		in := image.Pt(sz.X*23/100, sz.Y*16/100)
+		out := image.Pt(sz.X*52/100, sz.Y*37/100)
+		fillRRect(gtx, image.Rectangle{Min: in, Max: in.Add(bub)}, gtx.Dp(5), tp.BubbleIn)
+		fillRRect(gtx, image.Rectangle{Min: out, Max: out.Add(bub)}, gtx.Dp(5), tp.BubbleOut)
+		if on {
+			ctr := image.Pt(sz.X/2, sz.Y*78/100)
+			fillCircle(gtx, ctr, gtx.Dp(10), rgb(0xffffff))
+			s := gtx.Dp(16)
+			t := op.Offset(ctr.Sub(image.Pt(s/2, s/2))).Push(gtx.Ops)
+			drawIcon(gtx, icTick, 16, rgb(0x0a0a0a))
+			t.Pop()
+		}
 		return D{Size: sz}
 	})
 }
@@ -706,7 +947,7 @@ func (u *UI) bubbleRows(gtx C, id string, w int) []layout.Widget {
 		if schemeOf(u.scheme) != nil {
 			col = u.themed(chatThemes[i]).BubbleOut
 		}
-		if _, clicked := u.circle(gtx, "bubble:"+itoa(i), col, u.pal.Dialog, i == cur); clicked {
+		if _, clicked := u.circle(gtx, "bubble:"+itoa(i), col, u.themeBg(), i == cur); clicked {
 			if i == schemeIndex("WhatsApp-Green@Tonal") {
 				i = 0
 			}
@@ -770,8 +1011,7 @@ func (u *UI) wallRows(gtx C, id string, w int) []layout.Widget {
 		if c.Clicked(gtx) {
 			if wall == cur && strings.HasPrefix(wall, "photo:") {
 				// The chosen photo again: its position.
-				u.themeUI.page = "pos"
-				u.dialog.list.Position = layout.Position{}
+				u.themeGo("pos")
 			} else {
 				u.setWall(id, wall)
 			}
@@ -815,7 +1055,7 @@ func (u *UI) colorRows(gtx C, id string, w int) []layout.Widget {
 	cell := image.Pt(gtx.Dp(72), gtx.Dp(72))
 	return grid(len(solidWalls), cell, gtx.Dp(12), w, func(gtx C, i int) {
 		key := "color:" + itoa(i)
-		if _, clicked := u.circle(gtx, key, solidLook(solidWalls[i], u.dark).bg, u.pal.Dialog, cur == key); clicked {
+		if _, clicked := u.circle(gtx, key, solidLook(solidWalls[i], u.dark).bg, u.themeBg(), cur == key); clicked {
 			u.setWall(id, key)
 		}
 	})

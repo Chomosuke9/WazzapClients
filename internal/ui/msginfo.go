@@ -37,9 +37,10 @@ func (s *msgInfoState) shown() bool { return s.open || s.anim.v > 0 }
 // panel if one is open.
 func (u *UI) openMsgInfo(m *model.Message) {
 	s := &u.msgInfo
-	if u.info.open || u.search.open {
+	if u.info.open || u.search.open || u.themeUI.open {
 		u.hideInfo()
 		u.hideChatSearch()
+		u.hideChatTheme()
 		s.anim.snap(true)
 	}
 	s.open, s.chatID, s.msg, s.votes = true, m.ChatID, m, false

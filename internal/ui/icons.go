@@ -32,6 +32,7 @@ var (
 	icLock          = icon.LockFill
 	icBack          = icon.ArrowBack
 	icRefresh       = icon.Refresh
+	icDoodles       = icon.Brush
 	icBlock         = icon.Block
 	icGroup         = icon.GroupFill
 	icPerson        = icon.PersonFill
