@@ -32,6 +32,9 @@ What `gio.patch` does (marked `WazzapClients patch`):
   made-up events after the frame (Shift+F10 right-clicks the focused
   element). `MoveFocus` no longer panics on a focus that's gone. `widget`:
   `Clickable.NoFocus` keeps scrims out of Tab's way.
+- `widget/editor.go`: Ctrl+Backspace and Ctrl+Delete delete a word. Where
+  the shortcut modifier is also the one that moves by words (Ctrl, anywhere
+  but macOS) the editor took them for a shortcut and did nothing.
 - Linux desktop integration (`app/`), for `internal/desktop`:
   `SetDropHandler` hears of files dragged from another program over a
   window and dropped on it, on Wayland (`os_wayland.go`: the data device's

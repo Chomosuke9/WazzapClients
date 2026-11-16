@@ -198,6 +198,13 @@ Gotchas already found in the pinned version (v0.10.x):
   for a 1080p video), and a closed player hands the C heap back (`malloc_trim`).
   Its tests make media with ffmpeg and skip without GStreamer's plugins. The viewer's video UI is `videoview.go`;
   `WAZZAP_DEMO_VIDEO=<file.mp4>` makes `-demo` play that file.
+- Upstream's `widget.Editor` ignores Ctrl+Backspace and Ctrl+Delete wherever
+  `key.ModShortcut` and `key.ModShortcutAlt` are both Ctrl (everywhere but macOS): its
+  shortcut branch returns before the word delete. `patches/gio.patch` lets them through.
+- A list in the composer: a line's leading "- " or "* " is drawn as a bullet
+  (`bulletAt`, `composertext.go`), and `listKeys` reads Shift+Enter (Enter too, when
+  it adds a line) before the editor: it starts the next item, or ends the list on an
+  empty one (`composerNewLine`).
 - `f32.Rectangle` no longer exists. `image.Rect` normalizes swapped corners, so build an
   `image.Rectangle{Min: ..., Max: ...}` literal when `Max` is computed from `Min`.
 - `gtx.Disabled()` blocks `gtx.Execute` too, so a disabled context can't ask for the
@@ -624,7 +631,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    theme, encryption code, Add member, invite link) in chatmenu.go; chat
                    themes (WhatsApp's color schemes, vibrant, tonal and minimal, and the
                    wallpaper: a theme's, a plain color or a photo of yours; per chat or for
-                   every chat) and the Chat theme dialog's pages in chattheme.go, a photo
+                   every chat; a chat's opens as a panel in the info panel's place, like
+                   WhatsApp's, with a reset button, every chat's as a dialog of the same
+                   pages; WhatsApp doodles is a switch per look) in chattheme.go, a photo
                    wallpaper (cropped around a point you pick on its Photo position page,
                    only the part that shows decoded) in wallphoto.go, their tables
                    read from WhatsApp Web's modules in chatthemes.go, and the App theme color
@@ -644,7 +653,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    media, docs and links from every chat, or one chat's) in gallery.go; the list column's
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; keyboard use
                    (the focus ring, menus and dialogs trapping the focus, arrows along the chat list,
-                   messages and menus, Shift+F10, F6 and the shortcuts on Settings > Keyboard shortcuts)
+                   messages and menus, Shift+F10, F6 and the shortcuts on Settings > Keyboard shortcuts;
+                   Esc itself is `escape` in app.go: the topmost overlay, then the chat list's
+                   search, then the open chat)
                    in keyboard.go; a sender's run of stickers, side by side as many to a
                    line as fit, in stickerrow.go; sticker packs (a shared pack's card, the
                    "View sticker pack" dialog, which sends its stickers and adds the pack to
@@ -984,7 +995,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
-# the Chat theme dialog's pages theme, themebubble, themewall, themecolor, and accent (the App theme color Red);
+# the Chat theme panel's pages theme, themebubble, themewall, themecolor, and accent (the App theme color Red);
 # channels: channelinfo (-ochat techdaily@newsletter, or wazzapnews@newsletter for one of your own, bola@newsletter for a
 # suggestion's preview; convmenu and msgmenu work there too), channelnew (Create channel), channeladd (the ⊕ menu);
 # custom mentions: mentions (a group's page), custommention, newmention (its name's error), custompick (the picker offering them);

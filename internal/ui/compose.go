@@ -101,6 +101,7 @@ func (u *UI) closeChat() {
 	u.hideInfo()
 	u.hideChatSearch()
 	u.hideMsgInfo()
+	u.hideChatTheme()
 	u.endSelect()
 }
 

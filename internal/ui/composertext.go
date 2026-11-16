@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"gioui.org/f32"
+	"gioui.org/io/key"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -36,7 +37,16 @@ const (
 
 // composerRich reports whether the composer text needs paintComposerText.
 func (u *UI) composerRich(txt string) bool {
-	return strings.ContainsAny(txt, "*_~`") || len(u.mentionRanges(txt)) > 0 || u.commandName(txt) > 0
+	return strings.ContainsAny(txt, "*_~`") || strings.HasPrefix(txt, "- ") || strings.Contains(txt, "\n- ") ||
+		len(u.mentionRanges(txt)) > 0 || u.commandName(txt) > 0
+}
+
+// bulletAt reports whether the byte at i of txt is a list item's "-" or
+// "*": at the start of a line, before a space. fl are the text's flags
+// (a line of a code block isn't a list).
+func bulletAt(txt string, fl []uint8, i int) bool {
+	return i+1 < len(txt) && (txt[i] == '-' || txt[i] == '*') && txt[i+1] == ' ' &&
+		(i == 0 || txt[i-1] == '\n') && fl[i]&uint8(styleMono) == 0
 }
 
 // commandName returns the length in bytes of the "/name" of a slash
@@ -226,8 +236,16 @@ func (u *UI) paintComposerText(gtx C, e material.EditorStyle, txt string, sz ima
 		if len(run) > 0 && (f != runFl || run[0].Y != g.Y) {
 			flush()
 		}
-		runFl = f
-		run = append(run, glyphs[cs:i+1]...)
+		if bulletAt(txt, fl, bi) {
+			// A list item's dash shows as the bullet it will be sent as.
+			flush()
+			g0 := glyphs[cs]
+			x := (g0.X + (g.X+g.Advance-g0.X)/2).Round()
+			fillCircle(gtx, image.Pt(x, int(g.Y)-scroll-int(em*0.34+0.5)), max(1, int(em*0.15+0.5)), u.pal.Text)
+		} else {
+			runFl = f
+			run = append(run, glyphs[cs:i+1]...)
+		}
 		cs = i + 1
 		for range g.Runes {
 			if bi < len(txt) {
@@ -328,4 +346,75 @@ func (u *UI) paintComposerCaret(gtx C, asc, desc int) {
 	pt := ed.CaretCoords().Round()
 	hw := max(gtx.Dp(1)/2, 1)
 	fillRect(gtx, image.Rect(pt.X-hw, pt.Y-asc, pt.X+hw, pt.Y+desc), u.pal.Text)
+}
+
+// A list in the composer: Shift+Enter (or Enter, when it adds a line) on a
+// list item's line starts the next item, "- " or the next number, as
+// WhatsApp does; on an item still empty it ends the list instead.
+
+// listMarker returns the list marker line starts with ("- ", "* " or
+// "12. ") and the marker of the item after it, or "".
+func listMarker(line string) (marker, next string) {
+	if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+		return line[:2], line[:2]
+	}
+	if m := numberedRe.FindString(line); m != "" {
+		n := 0
+		for _, d := range m[:len(m)-2] {
+			n = n*10 + int(d-'0')
+		}
+		return m, itoa(n+1) + ". "
+	}
+	return "", ""
+}
+
+// listKeys reads the keys that add a line to the composer before it does.
+func (u *UI) listKeys(gtx C) {
+	ed := &u.conv.composer
+	f := key.Filter{Focus: ed, Name: key.NameReturn, Required: key.ModShift}
+	if !ed.Submit {
+		f.Required, f.Optional = 0, key.ModShift
+	}
+	g := f
+	g.Name = key.NameEnter
+	for {
+		ev, ok := gtx.Event(f, g)
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			u.composerNewLine()
+		}
+	}
+}
+
+// composerNewLine adds a line at the composer's caret, continuing or
+// ending the list it is in.
+func (u *UI) composerNewLine() {
+	ed := &u.conv.composer
+	a, b := ed.Selection()
+	rs := []rune(ed.Text())
+	if a != b || a > len(rs) {
+		ed.Insert("\n")
+		return
+	}
+	start, end := a, a
+	for start > 0 && rs[start-1] != '\n' {
+		start--
+	}
+	for end < len(rs) && rs[end] != '\n' {
+		end++
+	}
+	line := string(rs[start:end])
+	marker, next := listMarker(line)
+	inCode := strings.Count(string(rs[:start]), "```")%2 == 1
+	switch {
+	case marker == "" || inCode || a-start < len(marker):
+		ed.Insert("\n")
+	case trimSpace(line[len(marker):]) == "":
+		ed.SetCaret(start, end) // an empty item: the list ends here
+		ed.Insert("")
+	default:
+		ed.Insert("\n" + next)
+	}
 }

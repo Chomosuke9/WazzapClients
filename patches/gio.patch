@@ -1542,3 +1542,19 @@ index f03e3f1..b5952c8 100644
  		e, ok := gtx.Event(
  			key.FocusFilter{Target: t},
  			key.Filter{Focus: t, Name: key.NameReturn},
+diff --git a/widget/editor.go b/widget/editor.go
+--- a/widget/editor.go
++++ b/widget/editor.go
+@@ -516,7 +516,11 @@
+ 			e.text.MoveWord(1*direction, selAct)
+ 		}
+ 	}
+-	if k.Modifiers.Contain(key.ModShortcut) {
++	// WazzapClients patch: where the shortcut modifier is also the one that
++	// moves by words (Ctrl), Ctrl+Backspace and Ctrl+Delete ended here and
++	// never deleted a word.
++	wordDelete := k.Name == key.NameDeleteBackward || k.Name == key.NameDeleteForward
++	if k.Modifiers.Contain(key.ModShortcut) && !wordDelete {
+ 		switch k.Name {
+ 		// Initiate a paste operation, by requesting the clipboard contents; other
+ 		// half is in Editor.processKey() under clipboard.Event.
