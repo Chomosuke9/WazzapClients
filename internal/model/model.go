@@ -393,15 +393,9 @@ func (r StickerReaction) Message(chatID string) *Message {
 		FromMe: r.Me, SenderID: r.SenderID, Sender: r.Sender, Time: r.Time}
 }
 
-// MySticker returns your sticker reaction to m, if you gave one.
-func (m *Message) MySticker() (StickerReaction, bool) {
-	for _, r := range m.Stickers {
-		if r.Me {
-			return r, true
-		}
-	}
-	return StickerReaction{}, false
-}
+// StickerReactsMax is how many sticker reactions to a message each
+// person keeps, as on WhatsApp: the newest.
+const StickerReactsMax = 20
 
 // Reactor is one person's reaction to a message. ID is their JID (yours
 // when Me), and Name "You" when Me.
@@ -1622,9 +1616,12 @@ type Backend interface {
 	// React sets (or, with "", removes) your reaction to a message.
 	React(m *Message, emoji string)
 	// ReactSticker reacts to a message with a sticker (one received
-	// before or from the picker, as SendSticker takes), in place of the
-	// sticker you reacted with before; nil takes yours back.
+	// before or from the picker, as SendSticker takes), besides the ones
+	// you reacted with before: each person keeps StickerReactsMax, and
+	// one more takes your oldest back.
 	ReactSticker(m *Message, sticker *Message)
+	// TakeBackSticker takes back your sticker reaction id to a message.
+	TakeBackSticker(m *Message, id string)
 	// Reactors lists who reacted to a message and with what: you first,
 	// then the newest first.
 	Reactors(m *Message) []Reactor

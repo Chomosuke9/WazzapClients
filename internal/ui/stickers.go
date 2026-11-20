@@ -51,7 +51,7 @@ func (u *UI) stickerSettings() []settingsSection {
 		[]perfOpt{{"", "Still"}, {"hover", "Play the one under the pointer"}, {"all", "Play them all"}})
 	keep := perf.keepPicker
 	after := settingsSection{rows: []settingRow{{key: prefKeepPicker, kind: setToggle, title: "Keep the picker open",
-		sub: "Sending a sticker or GIF leaves the picker open, to send another", on: keep, run: func() {
+		sub: "Sending a sticker or GIF, or reacting with a sticker, leaves the picker open, to send another", on: keep, run: func() {
 			v := "on"
 			if keep {
 				v = ""

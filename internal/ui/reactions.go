@@ -226,8 +226,8 @@ func (u *UI) layoutReactions(gtx C) {
 			switch {
 			case !x.Me:
 			case x.sticker != nil:
-				if u.btn("reactor:mysticker/" + x.msg.ID).Clicked(gtx) {
-					u.backend.ReactSticker(x.msg, nil)
+				if u.btn("reactor:mysticker/" + x.msg.ID + "/" + x.sticker.ID).Clicked(gtx) {
+					u.backend.TakeBackSticker(x.msg, x.sticker.ID)
 				}
 			case u.btn("reactor:me/" + x.msg.ID).Clicked(gtx):
 				u.backend.React(x.msg, "")
@@ -388,7 +388,7 @@ func (u *UI) reactorRow(gtx C, x reactorRow) D {
 	}
 	c := u.btn("reactor:me/" + x.msg.ID)
 	if x.sticker != nil {
-		c = u.btn("reactor:mysticker/" + x.msg.ID)
+		c = u.btn("reactor:mysticker/" + x.msg.ID + "/" + x.sticker.ID)
 	}
 	return clickable(gtx, c, func(gtx C) D { return content(gtx, u.hover(gtx, c)) })
 }

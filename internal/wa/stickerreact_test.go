@@ -2,6 +2,9 @@ package wa
 
 import (
 	"bytes"
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,9 +63,9 @@ func TestStickerReaction(t *testing.T) {
 			t.Fatalf("%s first: the sticker's media = %v, %v, %v", first, media, s.GetDirectPath(), err)
 		}
 
-		// The same person's next sticker takes the first one's place.
+		// The same person's next sticker shows besides the first.
 		arrive(t, b, "NEXT", 1040, stickerReaction())
-		if st := b.Messages(copyChat, 10)[0].Stickers; len(st) != 1 || st[0].ID != "NEXT" {
+		if st := b.Messages(copyChat, 10)[0].Stickers; len(st) != 2 || st[0].ID != copyChild || st[1].ID != "NEXT" {
 			t.Fatalf("%s first: after another sticker = %+v", first, st)
 		}
 
@@ -102,5 +105,24 @@ func TestFoldStickerReacts(t *testing.T) {
 	ms := b.Messages(copyChat, 10)
 	if len(ms) != 1 || len(ms[0].Stickers) != 1 || ms[0].Stickers[0].ID != copyChild || ms[0].Stickers[0].SenderID != "9@lid" {
 		t.Fatalf("after folding = %+v", ms)
+	}
+}
+
+// A message shows each person's newest model.StickerReactsMax stickers.
+func TestReadStickersMax(t *testing.T) {
+	var lines []string
+	for i := range model.StickerReactsMax + 2 {
+		lines = append(lines, fmt.Sprintf("a%d\ta@lid\t0\t%d", i, 1000+i))
+	}
+	lines = append(lines, "b0\tb@lid\t0\t1005")
+	st := readStickers(strings.Join(lines, "\n"))
+	if len(st) != model.StickerReactsMax+1 || st[0].ID != "a2" || st[len(st)-1].ID != fmt.Sprintf("a%d", model.StickerReactsMax+1) ||
+		!slices.ContainsFunc(st, func(r model.StickerReaction) bool { return r.ID == "b0" }) {
+		t.Fatalf("readStickers = %+v", st)
+	}
+	for i := 1; i < len(st); i++ {
+		if st[i].Time.Before(st[i-1].Time) {
+			t.Fatalf("readStickers out of order: %+v", st)
+		}
 	}
 }

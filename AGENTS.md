@@ -420,12 +420,20 @@ Gotchas already found in the pinned version (v0.10.x):
   that sticker message for everyone. It's no message here: `parse` files it under the message,
   in `wz_sticker_reacts` (`internal/wa/stickerreact.go`), its file downloads under the chat and
   its own ID (`mediaBlob`), and `msgColumns` reads a message's with a subquery
-  (`Message.Stickers`, each person's latest). Phones show up to three
-  in a row along the bubble's bottom edge, from its edge or from the emoji pill, the newest
-  first and in front; a new one pops in while the others move over (`stickerReactions`,
-  `internal/ui/stickerreact.go`; read off screenshots of an unreleased feature, and other
-  screenshots had them on the bubble's corners). The first and third lean clockwise, the middle
-  one the other way, and their corners are rounded.
+  (`Message.Stickers`). Each person keeps their newest 20 (`model.StickerReactsMax`): a
+  21st of yours takes your oldest back, and the who-reacted list takes yours back one by one
+  (`TakeBackSticker`). Phones show them along the bubble's bottom edge, from its edge or from
+  the emoji pill, the newest first and in front, about two lines of text tall (36 dp); past
+  what fits in that row they go on around the bubble, up its other side and back along its
+  top to above the row's start (over the message above). The ring is as wide as the bubble
+  (after the pill, when there is one). The rows squeeze together down to 80% of a sticker
+  apart (the side keeps its spacing), and the oldest that still don't fit don't show
+  (`stickerRing`: 12 of 18 around a two-line bubble, 6 around "Tes", 4 after its pill). From
+  a phone's screen recordings: a new one fades in at full size within two frames while the
+  others glide one place along the ring in about 200 ms, easing out; one that no longer fits
+  goes at once, and a pill coming or going moves them all at once (`stickerReactions`,
+  `internal/ui/stickerreact.go`). Every other one leans the other way, and their corners are
+  rounded.
   WhatsApp shows none in a channel, in a community's announcements or on a sticker message
   (`takesStickers`), and its phones can't give one yet, so the reaction picker's Sticker tab is
   an extra feature (`prefStickerReact`).
@@ -991,7 +999,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
 # group: -ochat work), statusviews (your status's Viewed by sheet), statusmention and statusmentioned (a status mention's card, and the status it opens: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
-# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), stickerreact (sticker reactions on the chat's last messages), stickerreactors (who gave them), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), stickerreact (sticker reactions on the chat's last messages), stickerring (20 of them around a bubble), stickerreactors (who gave them), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;

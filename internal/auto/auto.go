@@ -609,6 +609,12 @@ func (a *Backend) ReactSticker(m *model.Message, sticker *model.Message) {
 	}
 }
 
+func (a *Backend) TakeBackSticker(m *model.Message, id string) {
+	if !a.refused() {
+		a.Backend.TakeBackSticker(m, id)
+	}
+}
+
 func (a *Backend) VotePoll(m *model.Message, options []int) {
 	if !a.refused() {
 		a.Backend.VotePoll(m, options)

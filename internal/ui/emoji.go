@@ -689,8 +689,12 @@ func (u *UI) layoutStickerTab(gtx C) D {
 			if e.target != nil {
 				u.backend.ReactSticker(e.target, s)
 			}
-			u.closePicker()
-			return D{}
+			// Each person may react with several stickers; an emoji
+			// reaction is one, so its tab closes the picker regardless.
+			if !perf.keepPicker {
+				u.closePicker()
+				return D{}
+			}
 		}
 		if u.btn("sticker:"+s.ChatID+"/"+s.ID).Clicked(gtx) && u.selected != nil {
 			u.backend.SendSticker(u.selected.ID, s, u.conv.reply)

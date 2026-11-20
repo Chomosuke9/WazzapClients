@@ -24,7 +24,7 @@ import (
 // corner, not in the chat, so it's no message here either: parse files it
 // under the message, in wz_sticker_reacts, as its payload. Taking it back
 // is deleting the sticker message for everyone. A message shows each
-// person's latest.
+// person's latest model.StickerReactsMax.
 //
 // The columns are named apart from wz_messages', so that stickerColumn can
 // sit in any query of messages.
@@ -73,28 +73,32 @@ func annotates(m *waE2E.Message) string {
 }
 
 // readStickers reads what stickerColumn holds: each person's latest
-// sticker, oldest first. Names are resolve's to give.
+// model.StickerReactsMax stickers, oldest first. Names are resolve's to
+// give.
 func readStickers(s string) []model.StickerReaction {
 	if s == "" {
 		return nil
 	}
-	var out []model.StickerReaction
+	var all []model.StickerReaction
 	for _, l := range strings.Split(s, "\n") {
 		f := strings.Split(l, "\t")
 		if len(f) != 4 {
 			continue
 		}
 		ts, _ := strconv.ParseInt(f[3], 10, 64)
-		r := model.StickerReaction{ID: f[0], SenderID: f[1], Me: f[1] == meVoter, Lottie: f[2] == "1", Time: time.UnixMilli(ts)}
-		i := slices.IndexFunc(out, func(o model.StickerReaction) bool { return o.SenderID == r.SenderID })
-		switch {
-		case i < 0:
+		all = append(all, model.StickerReaction{ID: f[0], SenderID: f[1], Me: f[1] == meVoter, Lottie: f[2] == "1", Time: time.UnixMilli(ts)})
+	}
+	slices.SortStableFunc(all, func(a, b model.StickerReaction) int { return a.Time.Compare(b.Time) })
+	// The newest first, counting each person's.
+	n := map[string]int{}
+	var out []model.StickerReaction
+	for i := len(all) - 1; i >= 0; i-- {
+		if r := all[i]; n[r.SenderID] < model.StickerReactsMax {
+			n[r.SenderID]++
 			out = append(out, r)
-		case !r.Time.Before(out[i].Time):
-			out[i] = r
 		}
 	}
-	slices.SortStableFunc(out, func(a, b model.StickerReaction) int { return a.Time.Compare(b.Time) })
+	slices.Reverse(out)
 	return out
 }
 
@@ -128,10 +132,11 @@ func (s *msgStore) dropStickerReact(ctx context.Context, chat, sid string) (pare
 	return parent
 }
 
-// myStickerReacts lists the sticker messages you reacted to a message with.
+// myStickerReacts lists the sticker messages you reacted to a message
+// with, the oldest first.
 func (s *msgStore) myStickerReacts(ctx context.Context, chat, parent string) (sids []string) {
-	rows, err := s.db.QueryContext(ctx, `SELECT sid FROM wz_sticker_reacts WHERE rchat = ? AND parent = ? AND who = ?`,
-		chat, parent, meVoter)
+	rows, err := s.db.QueryContext(ctx, `SELECT sid FROM wz_sticker_reacts WHERE rchat = ? AND parent = ? AND who = ?
+		ORDER BY rts, sid`, chat, parent, meVoter)
 	if err != nil {
 		return nil
 	}
@@ -253,22 +258,17 @@ func (b *Backend) ReactSticker(m *model.Message, sticker *model.Message) {
 	if cli == nil || err != nil || isChannel(jid) {
 		return
 	}
+	if sticker == nil {
+		return
+	}
 	ctx, chat := b.ctx, m.ChatID
+	// Past the most each person keeps, your oldest go.
 	old := b.store.myStickerReacts(ctx, chat, m.ID)
+	old = old[:max(len(old)-(model.StickerReactsMax-1), 0)]
 	takeBack := func() {
 		for _, sid := range old {
-			if _, err := b.sendMessage(ctx, cli, jid, cli.BuildRevoke(jid, types.EmptyJID, sid)); err != nil {
-				b.log.Warnf("take a sticker reaction back in %s: %v", chat, err)
-			}
+			b.revokeStickerReact(ctx, cli, jid, sid)
 		}
-	}
-	if sticker == nil {
-		for _, sid := range old {
-			b.store.dropStickerReact(ctx, chat, sid)
-		}
-		b.emitMessage(chat, m.ID)
-		go takeBack()
-		return
 	}
 	e, data, ok := b.stickerMessageOf(sticker)
 	if !ok {
@@ -319,6 +319,26 @@ func (b *Backend) ReactSticker(m *model.Message, sticker *model.Message) {
 		b.recentSticker(marshal(e), time.Now(), chat, r.sid)
 		takeBack()
 	}()
+}
+
+// TakeBackSticker implements model.Backend.
+func (b *Backend) TakeBackSticker(m *model.Message, id string) {
+	cli := b.connected()
+	jid, err := types.ParseJID(m.ChatID)
+	if cli == nil || err != nil || isChannel(jid) || !slices.Contains(b.store.myStickerReacts(b.ctx, m.ChatID, m.ID), id) {
+		return
+	}
+	b.store.dropStickerReact(b.ctx, m.ChatID, id)
+	b.emitMessage(m.ChatID, m.ID)
+	go b.revokeStickerReact(b.ctx, cli, jid, id)
+}
+
+// revokeStickerReact deletes your sticker reaction's message sid for
+// everyone, which takes it back.
+func (b *Backend) revokeStickerReact(ctx context.Context, cli *whatsmeow.Client, jid types.JID, sid string) {
+	if _, err := b.sendMessage(ctx, cli, jid, cli.BuildRevoke(jid, types.EmptyJID, sid)); err != nil {
+		b.log.Warnf("take a sticker reaction back in %s: %v", jid, err)
+	}
 }
 
 // uploadSticker uploads a sticker's file and gives e its link and keys.

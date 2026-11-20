@@ -133,32 +133,52 @@ func (b *Backend) Reactors(m *model.Message) []model.Reactor {
 	return rs
 }
 
-// ReactSticker gives m your sticker reaction, or (nil) takes it back.
+// ReactSticker gives m one more sticker reaction of yours, taking your
+// oldest back past model.StickerReactsMax.
 func (b *Backend) ReactSticker(m *model.Message, sticker *model.Message) {
+	x := b.find(m)
+	if x == nil || sticker == nil {
+		return
+	}
+	rs := slices.Clone(x.Stickers)
+	b.stickerReacts++
+	r := model.StickerReaction{ID: fmt.Sprintf("%s-react-%d", x.ID, b.stickerReacts), SenderID: "me@lid", Sender: "You", Me: true,
+		Lottie: sticker.Lottie, Time: b.now()}
+	b.mu.Lock()
+	if data := b.media[key(sticker)]; data != nil {
+		b.media[x.ChatID+"/"+r.ID] = data
+	}
+	b.mu.Unlock()
+	rs = append(rs, r)
+	mine := 0
+	for i := len(rs) - 1; i >= 0; i-- {
+		if rs[i].Me {
+			if mine++; mine > model.StickerReactsMax {
+				rs = slices.Delete(rs, i, i+1)
+			}
+		}
+	}
+	b.update(x, func(x *model.Message) { x.Stickers = rs })
+}
+
+// TakeBackSticker takes back your sticker reaction id to m.
+func (b *Backend) TakeBackSticker(m *model.Message, id string) {
 	x := b.find(m)
 	if x == nil {
 		return
 	}
-	rs := slices.DeleteFunc(slices.Clone(x.Stickers), func(r model.StickerReaction) bool { return r.Me })
-	if sticker != nil {
-		b.stickerReacts++
-		r := model.StickerReaction{ID: fmt.Sprintf("%s-react-%d", x.ID, b.stickerReacts), SenderID: "me@lid", Sender: "You", Me: true,
-			Lottie: sticker.Lottie, Time: b.now()}
-		b.mu.Lock()
-		if data := b.media[key(sticker)]; data != nil {
-			b.media[x.ChatID+"/"+r.ID] = data
-		}
-		b.mu.Unlock()
-		rs = append(rs, r)
-	}
+	rs := slices.DeleteFunc(slices.Clone(x.Stickers), func(r model.StickerReaction) bool { return r.Me && r.ID == id })
 	b.update(x, func(x *model.Message) { x.Stickers = rs })
 }
 
 // DemoStickerReactions reacts with stickers to messages of the chat, for
 // previews: one to the last message from you, three (yours last) to the
 // last from someone else, and three to the first with emoji reactions.
-// The demo has no sticker files, so the stickers are drawn here.
-func (b *Backend) DemoStickerReactions(chatID string) {
+// The demo has no sticker files, so the stickers are drawn here. With
+// many, the last message from you gets 21 (20 from one person and one
+// from another) and the last from someone else eight, which go around
+// their bubbles.
+func (b *Backend) DemoStickerReactions(chatID string, many bool) {
 	var in, out, emojis *model.Message
 	for _, m := range b.msgs[chatID] {
 		switch {
@@ -182,17 +202,28 @@ func (b *Backend) DemoStickerReactions(chatID string) {
 		if x == nil {
 			return
 		}
-		for i, r := range people[:n] {
+		for i := range n {
+			r := people[i%len(people)]
+			if n > len(people) {
+				r = people[(i*len(people))/n] // each person's in a run
+			}
 			b.stickerReacts++
 			r.ID, r.Time = fmt.Sprintf("%s-react-%d", x.ID, b.stickerReacts), b.now().Add(time.Duration(i)*time.Second-time.Minute)
 			b.mu.Lock()
 			if b.media == nil {
 				b.media = map[string][]byte{}
 			}
-			b.media[x.ChatID+"/"+r.ID] = demoSticker(demoStickerColors[i], i > 0)
+			b.media[x.ChatID+"/"+r.ID] = demoSticker(demoStickerColors[i%len(demoStickerColors)], i%2 > 0)
 			b.mu.Unlock()
 			b.update(x, func(x *model.Message) { x.Stickers = append(x.Stickers, r) })
 		}
+	}
+	if many {
+		react(in, 8)
+		people = people[:2]
+		react(out, model.StickerReactsMax*2) // each person's run of 20
+		b.update(out, func(x *model.Message) { x.Stickers = x.Stickers[model.StickerReactsMax-1:] })
+		return
 	}
 	react(out, 1)
 	react(in, 3)
