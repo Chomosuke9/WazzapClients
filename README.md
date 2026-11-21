@@ -138,6 +138,19 @@ computer while the app runs. It serves a small HTTP API
 on port 8642 to this computer and its [Tailscale](https://tailscale.com) addresses only (or
 every network, if you turn that on), and every request needs the token shown on the page.
 
+To run it on a computer without a screen (a home server), start it **headless**: no window,
+only the watch's server. Link the account from the terminal, where the QR code is drawn as
+text (or type your phone number, with its country code, for a pairing code), with `-phone`,
+or from the server's `/login` page in a browser:
+
+```sh
+wazzapclients -headless -host localhost,tailscale -port 8642 -token "$(openssl rand -base64 24)"
+```
+
+`-host` takes IP addresses or names, `localhost`, `tailscale` and `all`. The token (`-token`,
+or `$WAZZAP_TOKEN`, which keeps it out of the process list) stays the same from one start to
+the next; without one, the app makes one once, prints it and keeps it.
+
 A page of its own, *Ethically gray features*, holds the ones that show more than the sender
 meant you to see. Each has its own switch:
 
@@ -295,6 +308,7 @@ go run ./cmd/wazzap            # run the app and link it with a QR code
 go run ./cmd/wazzap -demo      # made-up chats, no network
 go run ./cmd/wazzap -debug     # log protocol traffic
 go run ./cmd/wazzap -background  # start in the tray, without a window
+go run ./cmd/wazzap -headless    # no window: only the smartwatch server (-host, -port, -token, -phone)
 go build ./...
 ```
 

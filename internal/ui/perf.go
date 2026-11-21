@@ -166,8 +166,10 @@ func applyProcess() {
 	lottieFPS.Store(int32(perf.lottieFPS))
 	if perf.stickers == 0 {
 		playerBudget.Store(math.MaxInt64 / 2) // no limit, and room to add to it
+		previewBudget.Store(math.MaxInt64 / 2)
 	} else {
 		playerBudget.Store(int64(perf.stickers) * stickerBudget)
+		previewBudget.Store(defaultPreviewBudget)
 	}
 }
 

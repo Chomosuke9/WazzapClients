@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link WazzapClients</title>
+<style>
+:root { --bg: #f0f2f5; --card: #fff; --text: #111b21; --sub: #667781; --line: #d1d7db; --accent: #008069; --err: #d93025; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0b141a; --card: #202c33; --text: #e9edef; --sub: #8696a0; --line: #374248; --accent: #00a884; --err: #f28b82; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 440px; margin: 0 auto; padding: 32px 16px; }
+.card { background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+p { margin: 8px 0; color: var(--sub); }
+label { display: block; font-size: 13px; color: var(--sub); margin: 16px 0 6px; }
+input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--text); font: inherit; }
+input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+button { margin-top: 12px; padding: 10px 18px; border: 0; border-radius: 20px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+button.link { background: none; color: var(--accent); padding: 8px 0; }
+button:disabled { opacity: .5; cursor: default; }
+#qr { display: block; width: 100%; max-width: 280px; margin: 16px auto; border-radius: 8px; image-rendering: pixelated; }
+.code { font: 600 30px/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 4px; text-align: center; margin: 16px 0; }
+.err { color: var(--err); }
+.hidden { display: none; }
+ol { padding-left: 20px; color: var(--sub); margin: 8px 0; }
+</style>
+</head>
+<body>
+<main><div class="card">
+  <h1>Link WazzapClients</h1>
+  <section id="auth">
+    <p>Enter the server's token: it's printed when the app starts with <code>-headless</code>.</p>
+    <label for="token">Token</label>
+    <input id="token" type="password" autocomplete="current-password">
+    <button id="go">Continue</button>
+  </section>
+  <section id="link" class="hidden">
+    <p id="status">Connecting…</p>
+    <div id="qrbox" class="hidden">
+      <ol><li>Open WhatsApp on your phone</li><li>Tap Menu or Settings, then Linked devices</li><li>Tap Link a device and scan this code</li></ol>
+      <img id="qr" alt="QR code">
+    </div>
+    <button id="retry" class="hidden">New QR code</button>
+    <div id="phonebox" class="hidden">
+      <label for="phone">Or link with your phone number (with its country code)</label>
+      <input id="phone" inputmode="tel" placeholder="628123456789">
+      <button id="getcode">Get a code</button>
+      <div id="code" class="code hidden"></div>
+      <p id="codehint" class="hidden">On your phone: Linked devices › Link a device › Link with phone number instead, then enter this code.</p>
+    </div>
+    <button id="forget" class="link">Use another token</button>
+  </section>
+  <p id="error" class="err"></p>
+</div></main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let token = "", qrShown = "", timer = 0;
+  try { token = sessionStorage.getItem("wazzap-token") || ""; } catch (e) {}
+  const show = (id, on) => $(id).classList.toggle("hidden", !on);
+  const api = async (method, path, body) => {
+    const r = await fetch(path, { method, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: body && JSON.stringify(body) });
+    if (r.status === 401) { forget(); throw new Error("Wrong token"); }
+    if (path.endsWith(".svg")) { if (!r.ok) throw new Error("No QR code"); return r.blob(); }
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    return j;
+  };
+  const forget = () => {
+    token = ""; qrShown = "";
+    try { sessionStorage.removeItem("wazzap-token"); } catch (e) {}
+    clearTimeout(timer);
+    show("auth", true); show("link", false);
+  };
+  const poll = async () => {
+    clearTimeout(timer);
+    try {
+      const s = await api("GET", "/v1/login");
+      $("error").textContent = "";
+      show("qrbox", s.step === "qr");
+      show("retry", s.step === "expired" || s.step === "error");
+      show("phonebox", s.phone && s.step !== "linked");
+      $("status").textContent = {
+        starting: "Starting to link…",
+        qr: "Scan the QR code with WhatsApp, or link with your phone number.",
+        expired: "The QR codes ran out. Get a new one to go on.",
+        linked: s.me ? "Linked as " + s.me + ". You can close this page." : "Linked. You can close this page.",
+        error: "Linking failed: " + (s.error || "unknown error"),
+      }[s.step] || s.step;
+      if (s.step === "qr" && s.qr !== qrShown) {
+        const blob = await api("GET", "/v1/login/qr.svg");
+        const old = $("qr").src;
+        $("qr").src = URL.createObjectURL(blob);
+        if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+        qrShown = s.qr;
+      }
+      if (s.step === "linked") return;
+    } catch (e) {
+      $("error").textContent = e.message;
+      if (!token) return;
+    }
+    timer = setTimeout(poll, 2000);
+  };
+  const start = () => {
+    if (!token) return;
+    try { sessionStorage.setItem("wazzap-token", token); } catch (e) {}
+    show("auth", false); show("link", true);
+    poll();
+  };
+  $("go").onclick = () => { token = $("token").value.trim(); start(); };
+  $("token").onkeydown = e => { if (e.key === "Enter") $("go").click(); };
+  $("forget").onclick = forget;
+  $("retry").onclick = async () => {
+    try { await api("POST", "/v1/login/retry"); poll(); } catch (e) { $("error").textContent = e.message; }
+  };
+  $("getcode").onclick = async () => {
+    const b = $("getcode");
+    b.disabled = true;
+    try {
+      const r = await api("POST", "/v1/login/code", { phone: $("phone").value });
+      $("code").textContent = r.code;
+      show("code", true); show("codehint", true);
+      $("error").textContent = "";
+    } catch (e) {
+      $("error").textContent = e.message;
+    } finally {
+      b.disabled = false;
+    }
+  };
+  $("phone").onkeydown = e => { if (e.key === "Enter") $("getcode").click(); };
+  start();
+})();
+</script>
+</body>
+</html>

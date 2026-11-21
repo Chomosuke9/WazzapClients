@@ -160,7 +160,12 @@ Gotchas already found in the pinned version (v0.10.x):
   `animation/animation_secondary.json`, played once at 387% of the sticker, centered
   (`stickerfx.go`): on its first play (`sticker_fx_seen` pref) and on each click.
   Clicking any animated sticker plays it past the players' cap; `makeRoom` stops
-  others (benched while on screen) until it fits `playerBudget`.
+  others (benched while on screen) until it fits `playerBudget`. The picker's
+  stickers and GIFs play in a budget of their own (`previewBudget`, `maxPreviews`):
+  sharing the chats' 24 MB, only ~7 of a picker's 512 px stickers played. A player
+  that finds no room in its budget sets `noRoom`, and `animFrame` stops it and starts
+  it again once what it needs fits (`players.waiting`); it used to keep its slot and
+  stay still until it left the screen.
 - Media links expire: the CDN signs a direct path until its `oe` (hex unix time) and
   answers 403 after it. A favourite sticker keeps the link it had when it was
   favourited, so most old ones are dead. Only the phone brings media back: a media
@@ -435,8 +440,8 @@ Gotchas already found in the pinned version (v0.10.x):
   `internal/ui/stickerreact.go`). Every other one leans the other way, and their corners are
   rounded.
   WhatsApp shows none in a channel, in a community's announcements or on a sticker message
-  (`takesStickers`), and its phones can't give one yet, so the reaction picker's Sticker tab is
-  an extra feature (`prefStickerReact`).
+  (`takesStickers`). WhatsApp's beta gives them from phones too, so the reaction picker's
+  Sticker tab is always there (it was an extra feature with a switch).
 - Websites send WhatsApp links (wa.me, api.whatsapp.com) on to `whatsapp://send?phone=…`
   and invites to `whatsapp://chat?code=…`; Windows starts the scheme's handler with the
   link as the last argument. Apps can't make themselves the default: Windows keeps the
@@ -529,7 +534,8 @@ dependency, re-read the changelog and fix any deprecations in the same change.
 ## Layout
 
 ```
-cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs)
+cmd/wazzap/        desktop app entry point (-demo for fake data, -debug for protocol logs,
+                   -headless for the watch's server without a window: see Window lifecycle)
 cmd/screenshot/    headless renderer that writes UI previews to PNG (for docs and review)
 cmd/memprobe/      memory benchmark (Windows and Linux): clicks through stored or demo chats, prints memory;
                    -scroll scrolls instead and prints frame times and the frame rate
@@ -585,7 +591,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    hash in the prefs, the lock screen, auto-lock; shared by the host's UIs)
                    in applock.go; the composer's
                    formatting toolbar in formatbar.go; the attach
-                   menu (Camera through internal/camera, New sticker as /sticker), file tray and poll
+                   menu (Camera through internal/camera, New sticker as /sticker), file tray (its photo
+                   quality, Standard, HD or Raw, is the one picked last: `prefPhotoQuality`) and poll
                    dialog in attach.go, and its Create event dialog in eventnew.go; slash commands (their
                    picker over the composer and the notes only you see) in slash.go; emoji
                    shortcodes (":mo" offers matching emojis over the composer, a typed
@@ -595,7 +602,7 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    Snippets, the snippets /snippet send offers in the slash picker, their {variables}
                    and /catch's payload dialog) in snippets.go; and
                    the Extra features settings page in extras.go (the app's own features,
-                   such as slash commands, Sticker reactions (the reaction picker's Sticker tab), Extended mentions (one switch for @admin, custom mentions, @Tim frontend: people you
+                   such as slash commands, Extended mentions (one switch for @admin, custom mentions, @Tim frontend: people you
                    pick in a group, named and mentioned like @admin, in custommention.go, and mentions in private chats, of the other person only), the Privacy mode toggle, Block screen
                    recording and Raw photos: each off until turned on), and
                    its Ethically gray features page (Edit history, Keep deleted messages, Replay view
@@ -782,8 +789,11 @@ internal/remote/   the HTTP API the watch app (github.com/Chomosuke9/WazzapWatch
                    images.go; requests that wait for the backend's events register in
                    `listen`). Search shares the backend's search of every chat with the
                    window's, so one cancels the other. Its shared/convert.js reads this JSON: change both.
-                   It listens on this computer and its Tailscale addresses (port 8642) and
-                   asks for a bearer token; every request runs on the UI goroutine (Options.Do)
+                   It listens on this computer and its Tailscale addresses (port 8642), or
+                   `Options.Hosts` (`ListenAddrs`), and asks for a bearer token; every request
+                   runs on the UI goroutine (Options.Do). login.go links the account for the
+                   headless mode: /login, a page asking for the token, and /v1/login's QR code
+                   (SVG, internal/termqr) and pairing codes (`model.PhonePairer`)
 internal/camera/   the attach menu's Camera: opens the system's camera app and waits for the
                    photo it saves (no capture of our own; that would need each OS's capture API)
 internal/filepick/ the system's "Open" dialog (comdlg32 on Windows; osascript on macOS;
@@ -826,6 +836,17 @@ patches/           go-text, Gio and hypermeow patches and apply.sh, which builds
 ```
 
 ## Window lifecycle and notifications
+
+`-headless` (`Options.Headless`, `internal/ui/headless.go`) runs the same host and loop
+without a window, tray icon, notifications, updates or the emoji font: Smartwatch access
+is on, where `-host`/`-port` say, with `-token` (or `$WAZZAP_TOKEN`) kept as the token, or
+else the one made before (made once, an app preference that outlives logouts). `show`
+does nothing; ConnEvents go to `headlessHost.conn`, which draws QR codes in text
+(`internal/termqr`, redrawn in place on a terminal) and asks for `-phone`'s pairing code
+(`wa.Backend.PairPhone`: WhatsApp wants it on a client that is linking, after its first
+QR code). Lines typed in a terminal come as `reqConsole`; Ctrl+C or SIGTERM quits. No
+`app.Main` runs, but on Linux Gio's libraries must still be there to start. A Windows
+release is a GUI program, so `headlessConsole` attaches to the console it started from.
 
 `ui.Run` (`internal/ui/host.go`) owns the process. Its goroutine is the UI goroutine
 for good, with or without a window: a helper goroutine waits for each window event and
@@ -971,6 +992,9 @@ sh patches/apply.sh            # once after cloning: builds the patched go-text,
 go run ./cmd/wazzap            # run the app (links to WhatsApp via QR code)
 go run ./cmd/wazzap -demo      # run with fake chats, no network
 go run ./cmd/wazzap -background  # start in the tray, without a window
+# Headless: no window, tray or notifications, only the watch's server. Links from the
+# terminal (QR code in text, or a number typed for a pairing code), -phone, or /login:
+go run ./cmd/wazzap -headless -host localhost,tailscale -port 8642 -token <token>
 go run ./cmd/screenshot        # render preview PNGs into ./docs/
 # Every screenshot in README.md (the list is readmeShots in cmd/screenshot/readme.go):
 go run ./cmd/screenshot -readme -w 1280 -h 800 -scale 1.25 -out docs/screenshots

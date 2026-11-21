@@ -27,7 +27,21 @@ var playerBudget = func() *atomic.Int64 {
 	return &v
 }()
 
+// previewBudget caps the memory of the picker's players (previewFrame),
+// apart from the chats': a picker full of animated stickers, maxPreviews
+// of them, plays every one, which a 512x512 sticker shown 110 dp wide
+// takes about 3 MB of. Stopped with the picker.
+var previewBudget = func() *atomic.Int64 {
+	var v atomic.Int64
+	v.Store(defaultPreviewBudget)
+	return &v
+}()
+
 const (
+	defaultPreviewBudget = 96 << 20
+	// maxPreviews is how many of the picker's stickers and GIFs play at
+	// once: more than a tall picker shows.
+	maxPreviews   = 36
 	stickerBudget = 4 << 20
 	// roomWait is how long a clicked sticker waits for the players it
 	// stopped to let go of their memory.
@@ -62,6 +76,11 @@ type stickerPlayer struct {
 	// lottie is set once the sticker is found to be a Lottie one, which
 	// its message may not say.
 	lottie atomic.Bool
+	// budget is what cost counts against: playerBudget, or previewBudget
+	// for a preview. noRoom is set, with what it needed, when it didn't
+	// fit: animFrame starts it again once that fits.
+	budget *atomic.Int64
+	noRoom atomic.Int64
 }
 
 // players holds the animated stickers on screen, by image cache key.
@@ -76,9 +95,14 @@ type players struct {
 	// (with the frame they were last drawn): they don't start again until
 	// they leave the screen or are clicked.
 	benched map[string]int64
+	// waiting holds the stickers whose players found no room in their
+	// budget: they start again once what they need fits.
+	waiting map[string]roomWaiter
 	frame   int64
 	seq     int64
 	bytes   atomic.Int64 // held by the running players, against playerBudget
+	// previewBytes is held by the previews, against previewBudget.
+	previewBytes atomic.Int64
 
 	gifs     map[string]*gifPlayer // the GIFs playing, by "chat/id"
 	gifFetch map[string]gifFetch
@@ -89,6 +113,10 @@ type players struct {
 	soundUsed int64 // frame of last use
 }
 
+// roomWaiter is a sticker that waits for room: what it needs, and the
+// frame it was last drawn.
+type roomWaiter struct{ need, frame int64 }
+
 // stickerFrame returns the current frame of an animated sticker, starting
 // its player. ok is false while the first frame renders, or when too many
 // stickers already play.
@@ -97,8 +125,9 @@ func (u *UI) stickerFrame(key string, maxSide int, load func() []byte) (paint.Im
 }
 
 // previewFrame is stickerFrame for the picker: a GIF, an animated WebP a
-// few hundred px across, or a sticker. Four times maxGIFs of them play at
-// once.
+// few hundred px across, or a sticker. maxPreviews of them play at once,
+// in a budget of their own (previewBudget), so every one a picker shows
+// plays, and the chat's stickers keep theirs.
 func (u *UI) previewFrame(key string, maxSide int, load func() []byte) (paint.ImageOp, bool) {
 	return u.animFrame(key, maxSide, true, load)
 }
@@ -109,24 +138,47 @@ func (u *UI) animFrame(key string, maxSide int, preview bool, load func() []byte
 		// Not drawn, its player stops at the end of the frame.
 		return paint.ImageOp{}, false
 	}
+	held, budget := &ps.bytes, playerBudget
+	if preview {
+		held, budget = &ps.previewBytes, previewBudget
+	}
 	p := ps.m[key]
+	if p != nil {
+		if need := p.noRoom.Load(); need > 0 {
+			// It found no room: wait for some, showing the still picture.
+			ps.stop(key, p)
+			if ps.waiting == nil {
+				ps.waiting = make(map[string]roomWaiter)
+			}
+			ps.waiting[key] = roomWaiter{need: need}
+			p = nil
+		}
+	}
 	if p == nil {
 		n, limit := len(ps.m)-ps.previews-ps.effects, perf.stickers
 		if preview {
-			n, limit = ps.previews, 4*maxGIFs
+			n, limit = ps.previews, maxPreviews
 		}
 		if _, ok := ps.benched[key]; ok && !ps.forced[key] {
 			ps.benched[key] = ps.frame
 			return paint.ImageOp{}, false
 		}
+		if w, ok := ps.waiting[key]; ok {
+			if held.Load()+w.need > budget.Load() && !ps.forced[key] {
+				w.frame = ps.frame
+				ps.waiting[key] = w
+				return paint.ImageOp{}, false
+			}
+			delete(ps.waiting, key)
+		}
 		if n >= limit && limit > 0 && !ps.forced[key] {
 			return paint.ImageOp{}, false
 		}
-		p = ps.add(key, &stickerPlayer{preview: preview, clicked: ps.forced[key]})
+		p = ps.add(key, &stickerPlayer{preview: preview, clicked: ps.forced[key], budget: budget})
 		if preview {
 			ps.previews++
 		}
-		go p.run(load, maxSide, &ps.bytes, u.images.invalidate)
+		go p.run(load, maxSide, held, u.images.invalidate)
 	}
 	p.used = ps.frame
 	p.mu.Lock()
@@ -151,6 +203,11 @@ func (ps *players) endFrame() {
 	for k, f := range ps.benched {
 		if f < ps.frame {
 			delete(ps.benched, k)
+		}
+	}
+	for k, w := range ps.waiting {
+		if w.frame < ps.frame {
+			delete(ps.waiting, k)
 		}
 	}
 	for k, g := range ps.gifs {
@@ -184,6 +241,9 @@ func (ps *players) add(key string, p *stickerPlayer) *stickerPlayer {
 	}
 	ps.seq++
 	p.ready, p.shown, p.stop, p.seq = -1, -1, make(chan struct{}), ps.seq
+	if p.budget == nil {
+		p.budget = playerBudget
+	}
 	ps.m[key] = p
 	return p
 }
@@ -219,16 +279,27 @@ func (ps *players) makeRoom(need int64, keep ...string) {
 
 // reserve takes cost bytes of the budget for p, or reports false when they
 // don't fit. A clicked player waits for the players stopped to make room
-// for it to let go of theirs.
-func (p *stickerPlayer) reserve(held *atomic.Int64, cost int64) bool {
+// for it to let go of theirs; another one sets noRoom and asks for a
+// frame, which stops it until cost fits (animFrame).
+func (p *stickerPlayer) reserve(held *atomic.Int64, cost int64, invalidate func()) bool {
+	budget := p.budget
+	if budget == nil {
+		budget = playerBudget
+	}
 	deadline := time.Now().Add(roomWait)
 	for {
-		if held.Add(cost) <= playerBudget.Load() {
+		if held.Add(cost) <= budget.Load() {
 			p.cost.Add(cost)
 			return true
 		}
 		held.Add(-cost)
 		if !p.clicked || time.Now().After(deadline) {
+			if !p.clicked && !p.fx && cost <= budget.Load() {
+				p.noRoom.Store(cost)
+				if invalidate != nil {
+					invalidate()
+				}
+			}
 			return false
 		}
 		select {
@@ -239,9 +310,15 @@ func (p *stickerPlayer) reserve(held *atomic.Int64, cost int64) bool {
 	}
 }
 
-// release gives back what p holds of the budget.
-func (p *stickerPlayer) release(held *atomic.Int64) {
-	held.Add(-p.cost.Swap(0))
+// release gives back what p holds of the budget, and asks for a frame,
+// in which the stickers waiting for room (players.waiting) may start.
+func (p *stickerPlayer) release(held *atomic.Int64, invalidate func()) {
+	if c := p.cost.Swap(0); c > 0 {
+		held.Add(-c)
+		if invalidate != nil && !p.fx { // an effect asks for its last frame itself
+			invalidate()
+		}
+	}
 }
 
 // stop stops the player of key.
@@ -270,10 +347,10 @@ func (p *stickerPlayer) run(load func() []byte, maxSide int, held *atomic.Int64,
 	if s := max(w, h); s > maxSide {
 		w, h = max(1, w*maxSide/s), max(1, h*maxSide/s)
 	}
-	if !p.reserve(held, webpCost(a.Width, a.Height, w, h)) {
+	if !p.reserve(held, webpCost(a.Width, a.Height, w, h), invalidate) {
 		return
 	}
-	defer p.release(held)
+	defer p.release(held, invalidate)
 	due := time.Now()
 	for n := 0; ; n++ {
 		canvas, delay, err := a.Next()
@@ -326,10 +403,10 @@ func (p *stickerPlayer) playLottie(a *lottie.Animation, w, h int, loop bool, hel
 	// The three buffers and the renderer's coverage sums; what else the
 	// renderer keeps (layers drawn apart for masks and mattes) is counted
 	// after the first frame.
-	if !p.reserve(held, lottieCost(w, h)) {
+	if !p.reserve(held, lottieCost(w, h), invalidate) {
 		return
 	}
-	defer p.release(held)
+	defer p.release(held, invalidate)
 	step := max(1, math.Round(a.FrameRate/float64(max(1, lottieFPS.Load()))))
 	delay := time.Duration(step / a.FrameRate * float64(time.Second))
 	frames := float64(a.Frames())

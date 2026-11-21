@@ -21,7 +21,6 @@ const (
 	prefExtendedMentions = "admin_mention"  // "@admin" and custom mentions (custommention.go), and mentioning the other person in a private chat (compose.go)
 	prefRawPhotos        = "raw_photos"     // Raw quality for photos
 	prefEditHistory      = "edit_history"   // the earlier texts of edited messages (edit.go)
-	prefStickerReact     = "sticker_react"  // reacting with a sticker (stickerreact.go)
 )
 
 // grayCmdPref is the preference that turns on a gray command.
@@ -49,7 +48,9 @@ func (u *UI) loadExtras() {
 	u.extendedMentions = extraOn(b, prefExtendedMentions)
 	u.rawPhotos = extraOn(b, prefRawPhotos)
 	u.editHistory = extraOn(b, prefEditHistory)
-	u.stickerReact = extraOn(b, prefStickerReact)
+	if b != nil {
+		u.attach.quality = savedQuality(b, u.rawPhotos)
+	}
 	u.keepDeleted = extraOn(b, model.PrefKeepDeleted)
 	u.viewOnceReplay = extraOn(b, model.PrefViewOnceReplay)
 	u.loadGIFPrefs()
@@ -153,14 +154,10 @@ func (u *UI) extrasSettings() []settingsSection {
 			u.extraToggle(prefRawPhotos, "Raw quality", "Offer Raw when sending photos: JPEG and PNG files go as they are, not scaled or compressed",
 				&u.rawPhotos, func() {
 					if !u.rawPhotos && u.attach.quality == model.QualityRaw {
-						u.attach.quality = model.QualityHD
+						u.attach.quality = model.QualityHD // the pref keeps Raw, for when it's back on
 					}
 				}),
 		}},
-		{title: "Reactions", rows: []settingRow{
-			u.extraToggle(prefStickerReact, "Sticker reactions", "React to a message with a sticker, from the Sticker tab of the reaction picker",
-				&u.stickerReact, nil),
-		}, note: "WhatsApp's phones show sticker reactions but don't let people give them yet. The ones others give always show."},
 		u.gifSettings(),
 		u.remoteSettings(),
 		{rows: []settingRow{{key: "gray", ic: icExtensionGray, title: "Ethically gray features",

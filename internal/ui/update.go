@@ -65,7 +65,8 @@ type updater struct {
 // canUpdate reports whether this build updates itself: a release (not a
 // prerelease) that knows how to start again.
 func (h *host) canUpdate() bool {
-	return update.Supported(h.o.Version) && h.o.Relaunch != nil && h.upd.exe != ""
+	// The headless mode's restart would open a window: it doesn't update.
+	return update.Supported(h.o.Version) && h.o.Relaunch != nil && h.upd.exe != "" && h.o.Headless == nil
 }
 
 func (up *updater) state() (updateStep, *update.Release, int64, int64, error) {

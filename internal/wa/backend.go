@@ -58,6 +58,7 @@ type Backend struct {
 
 	pairMu     sync.Mutex
 	pairCancel context.CancelFunc // stops the running pair's QR loop
+	pairing    *pairAttempt       // the running pair, for PairPhone (paircode.go)
 
 	mu     sync.Mutex
 	events []model.Event
@@ -369,6 +370,8 @@ func (b *Backend) pair() {
 	if !ok {
 		return
 	}
+	at := b.attempt(cli)
+	defer b.endAttempt(at)
 	for {
 		var item whatsmeow.QRChannelItem
 		select {
@@ -382,6 +385,7 @@ func (b *Backend) pair() {
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
 			b.emit(model.ConnEvent{State: model.StateQR, QR: item.Code})
+			at.readyOnce.Do(func() { close(at.ready) })
 		case whatsmeow.QRChannelSuccess.Event:
 			b.emit(model.ConnEvent{State: model.StateConnecting})
 			b.emit(model.SyncEvent{Percent: 0})

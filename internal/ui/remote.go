@@ -30,8 +30,9 @@ const (
 // remoteConfig is what a running server was started with: a change
 // restarts it.
 type remoteConfig struct {
-	port int
-	all  bool
+	port  int
+	all   bool
+	hosts string // the headless mode's, joined by commas
 }
 
 func remotePort(b model.Backend) int {
@@ -54,11 +55,28 @@ func (h *host) applyRemote() {
 	b := h.b
 	on := extraOn(b, prefRemote)
 	tok := b.Pref(prefRemoteToken)
+	cfg := remoteConfig{port: remotePort(b), all: extraOn(b, prefRemoteAll)}
+	var hosts []string
+	if hl := h.o.Headless; hl != nil {
+		// Always on, where and with the token the command line says. The
+		// token given is kept like one made here, so the Smartwatch page
+		// shows it when the app next runs with a window.
+		on, hosts = true, hl.Hosts
+		cfg.hosts = strings.Join(hosts, ",")
+		if hl.Port != 0 {
+			cfg.port = hl.Port
+		}
+		if hl.Token != "" && hl.Token != tok {
+			tok = hl.Token
+			b.SetPref(prefRemoteToken, tok)
+		}
+	}
 	if on && tok == "" {
+		// Made once and kept (an app preference, which outlives logouts
+		// and carries over to other accounts): only "New token" changes it.
 		tok = newRemoteToken()
 		b.SetPref(prefRemoteToken, tok)
 	}
-	cfg := remoteConfig{port: remotePort(b), all: extraOn(b, prefRemoteAll)}
 	if h.remote != nil && (!on || cfg != h.remoteCfg) {
 		h.stopRemote()
 	}
@@ -67,7 +85,7 @@ func (h *host) applyRemote() {
 	}
 	if h.remote == nil {
 		h.remote = remote.Start(remote.Options{
-			Port: cfg.port, AllNetworks: cfg.all, Token: tok, Version: h.o.Version,
+			Port: cfg.port, AllNetworks: cfg.all, Hosts: hosts, Token: tok, Version: h.o.Version,
 			Do: h.remoteDo, Host: remoteHost{h},
 		})
 		h.remoteCfg = cfg

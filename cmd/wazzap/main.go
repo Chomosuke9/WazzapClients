@@ -5,6 +5,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -23,6 +24,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/record"
+	"github.com/chomosuke9/wazzapclients/internal/remote"
 	"github.com/chomosuke9/wazzapclients/internal/ui"
 	"github.com/chomosuke9/wazzapclients/internal/update"
 	"github.com/chomosuke9/wazzapclients/internal/wa"
@@ -47,7 +49,20 @@ func main() {
 	// starts the app.
 	embedding := flag.Bool("Embedding", false, "started by a notification click (set by Windows)")
 	waitPID := flag.Int("wait-pid", 0, "wait for this process to exit first (set by an update's restart)")
+	headless := flag.Bool("headless", false, "run without a window, as the server of the smartwatch app (see -host, -port, -token, -phone)")
+	hosts := flag.String("host", "", "headless: where the server listens, comma-separated: IP addresses or names, \"localhost\", "+
+		"\"tailscale\" (this computer's Tailscale addresses) or \"all\" (every network). Default: localhost,tailscale")
+	port := flag.Int("port", 0, fmt.Sprintf("headless: the server's port (default %d)", remote.DefaultPort))
+	token := flag.String("token", os.Getenv("WAZZAP_TOKEN"), "headless: the token the watch app asks with, kept from then on "+
+		"(default $WAZZAP_TOKEN, or the one made before)")
+	phone := flag.String("phone", "", "headless: link with a pairing code for this phone number (with its country code) instead of the QR code")
 	flag.Parse()
+	if *headless {
+		headlessConsole()
+	}
+	if *port < 0 || *port > 65535 {
+		log.Fatalf("-port %d: a port is from 1 to 65535", *port)
+	}
 	*embedding = *embedding || slices.Contains(flag.Args(), "/Embedding")
 	// Windows starts the handler of whatsapp: links with the link last
 	// (desktop.RegisterLinks). WhatsApp's web links open the same way
@@ -83,6 +98,10 @@ func main() {
 		desktop.WaitExit(*waitPID, 15*time.Second)
 	}
 	if !desktop.Lock(lockDir, link) {
+		if *headless {
+			fmt.Fprintln(os.Stderr, "WazzapClients already runs with this data directory (-data); quit it first.")
+			os.Exit(1)
+		}
 		return
 	}
 	if exe, err := os.Executable(); err == nil && version != "" {
@@ -98,6 +117,9 @@ func main() {
 		open = func(dir string) (model.Backend, error) { return demoAccount(root, dir), nil }
 	}
 	list := accounts.Load(root)
+	if *headless {
+		*background = false
+	}
 	opts := ui.Options{
 		Window: []app.Option{
 			app.Title("WazzapClients"),
@@ -117,6 +139,21 @@ func main() {
 		Version:      version,
 		KlipyKey:     klipyKey,
 		Link:         link,
+	}
+	if *headless {
+		opts.Headless = &ui.Headless{
+			Hosts: splitList(*hosts),
+			Port:  *port,
+			Token: strings.TrimSpace(*token),
+			Phone: *phone,
+			Out:   os.Stdout,
+			ANSI:  ansiTerminal(os.Stdout),
+		}
+		if isTerminal(os.Stdin) {
+			opts.Headless.In = os.Stdin
+		}
+		// Nothing draws emojis: don't download their font.
+		opts.EmojiDir = ""
 	}
 	if *demo {
 		opts.NotifyDir = demoDir
@@ -138,6 +175,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if *headless {
+		// No window: Gio's main loop isn't needed.
+		if err := ui.Run(backend, opts); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	go func() {
 		if err := ui.Run(backend, opts); err != nil {
 			log.Fatal(err)
@@ -145,6 +189,17 @@ func main() {
 		os.Exit(0)
 	}()
 	app.Main()
+}
+
+// splitList splits a comma-separated flag.
+func splitList(s string) []string {
+	var out []string
+	for v := range strings.SplitSeq(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // demoAccount is the demo backend of an account's directory: the usual

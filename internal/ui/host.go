@@ -72,6 +72,9 @@ type Options struct {
 	// StallLog is the file that gets what held the UI goroutine whenever
 	// something does for seconds (stall.go), or "" for none.
 	StallLog string
+	// Headless, when set, runs the app without a window, tray icon or
+	// notifications, as a server for the watch app (headless.go).
+	Headless *Headless
 }
 
 // Run runs the app until it quits. It opens a window and, while a tray
@@ -104,48 +107,16 @@ func Run(b model.Backend, o Options) error {
 	if exe, err := os.Executable(); err == nil {
 		h.upd.exe = exe
 	}
-	var cmd []string
-	if exe, err := os.Executable(); err == nil && o.Relaunch != nil {
-		cmd = append([]string{exe}, o.Relaunch...)
-	}
-	if err := notify.Init(notify.Options{
-		AppID:   appID,
-		Name:    appName,
-		Icon:    encodePNG(appIcon(256)),
-		Dir:     o.NotifyDir,
-		Command: cmd,
-		Activate: func(a notify.Activation) {
-			if a.Token != "" {
-				app.SetActivationToken(a.Token)
-			}
-			h.request(request{kind: reqActivate, act: a})
-		},
-	}); err == nil {
-		h.notifyOK = true
-		h.notes.enabled = true
-		defer notify.Close()
-	}
-	setTooltip = desktop.SetTooltip
-	tray := desktop.Tray{
-		Name: appName,
-		Icon: icon.Tray,
-		Open: func() { h.request(request{kind: reqShow}) },
-		Quit: func() { h.request(request{kind: reqQuit}) },
-		Link: func(link string) { h.request(request{kind: reqLink, link: link}) },
-		// For the window's next raise (show), which the request after it asks for.
-		Activation: app.SetActivationToken,
-	}
-	if o.Hidden {
-		// Started at login, perhaps before the panel that shows the icon.
-		tray.Wait = 5 * time.Second
-	}
-	if err := desktop.TrayStart(tray); err == nil {
-		h.tray = true
-		defer desktop.TrayStop()
+	var quit <-chan os.Signal // the headless mode's Ctrl+C
+	if o.Headless != nil {
+		// No window, tray icon or notifications: the watch's server.
+		quit = h.startHeadless()
+	} else {
+		defer h.startDesktop()()
 	}
 	defer h.closeAll()
 	h.notes.setChats(h.b.Chats())
-	if !o.Hidden || !h.tray {
+	if (!o.Hidden || !h.tray) && o.Headless == nil {
 		h.openWindow()
 	}
 	h.b.Start(h.poke)
@@ -153,9 +124,15 @@ func Run(b model.Backend, o Options) error {
 	h.startAuto()
 	h.applyRemote()
 	defer h.stopRemote()
+	if h.headless != nil {
+		h.headless.started()
+	}
 	stall := newStallWatch(o.StallLog)
 	for {
 		select {
+		case <-quit:
+			h.headless.say("Quitting.")
+			return nil
 		case e := <-h.events:
 			stall.begin(fmt.Sprintf("window event %T", e))
 			closed, err := h.windowEvent(e)
@@ -198,6 +175,57 @@ func Run(b model.Backend, o Options) error {
 			stall.begin("background accounts' tick")
 			h.bgTick()
 			stall.end()
+		}
+	}
+}
+
+// startDesktop starts notifications and the tray icon, and returns what
+// stops them.
+func (h *host) startDesktop() (stop func()) {
+	o := h.o
+	var stops []func()
+	var cmd []string
+	if exe, err := os.Executable(); err == nil && o.Relaunch != nil {
+		cmd = append([]string{exe}, o.Relaunch...)
+	}
+	if err := notify.Init(notify.Options{
+		AppID:   appID,
+		Name:    appName,
+		Icon:    encodePNG(appIcon(256)),
+		Dir:     o.NotifyDir,
+		Command: cmd,
+		Activate: func(a notify.Activation) {
+			if a.Token != "" {
+				app.SetActivationToken(a.Token)
+			}
+			h.request(request{kind: reqActivate, act: a})
+		},
+	}); err == nil {
+		h.notifyOK = true
+		h.notes.enabled = true
+		stops = append(stops, notify.Close)
+	}
+	setTooltip = desktop.SetTooltip
+	tray := desktop.Tray{
+		Name: appName,
+		Icon: icon.Tray,
+		Open: func() { h.request(request{kind: reqShow}) },
+		Quit: func() { h.request(request{kind: reqQuit}) },
+		Link: func(link string) { h.request(request{kind: reqLink, link: link}) },
+		// For the window's next raise (show), which the request after it asks for.
+		Activation: app.SetActivationToken,
+	}
+	if o.Hidden {
+		// Started at login, perhaps before the panel that shows the icon.
+		tray.Wait = 5 * time.Second
+	}
+	if err := desktop.TrayStart(tray); err == nil {
+		h.tray = true
+		stops = append(stops, desktop.TrayStop)
+	}
+	return func() {
+		for i := len(stops) - 1; i >= 0; i-- {
+			stops[i]()
 		}
 	}
 }
@@ -328,6 +356,8 @@ type host struct {
 	remote      *remote.Server
 	remoteCfg   remoteConfig
 	remoteCalls chan func()
+	// headless is set in the headless mode (headless.go).
+	headless *headlessHost
 }
 
 type request struct {
@@ -349,6 +379,7 @@ const (
 	reqRestart                   // an update is in place: start it and quit
 	reqAutoUpdate                // time for an automatic update check
 	reqLink                      // a second launch was to open a WhatsApp link
+	reqConsole                   // a line typed in the headless mode's terminal (link)
 )
 
 // request queues r for the UI goroutine. It's called from other
@@ -391,7 +422,9 @@ func (h *host) poll(invalidate bool) {
 			if e.MeID == "" {
 				h.conn.MeID = meID
 			}
-			if h.win == nil && (e.State == model.StateQR || e.State == model.StateError) {
+			if h.headless != nil {
+				h.headless.conn(e)
+			} else if h.win == nil && (e.State == model.StateQR || e.State == model.StateError) {
 				// Linking again, or a problem: only the window can show it.
 				h.show()
 			}
@@ -489,6 +522,8 @@ func (h *host) handle(r request) bool {
 		}
 	case reqRestart:
 		return h.restart()
+	case reqConsole:
+		h.headless.line(r.link)
 	}
 	return false
 }
@@ -560,6 +595,10 @@ func (h *host) markRead(id string) {
 // show brings the window up, opening one if there is none, and opens
 // openChat in it.
 func (h *host) show() {
+	if h.headless != nil {
+		h.headless.say("A window was asked for, but this instance runs headless.")
+		return
+	}
 	if h.win == nil {
 		if h.openWin != nil {
 			h.openWin()

@@ -136,11 +136,10 @@ type emojiPicker struct {
 }
 
 // stickerReacts reports whether the picker reacts to a message that takes
-// a sticker as a reaction (stickerreact.go), with that extra feature on:
-// it then has a Sticker tab.
+// a sticker as a reaction (stickerreact.go): it then has a Sticker tab.
 func (u *UI) stickerReacts() bool {
 	e := &u.picker
-	return u.stickerReact && e.mode == pickReaction && e.target != nil && u.takesStickers(e.target)
+	return e.mode == pickReaction && e.target != nil && u.takesStickers(e.target)
 }
 
 // shown reports whether the picker is open or still fading out.

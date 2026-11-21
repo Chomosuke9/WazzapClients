@@ -47,20 +47,6 @@ func TestStickerReactions(t *testing.T) {
 		t.Fatal("the message is gone")
 		return nil
 	}
-	// The Sticker tab is an extra feature, off until it's turned on.
-	u.openPicker(pickReaction, msg())
-	if u.stickerReact || u.stickerReacts() {
-		t.Fatal("the reaction picker has a Sticker tab by default")
-	}
-	u.closePicker()
-	u.ShowPage("extras")
-	settingRowByKey(t, u, prefStickerReact).run()
-	u.setPage(pageChats)
-	frame()
-	if !u.stickerReact || u.backend.Pref(prefStickerReact) != "on" {
-		t.Fatalf("after its switch: on %v, pref %q", u.stickerReact, u.backend.Pref(prefStickerReact))
-	}
-
 	// The reaction picker switches to its Sticker tab.
 	u.openPicker(pickReaction, msg())
 	frame()
@@ -240,8 +226,6 @@ func TestStickerReactKeepPicker(t *testing.T) {
 		u.applyEvents()
 	}
 	frame()
-	b.SetPref(prefStickerReact, "on")
-	u.stickerReact = true
 	target := u.msgs[len(u.msgs)-1]
 	stickers := func() int {
 		for _, m := range u.msgs {

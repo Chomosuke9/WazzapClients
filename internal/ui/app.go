@@ -225,7 +225,6 @@ type UI struct {
 	codes   shortcodes   // :emoji: names typed in the composer (shortcode.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
 	extendedMentions, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
-	stickerReact                                                          bool // the reaction picker has a Sticker tab
 	// Custom mentions (custommention.go): each group's as read from its
 	// preference, and a count of the changes to them.
 	customMentions    map[string][]customMention
@@ -1898,7 +1897,6 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "reactpicker":
 		// The picker a message's React opens, with its Sticker tab.
 		if lastIn != nil {
-			u.stickerReact = true // as with the extra feature on
 			u.openPicker(pickReaction, lastIn)
 			u.picker.anim.snap(true)
 		}

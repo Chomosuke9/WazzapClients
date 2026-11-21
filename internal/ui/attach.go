@@ -349,6 +349,28 @@ func (u *UI) openQualityMenu() {
 	}()
 }
 
+// prefPhotoQuality is the quality last picked in the quality menu, which
+// the next photos go out at, after a restart too: "" (Standard), "hd" or
+// "raw". It's an app preference (appPrefs).
+const prefPhotoQuality = "photo_quality"
+
+var qualityPrefs = map[model.Quality]string{model.QualityStandard: "", model.QualityHD: "hd", model.QualityRaw: "raw"}
+
+// savedQuality is the quality last picked: Raw only while that extra
+// feature is on, HD otherwise.
+func savedQuality(b model.Backend, raw bool) model.Quality {
+	switch b.Pref(prefPhotoQuality) {
+	case "hd":
+		return model.QualityHD
+	case "raw":
+		if raw {
+			return model.QualityRaw
+		}
+		return model.QualityHD
+	}
+	return model.QualityStandard
+}
+
 // qualityMenuItems mirrors WhatsApp's photo quality menu, plus Raw when
 // that extra feature is on.
 func (u *UI) qualityMenuItems() []menuItem {
@@ -357,7 +379,10 @@ func (u *UI) qualityMenuItems() []menuItem {
 		return nil
 	}
 	item := func(key, label string, q model.Quality) menuItem {
-		return menuItem{key: key, label: label, sub: a.qualitySub(q), tick: a.quality == q, run: func() { a.quality = q }}
+		return menuItem{key: key, label: label, sub: a.qualitySub(q), tick: a.quality == q, run: func() {
+			a.quality = q
+			u.backend.SetPref(prefPhotoQuality, qualityPrefs[q])
+		}}
 	}
 	items := []menuItem{
 		item("std", "Standard quality", model.QualityStandard),

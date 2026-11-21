@@ -326,6 +326,9 @@ func (b *Backend) Logout() {
 }
 func (b *Backend) Retry() {}
 
+// PairPhone gives a made-up pairing code: the demo can't link.
+func (b *Backend) PairPhone(phone string) (string, error) { return "WAZZ-DEMO", nil }
+
 type demoChat struct {
 	ID, Name, Presence, Typing       string
 	IsGroup, Pinned, Favorite, Muted bool

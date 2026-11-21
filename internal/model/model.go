@@ -1864,6 +1864,16 @@ type Backgrounder interface {
 	SetBackground(on bool)
 }
 
+// PhonePairer is implemented by backends that can link with a phone
+// number's pairing code instead of the QR code.
+type PhonePairer interface {
+	// PairPhone returns the code the phone of phone (international
+	// format) enters to link this device, starting linking again if the QR
+	// codes ran out. It blocks on the network, so it's called from any
+	// goroutine but the UI's.
+	PairPhone(phone string) (string, error)
+}
+
 // PrefKeeper is implemented by backends that wipe their data when the
 // account logs out or the phone unlinks it.
 type PrefKeeper interface {

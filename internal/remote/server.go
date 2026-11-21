@@ -18,6 +18,14 @@
 //	GET  /v1/chats/{chat}/photo/version         which profile picture the chat has
 //	GET  /v1/chats/{chat}/photo?size=58         the profile picture, a PNG circle
 //	GET  /v1/chats/{chat}/messages/{id}/image?w=400&h=400   a photo or sticker, a PNG
+//
+// Linking the account, for the headless mode (login.go):
+//
+//	GET  /login                                a page that links it (asks for the token)
+//	GET  /v1/login                             the linking state, and whether a QR code shows
+//	GET  /v1/login/qr.svg                      the QR code to scan, while there is one
+//	POST /v1/login/code                        a pairing code for {"phone"} instead
+//	POST /v1/login/retry                       new QR codes, once they ran out
 package remote
 
 import (
@@ -61,8 +69,10 @@ type Options struct {
 	// AllNetworks listens on every network instead of this computer and
 	// its Tailscale addresses alone.
 	AllNetworks bool
-	Token       string
-	Version     string
+	// Hosts, when set, are the hosts to listen on instead (ListenAddrs).
+	Hosts   []string
+	Token   string
+	Version string
 	// Do runs f on the UI goroutine and waits for it. It returns an error
 	// when f couldn't run in time (it may still run later).
 	Do   func(f func()) error
@@ -129,6 +139,11 @@ func newServer(o Options) *Server {
 	mux.HandleFunc("GET /v1/chats/{chat}/photo/version", s.auth(s.photoVersion))
 	mux.HandleFunc("GET /v1/chats/{chat}/photo", s.auth(s.photo))
 	mux.HandleFunc("GET /v1/chats/{chat}/messages/{id}/image", s.auth(s.picture))
+	mux.HandleFunc("GET /login", s.loginPage)
+	mux.HandleFunc("GET /v1/login", s.auth(s.loginState))
+	mux.HandleFunc("GET /v1/login/qr.svg", s.auth(s.loginQR))
+	mux.HandleFunc("POST /v1/login/code", s.auth(s.loginCode))
+	mux.HandleFunc("POST /v1/login/retry", s.auth(s.loginRetry))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fail(w, http.StatusNotFound, "no such endpoint") })
 	s.srv = &http.Server{
 		Handler:           mux,
@@ -198,6 +213,32 @@ func Addrs(port int, all bool) []string {
 	return addrs
 }
 
+// ListenAddrs are the addresses of hosts on port. A host is an IP address
+// or a name; "localhost" is 127.0.0.1, "tailscale" this computer's
+// Tailscale addresses (none while it's down), and "", "*" or "all" every
+// network.
+func ListenAddrs(hosts []string, port int) []string {
+	p := strconv.Itoa(port)
+	var addrs []string
+	for _, h := range hosts {
+		h = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(h), "["), "]")
+		switch strings.ToLower(h) {
+		case "", "*", "all":
+			addrs = append(addrs, ":"+p)
+		case "localhost":
+			addrs = append(addrs, net.JoinHostPort("127.0.0.1", p))
+		case "tailscale":
+			for _, ip := range TailscaleIPs() {
+				addrs = append(addrs, net.JoinHostPort(ip.String(), p))
+			}
+		default:
+			addrs = append(addrs, net.JoinHostPort(h, p))
+		}
+	}
+	slices.Sort(addrs)
+	return slices.Compact(addrs)
+}
+
 var (
 	tailnet4 = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 	tailnet6 = &net.IPNet{IP: net.ParseIP("fd7a:115c:a1e0::"), Mask: net.CIDRMask(48, 128)}
@@ -240,6 +281,9 @@ func (s *Server) watchAddrs() {
 
 func (s *Server) relisten() {
 	want := Addrs(s.o.Port, s.o.AllNetworks)
+	if len(s.o.Hosts) > 0 {
+		want = ListenAddrs(s.o.Hosts, s.o.Port)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	select {

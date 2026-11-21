@@ -182,6 +182,14 @@ func (a *Backend) SetBackground(on bool) {
 	}
 }
 
+// PairPhone passes on to the backend it wraps (model.PhonePairer).
+func (a *Backend) PairPhone(phone string) (string, error) {
+	if b, ok := a.Backend.(model.PhonePairer); ok {
+		return b.PairPhone(phone)
+	}
+	return "", errors.New("this backend can't link with a phone number")
+}
+
 // KeepPrefs passes on to the backend it wraps (model.PrefKeeper).
 func (a *Backend) KeepPrefs(keys []string) {
 	if b, ok := a.Backend.(model.PrefKeeper); ok {

@@ -284,3 +284,53 @@ func TestEffectWithoutRoomWaitsForClick(t *testing.T) {
 	}
 	u.players.stopAll()
 }
+
+// The picker's stickers play in a budget of their own, so a chat's
+// stickers don't keep them still, and one that found no room waits for
+// some instead of staying still until it leaves the screen.
+func TestPreviewsWaitForRoom(t *testing.T) {
+	u := New(mock.New())
+	data := wasFile(t, false)
+	load := func() []byte { return data }
+	ps := &u.players
+	defer ps.stopAll()
+	ps.bytes.Store(playerBudget.Load()) // the chats' stickers hold all of theirs
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatal(what)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	waitFor("a preview doesn't play while the chats' stickers fill their budget", func() bool {
+		_, ok := u.previewFrame("pick:a", 128, load)
+		ps.endFrame()
+		return ok
+	})
+
+	ps.previewBytes.Store(previewBudget.Load()) // the picker's own budget is full
+	waitFor("a preview without room doesn't wait for it", func() bool {
+		u.previewFrame("pick:a", 128, load)
+		u.previewFrame("pick:b", 128, load)
+		ps.endFrame()
+		_, waits := ps.waiting["pick:b"]
+		return waits && ps.m["pick:b"] == nil
+	})
+	u.previewFrame("pick:a", 128, load)
+	u.previewFrame("pick:b", 128, load)
+	ps.endFrame()
+	if ps.m["pick:b"] != nil {
+		t.Fatal("a waiting preview started again without room")
+	}
+	ps.previewBytes.Add(-previewBudget.Load()) // room again
+	waitFor("a waiting preview doesn't start once there's room", func() bool {
+		u.previewFrame("pick:a", 128, load)
+		_, ok := u.previewFrame("pick:b", 128, load)
+		ps.endFrame()
+		return ok
+	})
+	ps.bytes.Store(0)
+}
