@@ -315,7 +315,7 @@ type UI struct {
 		// olderMore and newerMore report stored messages past either end
 		// of msgs (see paging.go).
 		olderMore, newerMore bool
-		pinned               *model.Message  // shown in the pinned banner
+		pins                 pinState        // the pinned banner's messages
 		members              *model.ChatInfo // group members for @mentions
 		membersFor           string
 		// mentionHits' answer for one query.
@@ -1303,6 +1303,7 @@ func (u *UI) applyEvents() {
 			u.upsertMessage(e.Msg)
 			u.searchChatChanged(e.Msg.ChatID)
 			u.votesChanged(e.Msg)
+			u.repliesChanged(e.Msg)
 			u.reactionsChanged(e.Msg)
 		case model.SearchEvent:
 			if e.ChatID == "" {
@@ -1532,8 +1533,8 @@ func (u *UI) upsertMessage(m *model.Message) {
 	if u.selected == nil || u.selected.ID != m.ChatID {
 		return
 	}
-	if m.Pinned || u.conv.pinned != nil && u.conv.pinned.ID == m.ID {
-		u.conv.pinned = u.backend.PinnedMessage(m.ChatID)
+	if m.Pinned || u.conv.pins.has(m.ID) {
+		u.loadPins(m.ChatID)
 	}
 	moved := false
 	for i, old := range u.msgs {

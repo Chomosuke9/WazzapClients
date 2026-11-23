@@ -141,8 +141,8 @@ func (u *UI) markFXSeen(m *model.Message) {
 // stickerEffect draws a playing Lottie sticker's effect over it, starting
 // it the first time the sticker plays. It is drawn with the sticker, over
 // the messages above it (those below draw over it), and clipped to the
-// conversation like the rest.
-func (u *UI) stickerEffect(gtx C, m *model.Message, sz int) {
+// conversation like the rest. flip mirrors it, as the sticker is.
+func (u *UI) stickerEffect(gtx C, m *model.Message, sz int, flip bool) {
 	key := stickerKey(m)
 	fx := &u.fx
 	if fx.none[key] {
@@ -187,7 +187,7 @@ func (u *UI) stickerEffect(gtx C, m *model.Message, sz int) {
 	u.markFXSeen(m)
 	c := sz / 2
 	r := image.Rect(c-side/2, c-side/2, c-side/2+side, c-side/2+side)
-	paintCover(gtx, f, f.Size(), r)
+	paintCoverFlip(gtx, f, f.Size(), r, flip)
 }
 
 // fxFrame returns the current frame of a sticker's effect, starting its

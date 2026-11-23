@@ -13,9 +13,10 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
-// TestAlbumRows checks an album's pictures share one list row, which a
-// caption, a reply, another album or another sender takes a picture out of,
-// and that a lone picture of an album is an ordinary row.
+// TestAlbumRows checks an album's pictures share one list row, captioned
+// ones too and whatever comes in between, which a reply, another album or
+// another sender takes a picture out of, and that a lone picture of an
+// album is an ordinary row.
 func TestAlbumRows(t *testing.T) {
 	u := New(mock.New())
 	u.Start(func() {})
@@ -30,9 +31,10 @@ func TestAlbumRows(t *testing.T) {
 	reply.Quote = &model.Quote{Text: "hi"}
 	mine := pic("a8", "A")
 	mine.FromMe = true
+	text := &model.Message{ID: "t1", ChatID: "rina", Text: "in between", Time: at}
 	u.msgs = []*model.Message{
 		pic("a1", "A"), pic("a2", "A"), pic("a3", "A"), captioned, pic("a5", "A"), reply, pic("a7", "A"),
-		mine, pic("b1", "B"), pic("b2", "B"), pic("c1", "C"), pic("x1", ""), pic("x2", ""),
+		mine, pic("b1", "B"), text, pic("b2", "B"), pic("c1", "C"), pic("x1", ""), pic("x2", ""),
 	}
 	u.msgsVer++
 	var got [][]string
@@ -52,7 +54,7 @@ func TestAlbumRows(t *testing.T) {
 		}
 		got = append(got, ids)
 	}
-	want := [][]string{{"a1", "a2", "a3"}, {"a4"}, {"a5"}, {"a6", "a7"}, {"a8"}, {"b1", "b2"}, {"c1"}, {"x1"}, {"x2"}}
+	want := [][]string{{"a1", "a2", "a3", "a4", "a5"}, {"a6", "a7"}, {"a8"}, {"b1", "b2"}, {"t1"}, {"c1"}, {"x1"}, {"x2"}}
 	if len(got) != len(want) {
 		t.Fatalf("rows = %v, want %v", got, want)
 	}

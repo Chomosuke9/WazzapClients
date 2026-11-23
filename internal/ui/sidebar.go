@@ -342,7 +342,27 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 			o.community = cm
 		}
 	}
+	// A ringed picture opens the status updates its ring stands for.
+	ring := u.btn("rowring:" + c.ID)
+	var rung *model.StatusThread
+	if o.avatar == nil && o.community == nil && !pick.on {
+		rung = u.listStatus(c)
+	}
+	if rung != nil {
+		if noFocus(ring).Clicked(gtx) {
+			u.status.viewer.show(rung)
+		}
+		o.hovered = o.hovered || ring.Hovered()
+	}
 	dims := u.chatRow(gtx, shown, o)
+	if rung != nil && selV == 0 {
+		s := gtx.Dp(52)
+		t := op.Offset(image.Pt(gtx.Dp(13)+gtx.Dp(12), (dims.Size.Y-s)/2)).Push(gtx.Ops)
+		cg := gtx
+		cg.Constraints = layout.Exact(image.Pt(s, s))
+		clickable(cg, noFocus(ring), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		t.Pop()
+	}
 	if selV > 0 {
 		u.pickBox(gtx, c.ID, dims.Size.Y, selV)
 	}
@@ -670,7 +690,7 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 	switch {
 	case len(c.Typing) > 0:
 		children = append(children, layout.Flexed(1, u.label(size, typingText(c), p.Green, labelOpts{maxLines: 1}).Layout))
-	case u.drafts[c.ID] != nil:
+	case u.drafts[c.ID].listed():
 		children = append(children, layout.Rigid(u.label(size, "Draft: ", p.Green).Layout))
 		ic, txt := draftPreview(u.drafts[c.ID])
 		if ic != nil {

@@ -25,9 +25,17 @@ type msgInfoState struct {
 	data     *model.MessageInfo
 	votes    bool
 	voteList []model.Vote
-	list     widget.List
-	closeBtn widget.Clickable
-	anim     tween
+	// replies shows an announcement's replies instead (replies.go).
+	replies   bool
+	replyList []model.Reply
+	replyEd   widget.Editor
+	replySend widget.Clickable
+	replyFor  string // the announcement replyEd's text is for
+	// previewing is set while the panel draws the message itself.
+	previewing bool
+	list       widget.List
+	closeBtn   widget.Clickable
+	anim       tween
 }
 
 // shown reports whether the panel is open or still sliding away.
@@ -43,7 +51,7 @@ func (u *UI) openMsgInfo(m *model.Message) {
 		u.hideChatTheme()
 		s.anim.snap(true)
 	}
-	s.open, s.chatID, s.msg, s.votes = true, m.ChatID, m, false
+	s.open, s.chatID, s.msg, s.votes, s.replies = true, m.ChatID, m, false, false
 	s.data = u.backend.MessageInfo(m)
 	s.list.Position = layout.Position{}
 }
@@ -61,7 +69,7 @@ func (u *UI) msgInfoReceipt(e model.ReceiptEvent) {
 	if !s.open || s.chatID != e.ChatID {
 		return
 	}
-	if s.votes {
+	if s.votes || s.replies {
 		return
 	}
 	for _, id := range e.IDs {
@@ -88,7 +96,10 @@ func (u *UI) layoutMsgInfo(gtx C) D {
 	dims := fill(gtx, p.Panel)
 	title := "Message info"
 	var rows []layout.Widget
-	if s.votes {
+	foot := func(C) D { return D{} }
+	if s.replies {
+		title, rows, foot = "Replies", u.replyRows(), u.replyComposer
+	} else if s.votes {
 		title, rows = u.votesTitle(), u.voteRows()
 	} else {
 		rows = u.msgInfoRows()
@@ -108,6 +119,7 @@ func (u *UI) layoutMsgInfo(gtx C) D {
 		layout.Flexed(1, func(gtx C) D {
 			return u.scrollList(gtx, &s.list, len(rows), func(gtx C, i int) D { return rows[i](gtx) })
 		}),
+		layout.Rigid(foot),
 	)
 	return dims
 }
@@ -128,6 +140,12 @@ func (u *UI) msgInfoRows() []layout.Widget {
 		if len(info.Receipts) > 0 {
 			r = info.Receipts[0]
 		}
+		if m.Kind == model.KindViewOnce {
+			return append(rows,
+				u.msgInfoTime(nil, true, "Opened", r.Played),
+				u.msgInfoTime(icTicks, true, "Seen", r.Read),
+				u.msgInfoTime(icTicks, false, "Delivered", r.Delivered))
+		}
 		if m.Media == model.MediaVoice {
 			rows = append(rows, u.msgInfoTime(icMic, true, "Played", r.Played))
 		}
@@ -136,10 +154,13 @@ func (u *UI) msgInfoRows() []layout.Widget {
 			u.msgInfoTime(icTicks, false, "Delivered", r.Delivered))
 		return rows
 	}
+	// Opening a view once message is playing it, as for a voice message.
+	once := m.Kind == model.KindViewOnce
+	plays := once || m.Media == model.MediaVoice
 	var played, read, delivered []model.PersonReceipt
 	for _, r := range info.Receipts {
 		switch {
-		case m.Media == model.MediaVoice && !r.Played.IsZero():
+		case plays && !r.Played.IsZero():
 			played = append(played, r)
 		case !r.Read.IsZero():
 			read = append(read, r)
@@ -158,10 +179,15 @@ func (u *UI) msgInfoRows() []layout.Widget {
 	}
 	// Each list leaves out those in the lists above it, but the counts of
 	// those still to come take them in.
-	if m.Media == model.MediaVoice {
+	readBy := "Read by"
+	switch {
+	case once:
+		readBy = "Seen by"
+		section(nil, true, "Opened by", played, len(played), func(r model.PersonReceipt) time.Time { return r.Played })
+	case plays:
 		section(icMic, true, "Played by", played, len(played), func(r model.PersonReceipt) time.Time { return r.Played })
 	}
-	section(icTicks, true, "Read by", read, len(played)+len(read), func(r model.PersonReceipt) time.Time { return r.Read })
+	section(icTicks, true, readBy, read, len(played)+len(read), func(r model.PersonReceipt) time.Time { return r.Read })
 	section(icTicks, false, "Delivered to", delivered, len(played)+len(read)+len(delivered), func(r model.PersonReceipt) time.Time { return r.Delivered })
 	return rows
 }
@@ -184,8 +210,12 @@ func (u *UI) msgInfoPreview(gtx C) D {
 	maxW := max(w-2*padX, gtx.Dp(120))
 	bgtx := gtx.Disabled()
 	bgtx.Constraints = layout.Constraints{Max: image.Pt(maxW, gtx.Dp(2000))}
+	s.previewing = true
+	defer func() { s.previewing = false }()
 	var bub part
-	if s.msg.Kind == model.KindSticker || isRound(s.msg) {
+	if em := u.jumbo(c, s.msg); em != nil {
+		bub = record(bgtx, func(gtx C) D { return u.layoutJumboMessage(gtx, c, s.msg, em, true, maxW) })
+	} else if s.msg.Kind == model.KindSticker || isRound(s.msg) {
 		bub = record(bgtx, func(gtx C) D { return u.layoutStickerMessage(gtx, c, s.msg, true, maxW) })
 	} else {
 		bub = record(bgtx, func(gtx C) D { return u.layoutBubble(gtx, c, s.msg, true, maxW) })
@@ -204,12 +234,20 @@ func (u *UI) msgInfoHeading(ic *icon.Icon, blue bool, title string) layout.Widge
 		p := u.pal
 		return layout.Inset{Left: infoPadX, Right: 24, Top: 26, Bottom: 14}.Layout(gtx, func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(iconW(ic, 21, msgInfoTickColor(p, blue))),
+				layout.Rigid(u.msgInfoIcon(ic, msgInfoTickColor(p, blue))),
 				layout.Rigid(layout.Spacer{Width: 14}.Layout),
 				layout.Flexed(1, u.label(16, title, p.TextSecondary, labelOpts{maxLines: 1}).Layout),
 			)
 		})
 	}
+}
+
+// msgInfoIcon is a heading's icon: the view once mark when ic is nil.
+func (u *UI) msgInfoIcon(ic *icon.Icon, col color.NRGBA) layout.Widget {
+	if ic == nil {
+		return func(gtx C) D { return u.viewOnceMark(gtx, 21, col) }
+	}
+	return iconW(ic, 21, col)
 }
 
 func msgInfoTickColor(p *Palette, blue bool) color.NRGBA {
@@ -258,7 +296,7 @@ func (u *UI) msgInfoTime(ic *icon.Icon, blue bool, title string, at time.Time) l
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(iconW(ic, 21, msgInfoTickColor(p, blue))),
+						layout.Rigid(u.msgInfoIcon(ic, msgInfoTickColor(p, blue))),
 						layout.Rigid(layout.Spacer{Width: 14}.Layout),
 						layout.Flexed(1, u.label(16, title, p.Text, labelOpts{maxLines: 1}).Layout),
 					)

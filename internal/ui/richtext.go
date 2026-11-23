@@ -473,7 +473,8 @@ func (u *UI) layoutRich(gtx C, text string, size unit.Sp, col, secondary color.N
 				ts.tmp = ts.tmp[:0]
 				carets = &ts.tmp
 			}
-			body = record(bgtx, func(gtx C) D { return u.layoutSpans(gtx, spans, deco, onSpan, carets) })
+			lineH := max(22, size*1.3) // taller for emojis alone (bigEmojiSize)
+			body = record(bgtx, func(gtx C) D { return u.layoutSpansLH(gtx, spans, deco, lineH, onSpan, carets) })
 		}
 		if track {
 			// Keep the carets of the block's own text, not of the prefix,

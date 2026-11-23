@@ -21,11 +21,14 @@ type parsed struct {
 	target   string // message ID a reaction/revoke/edit/pin applies to
 	reaction *reaction
 	sticker  *stickerReact // a sticker reacting to target (stickerreact.go)
+	comment  *comment      // a reply to target, an announcement (comments.go)
 	revoke   bool
 	// revokedBy is the group admin who deleted someone else's message
 	// (revoke), or "" when its sender did.
 	revokedBy string
 	pin       int       // 1 pinned, -1 unpinned
+	pinAt     int64     // when, in unix milliseconds
+	pinUntil  int64     // when the pin ends, in unix seconds, 0 for never
 	keep      int       // 1 kept in the chat, -1 unkept
 	vote      *vote     // a vote in a poll or an answer to an event
 	event     *eventDef // an edit of an event
@@ -349,6 +352,22 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		p.reaction = &reaction{who: b.reactorOf(ctx, evt.Info.Sender, evt.Info.IsFromMe), ts: ts, emoji: r.GetText()}
 		return p, p.target != ""
 	}
+	if enc := m.GetEncReactionMessage(); enc != nil {
+		r := b.decryptReaction(ctx, evt)
+		if r == nil {
+			return p, false
+		}
+		ts := r.GetSenderTimestampMS()
+		if ts <= 0 {
+			ts = evt.Info.Timestamp.UnixMilli()
+		}
+		p.target = enc.GetTargetMessageKey().GetID()
+		p.reaction = &reaction{who: b.reactorOf(ctx, evt.Info.Sender, evt.Info.IsFromMe), ts: ts, emoji: r.GetText()}
+		return p, p.target != ""
+	}
+	if m.GetEncCommentMessage() != nil || m.GetCommentMessage() != nil {
+		return p, b.parseComment(ctx, evt, &p)
+	}
 	if m.GetPollUpdateMessage() != nil || m.GetEncEventResponseMessage() != nil {
 		return p, b.parseVote(ctx, evt, &p)
 	}
@@ -357,6 +376,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		if pin.GetType() == waE2E.PinInChatMessage_UNPIN_FOR_ALL {
 			p.pin = -1
 		}
+		p.setPinTime(pin.GetSenderTimestampMS(), evt.Info.Timestamp, max(addOnDuration(evt.RawMessage), addOnDuration(m)))
 		return p, p.target != ""
 	}
 	if k := m.GetKeepInChatMessage(); k != nil {
@@ -524,6 +544,30 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		p.msg.quotedMedia, p.msg.quotedID = q, id
 	}
 	return p, true
+}
+
+// setPinTime sets when p's pin was made, ms if it says so, and when it
+// ends, secs later (0 for never).
+func (p *parsed) setPinTime(ms int64, sent time.Time, secs uint32) {
+	p.pinAt = ms
+	if ms <= 0 {
+		p.pinAt = sent.UnixMilli()
+	}
+	if secs > 0 {
+		p.pinUntil = p.pinAt/1000 + int64(secs)
+	}
+}
+
+// addOnDuration returns how long what m adds to another message (a pin)
+// lasts, in seconds, or 0. It can sit on any of the envelopes around it.
+func addOnDuration(m *waE2E.Message) uint32 {
+	for i := 0; i < 5 && m != nil; i++ {
+		if d := m.GetMessageContextInfo().GetMessageAddOnDurationInSecs(); d > 0 {
+			return d
+		}
+		m = unwrapOnce(m)
+	}
+	return 0
 }
 
 // mentionsOf returns the mentions of a message's context, as stored.

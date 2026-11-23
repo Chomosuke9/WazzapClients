@@ -23,6 +23,14 @@ type longChat struct {
 	*mock.Backend
 	id   string
 	msgs []*model.Message
+	pins []*model.Message
+}
+
+func (b *longChat) PinnedMessages(chatID string) []*model.Message {
+	if chatID != b.id {
+		return b.Backend.PinnedMessages(chatID)
+	}
+	return b.pins
 }
 
 func (b *longChat) Messages(chatID string, limit int) []*model.Message {

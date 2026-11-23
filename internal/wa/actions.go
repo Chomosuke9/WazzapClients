@@ -297,7 +297,8 @@ func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) 
 		// "Reply privately" quotes a group message in a one-to-one chat.
 		ci.RemoteJID = proto.String(r.ChatID)
 	}
-	q := &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media, Round: r.Round}
+	q := &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media, Round: r.Round,
+		Status: r.ChatID == statusChat}
 	// Store the raw quoted text, not the display text with resolved names.
 	if raw, ok := b.store.message(b.ctx, r.ChatID, r.ID); ok {
 		q.Text = raw.Text
@@ -630,7 +631,15 @@ func (b *Backend) React(m *model.Message, emoji string) {
 	b.emitMessage(m.ChatID, m.ID)
 	msg := cli.BuildReaction(jid, b.senderOf(m), m.ID, emoji)
 	go func() {
-		if _, err := b.sendMessage(b.ctx, cli, jid, msg); err != nil {
+		var extra whatsmeow.SendRequestExtra
+		if b.store.announces(b.ctx, m.ChatID) {
+			msg = b.encryptReaction(b.ctx, cli, jid, m, msg)
+			if msg.GetEncReactionMessage() != nil {
+				// With Meta, hypermeow sends it to announcements as your LID.
+				extra.Meta = &types.MsgMetaInfo{DeprecatedLIDSession: proto.Bool(false)}
+			}
+		}
+		if _, err := b.sendMessage(b.ctx, cli, jid, msg, extra); err != nil {
 			b.log.Warnf("react in %s: %v", m.ChatID, err)
 			b.emit(model.NoticeEvent{Text: "Couldn't send the reaction."})
 		}
@@ -747,17 +756,15 @@ func (b *Backend) OpenedViewOnce(m *model.Message) {
 	b.emitMessage(m.ChatID, m.ID)
 }
 
-// pinDuration is how long a pinned message stays pinned (WhatsApp offers
-// 24 hours, 7 days or 30 days; the desktop app defaults to 7 days).
-const pinDuration = 7 * 24 * time.Hour
-
 // PinMessage implements model.Backend.
-func (b *Backend) PinMessage(m *model.Message, pinned bool) {
+func (b *Backend) PinMessage(m *model.Message, d time.Duration) {
+	pinned := d > 0
 	cli := b.connected()
 	if cli == nil {
 		return
 	}
 	ctx := b.ctx
+	now := b.sendTime()
 	jid, key := b.messageKey(m)
 	typ := waE2E.PinInChatMessage_PIN_FOR_ALL
 	if !pinned {
@@ -765,16 +772,15 @@ func (b *Backend) PinMessage(m *model.Message, pinned bool) {
 	}
 	msg := &waE2E.Message{
 		PinInChatMessage: &waE2E.PinInChatMessage{
-			Key: key, Type: typ.Enum(), SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
+			Key: key, Type: typ.Enum(), SenderTimestampMS: proto.Int64(now.UnixMilli()),
 		},
 		MessageContextInfo: &waE2E.MessageContextInfo{
-			MessageAddOnDurationInSecs: proto.Uint32(uint32(pinDuration / time.Second)),
+			MessageAddOnDurationInSecs: proto.Uint32(uint32(d / time.Second)),
 		},
 	}
-	if pinned {
-		_, _ = b.db.ExecContext(ctx, `UPDATE wz_messages SET pinned = 0 WHERE chat = ?`, m.ChatID)
+	if err := b.store.setPin(ctx, b.db, m.ChatID, m.ID, pinned, now.UnixMilli(), now.Add(d).Unix()); err != nil {
+		b.log.Warnf("pin %s in %s: %v", m.ID, m.ChatID, err)
 	}
-	_ = b.store.setMessageFlag(ctx, m.ChatID, m.ID, "pinned", pinned)
 	b.emitAllMessages(m.ChatID)
 	go func() {
 		if _, err := b.sendMessage(ctx, cli, jid, msg); err != nil {
@@ -1200,7 +1206,8 @@ func (s *msgStore) deleteMessage(ctx context.Context, chat, id string) error {
 		DELETE FROM wz_receipts WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_reactions WHERE chat = ?1 AND id = ?2;
-		DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND parent = ?2`, chat, id)
+		DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND parent = ?2;
+		DELETE FROM wz_comments WHERE cchat = ?1 AND cparent = ?2`, chat, id)
 	return err
 }
 
@@ -1215,7 +1222,9 @@ const dropOrphanEdits = `DELETE FROM wz_edits WHERE chat = ?1 AND NOT EXISTS
 	DELETE FROM wz_reactions WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_reactions.chat AND m.id = wz_reactions.id);
 	DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND NOT EXISTS
-	(SELECT 1 FROM wz_messages m WHERE m.chat = rchat AND m.id = parent)`
+	(SELECT 1 FROM wz_messages m WHERE m.chat = rchat AND m.id = parent);
+	DELETE FROM wz_comments WHERE cchat = ?1 AND NOT EXISTS
+	(SELECT 1 FROM wz_messages m WHERE m.chat = cchat AND m.id = cparent)`
 
 // clearChat deletes the chat's unstarred messages sent at or before upTo
 // (unix seconds), or all of them when upTo is 0.

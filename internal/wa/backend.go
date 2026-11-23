@@ -3,6 +3,7 @@
 package wa
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -628,12 +629,38 @@ func (b *Backend) SearchMessages(chatID, query string, limit int) {
 	}()
 }
 
-func (b *Backend) PinnedMessage(chatID string) *model.Message {
-	r, ok := b.store.pinnedMessage(b.ctx, chatID)
-	if !ok {
-		return nil
+func (b *Backend) PinnedMessages(chatID string) []*model.Message {
+	raw, err := b.store.pinnedMessages(b.ctx, chatID)
+	return b.resolveMessages(chatID, raw, err)
+}
+
+// historyPin reads that history sync says w, message id, is pinned (or no
+// longer).
+func historyPin(w *waWeb.WebMessageInfo, id string) (parsed, bool) {
+	pin := w.GetPinInChat()
+	typ, ms := pin.GetType(), pin.GetSenderTimestampMS()
+	secs := pin.GetMessageAddOnContextInfo().GetMessageAddOnDurationInSecs()
+	for _, a := range w.GetMessageAddOns() {
+		if a.GetMessageAddOnType() != waWeb.MessageAddOn_PIN_IN_CHAT || a.GetSenderTimestampMS() < ms {
+			continue
+		}
+		ms, secs = a.GetSenderTimestampMS(), a.GetAddOnContextInfo().GetMessageAddOnDurationInSecs()
+		typ = waWeb.PinInChat_PIN_FOR_ALL
+		if a.GetMessageAddOn().GetPinInChatMessage().GetType() == waE2E.PinInChatMessage_UNPIN_FOR_ALL {
+			typ = waWeb.PinInChat_UNPIN_FOR_ALL
+		}
 	}
-	return b.resolveMessages(chatID, []rawMsg{r}, nil)[0]
+	p := parsed{target: id}
+	switch typ {
+	case waWeb.PinInChat_PIN_FOR_ALL:
+		p.pin = 1
+	case waWeb.PinInChat_UNPIN_FOR_ALL:
+		p.pin = -1
+	default:
+		return p, false
+	}
+	p.setPinTime(ms, time.Unix(int64(w.GetMessageTimestamp()), 0), secs)
+	return p, true
 }
 
 func (b *Backend) resolveMessages(chatID string, raw []rawMsg, err error) []*model.Message {
@@ -1190,7 +1217,8 @@ func (b *Backend) dropWaiting(chat, id string) {
 func (b *Backend) onUndecryptable(e *events.UndecryptableMessage) {
 	viewOnce := e.IsUnavailable && e.UnavailableType == events.UnavailableTypeViewOnce
 	if isStatus(e.Info.Chat) || isChannel(e.Info.Chat) || e.Info.Edit != types.EditAttributeEmpty ||
-		!viewOnce && e.DecryptFailMode == events.DecryptFailHide {
+		!viewOnce && e.DecryptFailMode == events.DecryptFailHide ||
+		e.Info.MsgMetaInfo.ThreadMessageID != "" { // a reply to an announcement, which isn't in the chat
 		return
 	}
 	ctx := b.ctx
@@ -1238,10 +1266,9 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 			b.log.Warnf("edit %s in %s: %v", p.target, chat, err)
 		}
 	case p.pin != 0:
-		if p.pin > 0 {
-			_, _ = b.db.ExecContext(ctx, `UPDATE wz_messages SET pinned = 0 WHERE chat = ?`, chat)
+		if err := b.store.setPin(ctx, b.db, chat, b.albumTarget(ctx, chat, p.target), p.pin > 0, p.pinAt, p.pinUntil); err != nil {
+			b.log.Warnf("pin %s in %s: %v", p.target, chat, err)
 		}
-		_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
 		b.emitAllMessages(chat)
 		if p.pin > 0 && info.ID != "" {
 			// "Alice pinned a message", under the pin's own ID.
@@ -1253,6 +1280,7 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		b.putSystem(ctx, p.msg)
 		return
 	case p.keep != 0:
+		p.target = b.albumTarget(ctx, chat, p.target)
 		_ = b.store.setMessageFlag(ctx, chat, p.target, "kept", p.keep > 0)
 	case p.vote != nil:
 		if err := b.store.putVote(ctx, b.db, chat, p.target, *p.vote); err != nil {
@@ -1263,12 +1291,18 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 			b.log.Warnf("edit event %s in %s: %v", p.target, chat, err)
 		}
 	case p.target != "":
+		p.target = b.albumTarget(ctx, chat, p.target)
 		if p.reaction != nil {
 			_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
 		}
 		if p.sticker != nil {
 			if err := b.store.putStickerReact(ctx, b.db, chat, p.target, *p.sticker); err != nil {
 				b.log.Warnf("sticker reaction to %s in %s: %v", p.target, chat, err)
+			}
+		}
+		if p.comment != nil {
+			if err := b.store.putComment(ctx, b.db, chat, p.target, *p.comment); err != nil {
+				b.log.Warnf("reply to %s in %s: %v", p.target, chat, err)
 			}
 		}
 	default:
@@ -1342,11 +1376,16 @@ func (b *Backend) revoke(ctx context.Context, chat string, p parsed) {
 		b.emitMessage(chat, parent)
 		return
 	}
-	if !p.msg.FromMe && b.Pref(model.PrefKeepDeleted) == "on" {
-		at := p.msg.Time
-		if at.IsZero() {
-			at = time.Now()
-		}
+	at := p.msg.Time
+	if at.IsZero() {
+		at = time.Now()
+	}
+	keep := !p.msg.FromMe && b.Pref(model.PrefKeepDeleted) == "on"
+	if parent := b.store.dropComment(ctx, chat, p.target, keep, at); parent != "" {
+		b.emitMessage(chat, parent) // a reply to an announcement (comments.go)
+		return
+	}
+	if keep {
 		_ = b.store.markRevoked(ctx, chat, p.target, at, p.revokedBy)
 		return
 	}
@@ -1572,6 +1611,9 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				cd.edits = append(cd.edits, p)
 				continue
 			}
+			if pin, ok := historyPin(hm.GetMessage(), p.msg.ID); ok {
+				cd.edits = append(cd.edits, pin)
+			}
 			// A message kept in a disappearing chat says so itself.
 			p.msg.Kept = hm.GetMessage().GetKeepInChat().GetKeepType() == waE2E.KeepType_KEEP_FOR_ALL
 			if p.msg.Poll != nil || p.msg.Event != nil {
@@ -1634,15 +1676,16 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		return
 	}
 	for _, cd := range convs {
+		chat := cd.jid.String()
+		var pins []parsed
 		for _, p := range cd.edits {
-			chat := cd.jid.String()
 			switch {
 			case p.revoke:
 				b.revoke(ctx, chat, p)
 			case p.edited:
 				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editTime, p.msg.rawPayload)
 			case p.pin != 0:
-				_ = b.store.setMessageFlag(ctx, chat, p.target, "pinned", p.pin > 0)
+				pins = append(pins, p)
 			case p.keep != 0:
 				_ = b.store.setMessageFlag(ctx, chat, p.target, "kept", p.keep > 0)
 			case p.vote != nil:
@@ -1653,7 +1696,14 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
 			case p.sticker != nil:
 				_ = b.store.putStickerReact(ctx, b.db, chat, p.target, *p.sticker)
+			case p.comment != nil:
+				_ = b.store.putComment(ctx, b.db, chat, p.target, *p.comment)
 			}
+		}
+		// In the order they were made: history lists the newest first.
+		slices.SortStableFunc(pins, func(a, b parsed) int { return cmp.Compare(a.pinAt, b.pinAt) })
+		for _, p := range pins {
+			_ = b.store.setPin(ctx, b.db, chat, b.albumTarget(ctx, chat, p.target), p.pin > 0, p.pinAt, p.pinUntil)
 		}
 	}
 	b.onRecentStickers(data.GetRecentStickers())

@@ -54,13 +54,13 @@ type convRow struct {
 	job *model.Scheduled
 }
 
-// has reports whether the row shows message id.
+// has reports whether the row shows message id, or a picture of album id.
 func (r convRow) has(id string) bool {
 	if r.msg == nil {
 		return false
 	}
-	if r.group == nil {
-		return r.msg.ID == id
+	if r.msg.ID == id || r.msg.Album == id && id != "" {
+		return true
 	}
 	return slices.ContainsFunc(r.group, func(m *model.Message) bool { return m.ID == id })
 }
@@ -82,7 +82,20 @@ func (u *UI) rows(c *model.Chat) []convRow {
 	// Ones older than the loaded messages wait for their page, unless the
 	// chat's start is loaded (messages can be dated ahead of this clock).
 	notes := u.slash.chatNotes(c.ID)
+	albums := map[string]int{} // the row of each album's grid
 	for _, m := range u.msgs {
+		// A picture of an album joins its grid, whatever came in between.
+		if i, ok := albums[m.Album]; ok && !ann && !u.unreadRow(c, m) && joinsAlbum(rows[i].msg, m) {
+			r := &rows[i]
+			if r.group == nil {
+				r.group, r.album = []*model.Message{r.msg}, true
+			}
+			r.group = append(r.group, m)
+			if i == len(rows)-1 {
+				prev = m
+			}
+			continue
+		}
 		for len(notes) > 0 && notes[0].at.Before(m.Time) {
 			if prev != nil || !u.conv.olderMore {
 				rows = append(rows, convRow{kind: rowNote, note: notes[0], first: true})
@@ -108,15 +121,6 @@ func (u *UI) rows(c *model.Chat) []convRow {
 			rows = append(rows, convRow{kind: rowUnread})
 			first = true
 		}
-		// A picture of an album joins the one before it in the album.
-		if last := &rows[len(rows)-1]; last.kind == rowMessage && !ann && (last.group == nil || last.album) && joinsAlbum(last.msg, m) {
-			if last.group == nil {
-				last.group, last.album = []*model.Message{last.msg}, true
-			}
-			last.group = append(last.group, m)
-			prev = m
-			continue
-		}
 		// A sticker joins the stickers its sender sent just before.
 		if last := &rows[len(rows)-1]; !first && m.Time.Sub(prev.Time) <= 10*time.Minute && last.kind == rowMessage && groupsSticker(m) && groupsSticker(last.msg) && !ann {
 			if last.group == nil {
@@ -127,6 +131,9 @@ func (u *UI) rows(c *model.Chat) []convRow {
 			continue
 		}
 		rows = append(rows, convRow{kind: rowMessage, msg: m, first: first})
+		if albumMember(m) {
+			albums[m.Album] = len(rows) - 1
+		}
 		prev = m
 	}
 	if !u.conv.newerMore {
@@ -148,7 +155,7 @@ func (u *UI) layoutConversation(gtx C) D {
 		defer func() { u.pal = old }()
 	}
 	u.conv.selV = u.conv.selAnim.step(gtx, u.conv.selecting, durGrow)
-	pinned := u.conv.pinned
+	pinned := u.conv.pins.shown()
 	// The send view covers the conversation; once it's all in, the chat
 	// underneath isn't drawn at all.
 	sv := u.sendViewStep(gtx)
@@ -620,8 +627,16 @@ func (u *UI) layoutTyping(gtx C, group bool, margin int, v float32) D {
 	return D{Size: image.Pt(gtx.Constraints.Max.X, h)}
 }
 
-// selColor highlights the selected messages' rows.
-var selColor = argb(0x5dbf6e, 0x26)
+// selColor highlights the selected messages' rows, in the accent's color.
+func (u *UI) selColor() color.NRGBA { return withAlpha(u.pal.Green, 0x26) }
+
+// flashColor highlights the message just jumped to.
+func (u *UI) flashColor() color.NRGBA { return withAlpha(u.pal.Green, 0x30) }
+
+func withAlpha(c color.NRGBA, a uint8) color.NRGBA {
+	c.A = a
+	return c
+}
 
 // layoutMessageRow draws one message with its interactions: the hover
 // chevron and right-click menu, selection, and the flash after jumping to
@@ -659,11 +674,11 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	}
 	h := bubble.size.Y
 	band := image.Rect(-margin, -gtx.Dp(2), w+margin, h+gtx.Dp(2))
-	if u.conv.flash == m.ID {
+	if u.conv.flash != "" && r.has(u.conv.flash) {
 		u.drawFlash(gtx, band)
 	}
 	if sel && u.conv.picked[m.ID] {
-		fillRect(gtx, u.selBand(margin, w, h), selColor)
+		fillRect(gtx, u.selBand(margin, w, h), u.selColor())
 	}
 	bubble.at(gtx, x, 0)
 	u.focusMessage(gtx, m.ID, image.Rectangle{Min: image.Pt(x, 0), Max: image.Pt(x+bubble.size.X, h)})
@@ -748,12 +763,12 @@ func (u *UI) drawFlash(gtx C, band image.Rectangle) {
 		return
 	}
 	if !perf.animations {
-		fillRect(gtx, band, argb(0x5dbf6e, 0x30))
+		fillRect(gtx, band, u.flashColor())
 		gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil})
 		return
 	}
 	a := min(1, float32(flashTime-left)/float32(in), float32(left)/float32(out))
-	fillRect(gtx, band, faded(argb(0x5dbf6e, 0x30), smooth(a)))
+	fillRect(gtx, band, faded(u.flashColor(), smooth(a)))
 	if left > out && flashTime-left > in {
 		gtx.Execute(op.InvalidateCmd{At: u.conv.flashUntil.Add(-out)})
 	} else {
@@ -966,6 +981,10 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if cb := cardButtons(m); len(cb) > 0 {
 		buttons = append(slices.Clip(buttons), cb...)
 	}
+	if ann := u.announcementsOf(c) != nil; ann && u.takesReplies(m) && !u.msgInfo.previewing {
+		// Replies to an announcement are behind a button under it.
+		buttons = append(slices.Clip(buttons), model.Button{Kind: buttonReplies, Label: repliesLabel(m.Replies)})
+	}
 	for i := range buttons {
 		if u.btn("mbtn:" + m.ID + ":" + itoa(i)).Clicked(gtx) {
 			if i < len(m.Buttons) {
@@ -1046,7 +1065,11 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	// after measuring it so the viewer can grow from the clicked bounds.
 	voButton := u.btn("vo:" + m.ID)
 	voClicked := voButton.Clicked(gtx)
-	const textSize = unit.Sp(15.7)
+	textSize := unit.Sp(15.7)
+	if big := bigEmojiSize(m); big > 0 {
+		textSize = big
+		defer u.emojiIn(emojiAlone)()
+	}
 	text := m.Text
 	italic := false
 	var lead layout.Widget // icon before the text (media types, deleted)
@@ -1092,10 +1115,6 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	}
 	if text != "" {
 		nbsp := u.nbspWidth(gtx, textSize)
-		spacer := make([]rune, int(float32(meta.size.X+gtx.Dp(8))/nbsp)+1)
-		for i := range spacer {
-			spacer[i] = '\u00a0'
-		}
 		prefix := ""
 		if leadW > 0 {
 			indent := make([]rune, int(float32(leadW)/nbsp)+1)
@@ -1111,29 +1130,11 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		suffix := ""
 		if footerText == "" {
 			// The meta sits at the end of the last line, or of the footer.
-			suffix = " " + string(spacer)
+			suffix = u.metaSpacer(gtx, textSize, meta.size.X)
 		}
 		o := richOpts{italic: italic, prefix: prefix, suffix: suffix}
 		if lead == nil {
-			if !u.conv.selecting {
-				o.sel, o.links, o.mentions = m.ID, m.ID, m
-			}
-			if !out {
-				o.pills = pillMe
-				if c.IsGroup && strings.ContainsRune(text, model.MentionAdmins) && u.amAdmin(c.ID) {
-					o.pills |= pillAdmin
-				}
-			}
-			more := u.btn("more:" + m.ID)
-			if more.Clicked(gtx) {
-				if u.conv.expanded == nil {
-					u.conv.expanded = make(map[string]int)
-				}
-				u.conv.expanded[m.ID]++
-			}
-			if cut, ok := readMore(text, u.conv.expanded[m.ID]); ok {
-				text, o.more = cut, more
-			}
+			text = u.textOpts(gtx, c, m, text, &o)
 		}
 		body = record(tgtx, func(gtx C) D {
 			return u.layoutRich(gtx, text, textSize, textCol, secondary, o)
@@ -1239,9 +1240,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	if link.size.X > 0 && link.size.X < contentW {
 		link = record(cgtx, func(gtx C) D { return u.layoutLinkCard(gtx, m, contentW, 7, quoteBg, textCol, secondary) })
 	}
-	if u.btn("quote:"+m.ID).Clicked(gtx) && m.Quote != nil && m.Quote.ID != "" {
-		u.jumpTo(m.Quote.ID)
-	}
+	u.quoteClicked(gtx, m)
 	if cl := u.btn("img:" + m.ID); cl.Clicked(gtx) {
 		u.openViewer(m)
 		u.viewer.origin = u.viewerOrigin(gtx, cl, image.Pt(imgW, imgH))
@@ -1437,6 +1436,38 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	return D{Size: image.Pt(w, h)}
 }
 
+// textOpts sets in o how text, what message m of chat c says (or a part
+// of it), is selected, clicked and cut short, and returns it cut.
+func (u *UI) textOpts(gtx C, c *model.Chat, m *model.Message, text string, o *richOpts) string {
+	if !u.conv.selecting {
+		o.sel, o.links, o.mentions = m.ID, m.ID, m
+	}
+	if !m.FromMe {
+		o.pills = pillMe
+		if c.IsGroup && strings.ContainsRune(text, model.MentionAdmins) && u.amAdmin(c.ID) {
+			o.pills |= pillAdmin
+		}
+	}
+	more := u.btn("more:" + m.ID)
+	if more.Clicked(gtx) {
+		if u.conv.expanded == nil {
+			u.conv.expanded = make(map[string]int)
+		}
+		u.conv.expanded[m.ID]++
+	}
+	if cut, ok := readMore(text, u.conv.expanded[m.ID]); ok {
+		text, o.more = cut, more
+	}
+	return text
+}
+
+// metaSpacer is what follows a text of size to leave room for meta, meta px
+// wide, at the end of its last line.
+func (u *UI) metaSpacer(gtx C, size unit.Sp, meta int) string {
+	n := int(float32(meta+gtx.Dp(8))/u.nbspWidth(gtx, size)) + 1
+	return " " + strings.Repeat("\u00a0", n)
+}
+
 // paintBubble paints the bubble body and its tail (plus a 1px shadow in light mode).
 // senderButton makes a group message's sender name (or picture) open
 // their contact info.
@@ -1510,23 +1541,36 @@ func (u *UI) forwardedLabel(gtx C, m *model.Message, secondary color.NRGBA) D {
 	)
 }
 
+// quoteStatus follows the poster's name in the quote of a status update.
+const quoteStatus = " · Status"
+
+// quoteTexts are a quote's two lines: who wrote what it quotes, and its
+// text or what it is.
+func (u *UI) quoteTexts(q *model.Quote) (name, txt string) {
+	name = plainText(q.Sender)
+	if name == "" {
+		name = "You"
+	}
+	if q.Status {
+		name += quoteStatus
+	}
+	txt = q.Text
+	if q.Media != model.MediaNone {
+		txt = mediaLabel(&model.Message{Media: q.Media, Text: q.Text, Round: q.Round})
+	}
+	return name, txt
+}
+
 // layoutQuote draws a quoted message: a colored bar, the author and a
 // snippet, plus the quoted picture's thumbnail when it's loaded (qm).
 func (u *UI) layoutQuote(gtx C, chat string, q *model.Quote, bg, secondary color.NRGBA, width int, qm *model.Message) D {
 	defer u.emojiIn(emojiQuotes)()
 	p := u.pal
-	name := q.Sender
-	if name == "" {
-		name = "You"
-	}
-	name = plainText(name)
-	col := u.senderColor(chat, q.SenderID, name)
-	if name == "You" {
+	name, txt := u.quoteTexts(q)
+	who := strings.TrimSuffix(name, quoteStatus)
+	col := u.senderColor(chat, q.SenderID, who)
+	if who == "You" {
 		col = p.Green
-	}
-	txt := q.Text
-	if q.Media != model.MediaNone {
-		txt = mediaLabel(&model.Message{Media: q.Media, Text: q.Text, Round: q.Round})
 	}
 	gtx.Constraints.Min.X = width
 	gtx.Constraints.Max.X = width
@@ -1578,7 +1622,11 @@ func (u *UI) messageImage(m *model.Message, maxPx int) *imgEntry {
 		return u.blurredImage(m)
 	}
 	if (m.Media == model.MediaImage && u.photoWanted(m)) || m.Media == model.MediaSticker || wideLink(m) {
-		full := u.images.get("m:"+m.ChatID+"/"+m.ID, maxPx, func() []byte { return b.MediaData(m.ChatID, m.ID) })
+		get := u.images.get
+		if perf.sharpPhotos && m.Media == model.MediaImage {
+			get = u.images.getWide // tall photos too fill their place unscaled
+		}
+		full := get("m:"+m.ChatID+"/"+m.ID, maxPx, func() []byte { return b.MediaData(m.ChatID, m.ID) })
 		if full.state == imgReady {
 			return full
 		}
@@ -1675,14 +1723,39 @@ func playButton(gtx C, c image.Point, rad int, bg color.NRGBA) {
 	paint.FillShape(gtx.Ops, rgb(0xffffff), clip.Outline{Path: tri.End()}.Op())
 }
 
-// quotedMessage returns the loaded message a reply quotes, or nil.
+// quotedMessage returns the loaded message a reply quotes (an album's
+// first picture), or nil.
 func (u *UI) quotedMessage(q *model.Quote) *model.Message {
+	if q.Status || q.ID == "" {
+		return nil
+	}
 	for _, x := range u.msgs {
-		if x.ID == q.ID {
+		if x.ID == q.ID || q.Album && x.Album == q.ID {
 			return x
 		}
 	}
 	return nil
+}
+
+// quoteClicked handles a click on the quote of m: it jumps to the message
+// it quotes, or opens the status update it replies to.
+func (u *UI) quoteClicked(gtx C, m *model.Message) {
+	q := m.Quote
+	if !u.btn("quote:"+m.ID).Clicked(gtx) || q == nil || q.ID == "" {
+		return
+	}
+	if q.Status {
+		u.openStatus(q.ID)
+		return
+	}
+	id := q.ID
+	if q.Album && u.quotedMessage(q) == nil && u.selected != nil {
+		// Not loaded: the album's own ID is no message's.
+		if first := u.backend.AlbumMessage(u.selected.ID, id); first != "" {
+			id = first
+		}
+	}
+	u.jumpFrom(m.ID, id)
 }
 
 // layoutStickerMessage draws a sticker. A sticker that replies to a
@@ -1690,7 +1763,7 @@ func (u *UI) quotedMessage(q *model.Quote) *model.Message {
 // WhatsApp.
 func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail bool, maxW int) D {
 	if m.Quote == nil {
-		side := gtx.Dp(150)
+		side := gtx.Dp(stickerDp)
 		if isRound(m) {
 			side = min(gtx.Dp(roundVideoDp), maxW)
 		}
@@ -1711,16 +1784,15 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 	if out {
 		bg, quoteBg, metaCol, secondary = p.BubbleOut, p.QuoteOut, p.MetaOut, p.SecondaryOut
 	}
-	if u.btn("quote:"+m.ID).Clicked(gtx) && m.Quote.ID != "" {
-		u.jumpTo(m.Quote.ID)
-	}
+	u.quoteClicked(gtx, m)
 	pad, inset := gtx.Dp(3), gtx.Dp(8)
-	sz := gtx.Dp(200)
+	sz := gtx.Dp(stickerDp) // as one sent alone
 	if isRound(m) {
 		sz = gtx.Dp(roundVideoDp)
 	}
 	sz = min(sz, maxW-2*pad-2*inset)
-	w := sz + 2*inset // the inner width
+	// The inner width: room for the quote to be read.
+	w := min(max(sz+2*inset, gtx.Dp(216)), maxW-2*pad)
 	cgtx := gtx
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
 	var sender part
@@ -1749,8 +1821,8 @@ func (u *UI) layoutStickerMessage(gtx C, c *model.Chat, m *model.Message, tail b
 		clickable(qg, u.btn("quote:"+m.ID), func(gtx C) D { return D{Size: quote.size} })
 	}()
 	y += quote.size.Y + gtx.Dp(6)
-	t := op.Offset(image.Pt(inset, y)).Push(gtx.Ops)
-	u.stickerPicture(gtx, m, sz)
+	t := op.Offset(image.Pt((w-sz)/2, y)).Push(gtx.Ops)
+	u.drawSticker(gtx, m, sz, !out)
 	t.Pop()
 	y += sz + gtx.Dp(4)
 	meta.at(gtx, w-meta.size.X-gtx.Dp(5), y)
@@ -1795,7 +1867,7 @@ func stickerUnderHeader(gtx C, head part, sw int) (x, y int) {
 // bubbles.
 func (u *UI) layoutSticker(gtx C, m *model.Message, sz int) D {
 	p := u.pal
-	u.stickerPicture(gtx, m, sz)
+	u.drawSticker(gtx, m, sz, !m.FromMe)
 	bg, metaCol := p.BubbleIn, p.MetaIn
 	if m.FromMe {
 		bg, metaCol = p.BubbleOut, p.MetaOut
@@ -1812,8 +1884,16 @@ func (u *UI) layoutSticker(gtx C, m *model.Message, sz int) D {
 	return D{Size: image.Pt(sz, y+meta.size.Y)}
 }
 
+// stickerDp is a sticker's size in a chat, alone or in a reply.
+const stickerDp unit.Dp = 150
+
 // stickerPicture draws a sticker (or its placeholder) in an sz square.
-func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
+func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) { u.drawSticker(gtx, m, sz, false) }
+
+// drawSticker is stickerPicture for a chat: a Lottie sticker in someone
+// else's message (theirs) is mirrored, its effect too, as on WhatsApp: it
+// faces the middle of the chat from either side.
+func (u *UI) drawSticker(gtx C, m *model.Message, sz int, theirs bool) {
 	if isRound(m) {
 		u.roundPicture(gtx, m, sz)
 		return
@@ -1836,12 +1916,14 @@ func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
 	s := min(float32(sz)/float32(size.X), float32(sz)/float32(size.Y))
 	w, h := int(float32(size.X)*s), int(float32(size.Y)*s)
 	dst := image.Rect((sz-w)/2, (sz-h)/2, (sz-w)/2+w, (sz-h)/2+h)
-	paintCover(gtx, pic, size, dst)
+	p := u.players.m[key]
+	lottie := m.Lottie || p != nil && p.lottie.Load()
+	paintCoverFlip(gtx, pic, size, dst, theirs && lottie)
 	if img.animated && !u.conv.selecting {
 		u.stickerClick(gtx, m, sz)
 	}
-	if p := u.players.m[key]; playing && p != nil && (m.Lottie || p.lottie.Load()) {
-		u.stickerEffect(gtx, m, sz)
+	if p = u.players.m[key]; playing && p != nil && lottie {
+		u.stickerEffect(gtx, m, sz, theirs)
 	}
 }
 

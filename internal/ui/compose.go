@@ -9,7 +9,6 @@ import (
 	"strings"
 	"unicode"
 
-	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -138,10 +137,20 @@ func (u *UI) scrollMessages(p layout.Position) {
 	u.conv.glide = glide{}
 }
 
-// jumpTo scrolls smoothly to a message and flashes it.
-func (u *UI) jumpTo(id string) {
+// jumpFrom jumps to message id from the message from, which replies to
+// it: the ⌄ button then goes back there first (scrolldown.go).
+func (u *UI) jumpFrom(from, id string) {
+	if u.jumpTo(id) {
+		f := &u.conv.float
+		f.back = append(f.back, backJump{id: from})
+	}
+}
+
+// jumpTo scrolls smoothly to a message and flashes it. It reports whether
+// the message is there.
+func (u *UI) jumpTo(id string) bool {
 	if u.selected == nil {
-		return
+		return false
 	}
 	i := slices.IndexFunc(u.rows(u.selected), func(r convRow) bool { return r.has(id) })
 	if i < 0 {
@@ -149,10 +158,11 @@ func (u *UI) jumpTo(id string) {
 	}
 	if i < 0 {
 		u.toast("That message isn't available.")
-		return
+		return false
 	}
 	u.conv.glide = glide{first: max(0, i-2), pending: true}
 	u.conv.flash, u.conv.flashUntil = id, u.now().Add(flashTime)
+	return true
 }
 
 // sendComposer sends the composer text with its reply and mentions.
@@ -1129,38 +1139,6 @@ func (u *UI) hoverArea(gtx C, key string, sz image.Point) bool {
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, tag)
 	return u.hovered[key]
-}
-
-// layoutPinnedBanner shows the chat's pinned message under the header.
-func (u *UI) layoutPinnedBanner(gtx C, m *model.Message) D {
-	p := u.pal
-	cl := u.btn("pinned:" + m.ID)
-	if cl.Clicked(gtx) {
-		u.jumpTo(m.ID)
-	}
-	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	return clickable(gtx, cl, func(gtx C) D {
-		bg := mix(p.Panel, p.Hover, u.hover(gtx, cl))
-		d := background(gtx, bg, 0, func(gtx C) D {
-			return vcenter(gtx, gtx.Dp(50), func(gtx C) D {
-				return layout.Inset{Left: 22, Right: 16}.Layout(gtx, func(gtx C) D {
-					txt := plainText(stripIsolates(m.Text))
-					if m.Media != model.MediaNone && txt == "" {
-						txt = mediaLabel(m)
-					}
-					who, _, _ := u.senderLabel(m)
-					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(iconW(icPin, 20, p.TextSecondary)),
-						layout.Rigid(layout.Spacer{Width: 16}.Layout),
-						layout.Rigid(u.label(14.5, who+": ", p.TextSecondary, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
-						layout.Flexed(1, u.label(14.5, firstLine(txt), p.TextSecondary, labelOpts{maxLines: 1}).Layout),
-					)
-				})
-			})
-		})
-		fillRect(gtx, image.Rect(0, d.Size.Y-max(1, gtx.Dp(1)), d.Size.X, d.Size.Y), p.Divider)
-		return d
-	})
 }
 
 // composerArea passes presses and drags in area, around the composer's

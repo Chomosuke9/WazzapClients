@@ -139,9 +139,9 @@ func (u *UI) layoutAnnSticker(gtx C, m *model.Message, w int) D {
 	head.at(gtx, gtx.Dp(9), gtx.Dp(12))
 
 	y := hh + gtx.Dp(12)
-	sz := gtx.Dp(150)
+	sz := gtx.Dp(stickerDp)
 	t := op.Offset(image.Pt((w-sz)/2, y)).Push(gtx.Ops)
-	u.stickerPicture(gtx, m, sz)
+	u.drawSticker(gtx, m, sz, !m.FromMe)
 	t.Pop()
 	y += sz + gtx.Dp(10)
 	meta := record(gtx, func(gtx C) D {

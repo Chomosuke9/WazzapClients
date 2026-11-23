@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"crypto/rand"
+	"strconv"
 	"time"
 
 	"github.com/polymorfa/hypermeow"
@@ -10,6 +11,8 @@ import (
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // An album is photos and videos sent together, which WhatsApp shows as
@@ -82,6 +85,77 @@ func inAlbum(msg *waE2E.Message, chat types.JID, album string) {
 			ID:        proto.String(album),
 		},
 	}
+}
+
+// albumText words an album of photos and videos, as a reply to it shows
+// it (the counts are 0 when the reply doesn't say), and tells what it's
+// of, for its icon.
+func albumText(photos, videos int) (string, model.Media) {
+	count := func(n int, one, more string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return strconv.Itoa(n) + " " + more
+	}
+	switch {
+	case photos > 0 && videos > 0:
+		return count(photos, "photo", "photos") + ", " + count(videos, "video", "videos"), model.MediaImage
+	case videos > 0:
+		return count(videos, "video", "videos"), model.MediaVideo
+	case photos > 0:
+		return count(photos, "photo", "photos"), model.MediaImage
+	}
+	return "Album", model.MediaImage
+}
+
+// albumFirst returns the ID of the first of the messages of album in
+// chat, looking through the chat's newest last photos and videos (all of
+// them when last is 0), or "". Payloads only are known to hold the album's
+// ID, which a message that replies to the album holds too.
+func (s *msgStore) albumFirst(ctx context.Context, chat, album string, last int) string {
+	if album == "" {
+		return ""
+	}
+	if last <= 0 {
+		last = -1 // no limit
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, raw_payload FROM (
+			SELECT id, raw_payload, ts, rowid AS rid FROM wz_messages WHERE chat = ?1 AND kind = ?2 ORDER BY ts DESC, rowid DESC LIMIT ?3
+		) WHERE instr(raw_payload, ?4) ORDER BY ts, rid`, chat, int(model.KindImage), last, []byte(album))
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var raw []byte
+		if rows.Scan(&id, &raw) != nil {
+			return ""
+		}
+		var m waE2E.Message
+		if proto.Unmarshal(raw, &m) == nil && albumOf(&m) == album {
+			return id
+		}
+	}
+	return ""
+}
+
+// AlbumMessage implements model.Backend.
+func (b *Backend) AlbumMessage(chatID, albumID string) string {
+	return b.store.albumFirst(b.ctx, chatID, albumID, 0)
+}
+
+// albumTarget returns the message that what a message does to message id
+// (a reaction, a pin) shows on: id itself, or the first of an album's
+// pictures when id is the album's, since the album is no message here.
+func (b *Backend) albumTarget(ctx context.Context, chat, id string) string {
+	if _, ok := b.store.message(ctx, chat, id); ok {
+		return id
+	}
+	if first := b.store.albumFirst(ctx, chat, id, 500); first != "" {
+		return first
+	}
+	return id
 }
 
 // messageSecret is a new random secret for a message's messageContextInfo,

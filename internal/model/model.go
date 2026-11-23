@@ -125,7 +125,30 @@ type Quote struct {
 	Text     string
 	Media    Media
 	Round    bool // it quotes a video note (see Message.Round)
+	// Status marks a reply to a status update, whose ID is ID: it's in no
+	// chat.
+	Status bool
+	// Album marks a reply to a whole album: ID is the album's
+	// (Message.Album), which no message has for its own.
+	Album bool
 }
+
+// Reply is a reply to an announcement of a community, by a member who
+// needn't be an admin.
+type Reply struct {
+	ID               string
+	SenderID, Sender string // "You" when Me
+	Me               bool
+	Text             string
+	Time             time.Time
+	Receipt          Receipt // of yours: Pending, Sent or Failed
+	// Revoked is when it was deleted, for one kept with PrefKeepDeleted.
+	Revoked time.Time
+}
+
+// PinsMax is how many messages a chat keeps pinned: a further pin takes
+// the oldest one's place.
+const PinsMax = 4
 
 // Message is a single conversation entry.
 type Message struct {
@@ -214,6 +237,9 @@ type Message struct {
 	// one of WhatsApp's own a link in the text points to
 	// (wa.me/stickerpack/<id>): both have a "View sticker pack" button.
 	Pack *StickerPack
+	// Replies counts the replies to an announcement of a community, which
+	// show under it instead of in the chat (Backend.Replies).
+	Replies int
 	// Opened is set on a view once message (KindViewOnce) once it was
 	// opened on this computer, and OnPhone while its media never came to
 	// it: WhatsApp sends view once media only to the phone, so it shows
@@ -1609,8 +1635,12 @@ type Backend interface {
 	// An empty chatID searches every chat but channels (the chat list's
 	// search), apart from the search of one chat.
 	SearchMessages(chatID, query string, limit int)
-	// PinnedMessage returns the chat's most recently pinned message, or nil.
-	PinnedMessage(chatID string) *Message
+	// PinnedMessages returns the chat's pinned messages, the latest pinned
+	// first, at most PinsMax.
+	PinnedMessages(chatID string) []*Message
+	// AlbumMessage returns the ID of the first stored message of an album
+	// (Message.Album), or "".
+	AlbumMessage(chatID, albumID string) string
 	// Open is called when the user opens a chat: mark it read, subscribe to presence.
 	Open(chatID string)
 	// ReportTyping reports composer activity. Empty chatID stops it; backends
@@ -1693,8 +1723,16 @@ type Backend interface {
 	Delete(m *Message, forEveryone bool)
 	// Star stars or unstars a message.
 	Star(m *Message, starred bool)
-	// PinMessage pins a message to the top of its chat, or unpins it.
-	PinMessage(m *Message, pinned bool)
+	// PinMessage pins a message to the top of its chat for d, or unpins
+	// it when d is 0.
+	PinMessage(m *Message, d time.Duration)
+	// Replies lists the replies to an announcement, oldest first.
+	Replies(m *Message) []Reply
+	// SendReply replies to an announcement, and DeleteReply deletes a
+	// reply for everyone (yours, or anyone's as an admin). A MessageEvent
+	// for the announcement follows.
+	SendReply(m *Message, text string)
+	DeleteReply(m *Message, r Reply)
 	// KeepInChat keeps a disappearing message in its chat for everyone, or
 	// lets it disappear again (Unkeep).
 	KeepInChat(m *Message, keep bool)

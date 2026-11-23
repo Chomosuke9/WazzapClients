@@ -8,7 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/polymorfa/hypermeow"
+	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
+	"github.com/polymorfa/hypermeow/types/events"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -171,6 +175,50 @@ func fillReactions(m *model.Message, s string) {
 			m.Reactions = append(m.Reactions, model.ReactionCount{Emoji: e, Count: c})
 		}
 	}
+}
+
+// Reactions in a community's announcements come encrypted with the
+// secret of the message they react to, as poll votes do (an
+// encReactionMessage), and go out the same way: the members who react
+// there are known by LID only.
+
+// decryptReaction reads the encrypted reaction evt holds, or returns nil.
+func (b *Backend) decryptReaction(ctx context.Context, evt *events.Message) *waE2E.ReactionMessage {
+	cli := b.client()
+	if cli == nil {
+		return nil
+	}
+	var r *waE2E.ReactionMessage
+	err := b.asAddonSenders(cli, evt, func(e *events.Message) (err error) {
+		r, err = cli.DecryptReaction(ctx, e)
+		return err
+	})
+	if err != nil {
+		b.log.Warnf("decrypt reaction to %s in %s: %v", evt.Message.GetEncReactionMessage().GetTargetMessageKey().GetID(), evt.Info.Chat, err)
+		return nil
+	}
+	return r
+}
+
+// encryptReaction makes msg, a reaction to m in a community's
+// announcements, the encrypted one those take. It returns msg itself when
+// m's secret isn't known.
+func (b *Backend) encryptReaction(ctx context.Context, cli *whatsmeow.Client, chat types.JID, m *model.Message, msg *waE2E.Message) *waE2E.Message {
+	info := &types.MessageInfo{ID: m.ID, MessageSource: types.MessageSource{Chat: chat, Sender: b.senderOf(m), IsFromMe: m.FromMe, IsGroup: true}}
+	r := proto.Clone(msg.GetReactionMessage()).(*waE2E.ReactionMessage)
+	enc, err := cli.EncryptReaction(ctx, info, r)
+	if err != nil {
+		b.log.Warnf("encrypt reaction to %s in %s: %v", m.ID, m.ChatID, err)
+		return msg
+	}
+	return &waE2E.Message{EncReactionMessage: enc}
+}
+
+// announces reports whether chat is a community's announcements.
+func (s *msgStore) announces(ctx context.Context, chat string) bool {
+	var on bool
+	_ = s.db.QueryRowContext(ctx, `SELECT announce_sub FROM wz_chats WHERE jid = ?`, chat).Scan(&on)
+	return on
 }
 
 // reactorOf is who a reaction from j (fromMe if it's yours) is stored

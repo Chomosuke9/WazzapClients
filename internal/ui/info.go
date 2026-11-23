@@ -750,7 +750,22 @@ func (u *UI) infoMember(gtx C, m model.Member) D {
 	if c.Clicked(gtx) && !m.Me {
 		u.openContact(m.ID, title)
 	}
-	return u.layoutListItem(gtx, c, it, g)
+	t := u.memberStatus(m)
+	ring := u.btn("memberring:" + m.ID)
+	if t != nil && noFocus(ring).Clicked(gtx) {
+		u.status.viewer.show(t)
+	}
+	dims := u.layoutListItem(gtx, c, it, g)
+	if t != nil {
+		// Their ringed picture opens their status.
+		s := gtx.Dp(51)
+		at := image.Pt(gtx.Dp(g.hoverLeft)+gtx.Dp(g.iconCenter)-s/2, (dims.Size.Y-s)/2)
+		defer op.Offset(at).Push(gtx.Ops).Pop()
+		cg := gtx
+		cg.Constraints = layout.Exact(image.Pt(s, s))
+		clickable(cg, noFocus(ring), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	}
+	return dims
 }
 
 // memberPadRight is how far a member's role and number stop from the row's edge.
@@ -803,12 +818,20 @@ func (u *UI) memberAvatar(gtx C, m model.Member) D {
 	if m.Me {
 		id, name = u.meID, u.meName()
 	}
-	for _, t := range u.statuses {
-		if (t.Mine && m.Me) || (!t.Mine && !t.Unlisted && t.ID == m.ID) {
-			return u.ringedAvatar(gtx, t, id, name, 51)
-		}
+	if t := u.memberStatus(m); t != nil {
+		return u.ringedAvatar(gtx, t, id, name, 51)
 	}
 	return u.avatar(gtx, id, name, false, 51)
+}
+
+// memberStatus is the thread of a member's status updates, or nil.
+func (u *UI) memberStatus(m model.Member) *model.StatusThread {
+	for _, t := range u.statuses {
+		if (t.Mine && m.Me) || (!t.Mine && !t.Unlisted && t.ID == m.ID) {
+			return t
+		}
+	}
+	return nil
 }
 
 // ringedAvatar is a profile picture inside a status ring.

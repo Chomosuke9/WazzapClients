@@ -185,6 +185,32 @@ Gotchas already found in the pinned version (v0.10.x):
   leaves the Lottie packs (Flump, Chomp...) out unless asked with `lottie=1`. No app
   state action syncs installed packs between devices (`internal/wa/packs.go`). A
   zip's stickers have no link: the first send uploads them.
+- An album's `albumMessage` is no message here, but phones reply to it, pin it and react
+  to it by its ID. `Quote.Album` marks such a reply (its text is made from the counts the
+  quoted albumMessage carries), `AlbumMessage` finds the album's first stored picture for
+  a jump, and `albumTarget` moves what's done to the album's ID to that picture. Only
+  payloads hold an album's ID, so both search them. A grid takes every picture of its
+  album, whatever came in between, with the captions under it.
+- A chat keeps its latest `model.PinsMax` pins, each until it ends (`pin_until`, from
+  `messageAddOnDurationInSecs`; none means never): `setPin` drops the rest, as WhatsApp's
+  clients do, since no unpin is sent for a replaced one. Pinning asks for how long
+  (`pinChoices`, `internal/ui/pins.go`). History sync has a message's pin
+  in its `pinInChat` or `messageAddOns`.
+- Reactions in a community's announcements come, and must go, as `encReactionMessage`s,
+  encrypted with the message's secret and the reactor's LID (`decryptReaction`,
+  `internal/wa/reactions.go`). So are replies to one (`encCommentMessage`, text only,
+  `internal/wa/comments.go`), kept in `wz_comments` and not as messages; their stanza's
+  `<meta thread_msg_id thread_msg_sender_jid>` names the announcement, and one that can't
+  be decrypted shows nothing. Both are sent with `SendRequestExtra.Meta`: with it
+  hypermeow sends to announcements as your LID. They notify no one, as on WhatsApp, and
+  WhatsApp syncs none from before linking.
+- Someone else's Lottie sticker, and its effect, is mirrored in the chat (`drawSticker`),
+  so it faces the middle from either side. Flip inside `paintCoverFlip`'s clip: a clip
+  under a mirroring is a path, and the effect's would be a screen-sized one.
+- One picture of `imageCache` serves every place that shows it (a bubble, a quote, a
+  gallery tile): `get` decodes one again when a bigger place asks. Photos decode to fit
+  330 dp, so a tall one is scaled up in its bubble unless Settings > Performance >
+  Full-resolution previews is on (`getWide`).
 - A video note is a `ptvMessage`, the same protobuf as a `videoMessage`, so its stored
   blob doesn't say which it was. It keeps `media` = `MediaVideo`, `Message.Round` is read
   from the payload, and `asVideoNote` turns the blob back when it's forwarded or quoted.
@@ -637,7 +663,7 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    Smartwatch access (an extra feature: the host runs internal/remote's server
                    for the watch app, its token and address on the Extra features page) in remote.go;
                    the Performance settings (switches for animations, smooth scrolling and
-                   GIF/sticker autoplay, and an Advanced page of memory and CPU knobs with
+                   GIF/sticker autoplay, full-resolution photo previews, and an Advanced page of memory and CPU knobs with
                    live memory numbers; app prefs kept in the package's `perf`) in perf.go;
                    view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
@@ -656,8 +682,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    in stickerreact.go; the round React and Forward buttons beside a
                    hovered message (React opens the reaction bar alone) in sidebuttons.go;
                    the ⌄ button that goes back to the newest message
-                   (with the unread count) and the day pinned at the top while a chat
-                   scrolls in scrolldown.go; system messages ("Alice added Bob", missed
+                   (with the unread count; after a click on a quote, to the reply first), the @
+                   button that goes through a group's unread messages for you, and the day pinned
+                   at the top while a chat scrolls in scrolldown.go; system messages ("Alice added Bob", missed
                    calls: grey chips down the middle) in system.go; group invite links (the dialog that joins
                    one) in invite.go; WhatsApp's links (wa.me, api.whatsapp.com/send,
                    whatsapp://send and whatsapp://chat: a number's chat with the link's
@@ -666,7 +693,10 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    to follow, a business's wa.me/message link and a contact's wa.me/qr
                    link), clicked in a message or handed over by Windows, in applink.go; a community's announcements (cards down the
                    middle headed by their sender, a forward button beside them, and
-                   "Only community admins can send messages" for members) in announce.go;
+                   "Only community admins can send messages" for members) in announce.go; the replies
+                   to one (a button under its card, and the panel in the Message info panel's
+                   place that lists and writes them) in replies.go; the pinned banner and how long a pin
+                   lasts in pins.go;
                    chat actions shared by menus and info panels (mute choices, lists,
                    clear/exit/delete confirms) in chatactions.go; the open chat's ⋮ menu and
                    the settings it shares with the info panel (disappearing timer, chat
@@ -707,8 +737,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    picker's animation and keeping it open, stickers playing at once, the Lottie
                    frame rate; app prefs read into `perf`) in stickers.go; video notes (a circle like a sticker, without a bubble,
                    muted and looping through `gifFrame` once the file is here, a click plays them
-                   with sound and a progress ring) in roundvideo.go; a text of one to three emojis
-                   alone, drawn big without a bubble like a sticker, in jumbo.go; an AI's answer
+                   with sound and a progress ring) in roundvideo.go; an emoji sent alone, drawn big
+                   without a bubble like a sticker (a reply's quote in a bubble above it), and two or
+                   three alone, bigger in their bubble, in jumbo.go; an AI's answer
                    (Meta AI's rich responses: headings, lists, code blocks with a copy button,
                    tables and formulas) in richresponse.go; the Emoji style
                    (Settings > Chats: 2D, built in; 2D animated, with an Animated emojis page of
@@ -754,7 +785,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    albums (an albumMessage, then each picture pointing back to it) in album.go;
                    the copies WhatsApp sends of a message in HD (filed under it) in copies.go;
                    sticker reactions (sticker messages filed under the message they react
-                   to, wz_sticker_reacts) in stickerreact.go;
+                   to, wz_sticker_reacts) in stickerreact.go; replies to announcements
+                   (wz_comments) in comments.go;
                    Meta AI's answers (richResponseMessage, forwarded ones too) and the keys
                    of their formulas' pictures in richresponse.go;
                    polls, locations, contact cards and events (cards in bubbles) and the

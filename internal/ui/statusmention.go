@@ -127,10 +127,13 @@ func (u *UI) layoutStatusMentionCard(gtx C, c *model.Chat, m *model.Message, wid
 
 // openMentionedStatus opens the status a status mention names, while it's
 // kept.
-func (u *UI) openMentionedStatus(m *model.Message) {
+func (u *UI) openMentionedStatus(m *model.Message) { u.openStatus(m.StatusMention.StatusID) }
+
+// openStatus opens status update id, while it's kept.
+func (u *UI) openStatus(id string) {
 	for _, t := range u.statuses {
 		for i, up := range t.Updates {
-			if up.ID == m.StatusMention.StatusID {
+			if up.ID == id {
 				u.status.viewer.showAt(t, i)
 				return
 			}

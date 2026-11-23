@@ -634,9 +634,21 @@ func (a *Backend) Delete(m *model.Message, forEveryone bool) {
 	}
 }
 
-func (a *Backend) PinMessage(m *model.Message, pinned bool) {
+func (a *Backend) PinMessage(m *model.Message, d time.Duration) {
 	if !a.refused() {
-		a.Backend.PinMessage(m, pinned)
+		a.Backend.PinMessage(m, d)
+	}
+}
+
+func (a *Backend) SendReply(m *model.Message, text string) {
+	if !a.refused() {
+		a.Backend.SendReply(m, text)
+	}
+}
+
+func (a *Backend) DeleteReply(m *model.Message, r model.Reply) {
+	if !a.refused() {
+		a.Backend.DeleteReply(m, r)
 	}
 }
 

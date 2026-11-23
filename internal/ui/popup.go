@@ -142,6 +142,8 @@ const (
 	ctxCommunity   // the announcements' groups (chatID is the community's)
 	ctxConv        // the open chat's ⋮ menu
 	ctxTimer       // a chat's disappearing message timers
+	ctxPin         // how long a message stays pinned (pins.go)
+	ctxReply       // a reply to an announcement (replies.go)
 	ctxGallerySort // the Media panel's sort order
 	ctxScheduled   // a scheduled message's (scheduled.go)
 	ctxZoom        // the Font size choices (scale.go)
@@ -162,7 +164,7 @@ type ctxMenu struct {
 	chatID string
 	msg    *model.Message
 	fav    bool        // msg is a favourite sticker
-	job    string      // the scheduled message's ID, for ctxScheduled
+	job    string      // the scheduled message's ID, for ctxScheduled, or the reply's, for ctxReply
 	at     image.Point // where it was opened, in content coordinates
 	scrim  widget.Clickable
 	lists  bool // "Add to list" submenu open
@@ -275,6 +277,13 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 	if !deleted && !revoked && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
 		add(menuItem{key: "reply", ic: icReply, label: "Reply", run: func() { u.startReply(m) }})
 	}
+	if u.announcementsOf(c) != nil && u.takesReplies(m) {
+		label := "Reply to announcement"
+		if m.Replies > 0 {
+			label = "View " + repliesLabel(m.Replies)
+		}
+		add(menuItem{key: "replies", ic: icChats, label: label, run: func() { u.openReplies(m) }})
+	}
 	if c.IsGroup && !m.FromMe && m.SenderID != "" && !deleted {
 		add(menuItem{key: "private", ic: icReplyPrivate, label: "Reply privately", run: func() { u.replyPrivately(m) }})
 		add(menuItem{key: "dm", ic: icChats, label: "Message " + shortName(plainText(m.Sender)), run: func() { u.openDirect(m.SenderID, m.Sender) }})
@@ -305,9 +314,9 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		}
 		if !isChannelID(c.ID) && !revoked {
 			if m.Pinned {
-				add(menuItem{key: "pin", ic: icPin, label: "Unpin", run: func() { b.PinMessage(m, false) }})
+				add(menuItem{key: "pin", ic: icPin, label: "Unpin", run: func() { b.PinMessage(m, 0) }})
 			} else {
-				add(menuItem{key: "pin", ic: icPin, label: "Pin", run: func() { b.PinMessage(m, true) }})
+				add(menuItem{key: "pin", ic: icPin, label: "Pin", run: func() { u.openPinMenu(m) }})
 			}
 		}
 		if m.Starred {
@@ -444,6 +453,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			if u.gallery.open {
 				items = u.gallerySortItems()
 			}
+		case ctxPin:
+			items = u.pinItems(m.msg)
+		case ctxReply:
+			items = u.replyItems()
 		case ctxTimer:
 			if c := u.chatByID(m.chatID); c != nil {
 				items = u.timerItems(c)

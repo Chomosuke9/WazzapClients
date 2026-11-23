@@ -28,6 +28,12 @@ func (d *chatDraft) empty() bool {
 	return trimSpace(d.text) == "" && d.reply == nil && len(d.files) == 0
 }
 
+// listed reports whether the chat's row in the list says "Draft:". A
+// reply with nothing written yet only waits for the chat to open again.
+func (d *chatDraft) listed() bool {
+	return d != nil && (trimSpace(d.text) != "" || len(d.files) > 0)
+}
+
 // stashDraft puts the open chat's composer aside as its draft and leaves
 // the composer empty.
 func (u *UI) stashDraft() {

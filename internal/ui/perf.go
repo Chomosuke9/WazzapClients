@@ -25,6 +25,7 @@ const (
 	prefAnimations   = "animations"    // on unless "off"
 	prefSmoothScroll = "smooth_scroll" // on unless "off"
 	prefAutoplay     = "autoplay"      // "" (always), "hover" or "never"
+	prefSharpPhotos  = "sharp_photos"  // "on": photos in chats decode at full sharpness
 
 	// The Advanced page's knobs. "" is the default of each.
 	prefImageCache = "image_cache"     // MB of decoded pictures
@@ -37,7 +38,7 @@ const (
 	prefEmojiFPS   = "emoji_fps"       // frames a second of animated emojis
 )
 
-var perfPrefs = []string{prefAnimations, prefSmoothScroll, prefAutoplay,
+var perfPrefs = []string{prefAnimations, prefSmoothScroll, prefAutoplay, prefSharpPhotos,
 	prefImageCache, prefLoadedMsgs, prefGCPercent, prefTrimAfter, prefCPUs,
 	prefEmojiAnims, prefEmojiDec, prefEmojiFPS}
 
@@ -46,6 +47,7 @@ type perfSettings struct {
 	animations   bool
 	smoothScroll bool
 	autoplay     string
+	sharpPhotos  bool          // photos in chats are decoded to fill their place (messageImage)
 	imageCache   int           // bytes
 	loadedMsgs   int           // at least two pages (paging.go)
 	gcPercent    int           //
@@ -99,6 +101,7 @@ func readPerf(b model.Backend) perfSettings {
 	if v := b.Pref(prefAutoplay); v == "hover" || v == "never" {
 		p.autoplay = v
 	}
+	p.sharpPhotos = b.Pref(prefSharpPhotos) == "on"
 	if n, ok := num(prefImageCache, 4, 1024); ok {
 		p.imageCache = n << 20
 	}
@@ -310,6 +313,17 @@ func (u *UI) perfSettingsPage() []settingsSection {
 	}
 	play.note = "GIFs that don't play show their first picture: click one to play it in the viewer. " +
 		"Never also keeps animated emojis still."
+	sharp := settingsSection{title: "Photos", rows: []settingRow{{key: prefSharpPhotos, kind: setToggle,
+		title: "Full-resolution previews", on: perf.sharpPhotos,
+		sub: "Photos in chats show as sharp as their bubble allows, from the downloaded photo. Off, they're " +
+			"decoded smaller: less memory, and tall ones look soft",
+		run: func() {
+			v := "on"
+			if perf.sharpPhotos {
+				v = ""
+			}
+			u.setPerfPref(prefSharpPhotos, v)
+		}}}}
 	return []settingsSection{
 		{title: "Motion", rows: []settingRow{
 			toggle(prefAnimations, "Animations", "Menus, panels and highlights slide and fade. Off, they change at once"),
@@ -317,6 +331,7 @@ func (u *UI) perfSettingsPage() []settingsSection {
 			toggle(prefDoodles, "Wallpaper doodles", "Draw doodles on the chat background"),
 		}},
 		play,
+		sharp,
 		{rows: []settingRow{{key: "advanced", ic: icTune, title: "Advanced", sub: "Memory, CPU and caches",
 			trailing: icChevronRight, run: func() { u.openSettingsSub("advanced") }}}},
 	}

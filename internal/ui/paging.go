@@ -27,7 +27,7 @@ func (u *UI) loadLatest() {
 	u.conv.list.ScrollToEnd = true
 	u.conv.scrollTo = &layout.Position{}
 	u.conv.glide = glide{}
-	u.conv.pinned = u.backend.PinnedMessage(c.ID)
+	u.loadPins(c.ID)
 }
 
 // reloadMessages loads the open chat's messages again, keeping the same
@@ -47,7 +47,7 @@ func (u *UI) reloadMessages() {
 		u.msgs, u.conv.olderMore = more(u.backend.Messages(c.ID, n+1), n, true)
 	}
 	u.msgsVer++
-	u.conv.pinned = u.backend.PinnedMessage(c.ID)
+	u.loadPins(c.ID)
 }
 
 // pageMessages loads the next page when the list, as laid out last frame,

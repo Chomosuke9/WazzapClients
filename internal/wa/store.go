@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS wz_messages (
 	receipt      INTEGER NOT NULL DEFAULT 0, -- model.Receipt
 	reaction     TEXT NOT NULL DEFAULT '',   -- reactionSummary of its wz_reactions
 	starred      INTEGER NOT NULL DEFAULT 0,
-	pinned       INTEGER NOT NULL DEFAULT 0, -- when, 0 = not pinned
+	pinned       INTEGER NOT NULL DEFAULT 0, -- unix ms it was pinned (1: before that was kept), 0 = not pinned
+	pin_until    INTEGER NOT NULL DEFAULT 0, -- unix s the pin ends, 0 = never
 	edited       INTEGER NOT NULL DEFAULT 0, -- unix ms of the last edit, 0 = never
 	-- Unix ms its sender deleted it for everyone, for a message kept with
 	-- model.PrefKeepDeleted; 0 otherwise.
@@ -212,6 +213,7 @@ var migrations = []string{
 	`ALTER TABLE wz_scheduled ADD COLUMN created INTEGER NOT NULL DEFAULT 0`, // schedule.go
 	`ALTER TABLE wz_reveal_keys ADD COLUMN chat TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_reveal_keys ADD COLUMN id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE wz_messages ADD COLUMN pin_until INTEGER NOT NULL DEFAULT 0`, // setPin
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -219,7 +221,7 @@ func (s *msgStore) init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("drop old messages: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, schema+receiptsSchema+statusRepliesSchema+statusMentionsSchema+stickerSchema+packSchema+votesSchema+reactionsSchema+stickerReactSchema+snippetSchema+channelPostsSchema+scheduleSchema); err != nil {
+	if _, err := s.db.ExecContext(ctx, schema+receiptsSchema+statusRepliesSchema+statusMentionsSchema+stickerSchema+packSchema+votesSchema+reactionsSchema+stickerReactSchema+snippetSchema+channelPostsSchema+scheduleSchema+commentsSchema); err != nil {
 		return err
 	}
 	for _, m := range migrations {
@@ -269,6 +271,7 @@ func (s *msgStore) dropOldMessages(ctx context.Context) (bool, error) {
 		`DROP TABLE IF EXISTS wz_receipts`,
 		`DROP TABLE IF EXISTS wz_reactions`,
 		`DROP TABLE IF EXISTS wz_sticker_reacts`,
+		`DROP TABLE IF EXISTS wz_comments`,
 		`UPDATE wz_chats SET unread = 0`,
 		`DELETE FROM wz_meta WHERE key IN ('legacy_media_migrated', 'file_info_migrated')`,
 	} {
@@ -291,8 +294,9 @@ func (s *msgStore) vacuum(ctx context.Context) {
 // failStale marks the messages still pending from an earlier run failed:
 // nothing sends them any more.
 func (s *msgStore) failStale(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET receipt = ? WHERE from_me = 1 AND receipt = ?`,
-		int(model.Failed), int(model.Pending))
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET receipt = ?1 WHERE from_me = 1 AND receipt = ?2;
+		UPDATE wz_comments SET creceipt = ?1 WHERE cwho = ?3 AND creceipt = ?2`,
+		int(model.Failed), int(model.Pending), meVoter)
 	return err
 }
 
@@ -300,7 +304,7 @@ func (s *msgStore) wipe(ctx context.Context, keep ...string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM wz_messages; DELETE FROM wz_chats;
 		DELETE FROM wz_status; DELETE FROM wz_channels; DELETE FROM wz_channel_posts; DELETE FROM wz_lists; DELETE FROM wz_list_chats; DELETE FROM wz_stickers;
 		DELETE FROM wz_sticker_packs; DELETE FROM wz_pack_stickers;
-		DELETE FROM wz_edits; DELETE FROM wz_votes; DELETE FROM wz_reactions; DELETE FROM wz_sticker_reacts; DELETE FROM wz_snippets;
+		DELETE FROM wz_edits; DELETE FROM wz_votes; DELETE FROM wz_reactions; DELETE FROM wz_sticker_reacts; DELETE FROM wz_comments; DELETE FROM wz_snippets;
 		DELETE FROM wz_receipts; DELETE FROM wz_status_replies; DELETE FROM wz_status_mentions;
 		DELETE FROM wz_scheduled; DELETE FROM wz_reveal_keys;`)
 	if err != nil {
@@ -639,7 +643,8 @@ func (s *msgStore) markDeleted(ctx context.Context, chat, id, by string) error {
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_reactions WHERE chat = ?1 AND id = ?2;
-		DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND parent = ?2`, chat, id, int(model.KindDeleted), by)
+		DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND parent = ?2;
+		DELETE FROM wz_comments WHERE cchat = ?1 AND cparent = ?2`, chat, id, int(model.KindDeleted), by)
 	return err
 }
 
@@ -795,8 +800,8 @@ type rawMsg struct {
 }
 
 // msgColumns are what scanMessage reads.
-const msgColumns = `chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, reaction, starred, pinned,
-	edited, revoked, revoked_by, opened, whisper, kept, ` + stickerColumn + `, raw_payload, edit_payload`
+const msgColumns = `chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, reaction, starred, pinned, pin_until,
+	edited, revoked, revoked_by, opened, whisper, kept, ` + stickerColumn + `, ` + commentColumn + `, raw_payload, edit_payload`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -805,7 +810,7 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		m                       model.Message
 		r                       rawMsg
 		kind, media, receipt    int
-		ts, pinned              int64
+		ts, pinned, pinUntil    int64
 		edited, revoked         int64
 		fromMe, starred, opened bool
 		kept                    bool
@@ -813,7 +818,7 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		react, stickers         string
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &fromMe, &ts, &kind, &media, &m.Text, &receipt,
-		&react, &starred, &pinned, &edited, &revoked, &r.revokedBy, &opened, &r.whisper, &kept, &stickers, &raw, &edit)
+		&react, &starred, &pinned, &pinUntil, &edited, &revoked, &r.revokedBy, &opened, &r.whisper, &kept, &stickers, &m.Replies, &raw, &edit)
 	if err != nil {
 		return r, err
 	}
@@ -822,7 +827,8 @@ func scanMessage(sc scanner) (rawMsg, error) {
 	m.Kind = model.Kind(kind)
 	m.Media = model.Media(media)
 	m.Receipt = model.Receipt(receipt)
-	m.Starred, m.Pinned, m.Kept = starred, pinned != 0, kept
+	m.Starred, m.Kept = starred, kept
+	m.Pinned = pinned != 0 && (pinUntil == 0 || pinUntil > time.Now().Unix())
 	fillReactions(&m, react)
 	if kind != int(model.KindDeleted) {
 		m.Stickers = readStickers(stickers)
@@ -888,12 +894,33 @@ func (s *msgStore) oldestID(ctx context.Context, chat string) string {
 	return id
 }
 
-// pinnedMessage returns the chat's most recently pinned message.
-func (s *msgStore) pinnedMessage(ctx context.Context, chat string) (rawMsg, bool) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+msgColumns+` FROM wz_messages
-		WHERE chat = ? AND pinned != 0 ORDER BY pinned DESC LIMIT 1`, chat)
-	m, err := scanMessage(row)
-	return m, err == nil
+// pinnedNow picks the messages whose pin hasn't ended by ?2 (unix s).
+const pinnedNow = `chat = ?1 AND pinned != 0 AND (pin_until = 0 OR pin_until > ?2)`
+
+// pinnedMessages returns the chat's pinned messages, the latest pinned
+// first.
+func (s *msgStore) pinnedMessages(ctx context.Context, chat string) ([]rawMsg, error) {
+	return s.queryMessages(ctx, `SELECT `+msgColumns+` FROM wz_messages
+		WHERE `+pinnedNow+` ORDER BY pinned DESC, ts DESC LIMIT ?3`, chat, time.Now().Unix(), model.PinsMax)
+}
+
+// setPin pins a message as of at (unix ms), until until (unix s, 0 for
+// good), or unpins it. A chat's oldest pins past model.PinsMax go, as do
+// those that ended.
+func (s *msgStore) setPin(ctx context.Context, x execer, chat, id string, pinned bool, at, until int64) error {
+	if !pinned {
+		_, err := x.ExecContext(ctx, `UPDATE wz_messages SET pinned = 0, pin_until = 0 WHERE chat = ? AND id = ?`, chat, id)
+		return err
+	}
+	_, err := x.ExecContext(ctx, `UPDATE wz_messages SET pinned = ?, pin_until = ? WHERE chat = ? AND id = ? AND kind != ?`,
+		max(at, 1), until, chat, id, int(model.KindDeleted))
+	if err != nil {
+		return err
+	}
+	_, err = x.ExecContext(ctx, `UPDATE wz_messages SET pinned = 0, pin_until = 0 WHERE chat = ?1 AND pinned != 0 AND rowid NOT IN
+		(SELECT rowid FROM wz_messages WHERE `+pinnedNow+` ORDER BY pinned DESC, ts DESC LIMIT ?3)`,
+		chat, time.Now().Unix(), model.PinsMax)
+	return err
 }
 
 // searchMessages returns up to limit messages of a chat whose

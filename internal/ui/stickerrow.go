@@ -40,7 +40,7 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	out := ms[0].FromMe
 	w := gtx.Constraints.Max.X
 	sel := u.conv.selecting
-	cell, gap := gtx.Dp(150), gtx.Dp(stickerGap)
+	cell, gap := gtx.Dp(stickerDp), gtx.Dp(stickerGap)
 	// In a group, the run's first line is headed by the sender's name and
 	// moves over under it, as a lone sticker does.
 	var head part
@@ -120,7 +120,7 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		}
 		all := sel && u.pickedAll(line)
 		if all {
-			fillRect(gtx, sb, selColor)
+			fillRect(gtx, sb, u.selColor())
 		}
 		if sel {
 			// The line toggles all its stickers; each sticker, drawn on
@@ -134,7 +134,7 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		for i, m := range line {
 			x := x0 + i*(cell+gap)
 			if sel && !all && u.conv.picked[m.ID] {
-				fillRRect(gtx, image.Rectangle{Min: image.Pt(x, 0), Max: image.Pt(x+cell, lh)}.Inset(-gtx.Dp(4)), gtx.Dp(8), selColor)
+				fillRRect(gtx, image.Rectangle{Min: image.Pt(x, 0), Max: image.Pt(x+cell, lh)}.Inset(-gtx.Dp(4)), gtx.Dp(8), u.selColor())
 			}
 			u.stickerCell(gtx, c, m, parts[i], image.Pt(x, 0), sel)
 		}

@@ -20,6 +20,9 @@ type Backend struct {
 	mu         sync.Mutex
 	chats      []*model.Chat
 	msgs       map[string][]*model.Message
+	replies    map[string][]model.Reply // of announcements, by message
+	replySeq   int
+	pins       map[string][]string // pinned messages' IDs by chat, the latest first
 	events     []model.Event
 	notify     func()
 	now        func() time.Time
@@ -91,6 +94,7 @@ func New() *Backend {
 		return time.Date(y, mo, dd, h, m, 0, 0, now.Location())
 	})
 	b.addChannelPosts()
+	b.seedReplies()
 	b.demoStatusMentions()
 	b.demoVotes()
 	b.demoReactions()
@@ -288,14 +292,32 @@ func (b *Backend) SearchMessages(chatID, query string, limit int) {
 	b.emit(model.SearchEvent{ChatID: chatID, Query: query, Msgs: out})
 }
 
-func (b *Backend) PinnedMessage(chatID string) *model.Message {
-	m := b.msgs[chatID]
-	for i := len(m) - 1; i >= 0; i-- {
-		if m[i].Pinned && m[i].Kind != model.KindDeleted {
-			return m[i]
+func (b *Backend) PinnedMessages(chatID string) []*model.Message {
+	var out []*model.Message
+	for _, id := range b.pins[chatID] {
+		for _, m := range b.msgs[chatID] {
+			if m.ID == id && m.Pinned && m.Kind != model.KindDeleted {
+				out = append(out, m)
+			}
 		}
 	}
-	return nil
+	// Those pinned from the start, the newest first.
+	m := b.msgs[chatID]
+	for i := len(m) - 1; i >= 0; i-- {
+		if m[i].Pinned && m[i].Kind != model.KindDeleted && !slices.Contains(b.pins[chatID], m[i].ID) {
+			out = append(out, m[i])
+		}
+	}
+	return out[:min(len(out), model.PinsMax)]
+}
+
+func (b *Backend) AlbumMessage(chatID, albumID string) string {
+	for _, m := range b.msgs[chatID] {
+		if m.Album == albumID && albumID != "" {
+			return m.ID
+		}
+	}
+	return ""
 }
 
 // Open marks the chat read, unless ghost mode is on: like the real

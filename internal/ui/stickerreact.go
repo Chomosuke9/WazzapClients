@@ -58,9 +58,11 @@ const stickerTab = "\x00sticker"
 
 // takesStickers reports whether a message shows sticker reactions and
 // takes them: WhatsApp shows none in a channel, in a community's
-// announcements or on a sticker.
+// announcements, on a sticker or on an emoji sent alone, which has no
+// bubble for them to sit on either.
 func (u *UI) takesStickers(m *model.Message) bool {
-	return m.Media != model.MediaSticker && !isChannelID(m.ChatID) && u.announcementsOf(u.chatByID(m.ChatID)) == nil
+	c := u.chatByID(m.ChatID)
+	return m.Media != model.MediaSticker && !isChannelID(m.ChatID) && u.announcementsOf(c) == nil && u.jumbo(c, m) == nil
 }
 
 // shownSticker is a sticker reaction and the message it reacts to.

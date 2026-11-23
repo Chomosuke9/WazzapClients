@@ -114,6 +114,7 @@ type rawQuote struct {
 	text   string
 	media  model.Media
 	round  bool
+	album  bool // it's a whole album (album.go): id is the album's
 	quoted bool // the payload carries the quoted message
 	// mentions are those of the quoted message, when the payload carries
 	// them, and remote the chat it's in, when another (a private reply).
@@ -137,7 +138,12 @@ func quoteOf(ci *waE2E.ContextInfo) *rawQuote {
 		return nil
 	}
 	qc := describe(q)
-	return &rawQuote{id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, round: qc.round, quoted: q != nil,
+	album := false
+	if a := unwrap(q).GetAlbumMessage(); a != nil {
+		album = true
+		qc.text, qc.media = albumText(int(a.GetExpectedImageCount()), int(a.GetExpectedVideoCount()))
+	}
+	return &rawQuote{album: album, id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, round: qc.round, quoted: q != nil,
 		mentions: strings.Join(mentionsOf(qc.ctx), ","), remote: ci.GetRemoteJID()}
 }
 
@@ -148,7 +154,8 @@ func (b *Backend) resolveQuote(ctx context.Context, chat string, q *rawQuote) *m
 	if q == nil {
 		return nil
 	}
-	quote := &model.Quote{ID: q.id, Text: q.text, Media: q.media, Round: q.round}
+	quote := &model.Quote{ID: q.id, Text: q.text, Media: q.media, Round: q.round, Album: q.album,
+		Status: q.remote == statusChat}
 	sender := q.sender
 	if q.text == "" && q.media == model.MediaNone && q.id != "" {
 		orig, ok := b.store.message(ctx, chat, q.id)

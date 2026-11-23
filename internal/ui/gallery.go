@@ -520,7 +520,7 @@ func (u *UI) galleryTile(gtx C, m *model.Message) D {
 			box := icCheckBoxEmpty
 			if g.pickedAt(m) >= 0 {
 				box = icCheckBox
-				fillRect(gtx, r, argb(0x5dbf6e, 0x40))
+				fillRect(gtx, r, withAlpha(p.Green, 0x40))
 			}
 			fillCircle(gtx, image.Pt(gtx.Dp(22), gtx.Dp(22)), gtx.Dp(14), argb(0x000000, 0x60))
 			t := op.Offset(image.Pt(gtx.Dp(10), gtx.Dp(10))).Push(gtx.Ops)

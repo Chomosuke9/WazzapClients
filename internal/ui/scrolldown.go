@@ -2,8 +2,10 @@ package ui
 
 import (
 	"image"
+	"slices"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -13,10 +15,13 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
-// Two things float over the open chat's messages, like WhatsApp's:
+// Three things float over the open chat's messages, like WhatsApp's:
 //   - a round ⌄ button at the bottom right while you're scrolled up from
 //     the newest message, which goes back down to it, with the number of
-//     unread messages below on it;
+//     unread messages below on it. After a click on a reply's quote it goes
+//     back to that reply first;
+//   - in a group, an @ button above it while unread messages mention you (or
+//     reply to you), with how many: each click goes to the next;
 //   - the day you're looking at, pinned at the top of the chat while you
 //     scroll and faded out after. The next day's chip pushes it up.
 //
@@ -31,12 +36,27 @@ type convFloat struct {
 	away     bool // scrolled up from the newest message, last frame
 	// below is the unread messages under the screen, on the button: the
 	// chat's unread ones when it opened, and those that came since.
-	below    int
+	below int
+	// back are the replies whose quotes were clicked, the last one last:
+	// where the button goes before the newest message.
+	back []backJump
+	// mentions are the unread messages for you that weren't on screen
+	// yet, oldest first.
+	mentions []string
+	at       widget.Clickable
+	atAnim   tween
+	atN      int // how many it said last, while it goes away
 	dateAnim tween
 	pinned   bool      // the day's chip was pinned at the top last frame
 	scrolled time.Time // when the list last scrolled
 	pos      layout.Position
 	chips    []dayChip // the day chips laid out this frame
+}
+
+// backJump is a reply to go back to.
+type backJump struct {
+	id   string
+	left bool // it went off the screen
 }
 
 // dayChip is a day chip of the list, recorded while it laid out.
@@ -74,6 +94,38 @@ func (u *UI) newBelow(e model.MessageEvent) {
 	f := &u.conv.float
 	if e.New && !e.Msg.FromMe && u.selected != nil && u.selected.ID == e.Msg.ChatID && f.away {
 		f.below++
+		if u.selected.IsGroup && e.Msg.ForMe(u.meID) {
+			f.mentions = append(f.mentions, e.Msg.ID)
+		}
+	}
+}
+
+// trackFloats drops the replies to go back to that are on screen again (or
+// were scrolled past), and the mentions seen.
+func (u *UI) trackFloats(rows []convRow) {
+	f := &u.conv.float
+	pos := u.conv.list.Position
+	first, last := pos.First, min(pos.First+pos.Count, len(rows))
+	seen := func(id string) bool {
+		for i := first; i < last; i++ {
+			if rows[i].has(id) {
+				return true
+			}
+		}
+		return false
+	}
+	if g := &u.conv.glide; !g.pending && !g.active && u.conv.scrollTo == nil {
+		for len(f.back) > 0 {
+			b := &f.back[len(f.back)-1]
+			at := slices.IndexFunc(rows, func(r convRow) bool { return r.has(b.id) })
+			// Not loaded, it's below the loaded messages: still to come.
+			if at < 0 && u.conv.newerMore || at >= last {
+				b.left = true
+				break
+			}
+			f.back = f.back[:len(f.back)-1]
+		}
+		f.mentions = slices.DeleteFunc(f.mentions, seen)
 	}
 }
 
@@ -102,6 +154,7 @@ func (u *UI) layoutFloats(gtx C, c *model.Chat, rows []convRow) {
 	}
 	f.pos = pos
 	f.away = away
+	u.trackFloats(rows)
 	if !away {
 		f.below = 0 // you've seen them
 	}
@@ -176,45 +229,102 @@ func (u *UI) layoutFloats(gtx C, c *model.Chat, rows []convRow) {
 	}
 
 	u.layoutDownButton(gtx, sz)
+	u.layoutMentionButton(gtx, sz)
+}
+
+// goDown is the ⌄ button: back to the reply whose quote was clicked last,
+// or else to the newest message.
+func (u *UI) goDown() {
+	f := &u.conv.float
+	if n := len(f.back); n > 0 {
+		id := f.back[n-1].id
+		f.back = f.back[:n-1]
+		if u.jumpTo(id) {
+			return
+		}
+	}
+	f.back = nil
+	u.scrollMessages(layout.Position{})
+	f.below = 0
+}
+
+// nextMention goes to the oldest unread message for you not seen yet.
+func (u *UI) nextMention() {
+	f := &u.conv.float
+	for len(f.mentions) > 0 {
+		id := f.mentions[0]
+		f.mentions = f.mentions[1:]
+		if u.jumpTo(id) {
+			return
+		}
+	}
+}
+
+// floatButton draws a round button of the floats at at, v grown in, with
+// n over its top left when there are any. Going away (on false) it's
+// drawn, but no longer a button.
+func (u *UI) floatButton(gtx C, c *widget.Clickable, at image.Point, s int, v float32, on bool, n int, ic layout.Widget) {
+	p := u.pal
+	e := easeOut(v)
+	defer op.Offset(at).Push(gtx.Ops).Pop()
+	defer pushFx(gtx, e, scaleAt(image.Pt(s/2, s/2), lerp(0.7, 1, e))).Pop()
+	r := s / 2
+	rect := image.Rect(0, 0, s, s)
+	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r+gtx.Dp(1), p.Shadow)
+	if on {
+		clickable(gtx, c, func(gtx C) D {
+			fillCircle(gtx, image.Pt(r, r), r, p.Menu)
+			if h := u.hover(gtx, c); h > 0 {
+				fillCircle(gtx, image.Pt(r, r), r, faded(p.MenuHover, h))
+			}
+			return centerIn(gtx, s, ic)
+		})
+	} else {
+		fillCircle(gtx, image.Pt(r, r), r, p.Menu)
+		centerIn(gtx, s, ic)
+	}
+	if n > 0 {
+		// Over the button's top left, like WhatsApp's.
+		defer op.Offset(image.Pt(-gtx.Dp(6), -gtx.Dp(10))).Push(gtx.Ops).Pop()
+		u.badge(gtx, n)
+	}
+}
+
+// layoutMentionButton draws the @ button above the ⌄ button, or in its
+// place while that one is away.
+func (u *UI) layoutMentionButton(gtx C, sz image.Point) {
+	f := &u.conv.float
+	if f.at.Clicked(gtx) {
+		u.nextMention()
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	on := len(f.mentions) > 0
+	v := f.atAnim.step(gtx, on, durPopIn)
+	if v <= 0 {
+		return
+	}
+	if on {
+		f.atN = len(f.mentions)
+	}
+	s := gtx.Dp(42)
+	up := int(float32(s+gtx.Dp(16)) * easeOut(f.downAnim.v))
+	at := image.Pt(sz.X-s-gtx.Dp(18), sz.Y-s-gtx.Dp(14)-up)
+	u.floatButton(gtx, &f.at, at, s, v, on, f.atN,
+		u.label(23, "@", u.pal.Icon, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
 }
 
 // layoutDownButton draws the ⌄ button at the bottom right of a list of
 // size sz while it's scrolled up, with the unread count over it.
 func (u *UI) layoutDownButton(gtx C, sz image.Point) {
 	f := &u.conv.float
-	p := u.pal
 	if f.down.Clicked(gtx) {
-		u.scrollMessages(layout.Position{})
-		f.below = 0
+		u.goDown()
 	}
 	v := f.downAnim.step(gtx, f.away, durPopIn)
 	if v <= 0 {
 		return
 	}
-	e := easeOut(v)
 	s := gtx.Dp(42)
 	at := image.Pt(sz.X-s-gtx.Dp(18), sz.Y-s-gtx.Dp(14))
-	defer op.Offset(at).Push(gtx.Ops).Pop()
-	defer pushFx(gtx, e, scaleAt(image.Pt(s/2, s/2), lerp(0.7, 1, e))).Pop()
-	r := s / 2
-	rect := image.Rect(0, 0, s, s)
-	fillRRect(gtx, rect.Add(image.Pt(0, gtx.Dp(2))).Inset(-gtx.Dp(1)), r+gtx.Dp(1), p.Shadow)
-	if f.away {
-		clickable(gtx, &f.down, func(gtx C) D {
-			fillCircle(gtx, image.Pt(r, r), r, p.Menu)
-			if h := u.hover(gtx, &f.down); h > 0 {
-				fillCircle(gtx, image.Pt(r, r), r, faded(p.MenuHover, h))
-			}
-			return centerIn(gtx, s, iconW(icChevron, 28, p.Icon))
-		})
-	} else {
-		// Going away: drawn, but no longer a button.
-		fillCircle(gtx, image.Pt(r, r), r, p.Menu)
-		centerIn(gtx, s, iconW(icChevron, 28, p.Icon))
-	}
-	if f.below > 0 {
-		// Over the button's top left, like WhatsApp's.
-		defer op.Offset(image.Pt(-gtx.Dp(6), -gtx.Dp(10))).Push(gtx.Ops).Pop()
-		u.badge(gtx, f.below)
-	}
+	u.floatButton(gtx, &f.down, at, s, v, f.away, f.below, iconW(icChevron, 28, u.pal.Icon))
 }

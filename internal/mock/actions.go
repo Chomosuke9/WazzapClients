@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -79,7 +80,8 @@ func quoteOf(r *model.Message) *model.Quote {
 	if r.FromMe {
 		name = ""
 	}
-	return &model.Quote{ID: r.ID, Sender: name, SenderID: r.SenderID, Text: r.Text, Media: r.Media, Round: r.Round}
+	return &model.Quote{ID: r.ID, Sender: name, SenderID: r.SenderID, Text: r.Text, Media: r.Media, Round: r.Round,
+		Status: r.ChatID == "status@broadcast"}
 }
 
 func (b *Backend) copyTo(src *model.Message, chatID string, forwarded bool, quote *model.Quote) {
@@ -168,9 +170,24 @@ func (b *Backend) OpenedViewOnce(m *model.Message) {
 	b.update(m, func(x *model.Message) { x.Opened = true })
 }
 
-func (b *Backend) PinMessage(m *model.Message, pinned bool) {
+func (b *Backend) PinMessage(m *model.Message, d time.Duration) {
+	pinned := d > 0
+	keep := b.pins[m.ChatID][:0:0]
+	if pinned {
+		keep = append(keep, m.ID)
+	}
+	for _, x := range b.PinnedMessages(m.ChatID) {
+		if x.ID != m.ID {
+			keep = append(keep, x.ID)
+		}
+	}
+	keep = keep[:min(len(keep), model.PinsMax)]
+	if b.pins == nil {
+		b.pins = map[string][]string{}
+	}
+	b.pins[m.ChatID] = keep
 	for _, x := range b.msgs[m.ChatID] {
-		x.Pinned = pinned && x.ID == m.ID
+		x.Pinned = slices.Contains(keep, x.ID)
 	}
 	b.emit(model.DeletedEvent{ChatID: m.ChatID})
 }

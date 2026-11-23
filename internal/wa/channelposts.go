@@ -179,8 +179,8 @@ func (b *Backend) fetchChannelPosts(ctx context.Context, cli *whatsmeow.Client, 
 			if byServer, ok := b.store.postBySID(ctx, chat, nm.MessageServerID); ok {
 				id = byServer
 			}
-			if old, ok := b.store.message(ctx, chat, id); ok && old.Kind != model.KindDeleted {
-				_ = b.store.markDeleted(ctx, chat, id, "")
+			if old, ok := b.store.message(ctx, chat, id); ok && old.Kind != model.KindDeleted && old.Revoked.IsZero() {
+				b.deletePost(ctx, chat, id, b.now())
 				b.emitMessage(chat, id)
 			}
 			// Its place still counts for paging past it.
@@ -331,7 +331,7 @@ func (b *Backend) onChannelMessage(e *events.Message) bool {
 	switch {
 	case e.Info.Edit == types.EditAttributeAdminRevoke || e.Info.Edit == types.EditAttributeSenderRevoke:
 		if _, ok := b.store.message(ctx, chat, id); ok {
-			_ = b.store.markDeleted(ctx, chat, id, "")
+			b.deletePost(ctx, chat, id, e.Info.Timestamp)
 			b.emitMessage(chat, id)
 			b.emitChat(chat)
 		}
@@ -345,6 +345,20 @@ func (b *Backend) onChannelMessage(e *events.Message) bool {
 		return true
 	}
 	return false
+}
+
+// deletePost applies a channel's delete of a post at at. With
+// model.PrefKeepDeleted on, a post of a channel that isn't yours keeps its
+// content and is only flagged, as a chat's message is (revoke).
+func (b *Backend) deletePost(ctx context.Context, chat, id string, at time.Time) {
+	if meta, _ := b.store.channelMeta(ctx, chat); !meta.owner && b.Pref(model.PrefKeepDeleted) == "on" {
+		if at.IsZero() {
+			at = b.now()
+		}
+		_ = b.store.markRevoked(ctx, chat, id, at, "")
+		return
+	}
+	_ = b.store.markDeleted(ctx, chat, id, "")
 }
 
 // onChannelUpdate applies a channel's live reaction counts.

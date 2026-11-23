@@ -219,7 +219,7 @@ func (u *UI) layoutViewer(gtx C) {
 		{"goto", icChats, false, func() { u.closeViewer(); u.showMessage(m) }},
 		{"reply", icReply, isChannelID(m.ChatID), func() { u.closeViewer(); u.showMessage(m); u.startReply(m) }},
 		{"star", starIcon(m.Starred), false, func() { b.Star(m, !m.Starred) }},
-		{"pin", pinIcon(m.Pinned), isChannelID(m.ChatID), func() { b.PinMessage(m, !m.Pinned) }},
+		{"pin", pinIcon(m.Pinned), isChannelID(m.ChatID), func() { u.togglePin(m) }},
 		{"react", icEmoji, isChannelID(m.ChatID), func() { u.openPicker(pickReaction, m) }},
 		{"forward", icForward, false, func() { u.openForward([]*model.Message{m}) }},
 		{"save", icDownload, false, func() { b.SaveMedia(m) }},

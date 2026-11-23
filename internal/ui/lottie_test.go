@@ -257,7 +257,7 @@ func TestEffectWithoutRoomWaitsForClick(t *testing.T) {
 	gtx := layout.Context{Ops: new(op.Ops), Now: testNow()}
 	deadline := time.Now().Add(roomWait + 5*time.Second)
 	for {
-		u.stickerEffect(gtx, m, 64)
+		u.stickerEffect(gtx, m, 64, false)
 		if u.fx.tried[key] && u.players.m["fx:"+key] == nil {
 			break // started, then given up
 		}
@@ -269,7 +269,7 @@ func TestEffectWithoutRoomWaitsForClick(t *testing.T) {
 	if u.fx.none[key] {
 		t.Fatal("a sticker whose effect found no room is taken for one without")
 	}
-	u.stickerEffect(gtx, m, 64)
+	u.stickerEffect(gtx, m, 64, false)
 	if u.players.m["fx:"+key] != nil {
 		t.Fatal("the effect started again on its own")
 	}
@@ -278,7 +278,7 @@ func TestEffectWithoutRoomWaitsForClick(t *testing.T) {
 	if !u.fx.want[key] {
 		t.Fatal("a click doesn't ask for the effect")
 	}
-	u.stickerEffect(gtx, m, 64)
+	u.stickerEffect(gtx, m, 64, false)
 	if u.players.m["fx:"+key] == nil {
 		t.Error("the clicked sticker's effect didn't start")
 	}

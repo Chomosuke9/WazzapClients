@@ -48,6 +48,21 @@ type imgEntry struct {
 	// yet, or the download failed. It is asked for again after retryAfter.
 	empty    bool
 	loadedAt time.Time
+	// shrunk is set when the picture was scaled down, to fit asked pixels
+	// (or to be askedW wide): asking for a bigger one decodes it again.
+	shrunk        bool
+	asked, askedW int
+}
+
+// fits reports whether a ready picture is big enough to show side pixels
+// across, give or take a little.
+func (e *imgEntry) fits(side int) bool {
+	return !e.shrunk || side*10 <= max(e.asked, e.size.X, e.size.Y)*11
+}
+
+// covers reports the same of a picture shown w pixels wide.
+func (e *imgEntry) covers(w int) bool {
+	return !e.shrunk || w*10 <= max(e.askedW, e.size.X)*11
 }
 
 // retryAfter is how long missing media waits before it's asked for again.
@@ -61,6 +76,7 @@ const retryAfter = 15 * time.Second
 type imageCache struct {
 	mu         sync.Mutex
 	m          map[string]*imgEntry
+	growing    map[string]bool // pictures decoding again, bigger
 	frame      int64
 	limit      int // entries
 	budget     int // decoded bytes
@@ -123,7 +139,20 @@ func acquireDecode(data []byte) (release func()) {
 // get returns the entry for key, loading it in the background (load may
 // block; it runs on its own goroutine) when it isn't cached yet.
 func (c *imageCache) get(key string, maxSide int, load func() []byte) *imgEntry {
-	return c.getWith(key, load, func(data []byte) (image.Image, bool) { return decodeScaled(data, maxSide) })
+	return c.getSized(key, load, func(data []byte) (image.Image, bool) { return decodeScaled(data, maxSide) },
+		func(e *imgEntry) bool { return e.fits(maxSide) }, imgEntry{asked: maxSide})
+}
+
+// getWide is get for a picture shown w pixels wide and cropped: a tall
+// one is decoded taller than w rather than scaled up to its place.
+func (c *imageCache) getWide(key string, w int, load func() []byte) *imgEntry {
+	return c.getSized(key, load, func(data []byte) (image.Image, bool) {
+		side := w
+		if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil && cfg.Width > 0 && cfg.Height > cfg.Width {
+			side = min((w*cfg.Height+cfg.Width-1)/cfg.Width, 4*w)
+		}
+		return decodeScaled(data, side)
+	}, func(e *imgEntry) bool { return e.covers(w) }, imgEntry{askedW: w})
 }
 
 // blurSide is how many pixels across a blurred picture keeps. Scaled up
@@ -167,17 +196,37 @@ func boxBlur(src image.Image) *image.RGBA {
 
 // getWith is get with its own way to decode the loaded data.
 func (c *imageCache) getWith(key string, load func() []byte, decode func([]byte) (image.Image, bool)) *imgEntry {
+	return c.getSized(key, load, decode, nil, imgEntry{})
+}
+
+// getSized is getWith for a picture whose size depends on the place it's
+// shown: one decoded for a smaller place (a quote's thumbnail, a gallery
+// tile) that isn't enough is decoded again, and shows as it is meanwhile.
+// ask is what is asked of it, for its entry.
+func (c *imageCache) getSized(key string, load func() []byte, decode func([]byte) (image.Image, bool), enough func(*imgEntry) bool, ask imgEntry) *imgEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.m[key]; ok {
-		if !e.empty || time.Since(e.loadedAt) < retryAfter {
-			e.used = c.frame
+	e, ok := c.m[key]
+	grow := false // decoding a ready picture again, bigger
+	if ok && e.empty && time.Since(e.loadedAt) >= retryAfter {
+		c.remove(key)
+		ok = false
+	}
+	if ok {
+		e.used = c.frame
+		if e.state != imgReady || enough == nil || enough(e) || c.growing[key] {
 			return e
 		}
-		c.remove(key)
+		if c.growing == nil {
+			c.growing = make(map[string]bool)
+		}
+		c.growing[key] = true
+		grow = true
+		ask.asked, ask.askedW = max(ask.asked, e.asked), max(ask.askedW, e.askedW)
+	} else {
+		e = &imgEntry{state: imgLoading, used: c.frame}
+		c.m[key] = e
 	}
-	e := &imgEntry{state: imgLoading, used: c.frame}
-	c.m[key] = e
 	go func() {
 		data := load()
 		release := acquireDecode(data)
@@ -189,14 +238,25 @@ func (c *imageCache) getWith(key string, load func() []byte, decode func([]byte)
 		if img != nil {
 			img = outsideHeap(img)
 			done = &imgEntry{state: imgReady, op: paint.NewImageOp(img), size: img.Bounds().Size(),
-				animated: animated, loadedAt: done.loadedAt}
+				animated: animated, loadedAt: done.loadedAt, asked: ask.asked, askedW: ask.askedW}
 			done.bytes = 4 * done.size.X * done.size.Y
+			done.shrunk = enough != nil && scaledDown(data, done.size)
 		}
 		c.mu.Lock()
+		if grow {
+			delete(c.growing, key)
+		}
 		if c.m[key] == e { // not forgotten meanwhile
 			done.used = e.used
+			if grow && done.state != imgReady {
+				// It didn't come this time: keep the smaller one, and
+				// don't ask for this size again.
+				kept := *e
+				kept.asked, kept.askedW = ask.asked, ask.askedW
+				done = &kept
+			}
+			c.bytes += done.bytes - e.bytes
 			c.m[key] = done
-			c.bytes += done.bytes
 		}
 		c.mu.Unlock()
 		if c.invalidate != nil {
@@ -296,6 +356,16 @@ func (c *imageCache) endFrame() {
 	}
 }
 
+// scaledDown reports whether a picture decoded from data to size could be
+// decoded bigger.
+func scaledDown(data []byte, size image.Point) bool {
+	if lottie.IsWAS(data) || webpanim.IsAnimated(data) {
+		return true // drawn from shapes, or of a size DecodeConfig can't tell
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	return err == nil && (cfg.Width > size.X || cfg.Height > size.Y)
+}
+
 // decodeScaled decodes an image to fit in maxSide. Animated stickers (WebP,
 // or Lottie's .was) decode to their first frame, and animated is set.
 func decodeScaled(data []byte, maxSide int) (img image.Image, animated bool) {
@@ -348,13 +418,24 @@ func decodeScaled(data []byte, maxSide int) (img image.Image, animated bool) {
 // paintCover paints img scaled to cover r (like CSS object-fit: cover),
 // clipped to the current clip.
 func paintCover(gtx C, img paint.ImageOp, size image.Point, r image.Rectangle) {
+	paintCoverFlip(gtx, img, size, r, false)
+}
+
+// paintCoverFlip is paintCover, with the picture mirrored left to right
+// when flip is set. The clip isn't under the mirroring, which would make
+// it a path.
+func paintCoverFlip(gtx C, img paint.ImageOp, size image.Point, r image.Rectangle, flip bool) {
 	defer clip.Rect(r).Push(gtx.Ops).Pop()
 	s := max(float32(r.Dx())/float32(size.X), float32(r.Dy())/float32(size.Y))
 	off := f32.Pt(
 		float32(r.Min.X)+(float32(r.Dx())-float32(size.X)*s)/2,
 		float32(r.Min.Y)+(float32(r.Dy())-float32(size.Y)*s)/2,
 	)
-	defer op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(s, s)).Offset(off)).Push(gtx.Ops).Pop()
+	sx := s
+	if flip {
+		sx, off.X = -s, off.X+float32(size.X)*s
+	}
+	defer op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(sx, s)).Offset(off)).Push(gtx.Ops).Pop()
 	img.Filter = paint.FilterLinear
 	img.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)

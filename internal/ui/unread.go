@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"slices"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -38,11 +39,14 @@ func (u *UI) showUnread(n int) {
 	if n <= 0 || u.conv.newerMore {
 		return
 	}
-	id, loaded := u.firstUnread(n)
+	id, loaded, mentions := u.firstUnread(n)
 	if id == "" {
 		return
 	}
 	u.conv.unread = unreadDivider{chat: c.ID, id: id, n: n}
+	if c.IsGroup {
+		u.conv.float.mentions = mentions
+	}
 	u.msgsVer++
 	if !loaded && u.loadAround(id) < 0 {
 		u.conv.unread = unreadDivider{}
@@ -61,8 +65,10 @@ func (u *UI) showUnread(n int) {
 // firstUnread finds the oldest of the newest n incoming messages of the
 // open chat (system messages aren't any), looking up to unreadPages pages past the loaded ones, and
 // reports whether it is loaded. With fewer stored, it finds the oldest
-// incoming one.
-func (u *UI) firstUnread(n int) (id string, loaded bool) {
+// incoming one. mentions are those of them that mention or reply to you,
+// oldest first.
+func (u *UI) firstUnread(n int) (id string, loaded bool, mentions []string) {
+	defer func() { slices.Reverse(mentions) }()
 	c := u.selected
 	msgs, older, inMsgs := u.msgs, u.conv.olderMore, true
 	for page := 0; ; page++ {
@@ -71,12 +77,15 @@ func (u *UI) firstUnread(n int) (id string, loaded bool) {
 				continue
 			}
 			id, loaded = msgs[i].ID, inMsgs
+			if msgs[i].ForMe(u.meID) {
+				mentions = append(mentions, id)
+			}
 			if n--; n == 0 {
-				return id, loaded
+				return id, loaded, mentions
 			}
 		}
 		if !older || page == unreadPages || len(msgs) == 0 {
-			return id, loaded
+			return id, loaded, mentions
 		}
 		// Only the oldest message of each page is kept to fetch the next.
 		msgs, older = more(u.backend.MessagesBefore(c.ID, msgs[0].ID, messagePage+1), messagePage, true)
