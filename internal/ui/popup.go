@@ -152,6 +152,7 @@ const (
 	ctxChips       // the filter chips that didn't fit (chips.go)
 	ctxChannel     // a channel's row in the Channels page (channelinfo.go)
 	ctxChannelAdd  // the Channels page's ⊕
+	ctxSend        // the composer's send button, right-clicked or held (scheduled.go)
 )
 
 // ctxMenu is the open context menu: a chat's (right-click in the chat
@@ -455,7 +456,11 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			}
 		case ctxScheduled:
 			if u.selected != nil && u.selected.ID == m.chatID {
-				items = u.scheduledMenuItems(m.job)
+				items = u.scheduledMenuItems(m.chatID, m.job)
+			}
+		case ctxSend:
+			if u.selected != nil && u.selected.ID == m.chatID {
+				items = u.sendMenuItems()
 			}
 		case ctxStatusAdd:
 			items = u.statusAddItems()
@@ -550,6 +555,10 @@ func (u *UI) layoutCtxMenu(gtx C) {
 	case ctxAttach:
 		// It opens upwards from the attach button.
 		pos = image.Pt(max(gtx.Dp(8), m.at.X-gtx.Dp(24)), max(gtx.Dp(8), m.at.Y-gtx.Dp(30)-menu.size.Y))
+	case ctxSend:
+		// It opens upwards from the send button, ending at its right.
+		x := min(m.at.X+gtx.Dp(24), sz.X-gtx.Dp(8)) - menu.size.X
+		pos = image.Pt(max(gtx.Dp(8), x), max(gtx.Dp(8), m.at.Y-gtx.Dp(30)-menu.size.Y))
 	case ctxQuality:
 		// It hangs under the send view's HD button.
 		x := min(m.at.X-menu.size.X/2, sz.X-gtx.Dp(8)-menu.size.X)

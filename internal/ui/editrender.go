@@ -130,6 +130,10 @@ type outItem struct {
 	draft  model.Draft
 	temp   bool // att.Path is the app's own copy, removed once sent
 	busy   bool // still rendering
+	// at schedules it for then (Schedule message), its caption shown as
+	// typed; zero sends it now.
+	at    time.Time
+	shown string
 }
 
 // queueSend queues a picked file to send, rendering it first if edited.
@@ -328,7 +332,11 @@ func (u *UI) flushOutbox() {
 		it := a.outbox[0]
 		a.outbox[0] = nil
 		a.outbox = a.outbox[1:]
-		if isStatusDestination(it.chatID) {
+		if !it.at.IsZero() {
+			if err := u.backend.ScheduleFile(it.chatID, it.att, it.draft, it.shown, it.at); err != nil {
+				u.toast(sentence(err.Error()))
+			}
+		} else if isStatusDestination(it.chatID) {
 			att := it.att
 			u.backend.PostStatus(model.StatusPost{GroupID: statusGroup(it.chatID), Text: it.draft.Text, File: &att})
 		} else if m := u.backend.SendFile(it.chatID, it.att, it.draft); m != nil {

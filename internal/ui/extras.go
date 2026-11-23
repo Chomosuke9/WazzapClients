@@ -78,8 +78,6 @@ var commandIcons = map[string]*icon.Icon{
 	"purge":       icDeleteSweep,
 	"raffle":      icCasino,
 	"calc":        icCalculate,
-	"schedule":    icScheduleSend,
-	"scheduled":   icClock,
 	"afk":         icBedtime,
 	"ghost":       icVisibilityOff,
 	"whisper":     icVisibilityOff,

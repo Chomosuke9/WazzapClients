@@ -24,16 +24,17 @@ const (
 	dialogConfirm
 	dialogForward
 	dialogPoll
-	dialogInvite  // a group's invite link (invite.go)
-	dialogTheme   // every chat's theme (chattheme.go); title is lookAll
-	dialogEdits   // an edited message's earlier texts (edit.go)
-	dialogPayload // a message's payload (/catch, snippets.go)
-	dialogList    // a bot's list of choices (listpick.go)
-	dialogEvent   // the attach menu's Create event (eventnew.go)
-	dialogAppLock // App lock's password and auto-lock (applock.go)
-	dialogPack    // a sticker pack (stickerpack.go)
-	dialogMyPacks // Your stickers: the packs added to the picker (stickermanage.go)
-	dialogChannel // Create channel (channelinfo.go)
+	dialogInvite   // a group's invite link (invite.go)
+	dialogTheme    // every chat's theme (chattheme.go); title is lookAll
+	dialogEdits    // an edited message's earlier texts (edit.go)
+	dialogPayload  // a message's payload (/catch, snippets.go)
+	dialogList     // a bot's list of choices (listpick.go)
+	dialogEvent    // the attach menu's Create event (eventnew.go)
+	dialogAppLock  // App lock's password and auto-lock (applock.go)
+	dialogPack     // a sticker pack (stickerpack.go)
+	dialogMyPacks  // Your stickers: the packs added to the picker (stickermanage.go)
+	dialogChannel  // Create channel (channelinfo.go)
+	dialogSchedule // Schedule message (scheduled.go)
 )
 
 type dialogButton struct {
@@ -94,6 +95,10 @@ type dialogState struct {
 	myPacks  myPacks
 	event    newEventState
 	invite   inviteState
+
+	// viewOnce marks a confirm dialog that shows a view once text
+	// (viewonce.go): the window is kept out of screenshots meanwhile.
+	viewOnce bool
 
 	// Edit history: the message and its earlier texts.
 	editOf   *model.Message
@@ -221,6 +226,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.myPacksPanel)
 	case dialogChannel:
 		panel = record(gtx, u.createChannelPanel)
+	case dialogSchedule:
+		panel = record(gtx, u.schedulePanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

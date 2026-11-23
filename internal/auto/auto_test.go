@@ -1,6 +1,7 @@
 package auto
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -54,72 +55,46 @@ func (at *autoTest) poll() (msgs []*model.Message, notices []string) {
 	return msgs, notices
 }
 
-func TestSchedule(t *testing.T) {
+// legacy queues jobs as an earlier version did (/schedule), and wraps the
+// backend again, online, as a restart would.
+func (at *autoTest) legacy(jobs ...Job) {
+	b, _ := json.Marshal(jobs)
+	at.f.SetPref(prefJobs, string(b))
+	at.a = Wrap(at.f, func() time.Time { return at.now })
+	at.a.Start(func() {})
+	at.a.online = true
+}
+
+// The jobs an earlier version queued go to WhatsApp when it can hold them,
+// are sent from here when due when they're too soon for it, and are
+// dropped with a notice when too late.
+func TestLegacyJobs(t *testing.T) {
 	at := newAutoTest(t)
-	j := at.a.Schedule(Job{Chat: "rina", At: base.Add(time.Hour), Text: "later", Reply: "rina-2"})
-	at.a.Schedule(Job{Chat: "work", At: base.Add(30 * time.Minute), Text: "sooner"})
-	if js := at.a.Jobs(""); len(js) != 2 || js[0].Text != "sooner" || len(at.a.Jobs("rina")) != 1 {
-		t.Fatalf("jobs %+v", js)
+	at.legacy(
+		Job{ID: "late", Chat: "rina", At: base.Add(-2 * time.Hour), Text: "good morning everyone, coffee's on me today"},
+		Job{ID: "soon", Chat: "work", At: base.Add(5 * time.Minute), Text: "sooner"},
+		Job{ID: "far", Chat: "rina", At: base.Add(time.Hour), Text: "later", Shown: "later", Reply: "rina-2"},
+	)
+	ms, ns := at.poll()
+	want := "Not sent, the app was closed or offline at 13:00: \"good morning everyone, coffee's on me t…\""
+	if len(ms) != 0 || len(ns) != 1 || ns[0] != want {
+		t.Fatalf("sent %+v, notices %q", ms, ns)
 	}
-	// They're kept in the prefs.
-	if again := Wrap(at.f, func() time.Time { return at.now }); len(again.Jobs("")) != 2 {
-		t.Fatal("the jobs weren't saved")
+	sc := at.f.Scheduled("")
+	if len(sc) != 1 || sc[0].ChatID != "rina" || sc[0].Draft.Text != "later" || sc[0].Draft.Reply == nil ||
+		!sc[0].At.Equal(base.Add(time.Hour)) {
+		t.Fatalf("handed WhatsApp %+v", sc)
 	}
-	if ms, _ := at.poll(); len(ms) != 0 {
-		t.Fatalf("sent %d early", len(ms))
+	if !at.a.Next().Equal(base.Add(5 * time.Minute)) {
+		t.Fatalf("next job %v", at.a.Next())
 	}
-	at.now = base.Add(32 * time.Minute)
-	ms, _ := at.poll()
+	at.now = base.Add(6 * time.Minute)
+	ms, _ = at.poll()
 	if len(ms) != 1 || ms[0].Text != "sooner" || ms[0].ChatID != "work" {
 		t.Fatalf("sent %+v", ms)
 	}
-	// Offline, nothing goes until it's back.
-	at.f.in = append(at.f.in, model.ConnEvent{State: model.StateConnecting})
-	at.now = base.Add(time.Hour + 3*time.Minute) // a little late is fine
-	if ms, _ := at.poll(); len(ms) != 0 {
-		t.Fatal("sent while offline")
-	}
-	at.f.in = append(at.f.in, model.ConnEvent{State: model.StateOnline})
-	ms, _ = at.poll()
-	if len(ms) != 1 || ms[0].Text != "later" || ms[0].Quote == nil {
-		t.Fatalf("sent %+v", ms)
-	}
-	if at.a.Cancel(j.ID) || len(at.a.Jobs("")) != 0 || at.f.Pref(prefJobs) != "" {
+	if at.f.Pref(prefJobs) != "" || !at.a.Next().IsZero() {
 		t.Fatal("the queue isn't empty")
-	}
-}
-
-func TestScheduleTooLate(t *testing.T) {
-	at := newAutoTest(t)
-	at.a.Schedule(Job{Chat: "rina", At: base.Add(time.Hour), Text: "good morning everyone, coffee's on me today", Shown: ""})
-	at.a.Schedule(Job{Chat: "rina", At: base.Add(3 * time.Hour), Text: "later"})
-	// The app was closed: it opens two hours late.
-	at.now = base.Add(3 * time.Hour)
-	ms, ns := at.poll()
-	if len(ms) != 1 || ms[0].Text != "later" {
-		t.Fatalf("sent %+v", ms)
-	}
-	want := "Not sent, the app was closed or offline at 16:00: \"good morning everyone, coffee's on me t…\""
-	if len(ns) != 1 || ns[0] != want {
-		t.Fatalf("notices %q, want %q", ns, want)
-	}
-	if len(at.a.Jobs("")) != 0 {
-		t.Fatal("the late message stayed queued")
-	}
-}
-
-func TestCancelAndSendNow(t *testing.T) {
-	at := newAutoTest(t)
-	a := at.a.Schedule(Job{Chat: "rina", At: base.Add(time.Hour), Text: "a"})
-	b := at.a.Schedule(Job{Chat: "rina", At: base.Add(time.Hour), Text: "b"})
-	if !at.a.Cancel(a.ID) {
-		t.Fatal("couldn't cancel")
-	}
-	if m := at.a.SendNow(b.ID); m == nil || m.Text != "b" {
-		t.Fatalf("sent %v", m)
-	}
-	if at.a.SendNow(b.ID) != nil || len(at.a.Jobs("")) != 0 {
-		t.Fatal("sent twice")
 	}
 }
 

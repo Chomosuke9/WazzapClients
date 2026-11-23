@@ -18,7 +18,6 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 
-	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/styledtext"
 )
@@ -52,7 +51,7 @@ type convRow struct {
 	group []*model.Message
 	album bool
 	// job is a rowScheduled's message.
-	job *auto.Job
+	job *model.Scheduled
 }
 
 // has reports whether the row shows message id.
@@ -68,7 +67,7 @@ func (r convRow) has(id string) bool {
 
 // rows rebuilds the flattened message list when the loaded messages change.
 func (u *UI) rows(c *model.Chat) []convRow {
-	jobsVer := u.jobsVersion()
+	jobsVer := u.sched.ver
 	if u.conv.rowsFor == c && u.conv.rowsVer == u.msgsVer && u.conv.rowsJobs == jobsVer {
 		return u.conv.rows
 	}

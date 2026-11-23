@@ -54,6 +54,9 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 	if d.Link.Shown(d.Text) {
 		m.Link, m.Thumb = d.Link, d.LinkThumb
 	}
+	if d.ViewOnce {
+		m.Kind = model.KindViewOnce
+	}
 	b.add(m)
 	cp := *m
 	return &cp

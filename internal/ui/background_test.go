@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/accounts"
-	"github.com/chomosuke9/wazzapclients/internal/auto"
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/notify"
@@ -181,10 +180,6 @@ func TestBackgroundCheck(t *testing.T) {
 	if len(got) != 1 || got[0].ID != workDir+"|rina" || got[0].Body != "Are you coming?" {
 		t.Fatalf("the message kept while offline: %+v", got)
 	}
-	// A message scheduled before the next check makes it come sooner.
-	job := testNow().Add(5 * time.Minute)
-	bg.b.(*auto.Backend).Schedule(auto.Job{Chat: "rina", At: job, Text: "On my way"})
-
 	// Caught up: the check ends and closes the backend.
 	bt.tick()
 	h.awaitClosed(workDir)
@@ -192,8 +187,8 @@ func TestBackgroundCheck(t *testing.T) {
 		t.Fatalf("still connected after the check: closed %v, %+v", bt.work.Closed(), bg)
 	}
 	checked := bt.l.Find(workDir).Checked
-	if checked.IsZero() || !bg.next.Equal(job) {
-		t.Errorf("checked %v, next %v; want the time it ended, and the scheduled message's", checked, bg.next)
+	if checked.IsZero() || !bg.next.After(checked) {
+		t.Errorf("checked %v, next %v; want the time it ended, and a check after it", checked, bg.next)
 	}
 	if s := bt.workRow().status(testNow()); !strings.HasPrefix(s, "Checked ") || !strings.HasSuffix(s, " · every 15 min") {
 		t.Errorf("status after the check %q", s)
@@ -339,17 +334,14 @@ func TestSwitchAwayChecksLater(t *testing.T) {
 	if len(h.bg) != 0 {
 		t.Fatalf("the open account runs in the background: %+v", h.bg)
 	}
-	job := testNow().Add(10 * time.Minute)
-	h.b.(*auto.Backend).Schedule(auto.Job{Chat: "rina", At: job, Text: "Lunch?"})
-
 	h.switchAccount(workDir)
 	h.settle()
 	bg := h.bg[""]
 	if bg == nil || bg.b != nil || !bt.me.Closed() {
 		t.Fatalf("the first account isn't closed and waiting to check: %+v", bg)
 	}
-	if !bg.next.Equal(job) || bt.l.Find("").Checked.IsZero() {
-		t.Errorf("next check %v, checked %v; want the scheduled message's time, and now", bg.next, bt.l.Find("").Checked)
+	if !bg.next.After(testNow()) || bt.l.Find("").Checked.IsZero() {
+		t.Errorf("next check %v, checked %v; want one to come, and now", bg.next, bt.l.Find("").Checked)
 	}
 	bt.tick()
 	if bt.opens[bt.l.Path("")] != 1 {

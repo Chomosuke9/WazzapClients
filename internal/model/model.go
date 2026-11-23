@@ -598,7 +598,49 @@ type Draft struct {
 	// LinkImage is the picture big, for the wide card WhatsApp shows above
 	// the title, or empty.
 	LinkImage LinkImage
+	// ViewOnce sends the text as a view once message: WhatsApp shows it
+	// to the others once, and only on their phones.
+	ViewOnce bool
 }
+
+// Scheduled is a message WhatsApp holds until its time (Backend.Schedule):
+// it went to the others already, encrypted, and the server gives them its
+// key then. Its sender's phone and linked devices list it until then.
+type Scheduled struct {
+	ID, ChatID string
+	At         time.Time
+	// Draft is what it sends, as Schedule took it (Reply holds the ID of
+	// the message it answers, and nothing else), and Shown its text as
+	// typed, mentions as "@Name". Both are empty for one scheduled on
+	// another device: only that device knows what it says (Elsewhere).
+	Draft     Draft
+	Shown     string
+	Elsewhere bool
+	// Media is the file it sends (MediaNone for a text), with Text its
+	// caption: FileName a document's name, Thumb a photo's or video's
+	// small JPEG, when known.
+	Media    Media
+	FileName string
+	Thumb    []byte
+}
+
+// Text is what a scheduled message's bubble says.
+func (s *Scheduled) Text() string {
+	if s.Shown != "" {
+		return s.Shown
+	}
+	return s.Draft.Text
+}
+
+// The times WhatsApp lets a message be scheduled for: at least
+// ScheduleMin from now (to the minute) and at most ScheduleMax.
+const (
+	ScheduleMin = 10 * time.Minute
+	ScheduleMax = 14 * 24 * time.Hour
+)
+
+// ScheduleMaxPerChat is how many messages WhatsApp holds for a chat at once.
+const ScheduleMaxPerChat = 30
 
 // GroupNameJID is the JID that a message's text mentions, as "@<JID>", for
 // the n-th name it gives a group (@admin, custom mentions): the group's own
@@ -1200,6 +1242,9 @@ type StickerPackEvent struct {
 // NoticeEvent is a short message for a toast ("Saved to Downloads").
 type NoticeEvent struct{ Text string }
 
+// ScheduledEvent says the messages scheduled in a chat changed.
+type ScheduledEvent struct{ ChatID string }
+
 // GalleryKind is what Backend.Gallery lists.
 type GalleryKind int
 
@@ -1442,6 +1487,7 @@ func (ConnEvent) isEvent()           {}
 func (ChatsEvent) isEvent()          {}
 func (ChatEvent) isEvent()           {}
 func (MessageEvent) isEvent()        {}
+func (ScheduledEvent) isEvent()      {}
 func (ReceiptEvent) isEvent()        {}
 func (TypingEvent) isEvent()         {}
 func (PresenceEvent) isEvent()       {}
@@ -1574,6 +1620,24 @@ type Backend interface {
 	MarkRead(chatIDs []string)
 	// Send queues a text message and returns it in its pending state.
 	Send(chatID string, d Draft) *Message
+	// Schedule sends a text message that WhatsApp shows the others at a
+	// time from ScheduleMin to ScheduleMax from now, whether this app runs
+	// then or not; shown is its text as typed. It goes in the background:
+	// a ScheduledEvent says it's on the list, a NoticeEvent if it failed.
+	Schedule(chatID string, d Draft, shown string, at time.Time) error
+	// ScheduleFile schedules a file, with d's text as its caption, the
+	// way Schedule does a text: it's uploaded now, and goes at at. A
+	// photo is read before it returns, so its file may go then.
+	ScheduleFile(chatID string, a Attachment, d Draft, shown string, at time.Time) error
+	// Scheduled lists the messages scheduled in a chat ("" for every
+	// chat), soonest first. Each joins its chat as a message of yours at
+	// its time, with a MessageEvent and a ScheduledEvent.
+	Scheduled(chatID string) []*Scheduled
+	// Unschedule takes a scheduled message back before its time, without
+	// the others knowing it was there, and reports whether it still was.
+	// It may finish in the background: the message stays on the list
+	// until then, and a NoticeEvent says how it went.
+	Unschedule(chatID, id string) bool
 	// SendWhisper sends a whisper's messages, in order, only to selected
 	// group members. Its files are read before it returns (they may be
 	// deleted then); it uploads and submits them in the background. The

@@ -187,30 +187,52 @@ func (u *UI) sendComposer() {
 		u.scrollMessages(layout.Position{})
 		return
 	}
-	txt := trimSpace(u.conv.composer.Text())
-	if txt == "" {
+	if u.schedEditing() {
+		// Enter sends an edited scheduled message at its time, not now.
+		u.openSchedule()
 		return
+	}
+	d, _, ok := u.composerDraft()
+	if !ok {
+		return
+	}
+	u.clearComposer()
+	if m := u.backend.Send(u.selected.ID, d); m != nil {
+		u.listSent(m)
+		u.upsertMessage(m)
+	}
+	u.scrollMessages(layout.Position{}) // jump to the newest message
+}
+
+// composerDraft makes the message the composer's text sends, with its
+// reply, mentions and link preview, and returns the text as typed. ok is
+// false while there's no text.
+func (u *UI) composerDraft() (d model.Draft, shown string, ok bool) {
+	txt := trimSpace(u.conv.composer.Text())
+	if txt == "" || u.selected == nil {
+		return d, "", false
 	}
 	if u.slash.on && strings.HasPrefix(txt, "//") {
 		// "//kick" sends "/kick" as text instead of running it.
 		txt = txt[1:]
 	}
-	d := u.draftFrom(txt)
+	d = u.draftFrom(txt)
 	d.Reply = u.conv.reply
 	if r := u.composerPreview(d.Text); r != nil {
 		d.Link = &model.LinkPreview{URL: r.url, Title: r.prev.Title, Description: r.prev.Description}
 		d.LinkThumb = r.prev.Thumb
 		d.LinkImage = model.LinkImage{Data: r.prev.Image, W: r.prev.W, H: r.prev.H}
 	}
+	return d, txt, true
+}
+
+// clearComposer empties the composer once its message went.
+func (u *UI) clearComposer() {
 	u.conv.link.reset()
 	u.conv.composer.SetText("")
 	u.conv.reply = nil
 	u.conv.mentions = nil
-	if m := u.backend.Send(u.selected.ID, d); m != nil {
-		u.listSent(m)
-		u.upsertMessage(m)
-	}
-	u.scrollMessages(layout.Position{}) // jump to the newest message
+	u.sched.editing = nil
 }
 
 // draftFrom makes a message of composer text, turning the picked
@@ -819,6 +841,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		}
 		m := op.Record(gtx.Ops)
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(u.layoutSchedEditBar),
 			layout.Rigid(func(gtx C) D {
 				ghost := c.replyGhost
 				if ghost == nil {
@@ -917,6 +940,13 @@ func (u *UI) layoutComposerBox(gtx C) D {
 							layout.Rigid(layout.Spacer{Width: 8}.Layout),
 							layout.Rigid(func(gtx C) D {
 								// The mic turns into the send button as you type.
+								defer func() {
+									// Its menu (Schedule message, View once): a right click,
+									// or Shift+F10 with the focus on it.
+									if sz := gtx.Dp(40); u.rightClick(gtx, "sendbtn", image.Pt(sz, sz)) {
+										u.openSendMenu()
+									}
+								}()
 								return clickable(gtx, &u.conv.send, func(gtx C) D {
 									sz := gtx.Dp(40)
 									mid := image.Pt(sz/2, sz/2)
@@ -949,7 +979,11 @@ func (u *UI) layoutComposerBox(gtx C) D {
 		call := m.Stop()
 		// A preview above the input makes the box less round, its corner
 		// around theirs.
-		r := lerpInt(gtx.Dp(28), gtx.Dp(composerCardRadius+8), max(rv, lv))
+		eb := float32(0)
+		if u.schedEditing() {
+			eb = 1 // the bar of a scheduled message being edited
+		}
+		r := lerpInt(gtx.Dp(28), gtx.Dp(composerCardRadius+8), max(rv, lv, eb))
 		fillRRect(gtx, image.Rectangle{Max: dims.Size}, min(dims.Size.Y/2, r), p.Composer)
 		call.Add(gtx.Ops)
 		for _, pk := range []struct {

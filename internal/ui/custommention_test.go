@@ -303,21 +303,24 @@ func TestCustomMentionSchedule(t *testing.T) {
 	st := customTest(t)
 	others, _ := membersOf(t, st.u, "work")
 	st.u.setCustomMentions("work", []customMention{{ID: "1", Name: "Tim frontend", Members: others[:2]}})
-	st.typeText("/schedule 1h standup @tim")
+	st.typeText("standup @tim")
 	ms := st.u.mentionQuery()
 	if ms == nil || customRow(ms) < 0 {
-		t.Fatalf("not offered in /schedule: %+v", ms)
+		t.Fatalf("not offered: %+v", ms)
 	}
 	st.u.pickMention(customRow(ms))
 	st.frame()
-	st.press(key.NameReturn)
-	jobs := st.u.auto.Jobs("work")
+	st.u.openSchedule()
+	st.frame()
+	st.u.confirmSchedule()
+	st.u.applyEvents()
+	jobs := st.u.backend.Scheduled("work")
 	if len(jobs) != 1 {
-		t.Fatalf("%d jobs", len(jobs))
+		t.Fatalf("%d scheduled", len(jobs))
 	}
 	j := jobs[0]
-	if j.MentionChat != "Tim frontend" || j.Text != "standup @work" || !slices.Equal(j.Mentions, others[:2]) {
-		t.Fatalf("job %+v", j)
+	if d := j.Draft; d.MentionChat != "Tim frontend" || d.Text != "standup @work" || !slices.Equal(d.Mentions, others[:2]) {
+		t.Fatalf("scheduled %+v", j)
 	}
 	st.u.editScheduled(j)
 	refs := st.u.conv.mentions

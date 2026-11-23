@@ -19,7 +19,9 @@ import (
 
 // View once messages (model.KindViewOnce) show as a line in their bubble
 // that opens them: a photo or video in the viewer, alone and without its
-// strip, forward or save, a voice message in place. Each opens once, and
+// strip, forward or save, a voice message in place, a text in a dialog.
+// WhatsApp sends others' only to the phone, though: here most show that
+// they came, and open there. Each opens once, and
 // the window can't be captured while one is shown. Replay view once
 // (Ethically gray features) opens them as often as you like and lets
 // screenshots through.
@@ -42,7 +44,7 @@ func viewOnceLabel(m *model.Message) string {
 // canOpenViewOnce reports whether a view once message opens here. Your
 // own don't, as in WhatsApp.
 func (u *UI) canOpenViewOnce(m *model.Message) bool {
-	if m.OnPhone || m.Media == model.MediaNone {
+	if m.OnPhone || m.Media == model.MediaNone && m.Text == "" {
 		return false
 	}
 	return u.viewOnceReplay || !m.Opened && !m.FromMe
@@ -55,7 +57,7 @@ func (u *UI) openViewOnce(m *model.Message) {
 	case playing:
 		u.toggleVoice(m) // pauses, or plays on, what was opened
 		return
-	case m.OnPhone || m.Media == model.MediaNone:
+	case m.OnPhone || m.Media == model.MediaNone && m.Text == "":
 		u.toast("For added privacy, WhatsApp sends view once messages only to your phone. Open it there.")
 		return
 	case !u.canOpenViewOnce(m):
@@ -67,6 +69,10 @@ func (u *UI) openViewOnce(m *model.Message) {
 		return
 	case m.Media == model.MediaVoice:
 		u.toggleVoice(m)
+	case m.Media == model.MediaNone:
+		u.confirm("View once message", plainText(m.Text))
+		u.dialog.buttons = []dialogButton{{label: "OK", primary: true}}
+		u.dialog.viewOnce = true
 	default:
 		u.openViewer(m)
 		u.viewer.items, u.viewer.viewOnce = []*model.Message{m}, true

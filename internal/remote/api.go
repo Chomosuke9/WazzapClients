@@ -148,7 +148,7 @@ func toMessage(m *model.Message, limit int) Message {
 	} else {
 		w.Status = receiptName(m.Receipt)
 	}
-	if w.Kind != "deleted" && w.Kind != "waiting" {
+	if w.Kind != "deleted" && w.Kind != "waiting" && w.Kind != "viewonce" { // a view once text is the phone's to show
 		w.Text, w.Truncated = clip(m.Text, limit)
 	}
 	if w.Kind == "system" {

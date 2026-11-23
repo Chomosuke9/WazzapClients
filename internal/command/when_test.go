@@ -70,35 +70,3 @@ func TestDescribeWhen(t *testing.T) {
 		}
 	}
 }
-
-func TestParseWhenOption(t *testing.T) {
-	for s, want := range map[string]struct{ when, msg, err string }{
-		"/schedule tomorrow 08:00 good morning": {"tomorrow 08:00", "good morning", ""},
-		"/schedule 2h call back":                {"2h", "call back", ""},
-		"/schedule tomorrow 8 apples":           {"tomorrow", "8 apples", "add a time: tomorrow 08:00"},
-		"/schedule soon hi":                     {"soon", "hi", "type a time like 21:00, 2h or tomorrow 08:00"},
-		"/schedule 1/1/2020 10:00 hi":           {"1/1/2020 10:00", "hi", ""}, // passed: for when it runs
-	} {
-		in, _ := Parse(s, len([]rune(s)), nil, nil)
-		v := in.Values[0][0]
-		if v.Text != want.when || in.Text("message") != want.msg || v.Err != want.err {
-			t.Errorf("%q: when %q (%q), message %q", s, v.Text, v.Err, in.Text("message"))
-		}
-	}
-}
-
-func TestPreviewSchedule(t *testing.T) {
-	now := time.Date(2026, time.October, 2, 15, 4, 0, 0, time.UTC)
-	for s, want := range map[string]string{
-		"/schedule 2h hi":             "Sends today at 17:04, in 2h",
-		"/schedule tomorrow":          "",
-		"/schedule soon hi":           "Type a time like 21:00, 2h or tomorrow 08:00.",
-		"/schedule 1/1/2020 10:00 hi": "That time has passed.",
-	} {
-		in, _ := Parse(s, len([]rune(s)), nil, nil)
-		in.Now = now
-		if got, _ := in.Cmd.Preview(&in); got != want {
-			t.Errorf("preview of %q = %q, want %q", s, got, want)
-		}
-	}
-}

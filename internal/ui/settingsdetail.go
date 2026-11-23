@@ -874,6 +874,8 @@ func shortcutSettings(enterSend bool) []settingsSection {
 		}},
 		{title: "Composer", rows: []settingRow{
 			send, line,
+			k("Schedule message", mod, "Shift", "Enter"),
+			k("The send button's menu, with the button focused: Schedule message, View once", "Shift", "F10"),
 			k("Bold", mod, "B"),
 			k("Italic", mod, "I"),
 			k("Strikethrough", mod, "Shift", "X"),

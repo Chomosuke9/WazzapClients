@@ -282,7 +282,7 @@ Gotchas already found in the pinned version (v0.10.x):
 - The slash command picker reads Up, Down, Tab and (when it picks) Enter before the
   composer does, in `slashKeys`, and only while it offers rows; otherwise the editor
   moves its caret with them as usual. In a command's text that takes @mentions
-  (`Option.Mentions`, /schedule's message) the mention picker shows instead, and it
+  (`Option.Mentions`, /whisper's text) the mention picker shows instead, and it
   takes Enter first (`slashTakesMentions`).
 - `@admin` and custom mentions are the group mentioning itself: the text holds
   `@<group JID>`, a `GroupMention` in `ContextInfo` gives that its name, `MentionedJID` says
@@ -340,7 +340,33 @@ Gotchas already found in the pinned version (v0.10.x):
   placeholder (`OnPhone`). A reply quoting it often carries its media key, and
   `fillViewOnce` gives the placeholder that media. While one is shown the window is kept
   out of screenshots (`desktop.BlockCapture`, `SetWindowDisplayAffinity` posted to the
-  window's thread through the drop target's subclass).
+  window's thread through the drop target's subclass). View once text is an
+  `extendedTextMessage` with `viewOnce` set, which linked devices get the same way;
+  one that comes with its text (or that you send: the send button's menu) opens in a
+  dialog.
+- Scheduled messages are WhatsApp's own (`internal/wa/schedule.go`): a
+  `conditionalRevealMessage` goes to everyone when scheduled, the real message
+  AES-256-GCM-sealed under a random 32-byte reveal key, and the stanza carries
+  `<meta type="scheduled_message" st="<unix s>"><key rkid="…">key</key></meta>`
+  (`SendRequestExtra.AdditionalNodes`), which the server keeps and hands out then.
+  Cancelling is a `MESSAGE_UNSCHEDULE` protocol message with no meta, sent with
+  `edit="7"` like a delete for everyone (hypermeow's patch); a meta with an empty
+  key, as Baileys sends, makes the server close the connection.
+  WhatsApp takes 10 minutes (to the minute) to 14 days ahead, 30 per chat (error 419).
+  Your phone's linked devices get its stanza with that same meta, key included
+  (and history sync has it, `scheduledMessageMetadata`). Recipients get nothing but the
+  sealed message until its time; then the server sends each of their devices a
+  `<notification type="mex">` from the sender whose `NotificationScheduledMessageReveal`
+  JSON holds `rk` (the key, base64), `rkid` and `st`, and the sender's devices get
+  `NotificationScheduledMessagePost` (`status` SUCCESS, or an `error_code`). Both are
+  read in the `RawNodeHandler` (`noteScheduledMex`). Until a key opens it, a scheduled
+  message is kept in `wz_scheduled` and shows nothing; `runScheduled` reveals each at
+  its time through `parse`. A file (`ScheduleFile`) is uploaded when it's scheduled
+  and sealed as its media message; each goes alone, never in an album, and is kept
+  locally (`keepSent`) under its ID so it shows without a download. The send button's
+  menu (right click, a 450 ms hold or Shift+F10; the send view's too) and
+  Ctrl+Shift+Enter open Schedule message (`internal/ui/scheduled.go`). The /schedule jobs of earlier versions go to
+  WhatsApp once online (`auto.migrate`), or from here when too soon for it.
 - Any other `events.UndecryptableMessage` (unless its sender marked it `decrypt-fail="hide"`)
   is stored as a `KindWaiting` placeholder, "Waiting for this message". hypermeow sends a
   retry receipt, and the decrypted copy that comes back under the same ID replaces it in
@@ -598,7 +624,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    shortcodes (":mo" offers matching emojis over the composer, a typed
                    ":moai:" becomes 🗿, Discord style) in shortcode.go; scheduled
                    messages as bubbles after a chat's newest (send now, edit, cancel) and
-                   the AFK bar above the chat list in scheduled.go; saved messages (Settings >
+                   the AFK bar above the chat list, the send button's menu (Schedule message,
+                   View once) and the Schedule message dialog in scheduled.go; saved messages (Settings >
                    Snippets, the snippets /snippet send offers in the slash picker, their {variables}
                    and /catch's payload dialog) in snippets.go; and
                    the Extra features settings page in extras.go (the app's own features,
@@ -712,10 +739,10 @@ internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated)
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/command/  slash commands, like Discord's: the list (commands.go), parsing their options,
                    and running them through a Host the UI implements. No Gio here
-internal/auto/     scheduled messages (/schedule) and AFK replies (/afk): wraps the Backend
-                   (`withAuto`; the host's, so they go on without a window), sees its events
+internal/auto/     AFK replies (/afk), and the /schedule jobs earlier versions queued: wraps the
+                   Backend (`withAuto`; the host's, so they go on without a window), sees its events
                    and your sends, and keeps its state in the backend's prefs. In ghost mode
-                   (/ghost) it refuses your own sends, but not its own
+                   (/ghost) it refuses your own sends and schedules, but not its own
 internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the embedded Anton
                    font (OFL), and its own lossless WebP (VP8L) encoder: x/image only decodes
                    WebP, and libwebp needs cgo or, translated to Go, adds megabytes. Videos,
@@ -732,6 +759,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    of their formulas' pictures in richresponse.go;
                    polls, locations, contact cards and events (cards in bubbles) and the
                    votes and event answers they get (wz_votes) in polls.go;
+                   WhatsApp's scheduled messages (conditionalRevealMessage, their reveal
+                   keys, wz_scheduled and wz_reveal_keys) in schedule.go;
                    system messages (model.KindSystem), stored with a waWeb stub as their
                    payload and worded when read, in system.go;
                    each person's receipts of your messages (wz_receipts, for Message info;
@@ -873,9 +902,9 @@ while the window is minimized and Gio draws no frames.
   the switcher and on Settings > Account): not at all (the default, to keep memory
   low), always connected, or checked every 5 to 60 minutes: opened, connected until
   the backend's `CaughtUpEvent` (WhatsApp sent what it kept) and a few seconds more,
-  then closed. Each has a backend of its own, wrapped with `withAuto` so scheduled
-  messages and AFK go on (a check also runs when the next scheduled message is due,
-  since `auto` drops late ones), and a notifier, which outlives a checked account's
+  then closed. Each has a backend of its own, wrapped with `withAuto` so AFK goes on
+  (a check also runs when the next /schedule job of an earlier version is due, since
+  `auto` drops late ones; WhatsApp's own scheduled messages need nothing here), and a notifier, which outlives a checked account's
   backend. Their backends open and close on goroutines and come back through
   `bgOpen`; everything else, polling them included, stays on the UI goroutine.
   Switching away from an always-connected account moves its backend and notifier to
@@ -1021,7 +1050,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
-# Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashschedule, slashrun, ghost (/ghost; open a
+# Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashrun, scheduled (scheduled messages and the AFK bar), sendmenu (the send button's menu: -at 1858,1078 with -ochat work), schedule (Schedule message), ghost (/ghost; open a
 # group: -ochat work), statusviews (your status's Viewed by sheet), statusmention and statusmentioned (a status mention's card, and the status it opens: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
 # delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), stickerreact (sticker reactions on the chat's last messages), stickerring (20 of them around a bubble), stickerreactors (who gave them), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); the Media panel:

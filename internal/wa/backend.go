@@ -66,6 +66,8 @@ type Backend struct {
 
 	names     nameCache
 	syncTimer *time.Timer
+	// schedKick wakes runScheduled (schedule.go).
+	schedKick chan struct{}
 
 	avatars   *fetcher
 	downloads *fetcher
@@ -161,6 +163,7 @@ func Open(dataDir string, debug bool) (*Backend, error) {
 		logf:        logf,
 		avatars:     newFetcher(),
 		downloads:   newFetcher(),
+		schedKick:   make(chan struct{}, 1),
 		subtitles:   make(map[string]string),
 		infoFetched: make(map[string]bool),
 		olderBusy:   make(map[string]bool),
@@ -240,6 +243,7 @@ func (b *Backend) Start(notify func()) {
 	// WhatsApp rate-limits profile picture queries, so space them out.
 	go b.avatars.run(b.ctx, 250*time.Millisecond)
 	go b.downloads.run(b.ctx, 50*time.Millisecond)
+	b.goWork(b.runScheduled)
 }
 
 func (b *Backend) run() {
@@ -297,7 +301,7 @@ func (b *Backend) useDevice(device *store.Device) {
 	// full sync must emit them too.
 	cli.EmitAppStateEventsOnFullSync = true
 	cli.AddEventHandler(b.handle)
-	cli.RawNodeHandler = b.groupedReceipts
+	cli.RawNodeHandler = b.rawNodes
 	b.cliMu.Lock()
 	b.cli = cli
 	b.cliMu.Unlock()

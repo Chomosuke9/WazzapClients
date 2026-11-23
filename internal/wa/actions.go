@@ -226,8 +226,20 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		Time:    b.sendTime(),
 		Receipt: model.Pending,
 	}
-	sm := storedMsg{Message: m}
-	msg := &waE2E.Message{Conversation: proto.String(d.Text)}
+	msg, prep := b.textMessage(cli, jid, d, m)
+	if d.ViewOnce {
+		m.Kind = model.KindViewOnce
+	}
+	return b.storeAndSendAfter(jid, storedMsg{Message: m}, msg, nil, prep)
+}
+
+// textMessage makes the message that sends d to jid, and fills in what m,
+// the message as it shows, takes from it: the link preview, and the quote.
+// prep, when not nil, uploads the link preview's picture into the message
+// before it goes.
+func (b *Backend) textMessage(cli *whatsmeow.Client, jid types.JID, d model.Draft, m *model.Message) (msg *waE2E.Message, prep func(context.Context)) {
+	chatID := m.ChatID
+	msg = &waE2E.Message{Conversation: proto.String(d.Text)}
 	link := d.Link.Shown(d.Text)
 	if link {
 		m.Link, m.Thumb = d.Link, d.LinkThumb
@@ -243,30 +255,35 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 			}
 		}
 	}
-	if ci := b.draftContext(chatID, d, m); ci != nil || link {
-		e := &waE2E.ExtendedTextMessage{
-			Text:                  proto.String(d.Text),
-			ContextInfo:           ci,
-			InviteLinkGroupTypeV2: waE2E.ExtendedTextMessage_DEFAULT.Enum(),
-		}
-		var prep func(context.Context)
-		if link {
-			addLink(e, d.Link, d.LinkThumb)
-			if img := d.LinkImage; len(img.Data) > 0 && jid.Server != types.NewsletterServer {
-				// Its size makes the card wide at once (see describe). A
-				// channel's post keeps the small thumbnail: its uploads
-				// aren't encrypted, and this one would be.
-				e.ThumbnailWidth, e.ThumbnailHeight = proto.Uint32(uint32(img.W)), proto.Uint32(uint32(img.H))
-				prep = func(ctx context.Context) { b.uploadLinkImage(ctx, cli, e, img) }
-			}
-		}
-		msg = &waE2E.Message{ExtendedTextMessage: e}
-		if d.MentionAdmins || d.MentionChat != "" || len(d.GroupNames) > 0 {
-			msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
-		}
-		return b.storeAndSendAfter(jid, sm, msg, nil, prep)
+	ci := b.draftContext(chatID, d, m)
+	if ci == nil && !link && !d.ViewOnce {
+		return msg, nil
 	}
-	return b.storeAndSend(jid, sm, msg)
+	e := &waE2E.ExtendedTextMessage{
+		Text:                  proto.String(d.Text),
+		ContextInfo:           ci,
+		InviteLinkGroupTypeV2: waE2E.ExtendedTextMessage_DEFAULT.Enum(),
+	}
+	if d.ViewOnce {
+		// WhatsApp's view once text: its server hands linked devices
+		// nothing but that it came (onUndecryptable).
+		e.ViewOnce = proto.Bool(true)
+	}
+	if link {
+		addLink(e, d.Link, d.LinkThumb)
+		if img := d.LinkImage; len(img.Data) > 0 && jid.Server != types.NewsletterServer {
+			// Its size makes the card wide at once (see describe). A
+			// channel's post keeps the small thumbnail: its uploads
+			// aren't encrypted, and this one would be.
+			e.ThumbnailWidth, e.ThumbnailHeight = proto.Uint32(uint32(img.W)), proto.Uint32(uint32(img.H))
+			prep = func(ctx context.Context) { b.uploadLinkImage(ctx, cli, e, img) }
+		}
+	}
+	msg = &waE2E.Message{ExtendedTextMessage: e}
+	if d.MentionAdmins || d.MentionChat != "" || len(d.GroupNames) > 0 {
+		msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
+	}
+	return msg, prep
 }
 
 // quote makes a message sent to chatID a reply to r: it fills in ci and

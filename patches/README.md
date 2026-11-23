@@ -4,7 +4,7 @@
 text library) to use far less memory for fonts, and lets the app swap emoji
 pictures. `gio.patch` patches Gio (`gioui.org`) so it lets go of pictures it
 drew. `hypermeow.patch` patches hypermeow (`github.com/polymorfa/hypermeow`)
-so it decrypts status updates and can send to some of status@broadcast. `go.mod` replaces the modules with
+so it decrypts status updates, can send to some of status@broadcast and can take scheduled messages back. `go.mod` replaces the modules with
 `third_party/typesetting`, `third_party/gio` and `third_party/hypermeow`,
 which `apply.sh` builds from the Go module cache and are not checked in:
 
@@ -81,6 +81,9 @@ What `hypermeow.patch` does (marked `WazzapClients patch`):
   1293), and hypermeow added your own phone number to every list: a like,
   sent to its poster's LID, never went. LIDs come from the store, missing
   ones from the server (one usync); someone without one is left out.
+- `send.go`: a `MESSAGE_UNSCHEDULE` protocol message (taking a scheduled
+  message back) goes with `edit="7"`, as phones send it. hypermeow sent it
+  with no edit attribute.
 
 After `go get github.com/polymorfa/hypermeow@main` run `apply.sh` again; if
 the hunk no longer applies, regenerate the patch as below.

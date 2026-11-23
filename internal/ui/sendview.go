@@ -256,7 +256,7 @@ func (u *UI) sendViewInput(gtx C, f *attachFile) {
 			u.pickFiles(a.chatID, "Choose documents", nil)
 		}
 	}
-	if u.btn("sv:send").Clicked(gtx) {
+	if u.sendClicked(gtx, u.btn("sv:send")) {
 		u.sendComposer()
 		return
 	}
@@ -658,6 +658,10 @@ func (u *UI) layoutSendStrip(gtx C, files []*attachFile, cur, y, h int) {
 		fillCircle(gtx, mid, bs/2, mix(p.Green, rgb(0xffffff), 0.12*u.hover(gtx, cl)))
 		return centerIn(gtx, bs, iconW(icSend, 28, p.OnGreen))
 	})
+	// Its menu (Schedule message): a right click, a hold or Shift+F10.
+	if u.rightClick(gtx, "sv:sendmenu", image.Pt(bs, bs)) {
+		u.openSendMenu()
+	}
 	if len(files) > 1 {
 		b := record(gtx, func(gtx C) D { return u.badge(gtx, len(files)) })
 		fillCircle(gtx, image.Pt(bs-b.size.X/2, b.size.Y/2), b.size.Y/2+gtx.Dp(2), p.Viewer)

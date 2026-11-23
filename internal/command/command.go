@@ -8,7 +8,6 @@
 package command
 
 import (
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -31,9 +30,6 @@ const (
 	Choice
 	// Number is a whole number from Option.Min to Option.Max.
 	Number
-	// When is a time, as ParseWhen reads it: one word ("21:00", "2h")
-	// or a day and a time ("tomorrow 08:00"). Choices are suggestions.
-	When
 	// Snippet is a saved message, by name: the rest of the line, like
 	// Text. The UI offers the saved snippets as it's typed, after send.
 	Snippet
@@ -395,24 +391,6 @@ func (in *Input) assign(rs []rune, toks []token, mentions []Mention, members []m
 			v := Value{Text: t.text, Start: t.start, End: t.end, Done: true}
 			if err != nil || n < o.Min || n > o.Max {
 				v.Err, v.Done = "type a number from "+strconv.Itoa(o.Min)+" to "+strconv.Itoa(o.Max), false
-			}
-			in.Values[oi] = append(in.Values[oi], v)
-			ti++
-		case When:
-			v := Value{Text: t.text, Start: t.start, End: t.end}
-			if ti+1 < len(toks) && dayWord(strings.ToLower(t.text)) {
-				if n := toks[ti+1]; n.id == "" {
-					if _, _, ok := clock(strings.ToLower(n.text)); ok {
-						v.Text, v.End = t.text+" "+n.text, n.end
-						ti++
-					}
-				}
-			}
-			// Whether the time has passed is for when it runs.
-			if _, err := ParseWhen(v.Text, time.Now()); err != nil && !errors.As(err, new(outOfRange)) {
-				v.Err = err.Error()
-			} else {
-				v.Done = true
 			}
 			in.Values[oi] = append(in.Values[oi], v)
 			ti++

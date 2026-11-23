@@ -222,6 +222,7 @@ type UI struct {
 
 	newChat newChatState // the New chat panel over the chat list
 	slash   slashState   // slash commands and their notes (slash.go)
+	sched   schedState   // scheduled messages and the send button's menu (scheduled.go)
 	codes   shortcodes   // :emoji: names typed in the composer (shortcode.go)
 	// Extra features turned on (extras.go); slash commands are slash.on.
 	extendedMentions, rawPhotos, editHistory, keepDeleted, viewOnceReplay bool
@@ -279,7 +280,7 @@ type UI struct {
 		rows            []convRow
 		rowsFor         *model.Chat
 		rowsVer         int
-		rowsJobs        int // the scheduled messages' version (auto.Backend.Version)
+		rowsJobs        int // the scheduled messages' version (u.sched.ver)
 		wallpaper       wallpaper
 		nbsp            map[int]float32 // NBSP advance per text size in px
 		// cardH is the height of the last message laid out, without the
@@ -1134,6 +1135,7 @@ func (u *UI) update(gtx C) {
 	u.updateWallPick()
 	u.updatePaste(gtx)
 	u.updateComposerLink(gtx)
+	u.scheduleKeys(gtx)
 	u.ctrlEnterKeys(gtx)
 	u.slashKeys(gtx)
 	u.mentionKeys(gtx)
@@ -1156,7 +1158,7 @@ func (u *UI) update(gtx C) {
 			u.sendComposer()
 		}
 	}
-	if u.conv.send.Clicked(gtx) && !u.micClicked() {
+	if u.sendButtonClicked(gtx) && !u.micClicked() {
 		u.sendComposer()
 	}
 	u.updateRecording(gtx)
@@ -1350,6 +1352,8 @@ func (u *UI) applyEvents() {
 			u.gifDownloaded(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
+		case model.ScheduledEvent:
+			u.sched.ver++
 		case model.PhoneEvent:
 			if !u.cardPhoneEvent(e) {
 				u.phoneEvent(e)
@@ -1617,10 +1621,10 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "newchat", "newnumber" (a typed phone number), "newmembers" (Create a similar group of the
 // open chat) or "newgroup"; the ⋮ menu "menu", its account switcher "accounts", or the
 // switcher on the login screen "loginaccounts", its Starred messages "starredall"; slash commands in a group: the
-// picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", a mention
-// in /schedule's message "slashschedule", the notes of commands run "slashrun", a scheduled
-// message and the AFK bar without their notes "scheduled", or ghost mode turned on with
-// /ghost "ghost". The chat list's Select chats "selectchats"; App lock's dialog "applock"
+// picker "slash", /kick's options "slashkick", /calc's answer as you type "slashcalc", the
+// notes of commands run "slashrun", scheduled messages and the AFK bar "scheduled", or ghost
+// mode turned on with /ghost "ghost". The send button's menu "sendmenu" (-at the button) and
+// Schedule message "schedule". The chat list's Select chats "selectchats"; App lock's dialog "applock"
 // (setting it up) or "applockon", and its lock screen "lockscreen".
 // "linkbar" shows the bar that asks to open WhatsApp links here, and
 // "channellink" a channel's link, to follow, and "sharelink" a share
@@ -1970,6 +1974,15 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openPoll()
 	case "newevent":
 		u.openNewEvent()
+	case "sendmenu", "schedule":
+		// The send button's menu (at -at, the send button), or the
+		// Schedule message dialog, for a message typed.
+		u.conv.composer.SetText("Standup moved to 10:00, see you all there")
+		if name == "sendmenu" {
+			u.openSendMenu()
+		} else {
+			u.openSchedule()
+		}
 	case "contacts":
 		u.openContactPicker()
 	case "invite":
@@ -2118,11 +2131,11 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.attach.anim.snap(true)
 			u.conv.composer.SetText("Sunday at the beach")
 		}
-	case "slash", "slashkick", "slashcalc", "slashschedule", "slashrun", "scheduled", "ghost":
+	case "slash", "slashkick", "slashcalc", "slashrun", "scheduled", "ghost":
 		// Slash commands (open a group with -ochat): the picker of
-		// commands, /kick's options, /calc's answer, a member picked in
-		// /schedule's message, the notes of commands run, or ghost mode
-		// turned on with /ghost.
+		// commands, /kick's options, /calc's answer, the notes of commands
+		// run, a scheduled message and the AFK bar, or ghost mode turned on
+		// with /ghost.
 		u.slash.on = true // an extra feature, off by default
 		ed := &u.conv.composer
 		set := func(s string) {
@@ -2143,29 +2156,28 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			}
 			u.slash.calcMore = true
 			set("/calc ceil((25000 + 8000 + 5000) ÷ 3)")
-		case "slashschedule":
-			set("/schedule tomorrow 08:00 Standup in 10 minutes @")
 		case "slashrun":
 			set("/kick ")
 			if sp := u.slashQuery(); sp != nil {
 				u.pickSlash(sp, 0)
 			}
 			u.sendComposer()
-			for _, s := range []string{"/link ", "/add +62 812 5550 0199", "/lockdown on",
-				"/schedule 2h Don't forget the demo", "/afk lunch, back at 2"} {
+			for _, s := range []string{"/link ", "/add +62 812 5550 0199", "/lockdown on", "/afk lunch, back at 2"} {
 				u.applyEvents()
 				set(s)
 				u.sendComposer()
 			}
 			u.applyEvents()
 		case "scheduled":
-			for _, s := range []string{"/schedule 2h Don't forget the demo", "/afk lunch, back at 2"} {
-				u.applyEvents()
-				set(s)
-				u.sendComposer()
+			if c := u.selected; c != nil {
+				at := u.now().Truncate(time.Minute).Add(2 * time.Hour)
+				_ = u.backend.Schedule(c.ID, model.Draft{Text: "Don't forget the demo"}, "", at)
+				_ = u.backend.Schedule(c.ID, model.Draft{Text: "Demo in 10 minutes!", ViewOnce: true}, "", at.Add(22*time.Hour))
 			}
+			set("/afk lunch, back at 2")
+			u.sendComposer()
 			u.applyEvents()
-			// The scheduled bubble and the AFK bar say what the notes would.
+			// The AFK bar says what its note would.
 			delete(u.slash.notes, u.selected.ID)
 			u.msgsVer++
 		case "ghost":

@@ -136,11 +136,12 @@ func unwrapOnce(m *waE2E.Message) *waE2E.Message {
 }
 
 // isViewOnce reports whether a message is view once: in one of the view
-// once envelopes, or a photo, video or voice message flagged so.
+// once envelopes, or a photo, video, voice message or text flagged so.
 func isViewOnce(m *waE2E.Message) bool {
 	for i := 0; i < 5 && m != nil; i++ {
 		if m.GetViewOnceMessage() != nil || m.GetViewOnceMessageV2() != nil || m.GetViewOnceMessageV2Extension() != nil ||
-			m.GetImageMessage().GetViewOnce() || m.GetVideoMessage().GetViewOnce() || m.GetPtvMessage().GetViewOnce() || m.GetAudioMessage().GetViewOnce() {
+			m.GetImageMessage().GetViewOnce() || m.GetVideoMessage().GetViewOnce() || m.GetPtvMessage().GetViewOnce() || m.GetAudioMessage().GetViewOnce() ||
+			m.GetExtendedTextMessage().GetViewOnce() {
 			return true
 		}
 		m = unwrapOnce(m)
@@ -385,6 +386,9 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 				at = time.UnixMilli(ms)
 			}
 			return p, p.setEdit(p.target, pm.GetEditedMessage(), at)
+		case waE2E.ProtocolMessage_MESSAGE_UNSCHEDULE:
+			b.unscheduled(ctx, chat.String(), p.target)
+			return p, false
 		case waE2E.ProtocolMessage_LIMIT_SHARING:
 			ls := pm.GetLimitSharing()
 			ts := ls.GetLimitSharingSettingTimestamp()
@@ -406,6 +410,10 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 			return p, false
 		}
 		return p, p.target != ""
+	}
+	if cr := m.GetConditionalRevealMessage(); cr != nil {
+		// A scheduled message: shown once its key comes (schedule.go).
+		return b.parseScheduled(ctx, evt, chat, cr)
 	}
 	if sm := m.GetSecretEncryptedMessage(); sm != nil {
 		// Newer WhatsApp versions send edits encrypted with the edited

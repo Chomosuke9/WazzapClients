@@ -8,10 +8,10 @@ import (
 )
 
 // TestGhost checks that ghost mode refuses what you send, with a notice,
-// but not scheduled messages or AFK replies, and that it lasts.
+// but not messages queued before or AFK replies, and that it lasts.
 func TestGhost(t *testing.T) {
 	at := newAutoTest(t)
-	at.a.Schedule(Job{Chat: "work", At: base.Add(time.Minute), Text: "standup"})
+	at.legacy(Job{ID: "1", Chat: "work", At: base.Add(time.Minute), Text: "standup"})
 	at.a.SetAway("lunch")
 	at.a.SetPref(model.PrefGhost, "on")
 	if !at.a.Ghost() || !Wrap(at.f, time.Now).Ghost() {
@@ -25,6 +25,9 @@ func TestGhost(t *testing.T) {
 	at.a.React(last, "👍")
 	at.a.Delete(last, true)
 	at.a.Forward([]*model.Message{last}, []string{"work"})
+	if at.a.Schedule("rina", model.Draft{Text: "later"}, "", base.Add(time.Hour)) == nil {
+		t.Error("scheduled in ghost mode")
+	}
 	if at.a.NewAlbum("rina", 2, 0) != "" {
 		t.Error("opened an album in ghost mode")
 	}

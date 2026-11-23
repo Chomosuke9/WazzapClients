@@ -84,7 +84,7 @@ type Context struct {
 	Backend model.Backend
 	// Now is when the command runs.
 	Now time.Time
-	// Auto sends scheduled messages and AFK replies; nil without it.
+	// Auto sends AFK replies; nil without it.
 	Auto *auto.Backend
 	// Files are the send view's files when a Files command is typed as a
 	// caption there, in order.

@@ -19,7 +19,7 @@ index 3069e6d..b9ac023 100644
  	if err != nil {
  		cli.Log.Warnf("Failed to parse message: %v", err)
 diff --git a/send.go b/send.go
-index fb35eeb..72dce13 100644
+index fb35eeb..99e1028 100644
 --- a/send.go
 +++ b/send.go
 @@ -167,6 +167,14 @@ type SendRequestExtra struct {
@@ -58,6 +58,17 @@ index fb35eeb..72dce13 100644
  		resp.DebugTimings.GetParticipants = time.Since(start)
  	} else if to.Server == types.HiddenUserServer {
  		ownID = cli.getOwnLID()
+@@ -1118,6 +1133,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
+ 			if msg.ProtocolMessage.EditedMessage != nil {
+ 				return types.EditAttributeMessageEdit
+ 			}
++		case waE2E.ProtocolMessage_MESSAGE_UNSCHEDULE:
++			// WazzapClients patch: phones take a scheduled message back
++			// with edit="7", like a delete for everyone.
++			return types.EditAttributeSenderRevoke
+ 		}
+ 	case msg.ReactionMessage != nil && msg.ReactionMessage.GetText() == RemoveReactionText:
+ 		return types.EditAttributeSenderRevoke
 diff --git a/status_patch.go b/status_patch.go
 new file mode 100644
 index 0000000..025ea64

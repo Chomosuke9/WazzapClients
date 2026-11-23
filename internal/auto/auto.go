@@ -1,8 +1,12 @@
-// Package auto sends messages for you: the ones you schedule (/schedule)
-// and, while you're away (/afk), a reply to whoever messages or mentions
-// you. It wraps the Backend, so it sees every event and every message you
-// send, and keeps its state in the backend's prefs: it goes on with the
-// window closed, and after a restart.
+// Package auto sends messages for you: while you're away (/afk), a reply
+// to whoever messages or mentions you. It wraps the Backend, so it sees
+// every event and every message you send, and keeps its state in the
+// backend's prefs: it goes on with the window closed, and after a restart.
+//
+// Scheduled messages are WhatsApp's own now (Backend.Schedule): its
+// server holds them. The ones an earlier version queued here (/schedule)
+// go to WhatsApp once online, when their time is far enough off for it,
+// and the others are sent from here when due, as they were.
 //
 // In ghost mode (model.PrefGhost) it refuses everything you'd send
 // yourself, with a notice: messages, reactions, votes, edits, deleting or
@@ -29,7 +33,7 @@ const (
 	prefAway = "auto_away"
 )
 
-// Job is a scheduled message.
+// Job is a message an earlier version scheduled here.
 type Job struct {
 	ID   string    `json:"id"`
 	Chat string    `json:"chat"`
@@ -73,8 +77,6 @@ type Backend struct {
 	out    []model.Event // for the next Poll
 	notify func()
 	timer  *time.Timer
-	seq    int
-	ver    int // bumped as the jobs change
 	ghost  bool
 }
 
@@ -131,38 +133,13 @@ func (a *Backend) Poll() []model.Event {
 			a.seen(e)
 		}
 	}
+	a.migrate()
 	a.sendDue()
 	if len(a.out) > 0 {
 		evs = append(evs, a.out...)
 		a.out = nil
 	}
 	return evs
-}
-
-// Schedule adds j to the queue, giving it an ID, and returns it.
-func (a *Backend) Schedule(j Job) Job {
-	a.seq++
-	j.ID = strconv.FormatInt(a.now().UnixNano(), 36) + "-" + strconv.Itoa(a.seq)
-	i := 0
-	for i < len(a.jobs) && !a.jobs[i].At.After(j.At) {
-		i++
-	}
-	a.jobs = append(a.jobs[:i:i], append([]Job{j}, a.jobs[i:]...)...)
-	a.saveJobs()
-	a.arm()
-	return j
-}
-
-// Jobs lists the messages scheduled in chat ("" for every chat), soonest
-// first.
-func (a *Backend) Jobs(chat string) []Job {
-	var out []Job
-	for _, j := range a.jobs {
-		if chat == "" || j.Chat == chat {
-			out = append(out, j)
-		}
-	}
-	return out
 }
 
 // Next is when the next scheduled message is due, or zero without one.
@@ -197,37 +174,40 @@ func (a *Backend) KeepPrefs(keys []string) {
 	}
 }
 
-// Cancel takes the job with id off the queue, and reports whether it was
-// still on it.
-func (a *Backend) Cancel(id string) bool {
-	for i, j := range a.jobs {
-		if j.ID == id {
-			a.jobs = append(a.jobs[:i:i], a.jobs[i+1:]...)
-			a.saveJobs()
-			a.arm()
-			return true
-		}
-	}
-	return false
-}
-
-// SendNow sends the job with id right away, and returns the message (nil
-// when the job is gone).
-func (a *Backend) SendNow(id string) *model.Message {
-	for i, j := range a.jobs {
-		if j.ID == id {
-			a.jobs = append(a.jobs[:i:i], a.jobs[i+1:]...)
-			a.saveJobs()
-			a.arm()
-			return a.send(j)
-		}
-	}
-	return nil
-}
-
 // lateBy is how late a scheduled message may still go: past it (the app
 // was closed or offline), it's dropped with a notice instead.
 const lateBy = 5 * time.Minute
+
+// migrate hands WhatsApp the queued jobs it can hold, once online.
+func (a *Backend) migrate() {
+	if !a.online || len(a.jobs) == 0 {
+		return
+	}
+	now := a.now()
+	kept := a.jobs[:0:0]
+	for _, j := range a.jobs {
+		if j.At.Sub(now.Truncate(time.Minute)) < model.ScheduleMin || j.At.Sub(now) > model.ScheduleMax {
+			kept = append(kept, j)
+			continue
+		}
+		d := model.Draft{Text: j.Text, Mentions: j.Mentions, MentionAll: j.MentionAll, MentionAdmins: j.MentionAdmins,
+			MentionChat: j.MentionChat, GroupNames: j.GroupNames}
+		if j.Reply != "" {
+			d.Reply = &model.Message{ID: j.Reply, ChatID: j.Chat}
+			if ms := a.Backend.MessagesFrom(j.Chat, j.Reply, 1); len(ms) > 0 && ms[0].ID == j.Reply {
+				d.Reply = ms[0]
+			}
+		}
+		if err := a.Backend.Schedule(j.Chat, d, j.Shown, j.At); err != nil {
+			kept = append(kept, j) // sent from here when due
+		}
+	}
+	if len(kept) != len(a.jobs) {
+		a.jobs = kept
+		a.saveJobs()
+		a.arm()
+	}
+}
 
 // sendDue sends the jobs whose time has come, once online, and drops the
 // ones too late to send.
@@ -306,11 +286,7 @@ func (a *Backend) arm() {
 	a.timer = time.AfterFunc(d, a.notify)
 }
 
-// Version changes whenever the scheduled messages do.
-func (a *Backend) Version() int { return a.ver }
-
 func (a *Backend) saveJobs() {
-	a.ver++
 	if len(a.jobs) == 0 {
 		a.Backend.SetPref(prefJobs, "")
 		return
@@ -520,6 +496,22 @@ func (a *Backend) Send(chatID string, d model.Draft) *model.Message {
 	}
 	a.sent()
 	return a.Backend.Send(chatID, d)
+}
+
+// Schedule refuses in ghost mode, like a message sent now.
+func (a *Backend) Schedule(chatID string, d model.Draft, shown string, at time.Time) error {
+	if a.ghost {
+		return errors.New(GhostText)
+	}
+	return a.Backend.Schedule(chatID, d, shown, at)
+}
+
+// ScheduleFile refuses in ghost mode, like Schedule.
+func (a *Backend) ScheduleFile(chatID string, f model.Attachment, d model.Draft, shown string, at time.Time) error {
+	if a.ghost {
+		return errors.New(GhostText)
+	}
+	return a.Backend.ScheduleFile(chatID, f, d, shown, at)
 }
 
 func (a *Backend) SendSnippet(chatID string, id int64, reply *model.Message, vars map[string]string) (*model.Message, error) {

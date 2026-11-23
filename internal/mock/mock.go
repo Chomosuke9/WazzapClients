@@ -32,6 +32,10 @@ type Backend struct {
 	// chat and message ID.
 	media      map[string][]byte
 	linkResets int // invite links reset, to make a new one
+	// scheduled are the messages scheduled (schedule.go), soonest first.
+	scheduled  []*model.Scheduled
+	schedSeq   int
+	schedFiles map[string]model.Attachment // the files of scheduled messages, by ID
 	// versions are the earlier texts of edited messages, by chat and ID.
 	versions map[string][]model.Version
 	// pics makes Avatar draw profile pictures (the demo has them, the
@@ -212,6 +216,7 @@ func (b *Backend) emit(e model.Event) {
 }
 
 func (b *Backend) Poll() []model.Event {
+	b.revealDue()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	ev := b.events

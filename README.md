@@ -119,7 +119,7 @@ WhatsApp already lets every linked device do, and they run from your own account
     <td><img src="docs/screenshots/edits.png" alt="Edit history"></td>
   </tr>
   <tr>
-    <td><b><code>/schedule</code></b> sends a message later, even with the window closed. <b><code>/afk</code></b> replies for you while you're away.</td>
+    <td><b><code>/afk</code></b> replies for you while you're away. The scheduled messages under it are WhatsApp's own and need no switch: right-click or hold the send button.</td>
     <td><b>Edit history</b> shows what an edited message said before each edit.</td>
   </tr>
   <tr>
@@ -180,8 +180,6 @@ stays off until both confirmations are completed; canceling either leaves it off
 | `/purge <count>` | Deletes your last messages for everyone |
 | `/raffle <winners>` | Draws group members at random and announces them |
 | `/calc <sum>` | A calculator: `12 x 4500`, `15k x 3`, `15% x 80000` |
-| `/schedule <when> <message>` | Sends later: `21:00`, `2h`, `tomorrow 08:00`, `fri 18:00` |
-| `/scheduled` | Lists the chat's scheduled messages, to send now or cancel |
 | `/afk <reason>` | Auto-replies while you're away, until you send something |
 | `/ghost` | Goes invisible: no read receipts, shown offline, no sending (an ethically gray feature) |
 | `/whisper @member @member <text>` | Sends text, or the files it's typed as the caption of, to selected group members using individual device envelopes (an ethically gray feature) |
@@ -251,7 +249,8 @@ them all at once, and `@` in a private chat, to mention the person you're talkin
 - 📌 Pinned, archived and muted chats, Favourites and custom lists, disappearing messages, chat themes
 - 📊 Polls with Hide voter names and an end time when you create one
 - 🔗 Link previews, sent and received, with WhatsApp's big picture; group invite links, albums and documents
-- 1️⃣ View once messages, opened once, with screenshots blocked while one is shown
+- 1️⃣ View once messages, opened once, with screenshots blocked while one is shown; send text as view once from the send button's menu
+- 🕘 Scheduled messages, WhatsApp's own, text or files: right-click or hold the send button, or Ctrl+Shift+Enter
 - 🔍 Font size from 80% to 200% (*Settings > General*, or Ctrl with +, - and 0)
 - 🅰️ Initials on a color for people without a profile picture, and clickable @mentions
 - ⬆️ Automatic updates from signed GitHub releases, downloading only what changed (*Settings > Help*)
@@ -326,7 +325,7 @@ internal/ui/       the Gio interface, from the chat list to the photo editor
 internal/wa/       hypermeow backend and the SQLite message store
 internal/mock/     the demo backend
 internal/command/  slash commands
-internal/auto/     scheduled messages and AFK replies
+internal/auto/     AFK replies
 internal/sticker/  makes stickers, with its own small lossless WebP encoder (animated ones with ffmpeg)
 internal/video/    plays video and audio with the OS's decoder
 internal/notify/   system notifications
