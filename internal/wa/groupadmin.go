@@ -229,7 +229,7 @@ func (b *Backend) sendGroupInvite(ctx context.Context, group types.JID, r model.
 }
 
 // SendNewSticker implements model.Backend.
-func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Message) *model.Message {
+func (b *Backend) SendNewSticker(chatID string, webp []byte, sound *model.StickerSound, reply *model.Message) *model.Message {
 	jid, err := types.ParseJID(chatID)
 	cli := b.client()
 	if err != nil || cli == nil {
@@ -239,21 +239,33 @@ func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Messag
 	if webpanim.IsAnimated(webp) {
 		e.IsAnimated = proto.Bool(true)
 	}
-	return b.sendStickerData(chatID, jid, cli, webp, e, reply)
+	return b.sendStickerData(chatID, jid, cli, webp, sound, e, reply)
 }
 
 // sendStickerData uploads a sticker's file and sends it, e saying what it
-// is (its type and size); the upload fills in where it is.
-func (b *Backend) sendStickerData(chatID string, jid types.JID, cli *whatsmeow.Client, webp []byte, e *waE2E.StickerMessage, reply *model.Message) *model.Message {
+// is (its type and size); the upload fills in where it is. sound is the
+// sound it plays, or nil; a channel's sticker has none.
+func (b *Backend) sendStickerData(chatID string, jid types.JID, cli *whatsmeow.Client, webp []byte, sound *model.StickerSound, e *waE2E.StickerMessage, reply *model.Message) *model.Message {
+	if isChannel(jid) {
+		sound = nil
+	}
 	m := &model.Message{ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Kind: model.KindSticker,
-		Media: model.MediaSticker, Time: b.sendTime(), Receipt: model.Pending, Lottie: e.GetIsLottie()}
+		Media: model.MediaSticker, Time: b.sendTime(), Receipt: model.Pending, Lottie: e.GetIsLottie(), Sound: sound != nil}
 	e.FileLength = proto.Uint64(uint64(len(webp)))
 	e.ContextInfo = b.draftContext(chatID, model.Draft{Reply: reply}, m)
-	msg := &waE2E.Message{StickerMessage: e}
+	var audio *waE2E.AudioMessage
+	if sound != nil {
+		audio = soundMessage(sound)
+		e.Audio = &waE2E.StickerMessage_AudioMessage{AudioMessage: audio}
+	}
+	msg := wrapSound(&waE2E.Message{StickerMessage: e})
 	sm := storedMsg{Message: m, rawPayload: marshal(msg)}
 	// Keep the picture, so it shows at once and without a download.
 	up := upload{data: webp, w: 512, h: 512}
 	up.keep(b.mediaPath(chatID, m.ID))
+	if sound != nil {
+		keepSound(sound.Ogg, b.soundPath(chatID, m.ID))
+	}
 	ctx := b.ctx
 	if err := b.store.ensureChat(ctx, b.db, chatID, jid.Server == types.GroupServer, ""); err != nil {
 		b.log.Errorf("store chat %s: %v", chatID, err)
@@ -266,14 +278,19 @@ func (b *Backend) sendStickerData(chatID string, jid types.JID, cli *whatsmeow.C
 		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
 		defer cancel()
 		res, err := cli.Upload(ctx, webp, whatsmeow.MediaImage)
+		if err == nil {
+			uploaded(e, res)
+			if sound != nil {
+				if res, err = cli.Upload(ctx, sound.Ogg, whatsmeow.MediaAudio); err == nil {
+					uploaded(audio, res)
+				}
+			}
+		}
 		if err != nil {
 			b.log.Errorf("upload sticker to %s: %v", chatID, err)
 			b.sendFailed(chatID, m.ID, "Couldn't send the sticker.")
 			return
 		}
-		e.URL, e.DirectPath, e.MediaKey = proto.String(res.URL), proto.String(res.DirectPath), res.MediaKey
-		e.FileEncSHA256, e.FileSHA256, e.FileLength = res.FileEncSHA256, res.FileSHA256, proto.Uint64(res.FileLength)
-		e.MediaKeyTimestamp = proto.Int64(time.Now().Unix())
 		blob := marshal(e) // before sending, which may add to it
 		b.sendAsync(chatID, jid, m.ID, msg)
 		b.recentSticker(blob, time.Now(), chatID, m.ID)

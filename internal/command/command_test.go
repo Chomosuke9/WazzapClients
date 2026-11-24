@@ -153,27 +153,29 @@ func TestParseSeparator(t *testing.T) {
 		text, top, bottom string
 		current           int
 	}{
-		{"/sticker When the code\nworks ", "When the code", "works", 1},
-		{"/sticker  only the top", "only the top", "", 0},
-		{"/sticker \nonly the bottom", "", "only the bottom", 1},
-		{"/sticker top \n", "top", "", 1},
-		{"/sticker #1 fan", "#1 fan", "", 0},
-		{"/sticker a\nb\nc", "a", "b\nc", 1},
+		{"/sticker When the code\nworks ", "When the code", "works", 2},
+		{"/sticker  only the top", "only the top", "", 1},
+		{"/sticker \nonly the bottom", "", "only the bottom", 2},
+		{"/sticker top \n", "top", "", 2},
+		{"/sticker #1 fan", "#1 fan", "", 1},
+		{"/sticker a\nb\nc", "a", "b\nc", 2},
+		{"/sticker include-audio", "", "", 0},
+		{"/sticker include-audio a\nb", "a", "b", 2},
+		{"/sticker include-audio\nb", "", "b", 2},
+		{"/sticker a include-audio", "a include-audio", "", 1},
 	} {
 		in, ok := Parse(c.text, len([]rune(c.text)), nil, nil)
 		if !ok || in.Problem() != "" {
 			t.Errorf("%q: ok %v, problem %q", c.text, ok, in.Problem())
 			continue
 		}
-		get := func(i int) string {
-			if len(in.Values[i]) == 0 {
-				return ""
-			}
-			return in.Values[i][0].Text
+		top, bottom := in.Text("top"), in.Text("bottom")
+		if audio := in.Text("include audio") != ""; audio != strings.HasPrefix(c.text, "/sticker include-audio") {
+			t.Errorf("%q: include audio %v", c.text, audio)
 		}
-		if get(0) != c.top || get(1) != c.bottom || in.Current != c.current {
+		if top != c.top || bottom != c.bottom || in.Current != c.current {
 			t.Errorf("%q: top %q, bottom %q, current %d; want %q, %q, %d",
-				c.text, get(0), get(1), in.Current, c.top, c.bottom, c.current)
+				c.text, top, bottom, in.Current, c.top, c.bottom, c.current)
 		}
 	}
 }

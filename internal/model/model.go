@@ -162,7 +162,10 @@ type Message struct {
 	// Lottie marks a Lottie sticker (application/was): its media is a zip
 	// of animations, and a premium one's second animation is an effect
 	// played around it.
-	Lottie   bool
+	Lottie bool
+	// Sound marks a sticker with a sound (an audioStickerMessage), which
+	// plays when it's asked to: Backend.StickerSound has its file.
+	Sound    bool
 	Duration int // seconds, for voice messages
 	FromMe   bool
 	Sender   string // display name; group chats only
@@ -410,6 +413,13 @@ type StickerReaction struct {
 	Me               bool
 	Lottie           bool // a Lottie sticker (see Message.Lottie)
 	Time             time.Time
+}
+
+// StickerSound is the sound of a sticker to send.
+type StickerSound struct {
+	Ogg      []byte // Opus in OGG
+	Seconds  int
+	Waveform []byte // 64 loudness values, 0 to 100
 }
 
 // Message is the reaction's sticker as a sticker message of the chat
@@ -1776,6 +1786,8 @@ type Backend interface {
 	// audio file or document, or "" while it downloads in the background;
 	// a MediaEvent announces the end.
 	MediaFile(m *Message) string
+	// StickerSound is MediaFile for the sound of a sticker (Message.Sound).
+	StickerSound(m *Message) string
 	// HasMediaFile reports whether MediaFile has the file already (or
 	// MediaData, for a picture or sticker).
 	HasMediaFile(m *Message) bool
@@ -1801,9 +1813,10 @@ type Backend interface {
 	// first.
 	Votes(m *Message) []Vote
 	// SendNewSticker sends a sticker made on this computer (a 512x512
-	// WebP, animated or not), as a reply to reply if it isn't nil, and returns it in its
-	// pending state. The upload runs in the background.
-	SendNewSticker(chatID string, webp []byte, reply *Message) *Message
+	// WebP, animated or not), with a sound if sound isn't nil, as a reply
+	// to reply if it isn't nil, and returns it in its pending state. The
+	// upload runs in the background.
+	SendNewSticker(chatID string, webp []byte, sound *StickerSound, reply *Message) *Message
 
 	// Chat list actions. Each is followed by a ChatEvent (or ChatsEvent).
 	SetArchived(chatID string, archived bool)

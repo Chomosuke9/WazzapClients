@@ -171,6 +171,26 @@ func (b *Backend) TakeBackSticker(m *model.Message, id string) {
 	b.update(x, func(x *model.Message) { x.Stickers = rs })
 }
 
+// DemoSoundStickers adds stickers with a sound to the chat, for previews:
+// one from someone else and one from you, drawn as DemoStickerReactions'.
+func (b *Backend) DemoSoundStickers(chatID string) {
+	for i, me := range []bool{false, true} {
+		m := &model.Message{ChatID: chatID, FromMe: me, Kind: model.KindSticker, Media: model.MediaSticker, Sound: true,
+			Time: b.now(), Receipt: model.Sent}
+		if !me {
+			m.Sender, m.SenderID = "Bima", "bima"
+		}
+		b.add(m)
+		b.mu.Lock()
+		if b.media == nil {
+			b.media = map[string][]byte{}
+		}
+		b.media[chatID+"/"+m.ID] = demoSticker(demoStickerColors[i], false)
+		b.mu.Unlock()
+		b.emit(model.MessageEvent{Msg: b.copyOf(m)})
+	}
+}
+
 // DemoStickerReactions reacts with stickers to messages of the chat, for
 // previews: one to the last message from you, three (yours last) to the
 // last from someone else, and three to the first with emoji reactions.

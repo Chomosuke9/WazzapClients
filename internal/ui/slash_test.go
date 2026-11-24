@@ -272,7 +272,8 @@ func TestExtrasOffByDefault(t *testing.T) {
 func TestSlashStickerHint(t *testing.T) {
 	st := newSlashTest(t, "rina")
 	for _, c := range []struct{ text, hint string }{
-		{"/sticker ", "[top] (new line) [bottom]"},
+		{"/sticker ", "[include audio] [top] (new line) [bottom]"},
+		{"/sticker include-audio ", "[top] (new line) [bottom]"},
 		{"/sticker when it works", "(new line) [bottom]"},
 		{"/sticker when it works\n", ""},
 	} {

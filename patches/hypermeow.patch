@@ -1,3 +1,28 @@
+diff --git a/audiosticker_patch_test.go b/audiosticker_patch_test.go
+new file mode 100644
+index 0000000..f200f59
+--- /dev/null
++++ b/audiosticker_patch_test.go
+@@ -0,0 +1,19 @@
++package whatsmeow
++
++import (
++	"testing"
++
++	"github.com/polymorfa/hypermeow/proto/waE2E"
++)
++
++// WazzapClients patch: a sticker with a sound goes as a sticker does.
++func TestAudioStickerStanzaTypes(t *testing.T) {
++	msg := &waE2E.Message{AudioStickerMessage: &waE2E.FutureProofMessage{
++		Message: &waE2E.Message{StickerMessage: &waE2E.StickerMessage{}}}}
++	if got := getTypeFromMessage(msg); got != "media" {
++		t.Errorf("type %q, want media", got)
++	}
++	if got := getMediaTypeFromMessage(msg); got != "sticker" {
++		t.Errorf("mediatype %q, want sticker", got)
++	}
++}
 diff --git a/message.go b/message.go
 index 971974d..d17fef8 100644
 --- a/message.go
@@ -19,7 +44,7 @@ index 971974d..d17fef8 100644
  	if err != nil {
  		cli.Log.Warnf("Failed to parse message: %v", err)
 diff --git a/send.go b/send.go
-index 5fb006b..285bf7b 100644
+index 5fb006b..a09f3c9 100644
 --- a/send.go
 +++ b/send.go
 @@ -174,6 +174,14 @@ type SendRequestExtra struct {
@@ -58,7 +83,28 @@ index 5fb006b..285bf7b 100644
  		resp.DebugTimings.GetParticipants = time.Since(start)
  	} else if to.Server == types.HiddenUserServer {
  		ownID = cli.getOwnLID()
-@@ -1156,6 +1171,12 @@ const RemoveReactionText = ""
+@@ -977,6 +992,10 @@ func getTypeFromMessage(msg *waE2E.Message) string {
+ 		return getTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
+ 	case msg.LottieStickerMessage != nil:
+ 		return getTypeFromMessage(msg.LottieStickerMessage.Message)
++	// WazzapClients patch: phones send a sticker with a sound as
++	// type="media" with mediatype="sticker".
++	case msg.GetAudioStickerMessage().GetMessage() != nil:
++		return getTypeFromMessage(msg.AudioStickerMessage.Message)
+ 	case msg.EphemeralMessage != nil:
+ 		return getTypeFromMessage(msg.EphemeralMessage.Message)
+ 	case msg.DocumentWithCaptionMessage != nil:
+@@ -1009,6 +1028,9 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
+ 		return getMediaTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
+ 	case msg.LottieStickerMessage != nil:
+ 		return getMediaTypeFromMessage(msg.LottieStickerMessage.Message)
++	// WazzapClients patch: see getTypeFromMessage.
++	case msg.GetAudioStickerMessage().GetMessage() != nil:
++		return getMediaTypeFromMessage(msg.AudioStickerMessage.Message)
+ 	case msg.EphemeralMessage != nil:
+ 		return getMediaTypeFromMessage(msg.EphemeralMessage.Message)
+ 	case msg.DocumentWithCaptionMessage != nil:
+@@ -1156,6 +1178,12 @@ const RemoveReactionText = ""
  
  func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  	switch {
@@ -71,7 +117,7 @@ index 5fb006b..285bf7b 100644
  	case msg.EditedMessage != nil && msg.EditedMessage.Message != nil:
  		return getEditAttribute(msg.EditedMessage.Message)
  	case msg.ProtocolMessage != nil && msg.ProtocolMessage.GetKey() != nil:
-@@ -1170,6 +1191,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
+@@ -1170,6 +1198,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  			if msg.ProtocolMessage.EditedMessage != nil {
  				return types.EditAttributeMessageEdit
  			}

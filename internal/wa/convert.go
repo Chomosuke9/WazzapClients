@@ -49,6 +49,7 @@ type content struct {
 	thumb    []byte
 	round    bool          // a video note (ptvMessage)
 	lottie   bool          // a Lottie sticker (application/was)
+	sound    bool          // a sticker with a sound (audiosticker.go)
 	inner    proto.Message // the media message, which downloading the media takes
 	bg       uint32        // ARGB background of a text status
 	ctx      *waE2E.ContextInfo
@@ -126,6 +127,8 @@ func unwrapOnce(m *waE2E.Message) *waE2E.Message {
 		return m.GetBotInvokeMessage().GetMessage()
 	case m.GetLottieStickerMessage().GetMessage() != nil:
 		return m.GetLottieStickerMessage().GetMessage()
+	case m.GetAudioStickerMessage().GetMessage() != nil:
+		return m.GetAudioStickerMessage().GetMessage() // a sticker with a sound
 	case m.GetAssociatedChildMessage().GetMessage() != nil:
 		return m.GetAssociatedChildMessage().GetMessage()
 	case m.GetGroupStatusMessageV2().GetMessage() != nil:
@@ -252,7 +255,8 @@ func describe(m *waE2E.Message) content {
 	case m.GetStickerMessage() != nil:
 		e := m.GetStickerMessage()
 		return content{kind: model.KindSticker, media: model.MediaSticker, thumb: e.GetPngThumbnail(),
-			inner: e, ctx: e.GetContextInfo(), lottie: e.GetIsLottie() || e.GetMimetype() == "application/was"}
+			inner: e, ctx: e.GetContextInfo(), lottie: e.GetIsLottie() || e.GetMimetype() == "application/was",
+			sound: e.GetAudioMessage() != nil}
 	case m.GetStickerPackMessage() != nil:
 		e := m.GetStickerPackMessage()
 		return content{text: e.GetName(), media: model.MediaStickerPack, inner: e, ctx: e.GetContextInfo(),
@@ -504,6 +508,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	msg.Kind = c.kind
 	msg.Media = c.media
 	msg.Round = c.round
+	msg.Sound = c.sound
 	msg.Duration = c.duration
 	msg.FromMe = evt.Info.IsFromMe
 	msg.Text = c.text

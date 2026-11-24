@@ -69,3 +69,18 @@ func TestWaveform(t *testing.T) {
 		t.Fatalf("%d", len(w))
 	}
 }
+
+// PCMWaveform is loud where the sound is, whatever its length.
+func TestPCMWaveform(t *testing.T) {
+	pcm := make([]byte, 2*Rate*2) // two seconds: silence, then a square wave
+	for i := len(pcm) / 2; i < len(pcm); i += 2 {
+		binary.LittleEndian.PutUint16(pcm[i:], 8000)
+	}
+	w := PCMWaveform(pcm)
+	if len(w) != WaveformLen || w[5] != 0 || w[WaveformLen-5] != 100 {
+		t.Errorf("waveform %v", w)
+	}
+	if w := PCMWaveform(nil); len(w) != WaveformLen {
+		t.Errorf("no sound: %v", w)
+	}
+}

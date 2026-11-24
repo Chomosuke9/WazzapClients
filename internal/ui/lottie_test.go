@@ -250,7 +250,7 @@ func keys[V any](m map[string]V) []string {
 func TestEffectWithoutRoomWaitsForClick(t *testing.T) {
 	b := mock.New()
 	u := New(b)
-	m := b.SendNewSticker("rina", wasFile(t, true), nil)
+	m := b.SendNewSticker("rina", wasFile(t, true), nil, nil)
 	m.Lottie = true
 	key := stickerKey(m)
 	u.players.bytes.Store(playerBudget.Load()) // full

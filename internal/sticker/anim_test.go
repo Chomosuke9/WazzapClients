@@ -133,6 +133,46 @@ func TestMakeVideo(t *testing.T) {
 	}
 }
 
+// A sticker's sound is the video's, cut like its animation; what has no
+// sound says so.
+func TestMakeSound(t *testing.T) {
+	ff := needFFmpeg(t)
+	dir := t.TempDir()
+	clip := func(name string, args ...string) string {
+		path := filepath.Join(dir, name)
+		args = append([]string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=240x320:rate=10:duration=8"}, args...)
+		if out, err := exec.Command(ff, append(args, path)...).CombinedOutput(); err != nil {
+			t.Skipf("can't make a test video: %v: %s", err, out)
+		}
+		return path
+	}
+	s, err := MakeSound(clip("loud.mp4", "-f", "lavfi", "-i", "sine=duration=8", "-c:v", "mpeg4", "-c:a", "aac"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(s.Ogg, []byte("OggS")) || !bytes.Contains(s.Ogg[:64], []byte("OpusHead")) || s.Seconds != 6 ||
+		len(s.Waveform) != 64 || len(s.Ogg) > 100<<10 {
+		t.Errorf("sound: %d bytes, %d s, waveform %v", len(s.Ogg), s.Seconds, s.Waveform)
+	}
+	// A sound alone, as another sticker's, makes one too.
+	ogg := filepath.Join(dir, "sound.ogg")
+	if err := os.WriteFile(ogg, s.Ogg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := MakeSound(ogg); err != nil || s.Seconds != 6 {
+		t.Errorf("of a sound: %v", err)
+	}
+	still := filepath.Join(dir, "a.gif")
+	if err := os.WriteFile(still, testGIF(t, 3, 40, 40), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{clip("mute.mp4", "-c:v", "mpeg4"), still} {
+		if _, err := MakeSound(path); !errors.Is(err, ErrNoSound) {
+			t.Errorf("%s: %v, want ErrNoSound", filepath.Base(path), err)
+		}
+	}
+}
+
 func TestMakeAnimatedWebP(t *testing.T) {
 	needFFmpeg(t)
 	first, err := Make("", testGIF(t, 4, 100, 100), Text{})

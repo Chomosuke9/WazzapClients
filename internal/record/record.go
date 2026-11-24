@@ -233,6 +233,23 @@ func (s *Session) Waveform() []byte {
 	return waveform(s.levels)
 }
 
+// PCMWaveform is the waveform of a whole sound, mono 16-bit samples at
+// Rate, as Session.Waveform's.
+func PCMWaveform(pcm []byte) []byte {
+	var levels []byte
+	for len(pcm) >= 2 {
+		n := min(len(pcm)/2, levelSamples)
+		var sum float64
+		for i := range n {
+			v := float64(int16(binary.LittleEndian.Uint16(pcm[2*i:])))
+			sum += v * v
+		}
+		levels = append(levels, level(sum/float64(n)))
+		pcm = pcm[2*n:]
+	}
+	return waveform(levels)
+}
+
 func waveform(levels []byte) []byte {
 	out := make([]byte, WaveformLen)
 	if len(levels) == 0 {

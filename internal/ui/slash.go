@@ -698,9 +698,16 @@ func (u *UI) slashHint(sp *slashPick) string {
 	if sp.previewOK && len(in.Missing()) == 0 {
 		return " " + sp.preview // apart from the text it works out
 	}
+	// An option left out before one that has a value can't follow it.
+	typed := -1
+	for i, vs := range in.Values {
+		if len(vs) > 0 {
+			typed = i
+		}
+	}
 	var parts []string
 	for i, o := range in.Cmd.Options {
-		if len(in.Values) > i && len(in.Values[i]) > 0 {
+		if i < typed || len(in.Values) > i && len(in.Values[i]) > 0 {
 			continue
 		}
 		p := o.Name

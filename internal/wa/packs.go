@@ -544,7 +544,7 @@ func (b *Backend) unuploaded(hash string) *waE2E.StickerMessage {
 // rescanUnsupported gives the messages stored as unsupported what they
 // show, now that the app supports more, once per supportVersion.
 func (s *msgStore) rescanUnsupported(ctx context.Context) error {
-	const supportVersion = "2" // sticker packs, status mentions
+	const supportVersion = "3" // sticker packs, status mentions, stickers with a sound
 	if s.meta(ctx, "unsupported_rescan") == supportVersion {
 		return nil
 	}

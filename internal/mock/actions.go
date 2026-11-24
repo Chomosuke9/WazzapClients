@@ -221,6 +221,16 @@ func (b *Backend) OpenMedia(*model.Message) {
 	b.emit(model.NoticeEvent{Text: "Demo mode doesn't open files."})
 }
 
+// StickerSound plays the file named by $WAZZAP_DEMO_AUDIO.
+func (b *Backend) StickerSound(m *model.Message) string {
+	if p := os.Getenv("WAZZAP_DEMO_AUDIO"); p != "" {
+		return p
+	}
+	b.emit(model.NoticeEvent{Text: "Demo mode doesn't download files."})
+	b.emit(model.MediaEvent{ChatID: m.ChatID, MsgID: m.ID, Failed: true})
+	return ""
+}
+
 // MediaFile plays the file named by $WAZZAP_DEMO_VIDEO (videos) or
 // $WAZZAP_DEMO_AUDIO (voice and audio messages), to try the players.
 func (b *Backend) MediaFile(m *model.Message) string {

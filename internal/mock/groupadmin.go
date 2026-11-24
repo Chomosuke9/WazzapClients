@@ -108,9 +108,9 @@ func (b *Backend) ManageGroup(r model.GroupRequest) {
 }
 
 // SendNewSticker keeps the sticker's picture, so the chat shows it.
-func (b *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Message) *model.Message {
+func (b *Backend) SendNewSticker(chatID string, webp []byte, sound *model.StickerSound, reply *model.Message) *model.Message {
 	m := &model.Message{ChatID: chatID, FromMe: true, Kind: model.KindSticker, Media: model.MediaSticker,
-		Time: b.now(), Receipt: model.Sent, Quote: quoteOf(reply)}
+		Sound: sound != nil, Time: b.now(), Receipt: model.Sent, Quote: quoteOf(reply)}
 	b.add(m)
 	b.mu.Lock()
 	if b.media == nil {

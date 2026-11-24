@@ -38,6 +38,7 @@ func (r *rawMsg) fill(raw, edit []byte) {
 	m.Thumb, r.hasBlob = c.keptThumb(), c.keepsBlob(pm)
 	m.Round = c.round
 	m.Lottie = c.lottie
+	m.Sound = c.sound
 	m.Duration = c.duration
 	m.Link = c.link
 	m.StatusMention = c.mention

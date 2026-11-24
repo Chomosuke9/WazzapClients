@@ -76,7 +76,7 @@ func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.M
 				asVideoNote(m)
 			}
 			nameCaption(m, r.mentions)
-			return m
+			return wrapSound(m)
 		}
 	}
 	switch r.Media {
@@ -470,6 +470,10 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	switch {
 	case msg != nil:
 		setContext(msg, ci)
+		if srcJID, _ := types.ParseJID(src.ChatID); isChannel(srcJID) || isChannel(jid) {
+			// Only the sticker's file is uploaded again below.
+			dropSound(msg)
+		}
 	case raw.Media != model.MediaNone || raw.Kind == model.KindDeleted || raw.Text == "":
 		return false // media we can't resend
 	default:
@@ -486,6 +490,8 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 		ID: cli.GenerateMessageID(), ChatID: chatID, FromMe: true, Time: b.sendTime(), Receipt: model.Pending,
 		Kind: raw.Kind, Media: raw.Media, Text: text,
 	}
+	part := mediaPart(msg)
+	msg = wrapSound(msg)
 	sm := storedMsg{Message: m, rawPayload: marshal(msg)}
 	if err := b.store.putMessage(ctx, b.db, sm); err != nil {
 		b.log.Errorf("store forwarded message: %v", err)
@@ -494,8 +500,11 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 	if data, err := os.ReadFile(b.mediaPath(src.ChatID, src.ID)); err == nil {
 		_ = os.WriteFile(b.mediaPath(chatID, m.ID), data, 0o600)
 	}
+	if data, err := os.ReadFile(b.soundPath(src.ChatID, src.ID)); err == nil && hasSound(msg) {
+		keepSound(data, b.soundPath(chatID, m.ID))
+	}
 	srcJID, _ := types.ParseJID(src.ChatID)
-	if part := mediaPart(msg); len(blob) > 0 && part != nil && (isChannel(srcJID) || isChannel(jid)) {
+	if len(blob) > 0 && part != nil && (isChannel(srcJID) || isChannel(jid)) {
 		// A channel's files aren't encrypted and a chat's are: the copy
 		// needs the file uploaded again, the way its new chat takes it.
 		id := m.ID
@@ -602,7 +611,7 @@ func (b *Backend) SendSticker(chatID string, sticker, reply *model.Message) {
 		default:
 			e := &waE2E.StickerMessage{Mimetype: s.Mimetype, Width: s.Width, Height: s.Height, IsAnimated: s.IsAnimated,
 				IsLottie: s.IsLottie, AccessibilityLabel: s.AccessibilityLabel, Emojis: s.Emojis}
-			if m := b.sendStickerData(chatID, jid, cli, data, e, reply); m != nil {
+			if m := b.sendStickerData(chatID, jid, cli, data, nil, e, reply); m != nil {
 				b.emit(model.MessageEvent{Msg: m})
 			}
 		}

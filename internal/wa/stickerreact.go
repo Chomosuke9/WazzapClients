@@ -248,6 +248,7 @@ func (b *Backend) stickerMessageOf(sticker *model.Message) (e *waE2E.StickerMess
 		return nil, nil, false
 	}
 	e.ContextInfo = nil
+	e.Audio = nil // a reaction makes no sound
 	return e, nil, true
 }
 

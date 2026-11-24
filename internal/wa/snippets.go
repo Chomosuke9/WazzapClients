@@ -348,7 +348,7 @@ func (b *Backend) SendSnippet(chat string, id int64, reply *model.Message, vars 
 		if wrap {
 			return &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 		}
-		return msg
+		return wrapSound(msg)
 	}
 	if err = b.store.ensureChat(b.ctx, b.db, chat, jid.Server == types.GroupServer, ""); err != nil {
 		return nil, err

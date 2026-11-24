@@ -54,6 +54,8 @@ var All = []*Command{
 	{
 		Name: "sticker", Description: "Turns the photo, video or GIF you reply to, or one you pick, into a sticker",
 		Options: []Option{
+			{Name: "include audio", Description: "Type " + includeAudio + " to keep the video's sound; leave it out for a silent sticker",
+				Kind: Choice, Choices: []string{includeAudio}},
 			{Name: "top", Description: "Text along the top; a new line (Shift+Enter) starts the bottom text", Kind: Text, Until: "\n"},
 			{Name: "bottom", Description: "Text along the bottom", Kind: Text},
 		},
@@ -293,11 +295,18 @@ func runSticker(c *Context) error {
 	chat := c.Chat.ID
 	text := sticker.Text{Top: c.Text("top"), Bottom: c.Text("bottom")}
 	plain := strings.TrimSpace(text.Top+text.Bottom) == ""
-	// makeSticker makes one of the file at path, or of data.
-	makeSticker := func(path string, data []byte) {
+	audio := c.Text("include audio") != ""
+	// makeSticker makes one of the file at path, or of data. Its sound, if
+	// it's asked for, is that of the file at from.
+	makeSticker := func(path string, data []byte, from string) {
 		n := busy(c, "Making a sticker…")
 		c.Do(func() func() {
 			webp, err := sticker.Make(path, data, text)
+			var sound *model.StickerSound
+			var soundErr error
+			if audio && err == nil {
+				sound, soundErr = stickerSound(from)
+			}
 			return func() {
 				switch {
 				case errors.Is(err, sticker.ErrNoFFmpeg):
@@ -310,8 +319,19 @@ func runSticker(c *Context) error {
 					fail(n, "Couldn't make a sticker of that.")
 					return
 				}
-				c.Dismiss(n)
-				if m := c.Backend.SendNewSticker(chat, webp, nil); m != nil {
+				switch {
+				case errors.Is(soundErr, sticker.ErrNoSound):
+					n.Busy, n.Text = false, "That has no sound, so it's a silent sticker."
+				case errors.Is(soundErr, sticker.ErrNoFFmpeg):
+					fail(n, noFFmpegSound)
+					return
+				case soundErr != nil:
+					fail(n, "Couldn't make a sticker with that sound.")
+					return
+				default:
+					c.Dismiss(n)
+				}
+				if m := c.Backend.SendNewSticker(chat, webp, sound, nil); m != nil {
 					c.Sent(m)
 				}
 			}
@@ -322,18 +342,33 @@ func runSticker(c *Context) error {
 	case src == nil:
 		c.PickImage(func(path string) {
 			if path != "" {
-				makeSticker(path, nil)
+				makeSticker(path, nil, path)
 			}
 		})
-	case src.Kind == model.KindSticker && plain:
+	case src.Kind == model.KindSticker && plain && (audio || !src.Sound || src.Lottie):
 		// It's a sticker already: send it as it is.
 		c.Backend.SendSticker(chat, src, nil)
+	case src.Kind == model.KindSticker && plain:
+		// The same, without its sound.
+		data := c.Backend.MediaData(src.ChatID, src.ID)
+		if data == nil {
+			return errors.New("It hasn't downloaded yet. Try again in a moment.")
+		}
+		if m := c.Backend.SendNewSticker(chat, data, nil, nil); m != nil {
+			c.Sent(m)
+		}
 	case src.Kind == model.KindSticker, src.Kind == model.KindImage && src.Media == model.MediaImage:
 		data := c.Backend.MediaData(src.ChatID, src.ID)
 		if data == nil {
 			return errors.New("It hasn't downloaded yet. Try again in a moment.")
 		}
-		makeSticker("", data)
+		from := ""
+		if audio && src.Sound {
+			if from = c.Backend.StickerSound(src); from == "" {
+				return errors.New("Its sound hasn't downloaded yet. Try again in a moment.")
+			}
+		}
+		makeSticker("", data, from)
 	case src.Kind == model.KindImage && (src.Media == model.MediaVideo || src.Media == model.MediaGIF):
 		if sticker.FFmpeg() == "" {
 			return errors.New(noFFmpeg)
@@ -342,12 +377,31 @@ func runSticker(c *Context) error {
 		if path == "" {
 			return errors.New("It hasn't downloaded yet. Try again in a moment.")
 		}
-		makeSticker(path, nil)
+		makeSticker(path, nil, path)
 	default:
 		return errors.New("Reply to a photo, video, GIF or sticker, or run /sticker without replying to pick one.")
 	}
 	return nil
 }
+
+// includeAudio, typed first, makes /sticker keep the sound. It's a word no
+// sticker's text would start with, unlike "on" or "true".
+const includeAudio = "include-audio"
+
+// stickerSound makes a sticker's sound of the file at path ("" for none).
+func stickerSound(path string) (*model.StickerSound, error) {
+	if path == "" {
+		return nil, sticker.ErrNoSound
+	}
+	s, err := sticker.MakeSound(path)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StickerSound{Ogg: s.Ogg, Seconds: s.Seconds, Waveform: s.Waveform}, nil
+}
+
+// noFFmpegSound says what stickers with a sound need.
+const noFFmpegSound = "Stickers with a sound need ffmpeg. Install it (with its folder on PATH) and try again."
 
 // noFFmpeg says what animated stickers need.
 const noFFmpeg = "Animated stickers need ffmpeg. Install it (with its folder on PATH) and try again."

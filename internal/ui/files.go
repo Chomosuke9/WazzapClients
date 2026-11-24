@@ -300,6 +300,7 @@ type voiceState struct {
 	seekTo  float32 // where to go (0 to 1) once the length is known; -1 none
 	drag    bool    // the knob follows the pointer
 	path    string  // the file, for a recording not sent yet (u.rec.draft)
+	synced  bool    // a sticker's animation started over with its sound (audiosticker.go)
 }
 
 // toggleVoice plays or pauses an audio message.
@@ -330,7 +331,11 @@ func (u *UI) toggleVoice(m *model.Message) {
 func (u *UI) loadVoice() {
 	v := &u.voice
 	path := v.path
-	if path == "" {
+	switch {
+	case path != "":
+	case v.msg.Media == model.MediaSticker:
+		path = u.backend.StickerSound(v.msg)
+	default:
 		path = u.backend.MediaFile(v.msg)
 	}
 	if path == "" {
@@ -343,8 +348,12 @@ func (u *UI) loadVoice() {
 		// No player here: the system's app plays it.
 		m, draft := v.msg, v.path != ""
 		u.stopVoice()
-		if draft {
+		switch {
+		case draft:
 			u.toast("The recording can't play here.")
+			return
+		case m.Media == model.MediaSticker:
+			u.toast("This sticker's sound can't play here.")
 			return
 		}
 		u.backend.OpenMedia(m)
@@ -422,6 +431,11 @@ func (u *UI) voiceProgress(m *model.Message) (t float32, pos int, playing, loadi
 	if st.Err != nil && v.path != "" {
 		u.stopVoice()
 		u.toast("The recording can't play here.")
+		return 0, m.Duration, false, false
+	}
+	if st.Err != nil && m.Media == model.MediaSticker {
+		u.stopVoice()
+		u.toast("This sticker's sound can't play here.")
 		return 0, m.Duration, false, false
 	}
 	if st.Err != nil {

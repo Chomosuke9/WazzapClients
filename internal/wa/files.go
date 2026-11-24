@@ -183,7 +183,11 @@ func (b *Backend) downloadFile(m *model.Message, path string) bool {
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
 	defer cancel()
 	media, blob, _ := b.store.mediaBlob(ctx, m.ChatID, m.ID)
-	dl := downloadable(media, blob)
+	return b.downloadTo(ctx, downloadable(media, blob), m.ID, path)
+}
+
+// downloadTo streams dl, part of message id, to path.
+func (b *Backend) downloadTo(ctx context.Context, dl whatsmeow.DownloadableMessage, id, path string) bool {
 	cli := b.client()
 	if dl == nil || cli == nil || !cli.IsConnected() {
 		b.emit(model.NoticeEvent{Text: "This file isn't available."})
@@ -204,7 +208,7 @@ func (b *Backend) downloadFile(m *model.Message, path string) bool {
 	}
 	if err != nil {
 		_ = os.Remove(path + ".part")
-		b.log.Infof("download %s: %v", m.ID, err)
+		b.log.Infof("download %s: %v", id, err)
 		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
 			b.emit(model.NoticeEvent{Text: "This file is no longer on WhatsApp's servers. Ask the sender to send it again."})
 		} else {

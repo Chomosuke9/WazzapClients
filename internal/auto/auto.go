@@ -559,12 +559,12 @@ func (a *Backend) SendSticker(chatID string, sticker, reply *model.Message) {
 	a.Backend.SendSticker(chatID, sticker, reply)
 }
 
-func (a *Backend) SendNewSticker(chatID string, webp []byte, reply *model.Message) *model.Message {
+func (a *Backend) SendNewSticker(chatID string, webp []byte, sound *model.StickerSound, reply *model.Message) *model.Message {
 	if a.refused() {
 		return nil
 	}
 	a.sent()
-	return a.Backend.SendNewSticker(chatID, webp, reply)
+	return a.Backend.SendNewSticker(chatID, webp, sound, reply)
 }
 
 func (a *Backend) SendContacts(chatID string, contactIDs []string) *model.Message {

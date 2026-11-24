@@ -1925,6 +1925,9 @@ func (u *UI) drawSticker(gtx C, m *model.Message, sz int, theirs bool) {
 	if p = u.players.m[key]; playing && p != nil && lottie {
 		u.stickerEffect(gtx, m, sz, theirs)
 	}
+	if m.Sound {
+		u.stickerSound(gtx, m, sz, img.animated)
+	}
 }
 
 // gradientImage stands in for photos in demo data.

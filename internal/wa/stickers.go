@@ -489,6 +489,12 @@ func (b *Backend) stickerFromChats(ctx context.Context, cli *whatsmeow.Client, h
 			return false
 		}
 		c.m.ContextInfo = nil
+		// The sticker stays with or without a sound, as it was kept: the
+		// chat's copy of the same picture may differ in that.
+		var kept waE2E.StickerMessage
+		if blob, err := b.store.stickerBlob(ctx, hash); err == nil && proto.Unmarshal(blob, &kept) == nil {
+			c.m.Audio = kept.Audio
+		}
 		if err := b.store.putSticker(ctx, b.db, hash, c.m, 0, 0); err != nil {
 			b.log.Warnf("store sticker: %v", err)
 		}
