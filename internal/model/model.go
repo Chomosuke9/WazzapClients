@@ -412,6 +412,7 @@ type StickerReaction struct {
 	SenderID, Sender string
 	Me               bool
 	Lottie           bool // a Lottie sticker (see Message.Lottie)
+	Sound            bool // a sticker with a sound (see Message.Sound)
 	Time             time.Time
 }
 
@@ -425,7 +426,7 @@ type StickerSound struct {
 // Message is the reaction's sticker as a sticker message of the chat
 // chatID, for what draws and plays stickers.
 func (r StickerReaction) Message(chatID string) *Message {
-	return &Message{ID: r.ID, ChatID: chatID, Kind: KindSticker, Media: MediaSticker, Lottie: r.Lottie,
+	return &Message{ID: r.ID, ChatID: chatID, Kind: KindSticker, Media: MediaSticker, Lottie: r.Lottie, Sound: r.Sound,
 		FromMe: r.Me, SenderID: r.SenderID, Sender: r.Sender, Time: r.Time}
 }
 

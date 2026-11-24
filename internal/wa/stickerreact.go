@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/polymorfa/hypermeow"
+	"github.com/polymorfa/hypermeow/proto/waCommon"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/types"
 	"google.golang.org/protobuf/proto"
@@ -43,8 +44,10 @@ CREATE INDEX IF NOT EXISTS wz_sticker_reacts_parent ON wz_sticker_reacts (rchat,
 `
 
 // stickerColumn is a message's sticker reactions, as readStickers takes
-// them: a line each, tab separated.
-const stickerColumn = `COALESCE((SELECT group_concat(sid || char(9) || who || char(9) || lottie || char(9) || rts, char(10))
+// them: a line each, tab separated. Only a sticker with a sound
+// (audiosticker.go) names a sound's type in its payload.
+const stickerColumn = `COALESCE((SELECT group_concat(sid || char(9) || who || char(9) || lottie || char(9) || rts ||
+	char(9) || (instr(payload, CAST('audio/' AS BLOB)) > 0), char(10))
 	FROM wz_sticker_reacts WHERE rchat = chat AND parent = id), '')`
 
 // stickerReact is a sticker someone reacted to p.target with.
@@ -82,11 +85,11 @@ func readStickers(s string) []model.StickerReaction {
 	var all []model.StickerReaction
 	for _, l := range strings.Split(s, "\n") {
 		f := strings.Split(l, "\t")
-		if len(f) != 4 {
+		if len(f) != 5 {
 			continue
 		}
 		ts, _ := strconv.ParseInt(f[3], 10, 64)
-		all = append(all, model.StickerReaction{ID: f[0], SenderID: f[1], Me: f[1] == meVoter, Lottie: f[2] == "1", Time: time.UnixMilli(ts)})
+		all = append(all, model.StickerReaction{ID: f[0], SenderID: f[1], Me: f[1] == meVoter, Lottie: f[2] == "1", Sound: f[4] == "1", Time: time.UnixMilli(ts)})
 	}
 	slices.SortStableFunc(all, func(a, b model.StickerReaction) int { return a.Time.Compare(b.Time) })
 	// The newest first, counting each person's.
@@ -248,8 +251,20 @@ func (b *Backend) stickerMessageOf(sticker *model.Message) (e *waE2E.StickerMess
 		return nil, nil, false
 	}
 	e.ContextInfo = nil
-	e.Audio = nil // a reaction makes no sound
 	return e, nil, true
+}
+
+// stickerReactMessage is the message that reacts with e to the message
+// whose key is parent. A sticker with a sound goes in its envelope, with
+// the association outside, beside the secret.
+func stickerReactMessage(e *waE2E.StickerMessage, parent *waCommon.MessageKey) *waE2E.Message {
+	return wrapSound(&waE2E.Message{StickerMessage: e, MessageContextInfo: &waE2E.MessageContextInfo{
+		MessageSecret: messageSecret(),
+		MessageAssociation: &waE2E.MessageAssociation{
+			AssociationType:  waE2E.MessageAssociation_STICKER_ANNOTATION.Enum(),
+			ParentMessageKey: parent,
+		},
+	}})
 }
 
 // ReactSticker implements model.Backend.
@@ -275,13 +290,7 @@ func (b *Backend) ReactSticker(m *model.Message, sticker *model.Message) {
 	if !ok {
 		return
 	}
-	msg := &waE2E.Message{StickerMessage: e, MessageContextInfo: &waE2E.MessageContextInfo{
-		MessageSecret: messageSecret(),
-		MessageAssociation: &waE2E.MessageAssociation{
-			AssociationType:  waE2E.MessageAssociation_STICKER_ANNOTATION.Enum(),
-			ParentMessageKey: cli.BuildMessageKey(jid, b.senderOf(m), m.ID),
-		},
-	}}
+	msg := stickerReactMessage(e, cli.BuildMessageKey(jid, b.senderOf(m), m.ID))
 	r := stickerReact{sid: cli.GenerateMessageID(), who: meVoter, ts: b.sendTime().UnixMilli(), lottie: e.GetIsLottie(),
 		payload: marshal(msg)}
 	if err := b.store.putStickerReact(ctx, b.db, chat, m.ID, r); err != nil {

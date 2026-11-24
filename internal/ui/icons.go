@@ -127,6 +127,7 @@ var (
 	icVolumeFill    = icon.VolumeUpFill
 	icVolumeOffFill = icon.VolumeOffFill
 	icVolume        = icon.VolumeUp
+	icSoundBars     = icon.SoundBars
 	icVolumeOff     = icon.VolumeOff
 	icStorage       = icon.DataUsage
 

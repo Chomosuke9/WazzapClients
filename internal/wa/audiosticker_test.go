@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/polymorfa/hypermeow/appstate"
+	"github.com/polymorfa/hypermeow/proto/waCommon"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
 	"github.com/polymorfa/hypermeow/proto/waSyncAction"
 	"github.com/polymorfa/hypermeow/types/events"
@@ -53,9 +54,36 @@ func TestAudioSticker(t *testing.T) {
 	if hasSound(silent) || wrapSound(silent) != silent {
 		t.Error("a sticker without a sound is wrapped")
 	}
-	// A reaction with it makes no sound.
-	if e, _, ok := b.stickerMessageOf(ms[0]); !ok || e.GetAudioMessage() != nil || e.GetDirectPath() != "/v/sticker" {
-		t.Errorf("as a reaction: %v %v", e, ok)
+	// A reaction with it has the sound, in the envelope, and what it reacts
+	// to outside; it reads back as a reaction. What's uploaded or sent later
+	// goes through e, so e must be the sticker inside.
+	e, _, ok := b.stickerMessageOf(ms[0])
+	if !ok {
+		t.Fatal("it can't be reacted with")
+	}
+	r := stickerReactMessage(e, &waCommon.MessageKey{ID: proto.String(copyParent)})
+	if !hasSound(r) || r.StickerMessage != nil || unwrap(r).GetStickerMessage() != e || annotates(r) != copyParent ||
+		r.GetMessageContextInfo().GetMessageAssociation() == nil || len(r.GetMessageContextInfo().GetMessageSecret()) != 32 {
+		t.Errorf("as a reaction: %v", r)
+	}
+	arrive(t, b, copyParent, 1010, &waE2E.Message{Conversation: proto.String("test")})
+	arrive(t, b, "R1", 1020, r)
+	var reacted int
+	for _, m := range b.Messages(copyChat, 10) {
+		for _, r := range m.Stickers {
+			if reacted++; !r.Sound || !r.Message(copyChat).Sound {
+				t.Errorf("the reaction %+v says it has no sound", r)
+			}
+		}
+		if m.ID == "R1" {
+			t.Error("the reaction is a message of the chat")
+		}
+	}
+	if reacted != 1 {
+		t.Errorf("%d sticker reactions, want 1", reacted)
+	}
+	if media, blob, err := b.store.mediaBlob(b.ctx, copyChat, "R1"); err != nil || !hasSound(mediaMessage(media, blob)) {
+		t.Errorf("the reaction's sticker: %v", err)
 	}
 	// Its sound's file, once here, is the path.
 	keepSound([]byte("OggS"), b.soundPath(copyChat, "S1"))
@@ -93,6 +121,9 @@ func TestAudioStickerRecent(t *testing.T) {
 	media, blob, err := b.store.mediaBlob(b.ctx, stickerChat, hash)
 	if err != nil || !hasSound(wrapSound(mediaMessage(media, blob))) {
 		t.Errorf("recent sticker: %v, %v", mediaMessage(media, blob), err)
+	}
+	if list := b.Stickers(model.StickersRecent); len(list) != 1 || !list[0].Sound {
+		t.Errorf("the picker's recent stickers: %+v", list)
 	}
 }
 

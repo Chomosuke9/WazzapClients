@@ -1891,20 +1891,31 @@ func (u *UI) layoutSticker(gtx C, m *model.Message, sz int) D {
 const stickerDp unit.Dp = 150
 
 // stickerPicture draws a sticker (or its placeholder) in an sz square.
-func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) { u.drawSticker(gtx, m, sz, false) }
+func (u *UI) stickerPicture(gtx C, m *model.Message, sz int) {
+	u.paintSticker(gtx, m, sz, false)
+}
 
 // drawSticker is stickerPicture for a chat: a Lottie sticker in someone
 // else's message (theirs) is mirrored, its effect too, as on WhatsApp: it
-// faces the middle of the chat from either side.
+// faces the middle of the chat from either side. One with a sound has a
+// button that plays it.
 func (u *UI) drawSticker(gtx C, m *model.Message, sz int, theirs bool) {
 	if isRound(m) {
 		u.roundPicture(gtx, m, sz)
 		return
 	}
+	if img := u.paintSticker(gtx, m, sz, theirs); img != nil && m.Sound {
+		u.stickerSound(gtx, m, sz, img.animated)
+	}
+}
+
+// paintSticker draws a sticker, and returns its picture, or its
+// placeholder and nil.
+func (u *UI) paintSticker(gtx C, m *model.Message, sz int, theirs bool) *imgEntry {
 	img := u.messageImage(m, sz*2)
 	if img == nil || img.state != imgReady {
 		fillRRect(gtx, image.Rect(0, 0, sz, sz), gtx.Dp(12), argb(0x808080, 0x30))
-		return
+		return nil
 	}
 	pic, size := img.op, img.size
 	key := stickerKey(m)
@@ -1928,9 +1939,7 @@ func (u *UI) drawSticker(gtx C, m *model.Message, sz int, theirs bool) {
 	if p = u.players.m[key]; playing && p != nil && lottie {
 		u.stickerEffect(gtx, m, sz, theirs)
 	}
-	if m.Sound {
-		u.stickerSound(gtx, m, sz, img.animated)
-	}
+	return img
 }
 
 // gradientImage stands in for photos in demo data.

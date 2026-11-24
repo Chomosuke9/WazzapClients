@@ -54,6 +54,21 @@ func stickerSmiley() *Icon {
 	return ic
 }
 
+// SoundBars marks a sticker with a sound: six bars, their sizes and
+// places those in the round badge of a phone's, as parts of its width.
+var SoundBars = soundBars()
+
+func soundBars() *Icon {
+	const w = 0.061
+	ic := &Icon{}
+	for i, h := range []float64{0.18, 0.425, 0.637, 0.333, 0.515, 0.227} {
+		x := float32(0.5 + 0.106*(float64(i)-2.5))
+		d := float32(h-w) / 2
+		stroke(ic, []f32.Point{f32.Pt(x, 0.5-d), f32.Pt(x, 0.5+d)}, w)
+	}
+	return ic
+}
+
 // polygon adds pts as a closed outline, always turned the same way: the
 // rasterizer adds up the windings, so outlines that overlap merge.
 func polygon(ic *Icon, pts []f32.Point) {

@@ -143,7 +143,7 @@ func (b *Backend) ReactSticker(m *model.Message, sticker *model.Message) {
 	rs := slices.Clone(x.Stickers)
 	b.stickerReacts++
 	r := model.StickerReaction{ID: fmt.Sprintf("%s-react-%d", x.ID, b.stickerReacts), SenderID: "me@lid", Sender: "You", Me: true,
-		Lottie: sticker.Lottie, Time: b.now()}
+		Lottie: sticker.Lottie, Sound: sticker.Sound, Time: b.now()}
 	b.mu.Lock()
 	if data := b.media[key(sticker)]; data != nil {
 		b.media[x.ChatID+"/"+r.ID] = data
@@ -172,8 +172,23 @@ func (b *Backend) TakeBackSticker(m *model.Message, id string) {
 }
 
 // DemoSoundStickers adds stickers with a sound to the chat, for previews:
-// one from someone else and one from you, drawn as DemoStickerReactions'.
+// one from someone else and one from you, drawn as DemoStickerReactions',
+// and reactions with them, beside one without, to a message before them.
 func (b *Backend) DemoSoundStickers(chatID string) {
+	text := &model.Message{ChatID: chatID, FromMe: true, Text: "test", Time: b.now(), Receipt: model.Sent}
+	b.add(text)
+	b.emit(model.MessageEvent{Msg: b.copyOf(text)})
+	for i := range 3 {
+		r := model.StickerReaction{ID: fmt.Sprintf("%s-sound-%d", text.ID, i), SenderID: "me@lid", Sender: "You", Me: true,
+			Sound: i != 1, Time: b.now().Add(time.Duration(i-60) * time.Second)}
+		b.mu.Lock()
+		if b.media == nil {
+			b.media = map[string][]byte{}
+		}
+		b.media[chatID+"/"+r.ID] = demoSticker(demoStickerColors[i], false)
+		b.mu.Unlock()
+		b.update(text, func(x *model.Message) { x.Stickers = append(x.Stickers, r) })
+	}
 	for i, me := range []bool{false, true} {
 		m := &model.Message{ChatID: chatID, FromMe: me, Kind: model.KindSticker, Media: model.MediaSticker, Sound: true,
 			Time: b.now(), Receipt: model.Sent}

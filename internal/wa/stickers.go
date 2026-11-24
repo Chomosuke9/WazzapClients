@@ -161,7 +161,7 @@ func (b *Backend) Stickers(set model.StickerSet) []*model.Message {
 	if set == model.StickersFavorite {
 		limit = -1
 	}
-	rows, err := b.db.QueryContext(b.ctx, `SELECT hash FROM wz_stickers WHERE `+order+` > 0
+	rows, err := b.db.QueryContext(b.ctx, `SELECT hash, blob FROM wz_stickers WHERE `+order+` > 0
 		ORDER BY `+order+` DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil
@@ -170,8 +170,11 @@ func (b *Backend) Stickers(set model.StickerSet) []*model.Message {
 	var out []*model.Message
 	for rows.Next() {
 		var hash string
-		if rows.Scan(&hash) == nil {
-			out = append(out, &model.Message{ID: hash, ChatID: stickerChat, Kind: model.KindSticker, Media: model.MediaSticker})
+		var blob []byte
+		var s waE2E.StickerMessage
+		if rows.Scan(&hash, &blob) == nil && proto.Unmarshal(blob, &s) == nil {
+			out = append(out, &model.Message{ID: hash, ChatID: stickerChat, Kind: model.KindSticker, Media: model.MediaSticker,
+				Sound: s.GetAudioMessage() != nil})
 		}
 	}
 	return out
@@ -203,7 +206,8 @@ func (b *Backend) receivedStickers() []*model.Message {
 			continue
 		}
 		seen[key] = true
-		out = append(out, &model.Message{ID: id, ChatID: chat, Kind: model.KindSticker, Media: model.MediaSticker})
+		out = append(out, &model.Message{ID: id, ChatID: chat, Kind: model.KindSticker, Media: model.MediaSticker,
+			Sound: s.GetAudioMessage() != nil})
 	}
 	return out
 }

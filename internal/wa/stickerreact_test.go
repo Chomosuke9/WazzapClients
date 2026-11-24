@@ -112,12 +112,12 @@ func TestFoldStickerReacts(t *testing.T) {
 func TestReadStickersMax(t *testing.T) {
 	var lines []string
 	for i := range model.StickerReactsMax + 2 {
-		lines = append(lines, fmt.Sprintf("a%d\ta@lid\t0\t%d", i, 1000+i))
+		lines = append(lines, fmt.Sprintf("a%d\ta@lid\t0\t%d\t0", i, 1000+i))
 	}
-	lines = append(lines, "b0\tb@lid\t0\t1005")
+	lines = append(lines, "b0\tb@lid\t0\t1005\t1")
 	st := readStickers(strings.Join(lines, "\n"))
 	if len(st) != model.StickerReactsMax+1 || st[0].ID != "a2" || st[len(st)-1].ID != fmt.Sprintf("a%d", model.StickerReactsMax+1) ||
-		!slices.ContainsFunc(st, func(r model.StickerReaction) bool { return r.ID == "b0" }) {
+		!slices.ContainsFunc(st, func(r model.StickerReaction) bool { return r.ID == "b0" && r.Sound }) {
 		t.Fatalf("readStickers = %+v", st)
 	}
 	for i := 1; i < len(st); i++ {

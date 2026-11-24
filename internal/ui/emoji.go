@@ -744,6 +744,11 @@ func (u *UI) layoutStickerTab(gtx C) D {
 									iw, ih := int(float32(size.X)*sc), int(float32(size.Y)*sc)
 									min := image.Pt((cell-iw)/2, (cell-ih)/2)
 									paintCover(gtx, pic, size, image.Rectangle{Min: min, Max: min.Add(image.Pt(iw, ih))})
+									if s.Sound {
+										t := op.Offset(image.Pt(pad, pad)).Push(gtx.Ops)
+										u.soundMark(gtx, in, markPicker)
+										t.Pop()
+									}
 								}
 								return D{Size: image.Pt(cell, cell)}
 							})

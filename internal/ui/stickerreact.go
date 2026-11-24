@@ -207,6 +207,9 @@ func (u *UI) stickerReactions(gtx C, ms []*model.Message, bubble image.Point, di
 		cl := roundShape(sz, sz, sz/10).Push(gtx.Ops)
 		u.stickerPicture(gtx, r.Message(r.msg.ChatID), sz)
 		cl.Pop()
+		if r.Sound {
+			u.soundMark(gtx, sz, markReact)
+		}
 		fx.Pop()
 		// The button goes over the picture: an animated sticker's own
 		// would hide under it anyway.

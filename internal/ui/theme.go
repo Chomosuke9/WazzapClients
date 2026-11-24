@@ -96,6 +96,11 @@ type Palette struct {
 	Toast, ToastText               color.NRGBA
 }
 
+// soundBadgeBg and soundBadgeFg are the mark on a sticker with a sound
+// (audiosticker.go), read off a phone's screenshot. It lies on the picture,
+// so it's the same in both themes.
+var soundBadgeBg, soundBadgeFg = rgb(0x242625), rgb(0xffffff)
+
 // markColors are what the photo editor draws with, the same in both
 // themes since they end up in the photo.
 var markColors = rgbs(0xffffff, 0x000000, 0xff3b30, 0xff9500, 0xffcc00, 0x34c759, 0x007aff, 0xaf52de)

@@ -24,6 +24,25 @@ const (
 	soundIcon  = 0.125
 )
 
+// Where a sticker's only shown (the picker, a reaction) a badge marks one
+// with a sound: an opaque disc with bars in it, in the corner of the square
+// the sticker is fitted in, whatever its shape. In parts of the square's
+// side, as measured on a phone's screenshots.
+const (
+	markPicker = 0.35
+	markReact  = 0.4
+	markInset  = 0.055
+)
+
+// soundMark draws the badge on a sticker in an sz square, size of it wide.
+func (u *UI) soundMark(gtx C, sz int, size float32) {
+	side := int(float32(sz)*size + 0.5)
+	at := int(float32(sz)*markInset + 0.5)
+	defer op.Offset(image.Pt(at, at)).Push(gtx.Ops).Pop()
+	fillCircle(gtx, image.Pt(side/2, side/2), side/2, soundBadgeBg)
+	drawIcon(gtx, icSoundBars, dp(gtx, side), soundBadgeFg)
+}
+
 // toggleStickerSound plays a sticker's sound from its start, or stops it.
 func (u *UI) toggleStickerSound(m *model.Message) {
 	on := u.voice.key == fileKey(m)

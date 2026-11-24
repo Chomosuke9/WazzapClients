@@ -400,6 +400,9 @@ func (u *UI) reactorRow(gtx C, x reactorRow) D {
 			}
 			side := gtx.Dp(44)
 			u.stickerPicture(gtx, x.sticker, side)
+			if x.sticker.Sound {
+				u.soundMark(gtx, side, markReact)
+			}
 			return D{Size: image.Pt(side, side)}
 		})
 		emoji.at(gtx, sz.X-gtx.Dp(20)-emoji.size.X, (sz.Y-emoji.size.Y)/2)
