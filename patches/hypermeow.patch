@@ -1,5 +1,5 @@
 diff --git a/message.go b/message.go
-index 3069e6d..b9ac023 100644
+index 971974d..d17fef8 100644
 --- a/message.go
 +++ b/message.go
 @@ -93,6 +93,15 @@ func (cli *Client) updateMessageContactNames(ctx context.Context, info *types.Me
@@ -19,13 +19,13 @@ index 3069e6d..b9ac023 100644
  	if err != nil {
  		cli.Log.Warnf("Failed to parse message: %v", err)
 diff --git a/send.go b/send.go
-index fb35eeb..99e1028 100644
+index 5fb006b..285bf7b 100644
 --- a/send.go
 +++ b/send.go
-@@ -167,6 +167,14 @@ type SendRequestExtra struct {
- 	Meta *types.MsgMetaInfo
- 	// use this only if you know what you are doing
+@@ -174,6 +174,14 @@ type SendRequestExtra struct {
  	AdditionalNodes *[]waBinary.Node
+ 
+ 	CheckPermissions bool
 +
 +	// WazzapClients patch: StatusRecipients, when sending to
 +	// status@broadcast, are the only people it goes to (with your own
@@ -37,7 +37,7 @@ index fb35eeb..99e1028 100644
  }
  
  // SendMessage sends the given message.
-@@ -327,6 +335,9 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
+@@ -354,6 +362,9 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
  				// Why is this set to PN?
  				extraParams.addressingMode = types.AddressingModePN
  			}
@@ -47,7 +47,7 @@ index fb35eeb..99e1028 100644
  		} else {
  			groupParticipants, err = cli.getBroadcastListParticipants(ctx, to)
  			if err != nil {
-@@ -334,6 +345,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
+@@ -361,6 +372,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
  				return
  			}
  		}
@@ -58,7 +58,8 @@ index fb35eeb..99e1028 100644
  		resp.DebugTimings.GetParticipants = time.Since(start)
  	} else if to.Server == types.HiddenUserServer {
  		ownID = cli.getOwnLID()
-@@ -1105,5 +1105,11 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
+@@ -1156,6 +1171,12 @@ const RemoveReactionText = ""
+ 
  func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  	switch {
 +	// WazzapClients patch: a group status revoke is wrapped in
@@ -70,7 +71,7 @@ index fb35eeb..99e1028 100644
  	case msg.EditedMessage != nil && msg.EditedMessage.Message != nil:
  		return getEditAttribute(msg.EditedMessage.Message)
  	case msg.ProtocolMessage != nil && msg.ProtocolMessage.GetKey() != nil:
-@@ -1118,6 +1133,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
+@@ -1170,6 +1191,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  			if msg.ProtocolMessage.EditedMessage != nil {
  				return types.EditAttributeMessageEdit
  			}
@@ -164,7 +165,7 @@ index 0000000..025ea64
 +}
 diff --git a/status_patch_test.go b/status_patch_test.go
 new file mode 100644
-index 0000000..32a1983
+index 0000000..4c9c1fa
 --- /dev/null
 +++ b/status_patch_test.go
 @@ -0,0 +1,80 @@

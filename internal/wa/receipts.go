@@ -89,11 +89,9 @@ type userReceipt struct {
 // groupedReceipts reads a group's grouped receipts itself. Without a
 // participant, a <receipt> holds many people's receipts of one of your
 // messages: <participants message_id="…"> with a <user jid="…" t="…"
-// type="delivery|read|played|inactive"/> each. hypermeow reads the
-// message's ID from a "key" attribute and gives every user the receipt's
-// own type, so their receipts were stored under no message at all, and
-// Message info missed most of a big group. The node goes on to hypermeow
-// without its users, which it still acks.
+// type="delivery|read|played|inactive"/> each. hypermeow would hand each
+// user out as an event of its own; here they're stored at once. The node
+// goes on to hypermeow without its users, which it still acks.
 func (b *Backend) groupedReceipts(_ context.Context, node *waBinary.Node) (*waBinary.Node, bool) {
 	if node.Tag != "receipt" {
 		return nil, false

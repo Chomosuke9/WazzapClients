@@ -356,10 +356,10 @@ Gotchas already found in the pinned version (v0.10.x):
   stored under `meVoter`, since they come from your phone number or your LID.
 - A group's delivery receipts mostly come grouped: a `<receipt>` without a participant,
   holding `<participants message_id="…">` with a `<user jid t type="delivery|read|inactive"/>`
-  each. hypermeow reads the ID from a `key` attribute and gives every user the receipt's
-  own type, so Message info missed most of a group. `groupedReceipts`
-  (`internal/wa/receipts.go`), the client's `RawNodeHandler`, reads them itself and passes
-  the node on without its users, which hypermeow still acks.
+  each. hypermeow hands each user out as an event of its own (before November 2026 it
+  missed their ID and type too). `groupedReceipts`
+  (`internal/wa/receipts.go`), the client's `RawNodeHandler`, reads them itself, storing
+  them at once, and passes the node on without its users, which hypermeow still acks.
 - WhatsApp sends view once media only to the phone. Linked devices get a stanza with
   `<unavailable type="view_once"/>` and no ciphertext, which hypermeow hands out as an
   `events.UndecryptableMessage`; `onUndecryptable` stores it as a `KindViewOnce`
