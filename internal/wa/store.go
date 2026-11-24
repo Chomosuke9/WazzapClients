@@ -241,6 +241,9 @@ func (s *msgStore) init(ctx context.Context) error {
 	if err := s.rescanUnsupported(ctx); err != nil {
 		return fmt.Errorf("rescan unsupported messages: %w", err)
 	}
+	if err := s.soundStickers(ctx); err != nil {
+		return fmt.Errorf("find stickers' sounds: %w", err)
+	}
 	if dropped {
 		s.vacuum(ctx)
 	}

@@ -500,7 +500,9 @@ Gotchas already found in the pinned version (v0.10.x):
   which hypermeow's patch does. A stored sticker's blob is the `stickerMessage` with its
   audio, so the recent and favourite ones keep theirs: whatever sends or quotes one puts it
   back in the envelope (`wrapSound`, `internal/wa/audiosticker.go`). Sticker reactions and
-  channels take it without the sound. It shows a speaker in its corner and plays through
+  channels take it without the sound. No sync names a sticker's sound (a favourite of your
+  own comes back as an app state action without it), so `putSticker` keeps the one it
+  knows, and `soundsFromChats` finds a phone-made favourite's in its message. It shows a speaker in its corner and plays through
   the voice messages' player, once per click, the animation starting over with it
   (`internal/ui/audiosticker.go`). `/sticker include-audio` makes one
   (`internal/sticker/sound.go`).

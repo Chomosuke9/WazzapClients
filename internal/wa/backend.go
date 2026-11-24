@@ -1707,6 +1707,18 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		}
 	}
 	b.onRecentStickers(data.GetRecentStickers())
+	sounds := false
+	for _, cd := range convs {
+		for _, m := range cd.msgs {
+			sounds = sounds || m.Sound
+		}
+	}
+	if sounds || len(data.GetRecentStickers()) > 0 {
+		// The favourites came before the messages that have their sounds.
+		if err := b.store.soundsFromChats(ctx, nil); err != nil {
+			b.log.Warnf("sounds of stickers: %v", err)
+		}
+	}
 	if gs := data.GetGlobalSettings(); gs != nil && gs.DisappearingModeDuration != nil {
 		_ = b.store.setMetaValue(ctx, defaultTimerKey, strconv.Itoa(int(gs.GetDisappearingModeDuration())))
 	}

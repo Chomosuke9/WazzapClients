@@ -2,11 +2,15 @@ package wa
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"os"
 	"testing"
 
+	"github.com/polymorfa/hypermeow/appstate"
 	"github.com/polymorfa/hypermeow/proto/waE2E"
+	"github.com/polymorfa/hypermeow/proto/waSyncAction"
+	"github.com/polymorfa/hypermeow/types/events"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -89,5 +93,78 @@ func TestAudioStickerRecent(t *testing.T) {
 	media, blob, err := b.store.mediaBlob(b.ctx, stickerChat, hash)
 	if err != nil || !hasSound(wrapSound(mediaMessage(media, blob))) {
 		t.Errorf("recent sticker: %v, %v", mediaMessage(media, blob), err)
+	}
+}
+
+// A favourite keeps its sound when its own action comes back, which can't
+// name one, and when it's reacted with; one made on the phone gets its
+// message's.
+func TestAudioStickerFavorite(t *testing.T) {
+	sha := bytes.Repeat([]byte{4}, 32)
+	hash := hex.EncodeToString(sha)
+	action := func(b *Backend, sha []byte) {
+		b.onStickerAppState(&events.AppState{
+			Index: []string{appstate.IndexFavoriteSticker, base64.StdEncoding.EncodeToString(sha)},
+			SyncActionValue: &waSyncAction.SyncActionValue{Timestamp: proto.Int64(1700000200000),
+				StickerAction: &waSyncAction.StickerAction{DirectPath: proto.String("/v/sticker"), IsFavorite: proto.Bool(true)}},
+		})
+	}
+	sent := func(b *Backend) *waE2E.StickerMessage {
+		t.Helper()
+		media, blob, err := b.store.mediaBlob(b.ctx, stickerChat, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return unwrap(wrapSound(mediaMessage(media, blob))).GetStickerMessage()
+	}
+	check := func(b *Backend, when string) {
+		t.Helper()
+		if s := sent(b); s.GetAudioMessage().GetDirectPath() != "/v/sound" || !s.GetIsAnimated() || s.GetDirectPath() != "/v/sticker" {
+			t.Errorf("%s: %v", when, s)
+		}
+	}
+
+	// Favourited here.
+	b := testBackend(t)
+	arrive(t, b, "S1", 1000, audioSticker())
+	s, _, _ := b.chatSticker(b.Messages(copyChat, 10)[0])
+	if err := b.store.putSticker(b.ctx, b.db, hash, s, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	check(b, "favourited")
+	action(b, sha)
+	check(b, "its action back")
+	silent := unwrap(audioSticker())
+	dropSound(silent)
+	b.recentSticker(marshal(silent.GetStickerMessage()), b.now(), "", "")
+	check(b, "reacted with")
+
+	// Favourited on the phone.
+	b = testBackend(t)
+	arrive(t, b, "S1", 1000, audioSticker())
+	action(b, sha)
+	check(b, "favourited on the phone")
+
+	// Saved without its sound by an earlier version, beside one that has none.
+	b = testBackend(t)
+	arrive(t, b, "S1", 1000, audioSticker())
+	other := bytes.Repeat([]byte{9}, 32)
+	for _, sum := range [][]byte{sha, other} {
+		if err := b.store.putSticker(b.ctx, b.db, hex.EncodeToString(sum),
+			&waE2E.StickerMessage{FileSHA256: sum, DirectPath: proto.String("/v/sticker")}, 0, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sent(b).GetAudioMessage() != nil {
+		t.Fatal("it has its sound already")
+	}
+	_ = b.store.setMetaValue(b.ctx, "sticker_sounds", "")
+	if err := b.store.soundStickers(b.ctx); err != nil {
+		t.Fatal(err)
+	}
+	check(b, "repaired")
+	media, blob, _ := b.store.mediaBlob(b.ctx, stickerChat, hex.EncodeToString(other))
+	if hasSound(mediaMessage(media, blob)) {
+		t.Error("a silent sticker got a sound")
 	}
 }

@@ -62,16 +62,21 @@ func unixSeconds(ts int64) int64 {
 // and/or favourite (fav > 0). Zero leaves that mark as it was.
 // A stored media message whose link expires later than the new one's is
 // kept: syncs repeat old links, while stickerFromChats stores fresh ones.
+// What the sync can't say (that it's animated, and its sound) stays known.
 func (s *msgStore) putSticker(ctx context.Context, x execer, hash string, sticker *waE2E.StickerMessage, recentTS, fav int64) error {
+	if blob, err := s.stickerBlob(ctx, hash); err == nil {
+		var old waE2E.StickerMessage
+		if proto.Unmarshal(blob, &old) == nil {
+			if linkExpiry(old.GetDirectPath()) > linkExpiry(sticker.GetDirectPath()) {
+				sticker = completeSticker(&old, sticker)
+			} else {
+				sticker = completeSticker(sticker, &old)
+			}
+		}
+	}
 	blob, err := proto.Marshal(sticker)
 	if err != nil {
 		return err
-	}
-	if old, err := s.stickerBlob(ctx, hash); err == nil {
-		var m waE2E.StickerMessage
-		if proto.Unmarshal(old, &m) == nil && linkExpiry(m.GetDirectPath()) > linkExpiry(sticker.GetDirectPath()) {
-			blob = old
-		}
 	}
 	_, err = x.ExecContext(ctx, `INSERT INTO wz_stickers (hash, blob, recent_ts, favorite) VALUES (?, ?, ?, ?)
 		ON CONFLICT (hash) DO UPDATE SET blob = excluded.blob,
@@ -296,9 +301,16 @@ func (b *Backend) onStickerAppState(e *events.AppState) {
 		if ts <= 0 {
 			ts = time.Now().Unix()
 		}
+		var was int64 // favourited already: this is our own coming back, or a resync
+		_ = b.db.QueryRowContext(b.ctx, `SELECT favorite FROM wz_stickers WHERE hash = ?`, hash).Scan(&was)
 		if err := b.store.putSticker(b.ctx, b.db, hash, stickerFromAction(a, sha), 0, ts); err != nil {
 			b.log.Warnf("store favourite sticker: %v", err)
 			return
+		}
+		if sha != nil && was == 0 {
+			if err := b.store.soundsFromChats(b.ctx, sha); err != nil {
+				b.log.Warnf("sound of a favourite sticker: %v", err)
+			}
 		}
 		b.emit(model.StickersEvent{})
 	case appstate.IndexRemoveRecentSticker:
@@ -334,6 +346,9 @@ func (b *Backend) rehashSticker(oldKey string, data []byte) {
 	if err := b.store.putSticker(ctx, b.db, key, &m, recentTS, fav); err != nil {
 		b.log.Warnf("rehash sticker: %v", err)
 		return
+	}
+	if err := b.store.soundsFromChats(ctx, sum[:]); err != nil {
+		b.log.Warnf("sound of a sticker: %v", err)
 	}
 	if key != oldKey {
 		_, _ = b.db.ExecContext(ctx, `DELETE FROM wz_stickers WHERE hash = ?`, oldKey)
@@ -489,12 +504,6 @@ func (b *Backend) stickerFromChats(ctx context.Context, cli *whatsmeow.Client, h
 			return false
 		}
 		c.m.ContextInfo = nil
-		// The sticker stays with or without a sound, as it was kept: the
-		// chat's copy of the same picture may differ in that.
-		var kept waE2E.StickerMessage
-		if blob, err := b.store.stickerBlob(ctx, hash); err == nil && proto.Unmarshal(blob, &kept) == nil {
-			c.m.Audio = kept.Audio
-		}
 		if err := b.store.putSticker(ctx, b.db, hash, c.m, 0, 0); err != nil {
 			b.log.Warnf("store sticker: %v", err)
 		}
