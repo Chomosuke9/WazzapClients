@@ -238,6 +238,10 @@ type UI struct {
 	secret  float32
 	// grayCmds are the gray commands turned on, by name (extras.go).
 	grayCmds map[string]bool
+	// userCmds are the commands the user added (usercommands.go), and
+	// userCmdNote what became of the last one.
+	userCmds    []*userCommand
+	userCmdNote string
 	// cmdsOpen shows the list of commands on the Extra features page.
 	cmdsOpen bool
 	ghostFx  ghostAnims // ghost mode coming and going (ghost.go)
@@ -1356,7 +1360,7 @@ func (u *UI) applyEvents() {
 		case model.ScheduledEvent:
 			u.sched.ver++
 		case model.PhoneEvent:
-			if !u.cardPhoneEvent(e) {
+			if !u.slashPhoneEvent(e) && !u.cardPhoneEvent(e) {
 				u.phoneEvent(e)
 			}
 		case model.LinkEvent:
@@ -1854,6 +1858,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		if lastOut != nil {
 			u.confirmDelete([]*model.Message{lastOut})
 		}
+	case "usercmds", "usercmdadd", "usercmdpick":
+		u.showUserCommandPreview(name)
 	case "graywarning":
 		u.ShowPage("gray")
 		for _, sec := range u.graySettings() {
@@ -2060,6 +2066,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openGroupStatus(id)
 		t := &model.StatusThread{ID: id, Name: title, Group: true, Updates: []*model.StatusUpdate{
 			{ID: "group-story-preview", Sender: "Rina", SenderID: "rina", Text: "See you all this weekend!", Background: 0xff6e257e, Time: u.now()},
+			{ID: "group-story-mine", Sender: "You", SenderID: "me", FromMe: true, Text: "A little update for the group", Background: 0xff1f6f54, Time: u.now()},
 		}}
 		u.statuses = []*model.StatusThread{t}
 		if name == "groupstatustext" {
@@ -2068,7 +2075,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.status.text.anim.snap(true)
 		}
 		if name == "groupstatusviewer" {
-			u.status.viewer.show(t)
+			u.status.viewer.showAt(t, len(t.Updates)-1) // your own, with its Delete button
 			u.status.viewer.anim.snap(true)
 		}
 	case "statusadd", "statusmenu", "statusprivacy", "statustext", "statussend",

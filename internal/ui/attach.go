@@ -200,14 +200,8 @@ func (u *UI) pickFiles(chatID, title string, filters []filepick.Filter) {
 		r := pickResult{chatID: chatID, err: err}
 		for _, p := range paths {
 			media := model.MediaDocument
-			switch {
-			case asDocs:
-			case hasExt(p, photoExts):
-				media = model.MediaImage
-			case hasExt(p, videoExts):
-				media = model.MediaVideo
-			case hasExt(p, audioExts):
-				media = model.MediaAudio
+			if !asDocs {
+				media = fileMedia(p)
 			}
 			r.files = append(r.files, model.Attachment{Path: p, Media: media})
 		}
@@ -216,6 +210,19 @@ func (u *UI) pickFiles(chatID, title string, filters []filepick.Filter) {
 			notify()
 		}
 	}()
+}
+
+// fileMedia is how a picked file goes out, by its extension.
+func fileMedia(path string) model.Media {
+	switch {
+	case hasExt(path, photoExts):
+		return model.MediaImage
+	case hasExt(path, videoExts):
+		return model.MediaVideo
+	case hasExt(path, audioExts):
+		return model.MediaAudio
+	}
+	return model.MediaDocument
 }
 
 // takePhoto opens the system's camera app and, once it saves a photo or

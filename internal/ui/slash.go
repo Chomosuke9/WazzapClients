@@ -56,9 +56,10 @@ type slashState struct {
 	ghost     *slashPick // what the picker showed, while it fades out
 	calcMore  bool       // /calc's calculator shows its functions (⋯)
 
-	notes   map[string][]*localNote           // per chat, oldest first
-	leaving map[string][]*localNote           // dismissed notes shrinking away, per chat
-	waiting map[string]func(model.GroupEvent) // group requests, by Ref
+	notes   map[string][]*localNote             // per chat, oldest first
+	leaving map[string][]*localNote             // dismissed notes shrinking away, per chat
+	waiting map[string]func(model.GroupEvent)   // group requests, by Ref
+	phones  map[string][]func(model.PhoneEvent) // phone numbers being looked up
 	seq     int
 	done    chan func() // what Host.Do finished, to run on this goroutine
 }
@@ -464,6 +465,9 @@ func (u *UI) dismissNote(chat string, n *command.Note) {
 			s.notes[chat] = append(ns[:i:i], ns[i+1:]...)
 			u.msgsVer++
 			u.noteLeaves(chat, ln)
+			if n.Dismissed != nil {
+				n.Dismissed()
+			}
 			return
 		}
 	}
@@ -614,6 +618,42 @@ func (h slashHost) PickImage(done func(path string)) {
 		return func() { done(path) }
 	})
 }
+
+func (h slashHost) PickFile(title string, done func(f model.Attachment)) {
+	h.u.slashDo(func() func() {
+		paths, err := filepick.Open(title, false, filepick.Filter{Name: "All files"})
+		var f model.Attachment
+		if err == nil && len(paths) > 0 {
+			f = model.Attachment{Path: paths[0], Media: fileMedia(paths[0])}
+		}
+		return func() { done(f) }
+	})
+}
+
+// LookupPhone asks once for a number that several commands wait for.
+func (h slashHost) LookupPhone(phone string, done func(model.PhoneEvent)) {
+	s := &h.u.slash
+	if s.phones == nil {
+		s.phones = map[string][]func(model.PhoneEvent){}
+	}
+	s.phones[phone] = append(s.phones[phone], done)
+	if len(s.phones[phone]) == 1 {
+		h.u.backend.LookupPhone(phone)
+	}
+}
+
+// slashPhoneEvent answers the commands that looked e's number up, and
+// reports whether there were any.
+func (u *UI) slashPhoneEvent(e model.PhoneEvent) bool {
+	waiting := u.slash.phones[e.Phone]
+	delete(u.slash.phones, e.Phone)
+	for _, done := range waiting {
+		done(e)
+	}
+	return len(waiting) > 0
+}
+
+func (h slashHost) Online() bool { return h.u.conn.State == model.StateOnline }
 
 func (h slashHost) Sent(m *model.Message) {
 	u := h.u

@@ -770,6 +770,14 @@ internal/ui/icon/  Material Symbols from SVG path data (symbols.go is generated)
 internal/ui/styledtext/  gio-x styledtext, vendored with a fix for bitmap emoji
 internal/command/  slash commands, like Discord's: the list (commands.go), parsing their options,
                    and running them through a Host the UI implements. No Gio here
+internal/usercmd/  slash commands the user adds from JavaScript files (docs/commands.md), run by goja: a template or
+                   a run function, which runs on a goroutine of its own and asks the UI for
+                   everything through `Host.Do` (run.go's `pump`). There are no permissions, on
+                   purpose: adding one says it can do anything (ui/usercommands.go). ctx.sock
+                   (sock.go) is the whole account with Baileys' names: any message of any kind
+                   (wa/rawsend.go), chats and groups, but not logging out or the preferences,
+                   which hold the added commands. docs/commands.md lists what differs from Baileys,
+                   and docs/commands/wazzap.d.ts types it all: change both with the functions
 internal/auto/     AFK replies (/afk), and the /schedule jobs earlier versions queued: wraps the
                    Backend (`withAuto`; the host's, so they go on without a window), sees its events
                    and your sends, and keeps its state in the backend's prefs. In ghost mode
@@ -1085,7 +1093,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashrun, scheduled (scheduled messages and the AFK bar), sendmenu (the send button's menu: -at 1858,1078 with -ochat work), schedule (Schedule message), ghost (/ghost; open a
 # group: -ochat work), statusviews (your status's Viewed by sheet), statusmention and statusmentioned (a status mention's card, and the status it opens: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
 # delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), stickerreact (sticker reactions on the chat's last messages), stickerring (20 of them around a bubble), stickerreactors (who gave them), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
-# privacystatus, privacycommunities); the Media panel:
+# privacystatus, privacycommunities); your own commands: usercmds (their page), usercmdadd (its dialog), usercmdpick (one in the picker); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
 # the Chat theme panel's pages theme, themebubble, themewall, themecolor, and accent (the App theme color Red);

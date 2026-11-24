@@ -181,25 +181,53 @@ func (b *Backend) SendSnippet(chat string, id int64, reply *model.Message, vars 
 	}
 	body := s.Body
 	if s.Payload {
-		var m struct {
-			Conversation        string `json:"conversation"`
-			ExtendedTextMessage struct {
-				Text string `json:"text"`
-			} `json:"extendedTextMessage"`
-		}
-		if err = json.Unmarshal([]byte(body), &m); err != nil {
+		if body, err = payloadText(body); err != nil {
 			return nil, err
-		}
-		body = m.Conversation
-		if body == "" {
-			body = m.ExtendedTextMessage.Text
-		}
-		if body == "" {
-			body = "Message payload"
 		}
 	}
 	return b.Send(chat, model.Draft{Text: model.ExpandSnippet(body, vars), Reply: reply}), nil
 }
+
+// payloadText is the text a message's JSON shows here.
+func payloadText(body string) (string, error) {
+	var m struct {
+		Conversation        string `json:"conversation"`
+		ExtendedTextMessage struct {
+			Text string `json:"text"`
+		} `json:"extendedTextMessage"`
+	}
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		return "", err
+	}
+	if m.Conversation == "" {
+		m.Conversation = m.ExtendedTextMessage.Text
+	}
+	if m.Conversation == "" {
+		m.Conversation = "Message payload"
+	}
+	return m.Conversation, nil
+}
+
+func (b *Backend) SendPayload(chat, payload, messageID string, reply *model.Message) (*model.Message, bool, error) {
+	text, err := payloadText(payload)
+	if err != nil {
+		return nil, false, err
+	}
+	if strings.Contains(payload, `"albumMessage"`) { // has no bubble
+		id := messageID
+		if id == "" {
+			id = "album"
+		}
+		return &model.Message{ID: id, ChatID: chat, FromMe: true, Time: b.now()}, false, nil
+	}
+	m := b.Send(chat, model.Draft{Text: text, Reply: reply})
+	if m != nil && messageID != "" {
+		m.ID = messageID
+	}
+	return m, true, nil
+}
+
+func (b *Backend) ChatID(id string) string { return id }
 
 // messageJSON writes a demo message the way the protocol's JSON would
 // carry it; demo messages have no real payload.

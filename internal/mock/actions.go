@@ -1,6 +1,7 @@
 package mock
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -160,6 +161,17 @@ func (b *Backend) Delete(m *model.Message, forEveryone bool) {
 		}
 	}
 	b.emit(model.DeletedEvent{ChatID: m.ChatID, IDs: []string{m.ID}})
+}
+
+func (b *Backend) DeleteGroupStatus(group, id string) error {
+	for _, t := range b.statuses {
+		if t.Group && t.ID == group {
+			t.Updates = slices.DeleteFunc(t.Updates, func(u *model.StatusUpdate) bool { return u.ID == id })
+			b.emit(model.StatusEvent{})
+			return nil
+		}
+	}
+	return errors.New("No such group status here.")
 }
 
 func (b *Backend) Star(m *model.Message, starred bool) {

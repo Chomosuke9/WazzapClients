@@ -58,6 +58,18 @@ index fb35eeb..99e1028 100644
  		resp.DebugTimings.GetParticipants = time.Since(start)
  	} else if to.Server == types.HiddenUserServer {
  		ownID = cli.getOwnLID()
+@@ -1105,5 +1105,11 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
+ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
+ 	switch {
++	// WazzapClients patch: a group status revoke is wrapped in
++	// groupStatusMessageV2; take the edit attribute (7 for your own, 8 as a
++	// group admin) from the inner protocol message, so the server applies
++	// the revoke to the status instead of acking it as a chat revoke.
++	case msg.GetGroupStatusMessageV2().GetMessage() != nil:
++		return getEditAttribute(msg.GetGroupStatusMessageV2().GetMessage())
+ 	case msg.EditedMessage != nil && msg.EditedMessage.Message != nil:
+ 		return getEditAttribute(msg.EditedMessage.Message)
+ 	case msg.ProtocolMessage != nil && msg.ProtocolMessage.GetKey() != nil:
 @@ -1118,6 +1133,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  			if msg.ProtocolMessage.EditedMessage != nil {
  				return types.EditAttributeMessageEdit
@@ -155,17 +167,20 @@ new file mode 100644
 index 0000000..32a1983
 --- /dev/null
 +++ b/status_patch_test.go
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,80 @@
 +package whatsmeow
 +
 +import (
 +	"testing"
 +
 +	waBinary "github.com/polymorfa/hypermeow/binary"
++	"github.com/polymorfa/hypermeow/proto/waCommon"
++	"github.com/polymorfa/hypermeow/proto/waE2E"
 +	"github.com/polymorfa/hypermeow/store"
 +	"github.com/polymorfa/hypermeow/types"
 +	"github.com/polymorfa/hypermeow/types/events"
 +	waLog "github.com/polymorfa/hypermeow/util/log"
++	"google.golang.org/protobuf/proto"
 +)
 +
 +// WazzapClients patch: a <status> stanza with <enc> nodes (how WhatsApp
@@ -214,5 +229,22 @@ index 0000000..32a1983
 +	got := cli.statusLIDs(t.Context(), []types.JID{poster, me.ToNonAD(), poster})
 +	if len(got) != 2 || got[0] != poster || got[1] != ownLID {
 +		t.Errorf("recipients %v, want %v and %v", got, poster, ownLID)
++	}
++}
++
++// WazzapClients patch: a group status revoke is wrapped in
++// groupStatusMessageV2; its edit attribute comes from the inner protocol
++// message, 7 for your own and 8 as a group admin.
++func TestGroupStatusRevokeEditAttribute(t *testing.T) {
++	wrap := func(fromMe bool) *waE2E.Message {
++		return &waE2E.Message{GroupStatusMessageV2: &waE2E.FutureProofMessage{Message: &waE2E.Message{
++			ProtocolMessage: &waE2E.ProtocolMessage{Type: waE2E.ProtocolMessage_REVOKE.Enum(),
++				Key: &waCommon.MessageKey{FromMe: proto.Bool(fromMe), ID: proto.String("S1")}}}}}
++	}
++	if got := getEditAttribute(wrap(true)); got != types.EditAttributeSenderRevoke {
++		t.Errorf("own revoke = %q, want 7", got)
++	}
++	if got := getEditAttribute(wrap(false)); got != types.EditAttributeAdminRevoke {
++		t.Errorf("admin revoke = %q, want 8", got)
 +	}
 +}

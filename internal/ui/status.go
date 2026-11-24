@@ -421,6 +421,7 @@ type statusViewer struct {
 	reacts             bool
 	reactAnim          tween
 	mention            widget.Clickable // "Mentioned privately"
+	deleteBtn          widget.Clickable // delete your own group status
 	backdrop           tween            // the blurred update behind it fading in
 	views              statusViews      // who saw your own update (statusviews.go)
 }
@@ -641,6 +642,10 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		if v.send.Clicked(gtx) {
 			u.sendStatusReply()
 		}
+		if v.deleteBtn.Clicked(gtx) {
+			up := t.Updates[v.index]
+			u.confirmDeleteGroupStatus(t.ID, up.ID)
+		}
 		// A click on the picture goes back or forward like the rest of
 		// the window, unless it's zoomed in.
 		if clicked, _ := v.zp.update(gtx); clicked && !v.zp.zoomed() {
@@ -769,6 +774,10 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		}
 		headBtn(c, icMenu, 24)
 	}
+	// Your own group status can be deleted for everyone in the group.
+	if t.Group && up.FromMe {
+		headBtn(&v.deleteBtn, icDelete, 22)
+	}
 	if v.video.player != nil {
 		ic := icVolumeFill
 		if !u.soundOn(v.video.muted) {
@@ -855,6 +864,19 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	if t.Mine && !t.Group {
 		u.layoutStatusViews(gtx, up, frame)
 	}
+}
+
+// confirmDeleteGroupStatus asks before revoking your own group status, then
+// removes it for everyone in the group and closes the viewer.
+func (u *UI) confirmDeleteGroupStatus(group, id string) {
+	u.confirm("Delete this status update?", "It will be removed for everyone in the group.",
+		dialogButton{label: "Delete", danger: true, run: func() {
+			if err := u.backend.DeleteGroupStatus(group, id); err != nil {
+				u.toast(err.Error())
+				return
+			}
+			u.status.viewer.close()
+		}})
 }
 
 // shade fills r with black fading from alpha a0 at its top to a1 at its

@@ -77,6 +77,49 @@ func TestGroupStatusPayloads(t *testing.T) {
 	}
 }
 
+// A group status sent through SendPayload (relayMessage) gets the secret and
+// the is_group_status meta node it needs to reach the group as a status.
+func TestGroupStatusRelay(t *testing.T) {
+	group := types.NewJID("123", types.GroupServer)
+	msg := &waE2E.Message{GroupStatusMessageV2: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("hi")}}}}
+	extra, ok := groupStatusRelay(msg, group)
+	if !ok {
+		t.Fatal("not recognised as a group status")
+	}
+	if len(msg.GetMessageContextInfo().GetMessageSecret()) != 32 {
+		t.Fatal("no message secret added")
+	}
+	if extra.AdditionalNodes == nil || len(*extra.AdditionalNodes) != 1 ||
+		(*extra.AdditionalNodes)[0].Attrs["is_group_status"] != "true" {
+		t.Fatal("no is_group_status meta node")
+	}
+	// The inner contextInfo must match the app's own posts, or the phone
+	// can't delete the status for everyone.
+	ci := msg.GetGroupStatusMessageV2().GetMessage().GetExtendedTextMessage().GetContextInfo()
+	if !ci.GetIsGroupStatus() || ci.GetStatusSourceType() != waE2E.ContextInfo_TEXT {
+		t.Fatalf("inner contextInfo = %v, want isGroupStatus and StatusSourceType TEXT", ci)
+	}
+	keep := []byte("0123456789abcdef0123456789abcdef")
+	msg.MessageContextInfo.MessageSecret = keep
+	if groupStatusRelay(msg, group); string(msg.GetMessageContextInfo().GetMessageSecret()) != string(keep) {
+		t.Fatal("overwrote an existing secret")
+	}
+	if _, ok := groupStatusRelay(msg, types.NewJID("1", types.DefaultUserServer)); ok {
+		t.Fatal("a direct chat counted as a group status")
+	}
+	if _, ok := groupStatusRelay(&waE2E.Message{Conversation: proto.String("x")}, group); ok {
+		t.Fatal("an ordinary message counted as a group status")
+	}
+	// A contentless status isn't broadcast as one (it couldn't be stored
+	// or deleted), so it goes out as an ordinary message instead.
+	empty := &waE2E.Message{GroupStatusMessageV2: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{ContextInfo: &waE2E.ContextInfo{IsGroupStatus: proto.Bool(true)}}}}}
+	if _, ok := groupStatusRelay(empty, group); ok {
+		t.Fatal("an empty status counted as a group status")
+	}
+}
+
 func TestGroupStatusSeparationAndExpiry(t *testing.T) {
 	b := testBackend(t)
 	now := time.Now()

@@ -113,6 +113,7 @@ var settingsViews = map[string]struct {
 	"accountcheck": {settingAccount, "acct:accounts/3"},
 	"snippets":     {settingSnippets, ""},
 	"gray":         {settingExtras, "gray"},
+	"commands":     {settingExtras, "commands"},
 	"help":         {settingHelp, ""},
 	"videovoice":   {settingMedia, ""},
 	"microphone":   {settingMedia, "mic"},
@@ -199,6 +200,8 @@ func (u *UI) settingsTitle() string {
 		return "App theme"
 	case "gray":
 		return "Ethically gray features"
+	case "commands":
+		return "Your commands"
 	case "advanced":
 		return "Advanced"
 	case "emoji":
@@ -248,6 +251,8 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.blockedContacts()
 	case "gray":
 		return u.graySettings()
+	case "commands":
+		return u.userCommandSettings()
 	case "advanced":
 		return u.advancedSettings()
 	case "emoji":

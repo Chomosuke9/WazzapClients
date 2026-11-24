@@ -60,6 +60,7 @@ func (u *UI) loadExtras() {
 			u.grayCmds[c.Name] = true
 		}
 	}
+	u.loadUserCommands()
 	// A window opening in ghost mode shows it at once.
 	u.ghostFx.bar.snap(u.ghostMode())
 	u.ghostFx.compose.snap(u.ghostMode())
@@ -141,6 +142,8 @@ func (u *UI) extrasSettings() []settingsSection {
 		{title: "Slash commands", rows: []settingRow{
 			u.extraToggle(prefSlash, "Slash commands", "Type / at the start of a message to run a command, like in Discord. Start it with // to send it as text",
 				&u.slash.on, func() { u.conv.richFor = "" }), // the composer starts or stops showing commands
+			{key: "usercmds", title: "Your commands", sub: "Add commands from files, and turn them off or remove them",
+				trailing: icChevronRight, run: func() { u.openSettingsSub("commands") }},
 		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
 		{title: "Mentions", rows: []settingRow{
 			u.extraToggle(prefExtendedMentions, "Extended mentions",

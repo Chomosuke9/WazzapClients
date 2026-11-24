@@ -22,6 +22,9 @@ func TestGhost(t *testing.T) {
 	if m := at.a.Send("rina", model.Draft{Text: "hi"}); m != nil {
 		t.Fatal("sent in ghost mode")
 	}
+	if m, _, err := at.a.SendPayload("rina", `{"conversation":"hi"}`, "", nil); m != nil || err == nil {
+		t.Fatal("sent a payload in ghost mode")
+	}
 	at.a.React(last, "👍")
 	at.a.Delete(last, true)
 	at.a.Forward([]*model.Message{last}, []string{"work"})
@@ -31,7 +34,7 @@ func TestGhost(t *testing.T) {
 	if at.a.NewAlbum("rina", 2, 0) != "" {
 		t.Error("opened an album in ghost mode")
 	}
-	if _, notices := at.poll(); len(notices) != 4 || notices[0] != GhostText {
+	if _, notices := at.poll(); len(notices) != 5 || notices[0] != GhostText {
 		t.Errorf("notices %q", notices)
 	}
 	if now := at.f.Messages("rina", 1000); len(now) != before || len(now[len(now)-1].Reactions) != 0 ||

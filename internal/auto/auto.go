@@ -525,6 +525,17 @@ func (a *Backend) SendSnippet(chatID string, id int64, reply *model.Message, var
 	return m, err
 }
 
+func (a *Backend) SendPayload(chatID, payload, messageID string, reply *model.Message) (*model.Message, bool, error) {
+	if a.refused() {
+		return nil, false, errors.New(GhostText)
+	}
+	m, shown, err := a.Backend.SendPayload(chatID, payload, messageID, reply)
+	if err == nil && shown {
+		a.sent()
+	}
+	return m, shown, err
+}
+
 func (a *Backend) SendFile(chatID string, at model.Attachment, d model.Draft) *model.Message {
 	if a.refused() {
 		return nil

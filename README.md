@@ -187,6 +187,9 @@ stays off until both confirmations are completed; canceling either leaves it off
 | `/snippet save [name]` | Saves the whole message you reply to (a poll, document or photo too), under that name or a generated one |
 | `/catch` | Opens the stored payload of the message you reply to, with Copy JSON and Export JSON |
 
+You can also add commands of your own, as templates or small scripts with a Baileys-like `sock`, under
+**Extra features > Your commands**: see [Writing your own slash commands](docs/commands.md).
+
 To use `/whisper`, enable **Slash commands** and its own switch under **Extra features >
 Ethically gray features**, acknowledge the warning, then pick one or more members and
 type the message, for example `/whisper @Budi @Siti Meet at 8`. The first non-mention

@@ -99,10 +99,36 @@ func (c *Command) Usage() string {
 	return s
 }
 
+// user are the commands the user added (internal/usercmd), after All in
+// the picker. Only the UI goroutine reads and sets them.
+var user []*Command
+
+// SetUser replaces the commands the user added. Those named like one of
+// the app's own are left out.
+func SetUser(cmds []*Command) {
+	user = nil
+	for _, c := range cmds {
+		if BuiltIn(c.Name) == nil {
+			user = append(user, c)
+		}
+	}
+}
+
+// BuiltIn returns the app's own command named name, or nil.
+func BuiltIn(name string) *Command { return find(All, name) }
+
 // Lookup returns the command named name, or nil.
 func Lookup(name string) *Command {
-	for _, c := range All {
-		if c.Name == strings.ToLower(name) {
+	if c := BuiltIn(name); c != nil {
+		return c
+	}
+	return find(user, name)
+}
+
+func find(cmds []*Command, name string) *Command {
+	name = strings.ToLower(name)
+	for _, c := range cmds {
+		if c.Name == name {
 			return c
 		}
 	}
@@ -114,9 +140,11 @@ func Lookup(name string) *Command {
 func Matching(prefix string, group bool) []*Command {
 	prefix = strings.ToLower(prefix)
 	var out []*Command
-	for _, c := range All {
-		if strings.HasPrefix(c.Name, prefix) && (group || !c.Group) {
-			out = append(out, c)
+	for _, cmds := range [][]*Command{All, user} {
+		for _, c := range cmds {
+			if strings.HasPrefix(c.Name, prefix) && (group || !c.Group) {
+				out = append(out, c)
+			}
 		}
 	}
 	return out

@@ -1618,6 +1618,17 @@ func AutoDownload(pref func(string) string, m Media) bool {
 // then drains them with Poll on its next frame.
 type Backend interface {
 	SnippetBackend
+	// SendPayload sends a message of any kind, given as the protocol's
+	// JSON, to a chat (ChatID), as a reply to reply if it isn't nil, with
+	// the ID messageID or, when it's "", a fresh one. It returns the
+	// message in its pending state. One that doesn't show in the chat, like
+	// a reaction or an album's header, has shown false and only what names
+	// it (its ID, chat and time).
+	SendPayload(chatID, payload, messageID string, reply *Message) (m *Message, shown bool, err error)
+	// ChatID is the ID of the chat a user, group or channel ID names, or
+	// "" when it can't be one: a phone number's ("...@s.whatsapp.net")
+	// may have its chat under another.
+	ChatID(id string) string
 	Start(notify func())
 	Poll() []Event
 	Chats() []*Chat
@@ -1721,6 +1732,10 @@ type Backend interface {
 	Reactors(m *Message) []Reactor
 	// Delete deletes a message for you, or for everyone (your own messages).
 	Delete(m *Message, forEveryone bool)
+	// DeleteGroupStatus revokes a group status (kept with the statuses, not
+	// among chat messages), named by its group and ID. A command's { delete }
+	// routes here when its key names one rather than a stored message.
+	DeleteGroupStatus(group, id string) error
 	// Star stars or unstars a message.
 	Star(m *Message, starred bool)
 	// PinMessage pins a message to the top of its chat for d, or unpins

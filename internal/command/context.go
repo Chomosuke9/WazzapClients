@@ -22,6 +22,9 @@ type Note struct {
 	// Failed shows Text as an error.
 	Failed  bool
 	Buttons []Button
+	// Dismissed, when set, runs when the note is dismissed, by you or by
+	// the command.
+	Dismissed func()
 }
 
 // Button is a button under a Note.
@@ -50,6 +53,14 @@ type Host interface {
 	// PickImage asks for a picture or video, and calls done with its path
 	// ("" when cancelled).
 	PickImage(done func(path string))
+	// PickFile asks for a file of any kind, and calls done with it (no
+	// path when cancelled) as the attach menu would send it.
+	PickFile(title string, done func(f model.Attachment))
+	// LookupPhone looks up a phone number (digits with the country code)
+	// and calls done with the answer.
+	LookupPhone(phone string, done func(model.PhoneEvent))
+	// Online reports whether WhatsApp is connected.
+	Online() bool
 	// Sent shows a message you just sent.
 	Sent(m *model.Message)
 	// Draft makes a message of text typed in the composer, turning the
