@@ -7,27 +7,27 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
-// An announcement's button opens its replies, where members write theirs.
+// The pill under an announcement opens its replies, where members write
+// theirs.
 func TestReplies(t *testing.T) {
 	ft := newFloatTest("work-ann")
 	m := ft.msgs[len(ft.msgs)-1]
-	if m.Replies != 2 || repliesLabel(m.Replies) != "2 replies" || repliesLabel(0) != "Reply" || repliesLabel(1) != "1 reply" {
+	if m.Replies != 2 || repliesLabel(m.Replies) != "2 replies" || repliesLabel(1) != "1 reply" {
 		t.Fatalf("%d replies", m.Replies)
 	}
-	// Its only button.
-	ft.btn("mbtn:" + m.ID + ":0").Click()
+	ft.btn("replies:" + m.ChatID + "/" + m.ID).Click()
 	ft.frames(5)
-	s := &ft.msgInfo
-	if !s.open || !s.replies || len(s.replyList) != 2 {
-		t.Fatalf("open %v, replies %v: %+v", s.open, s.replies, s.replyList)
+	s := &ft.replies
+	if !s.isOpen() || len(s.list) != 2 || len(s.msgs) != 2 || ft.msgInfo.open {
+		t.Fatalf("open %v: %+v", s.isOpen(), s.list)
 	}
-	s.replyEd.SetText("  Thanks!  ")
-	s.replySend.Click()
+	s.ed.SetText("  Thanks!  ")
+	s.send.Click()
 	ft.frames(2)
 	ft.applyEvents()
 	ft.frames(2)
-	if n := len(s.replyList); n != 3 || s.replyList[2].Text != "Thanks!" || !s.replyList[2].Me || s.replyEd.Text() != "" {
-		t.Fatalf("after sending: %+v, field %q", s.replyList, s.replyEd.Text())
+	if n := len(s.list); n != 3 || s.list[2].Text != "Thanks!" || !s.list[2].Me || s.ed.Text() != "" || !s.msgs[2].FromMe {
+		t.Fatalf("after sending: %+v, field %q", s.list, s.ed.Text())
 	}
 	if s.msg.Replies != 3 {
 		t.Errorf("the announcement counts %d", s.msg.Replies)
@@ -36,8 +36,8 @@ func TestReplies(t *testing.T) {
 	ft.b.Reply(s.msg, "clara", "Clara", "And the docs?")
 	ft.applyEvents()
 	ft.frames(2)
-	if len(s.replyList) != 4 {
-		t.Errorf("%d replies", len(s.replyList))
+	if len(s.list) != 4 {
+		t.Errorf("%d replies", len(s.list))
 	}
 	labels := func(r model.Reply) (out []string) {
 		for _, it := range ft.replyItemsOf(r) {
@@ -51,10 +51,28 @@ func TestReplies(t *testing.T) {
 	if got := labels(model.Reply{Me: true, Receipt: model.Sent}); len(got) != 2 {
 		t.Errorf("your reply's menu: %v", got)
 	}
+	// What was being written waits for the next time.
+	s.ed.SetText("And")
 	ft.escape()
-	ft.frames(5)
-	if s.open {
+	if s.isOpen() {
 		t.Error("Esc left it open")
+	}
+	for range 100 {
+		ft.frames(1)
+	}
+	if ft.selected == nil {
+		t.Error("Esc closed the chat too")
+	}
+	ft.openReplies(m)
+	ft.frames(2)
+	if !s.isOpen() || s.ed.Text() != "And" {
+		t.Errorf("open %v, field %q", s.isOpen(), s.ed.Text())
+	}
+	// A sender's picture leaves for their contact info.
+	ft.btn("sender:" + s.msgs[0].ID).Click()
+	ft.frames(2)
+	if s.isOpen() || !ft.info.open || ft.info.chatID != "clara" {
+		t.Errorf("open %v, info %v of %q", s.isOpen(), ft.info.open, ft.info.chatID)
 	}
 	// Not under other chats' messages.
 	ft.SelectID("rina")

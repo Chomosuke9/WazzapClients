@@ -588,7 +588,7 @@ func demo(now time.Time) []*demoChat {
 		{ID: "work-ann", Name: "Announcements", IsGroup: true, Messages: []*model.Message{
 			{FromMe: true, Text: "Welcome to Product HQ! Every team's news goes here.", Time: day(8, 9, 0), Receipt: model.Read},
 			{FromMe: true, Kind: model.KindImage, Media: model.MediaImage, Text: "Q4 roadmap is out. Details in the Product Team group",
-				Time: day(2, 15, 10), Receipt: model.Read, ImageA: 0x667eea, ImageB: 0x764ba2},
+				Time: day(2, 15, 10), Receipt: model.Read, ImageA: 0x667eea, ImageB: 0x764ba2, Reactions: reacts("😮")},
 			{Sender: "Andre", SenderID: "andre", Text: "Heads up: the staging freeze starts Friday at noon", Time: day(0, 9, 45)},
 		}},
 		{ID: "design", Name: "Design Crew", IsGroup: true, Unread: 1, Presence: "Clara, Dewi, You", Messages: []*model.Message{

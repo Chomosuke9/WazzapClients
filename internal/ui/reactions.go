@@ -10,6 +10,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -50,17 +51,35 @@ func reactionKey(m *model.Message) string {
 	return sb.String()
 }
 
+// pillH is the height of the pills on a bubble's bottom edge, at least.
+const pillH unit.Dp = 24
+
 // reactionPill draws the reactions to ms on the bottom edge of their
-// bubble (or, under, below it: an announcement's card) and returns the
-// row's size. A running pop scales it in.
-func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, pop animKey) D {
+// bubble (or, under, below it: a sticker announcement's time) and the pill
+// after, if any, beside them, and returns the row's size. A running pop
+// scales the reactions in.
+func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, after part, pop animKey) D {
 	defer u.emojiIn(emojiReactions)()
 	counts, total := reactionCounts(ms)
 	u.conv.pill = image.Rectangle{}
+	p := u.pal
+	ring := gtx.Dp(2)
+	py := dims.Size.Y - gtx.Dp(5)
+	if under {
+		py = dims.Size.Y + gtx.Dp(3)
+	}
 	if total == 0 {
+		if after.size == (image.Point{}) {
+			return dims
+		}
+		x := gtx.Dp(8)
+		if out {
+			x = dims.Size.X - after.size.X - gtx.Dp(8)
+		}
+		u.ringedPill(gtx, after, x, py)
+		dims.Size.Y = py + after.size.Y + ring
 		return dims
 	}
-	p := u.pal
 	c := u.btn("reactpill:" + ms[0].ChatID + "/" + ms[0].ID)
 	if c.Clicked(gtx) {
 		if isChannelID(ms[0].ChatID) {
@@ -74,7 +93,7 @@ func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, p
 		gtx.Constraints.Min = image.Point{}
 		return clickable(gtx, c, func(gtx C) D {
 			return u.card(gtx, 13, p.BubbleIn, func(gtx C) D {
-				return layout.Inset{Left: 6, Right: 6, Top: 2, Bottom: 3}.Layout(gtx, func(gtx C) D {
+				content := func(gtx C) D {
 					var children []layout.FlexChild
 					for i, rc := range counts {
 						if i == 3 {
@@ -88,18 +107,29 @@ func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, p
 						}))
 					}
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
-				})
+				}
+				in := layout.Inset{Left: 6, Right: 6, Top: 2, Bottom: 3}
+				if h := after.size.Y; h > 0 {
+					// As tall as the pill after, and a circle for one emoji.
+					gtx.Constraints.Min = image.Pt(h, h)
+					in.Top, in.Bottom = 0, 0
+				}
+				return layout.Center.Layout(gtx, func(gtx C) D { return in.Layout(gtx, content) })
 			})
 		})
 	})
+	// The two pills' rings meet, so they're a ring apart.
+	width := pill.size.X
+	if after.size.X > 0 {
+		width += ring + after.size.X
+	}
 	x := gtx.Dp(8)
 	if out {
-		x = dims.Size.X - pill.size.X - gtx.Dp(8)
+		x = dims.Size.X - width - gtx.Dp(8)
 	}
-	ring := gtx.Dp(2)
-	py := dims.Size.Y - gtx.Dp(5)
-	if under {
-		py = dims.Size.Y + gtx.Dp(3)
+	rowH := max(pill.size.Y, after.size.Y)
+	if after.size.X > 0 {
+		u.ringedPill(gtx, after, x+pill.size.X+ring, py+(rowH-after.size.Y)/2)
 	}
 	fx := fxStack{}
 	if pop.id != "" && u.anims.running(pop) {
@@ -110,12 +140,19 @@ func (u *UI) reactionPill(gtx C, dims D, ms []*model.Message, out, under bool, p
 		mid := image.Pt(x+pill.size.X/2, py+pill.size.Y/2)
 		fx = pushFx(gtx, min(1, 3*v), scaleAt(mid, lerp(0.3, 1, easeOutBack(v))))
 	}
-	fillRRect(gtx, image.Rect(x-ring, py-ring, x+pill.size.X+ring, py+pill.size.Y+ring), pill.size.Y/2+ring, p.ChatBg)
-	pill.at(gtx, x, py)
+	u.ringedPill(gtx, pill, x, py)
 	fx.Pop()
 	u.conv.pill = image.Rect(x, py, x+pill.size.X, py+pill.size.Y)
-	dims.Size.Y = py + pill.size.Y + ring
+	dims.Size.Y = py + rowH + ring
 	return dims
+}
+
+// ringedPill draws a pill at x, y, with a ring of the chat's background
+// around it.
+func (u *UI) ringedPill(gtx C, pill part, x, y int) {
+	ring := gtx.Dp(2)
+	fillRRect(gtx, image.Rect(x-ring, y-ring, x+pill.size.X+ring, y+pill.size.Y+ring), pill.size.Y/2+ring, u.pal.ChatBg)
+	pill.at(gtx, x, y)
 }
 
 // reactionsPopup lists who reacted to a message, or to an album's

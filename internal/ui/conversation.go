@@ -923,7 +923,8 @@ func (p part) at(gtx C, x, y int) {
 	t.Pop()
 }
 
-// layoutMessage draws a bubble (or a sticker) plus its reaction pill.
+// layoutMessage draws a bubble (or a sticker) plus its reaction pill, and
+// an announcement's replies beside that.
 func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 	m := r.msg
 	// A reaction that changes while the chat is open pops in.
@@ -939,10 +940,12 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 		u.conv.reactions[m.ID] = key
 	}
 	var dims D
+	ann := u.announcementsOf(c) != nil
+	sticker := m.Kind == model.KindSticker || isRound(m)
 	switch {
-	case (m.Kind == model.KindSticker || isRound(m)) && u.announcementsOf(c) != nil:
+	case sticker && ann:
 		dims = u.layoutAnnSticker(gtx, m, maxW)
-	case m.Kind == model.KindSticker || isRound(m):
+	case sticker:
 		dims = u.layoutStickerMessage(gtx, c, m, r.first, maxW)
 	case u.jumbo(c, m) != nil:
 		dims = u.layoutJumboMessage(gtx, c, m, u.jumbo(c, m), r.first, maxW)
@@ -951,7 +954,11 @@ func (u *UI) layoutMessage(gtx C, c *model.Chat, r convRow, maxW int) D {
 	}
 	u.conv.cardH = dims.Size.Y
 	bubble := dims.Size
-	dims = u.reactionPill(gtx, dims, []*model.Message{m}, m.FromMe, u.announcementsOf(c) != nil, pop)
+	var replies part
+	if ann {
+		replies = u.repliesPill(gtx, m)
+	}
+	dims = u.reactionPill(gtx, dims, []*model.Message{m}, m.FromMe, ann && sticker, replies, pop)
 	return u.stickerReactions(gtx, []*model.Message{m}, bubble, dims, m.FromMe)
 }
 
@@ -980,10 +987,6 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	}
 	if cb := cardButtons(m); len(cb) > 0 {
 		buttons = append(slices.Clip(buttons), cb...)
-	}
-	if ann := u.announcementsOf(c) != nil; ann && u.takesReplies(m) && !u.msgInfo.previewing {
-		// Replies to an announcement are behind a button under it.
-		buttons = append(slices.Clip(buttons), model.Button{Kind: buttonReplies, Label: repliesLabel(m.Replies)})
 	}
 	for i := range buttons {
 		if u.btn("mbtn:" + m.ID + ":" + itoa(i)).Clicked(gtx) {

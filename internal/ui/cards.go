@@ -47,7 +47,6 @@ const (
 	buttonContacts                               // every contact a message shares
 	buttonMap                                    // a live location on the map
 	buttonPack                                   // the sticker pack it shares or links to
-	buttonReplies                                // the replies to an announcement (replies.go)
 )
 
 // cardButtons are the buttons under m's card.
@@ -88,8 +87,6 @@ func (u *UI) pressCardButton(m *model.Message, b model.Button) {
 	switch b.Kind {
 	case buttonVotes:
 		u.openVotes(m)
-	case buttonReplies:
-		u.openReplies(m)
 	case buttonMessage:
 		u.messagePhone(b.Value, m.Contacts[0].Name)
 	case buttonContacts:

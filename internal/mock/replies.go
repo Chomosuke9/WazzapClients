@@ -44,19 +44,29 @@ func (b *Backend) setReplies(m *model.Message, rs []model.Reply) {
 	b.update(m, func(x *model.Message) { x.Replies = len(rs) })
 }
 
-// seedReplies gives the first announcement of the demo's community replies.
+// seedReplies gives the last announcements of the demo's community replies:
+// your photo, and the newest.
 func (b *Backend) seedReplies() {
 	ms := b.msgs["work-ann"]
-	if len(ms) == 0 {
+	if len(ms) < 2 {
 		return
 	}
-	m := ms[len(ms)-1]
 	if b.replies == nil {
 		b.replies = map[string][]model.Reply{}
 	}
-	b.replies[key(m)] = []model.Reply{
-		{ID: "ann-reply-1", SenderID: "clara", Sender: "Clara", Text: "Does that include the *mobile* builds?", Time: m.Time.Add(2 * time.Minute), Receipt: model.Sent},
-		{ID: "ann-reply-2", SenderID: "bima", Sender: "Bima", Text: "Got it, thanks for the heads up", Time: m.Time.Add(5 * time.Minute), Receipt: model.Sent},
+	seed := func(m *model.Message, rs ...model.Reply) {
+		for i := range rs {
+			rs[i].ID = fmt.Sprintf("%s-reply-%d", m.ID, i+1)
+			rs[i].Time, rs[i].Receipt = m.Time.Add(time.Duration(2+3*i)*time.Minute), model.Sent
+		}
+		b.replies[key(m)] = rs
+		m.Replies = len(rs)
 	}
-	m.Replies = 2
+	seed(ms[len(ms)-2],
+		model.Reply{SenderID: "bima", Sender: "Bima", Text: "Is the API work still in Q4?"},
+		model.Reply{SenderID: "me@lid", Sender: "You", Me: true, Text: "Yes, right after the freeze"},
+		model.Reply{SenderID: "dewi", Sender: "Dewi", Text: "🎉"})
+	seed(ms[len(ms)-1],
+		model.Reply{SenderID: "clara", Sender: "Clara", Text: "Does that include the *mobile* builds?"},
+		model.Reply{SenderID: "bima", Sender: "Bima", Text: "Got it, thanks for the heads up"})
 }

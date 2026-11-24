@@ -25,17 +25,9 @@ type msgInfoState struct {
 	data     *model.MessageInfo
 	votes    bool
 	voteList []model.Vote
-	// replies shows an announcement's replies instead (replies.go).
-	replies   bool
-	replyList []model.Reply
-	replyEd   widget.Editor
-	replySend widget.Clickable
-	replyFor  string // the announcement replyEd's text is for
-	// previewing is set while the panel draws the message itself.
-	previewing bool
-	list       widget.List
-	closeBtn   widget.Clickable
-	anim       tween
+	list     widget.List
+	closeBtn widget.Clickable
+	anim     tween
 }
 
 // shown reports whether the panel is open or still sliding away.
@@ -51,7 +43,7 @@ func (u *UI) openMsgInfo(m *model.Message) {
 		u.hideChatTheme()
 		s.anim.snap(true)
 	}
-	s.open, s.chatID, s.msg, s.votes, s.replies = true, m.ChatID, m, false, false
+	s.open, s.chatID, s.msg, s.votes = true, m.ChatID, m, false
 	s.data = u.backend.MessageInfo(m)
 	s.list.Position = layout.Position{}
 }
@@ -69,7 +61,7 @@ func (u *UI) msgInfoReceipt(e model.ReceiptEvent) {
 	if !s.open || s.chatID != e.ChatID {
 		return
 	}
-	if s.votes || s.replies {
+	if s.votes {
 		return
 	}
 	for _, id := range e.IDs {
@@ -96,10 +88,7 @@ func (u *UI) layoutMsgInfo(gtx C) D {
 	dims := fill(gtx, p.Panel)
 	title := "Message info"
 	var rows []layout.Widget
-	foot := func(C) D { return D{} }
-	if s.replies {
-		title, rows, foot = "Replies", u.replyRows(), u.replyComposer
-	} else if s.votes {
+	if s.votes {
 		title, rows = u.votesTitle(), u.voteRows()
 	} else {
 		rows = u.msgInfoRows()
@@ -119,7 +108,6 @@ func (u *UI) layoutMsgInfo(gtx C) D {
 		layout.Flexed(1, func(gtx C) D {
 			return u.scrollList(gtx, &s.list, len(rows), func(gtx C, i int) D { return rows[i](gtx) })
 		}),
-		layout.Rigid(foot),
 	)
 	return dims
 }
@@ -210,8 +198,6 @@ func (u *UI) msgInfoPreview(gtx C) D {
 	maxW := max(w-2*padX, gtx.Dp(120))
 	bgtx := gtx.Disabled()
 	bgtx.Constraints = layout.Constraints{Max: image.Pt(maxW, gtx.Dp(2000))}
-	s.previewing = true
-	defer func() { s.previewing = false }()
 	var bub part
 	if em := u.jumbo(c, s.msg); em != nil {
 		bub = record(bgtx, func(gtx C) D { return u.layoutJumboMessage(gtx, c, s.msg, em, true, maxW) })

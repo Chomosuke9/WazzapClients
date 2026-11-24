@@ -177,6 +177,7 @@ type UI struct {
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
 	ctx                     ctxMenu
 	reacts                  reactionsPopup // who reacted to a message (reactions.go)
+	replies                 repliesPopup   // the replies to an announcement (replies.go)
 	dialog                  dialogState
 	picker                  emojiPicker
 	gifs                    gifSearch // the picker's GIF tab (gifs.go)
@@ -836,6 +837,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia || u.picker.mode == pickAudience) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
+	u.layoutReplies(gtx)
 	u.layoutCtxMenu(gtx)
 	u.layoutReactions(gtx)
 	u.layoutDialog(gtx)
@@ -1206,6 +1208,8 @@ func (u *UI) escape() {
 		u.closeReactions()
 	case u.dialog.isOpen():
 		u.closeDialog()
+	case u.replies.isOpen():
+		u.closeReplies()
 	case u.picView.isOpen():
 		u.closePicView()
 	case u.status.text.isOpen():
@@ -1947,6 +1951,16 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			if len(m.Reactions) > 0 {
 				u.openReactions([]*model.Message{m})
 				u.reacts.anim.snap(true)
+				break
+			}
+		}
+	case "replies":
+		// The replies to an announcement (-ochat work-ann).
+		for _, m := range u.msgs {
+			if m.Replies > 0 {
+				u.mouse = image.Pt(x, y)
+				u.openReplies(m)
+				u.replies.anim.snap(true)
 				break
 			}
 		}
