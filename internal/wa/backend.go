@@ -1381,9 +1381,9 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 }
 
 // revoke applies a delete for everyone, by its sender or a group admin.
-// With model.PrefKeepDeleted on, a message someone else deleted keeps its
-// content and is only flagged; your own deletes (from another device)
-// still remove it.
+// With model.PrefKeepDeleted on, the message keeps its content and is only
+// flagged, also when you deleted it (from another device; Delete does the
+// same here).
 func (b *Backend) revoke(ctx context.Context, chat string, p parsed) {
 	if parent := b.store.dropStickerReact(ctx, chat, p.target); parent != "" {
 		// A sticker reaction taken back (stickerreact.go).
@@ -1394,8 +1394,8 @@ func (b *Backend) revoke(ctx context.Context, chat string, p parsed) {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	keep := !p.msg.FromMe && b.Pref(model.PrefKeepDeleted) == "on"
-	if parent := b.store.dropComment(ctx, chat, p.target, keep, at); parent != "" {
+	keep := b.Pref(model.PrefKeepDeleted) == "on"
+	if parent := b.store.dropComment(ctx, chat, p.target, keep, at, p.revokedBy); parent != "" {
 		b.emitMessage(chat, parent) // a reply to an announcement (comments.go)
 		return
 	}

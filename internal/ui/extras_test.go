@@ -153,3 +153,61 @@ func TestExtraFeatureWithoutConsent(t *testing.T) {
 		t.Fatal("a regular extra feature did not enable immediately")
 	}
 }
+
+// TestKeepDeletedByYou checks that with Keep deleted messages on, what you
+// delete for everyone stays, marked as deleted by you, and that it can't
+// be deleted for everyone or edited again.
+func TestKeepDeletedByYou(t *testing.T) {
+	st := newSlashTest(t, "work")
+	st.b.SetPref(model.PrefKeepDeleted, "on")
+	all := st.b.Messages("work", 1000)
+	st.typeText("/purge 3")
+	st.press(key.NameReturn)
+	st.runConfirm("Delete 3 messages for everyone?")
+	now := st.b.Messages("work", 1000)
+	for i, m := range now {
+		kept := i >= len(all)-3
+		if m.Kind != all[i].Kind || m.Text != all[i].Text || m.Revoked.IsZero() == kept {
+			t.Errorf("message %d (%q): kind %v text %q revoked %v", i, all[i].Text, m.Kind, m.Text, m.Revoked)
+		}
+		if tag, name := deletedTag(m); kept && (tag != "Deleted by you" || name != "") {
+			t.Errorf("message %d is marked %q %q", i, tag, name)
+		}
+	}
+	last := now[len(now)-1]
+	last.FromMe, last.Receipt, last.Time = true, model.Read, st.u.now()
+	if last.CanEdit(st.u.now()) {
+		t.Error("a deleted message can be edited")
+	}
+	st.u.confirmDelete([]*model.Message{last})
+	if bs := st.u.dialog.buttons; len(bs) == 0 || bs[0].label != "Delete for me" {
+		t.Errorf("a deleted message offers %+v", bs)
+	}
+	st.u.dialog = dialogState{}
+	// They don't count for the next /purge.
+	st.typeText("/purge 1")
+	st.press(key.NameReturn)
+	st.runConfirm("Delete 1 message for everyone?")
+	if m := st.b.Messages("work", 1000)[len(all)-4]; m.Revoked.IsZero() {
+		t.Errorf("%q wasn't deleted", m.Text)
+	}
+}
+
+// TestDeletedTag checks who a kept message says deleted it.
+func TestDeletedTag(t *testing.T) {
+	for _, c := range []struct {
+		m    model.Message
+		want string
+	}{
+		{model.Message{}, "Deleted"},
+		{model.Message{FromMe: true}, "Deleted by you"},
+		{model.Message{DeletedByMe: true}, "Deleted by you"},
+		{model.Message{DeletedBy: "Alice Smith"}, "Deleted by Alice Smith"},
+		{model.Message{FromMe: true, DeletedBy: "~Al"}, "Deleted by ~Al"},
+	} {
+		tag, name := deletedTag(&c.m)
+		if got := strings.TrimSpace(tag + " " + name); got != c.want {
+			t.Errorf("%+v is marked %q, want %q", c.m, got, c.want)
+		}
+	}
+}

@@ -374,15 +374,21 @@ func (b *Backend) resolve(ctx context.Context, r rawMsg, isGroup bool) *model.Me
 			m.Whisper = append(m.Whisper, b.memberName(ctx, jid, types.EmptyJID))
 		}
 	}
-	if r.revokedBy != "" {
-		if j, err := types.ParseJID(r.revokedBy); err == nil && b.isMe(j) {
-			m.DeletedByMe = true
-		} else {
-			m.DeletedBy = b.senderNameStr(ctx, r.revokedBy, "")
-		}
-	}
+	m.DeletedBy, m.DeletedByMe = b.deleter(ctx, r.revokedBy)
 	b.fillVotes(ctx, m)
 	return m
+}
+
+// deleter names the admin who deleted a message, or says it was you; by is
+// "" when its sender deleted it.
+func (b *Backend) deleter(ctx context.Context, by string) (name string, me bool) {
+	switch {
+	case by == "":
+		return "", false
+	case b.isMeID(by):
+		return "", true
+	}
+	return b.senderNameStr(ctx, by, ""), false
 }
 
 // myName is how a mention of you shows: your profile name, as in

@@ -101,8 +101,20 @@ func TestAnnouncementReplies(t *testing.T) {
 	}
 	b.SetPref(model.PrefKeepDeleted, "on")
 	revoke("R2", c)
-	if rs := b.Replies(m); len(rs) != 2 || rs[0].Revoked.IsZero() {
+	if rs := b.Replies(m); len(rs) != 2 || rs[0].Revoked.IsZero() || rs[0].DeletedBy != "" {
 		t.Errorf("kept: %+v", rs)
+	}
+	// An admin's delete of your reply names them, and can't be overwritten.
+	mine := rs[2].ID
+	for _, by := range []types.JID{a, c} {
+		b.store.dropComment(ctx, chat, mine, true, time.Unix(350, 0), by.String())
+	}
+	if rs := b.Replies(m); len(rs) != 2 || rs[1].DeletedByMe || rs[1].DeletedBy != b.senderNameStr(ctx, a.String(), "") {
+		t.Errorf("kept, deleted by an admin: %+v", rs)
+	}
+	b.store.unmarkComment(ctx, chat, mine)
+	if rs := b.Replies(m); len(rs) != 2 || !rs[1].Revoked.IsZero() || rs[1].DeletedBy != "" {
+		t.Errorf("taken back: %+v", rs)
 	}
 
 	// A reply still going when the app closed failed, and goes away alone.

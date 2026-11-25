@@ -475,7 +475,7 @@ func runPurge(c *Context) error {
 }
 
 // purgeable returns up to count messages of a chat that aren't deleted
-// yet, newest first: the newest ones, or from reply back.
+// yet (kept with Keep deleted messages or not), newest first: the newest ones, or from reply back.
 func purgeable(b model.Backend, chat string, reply *model.Message, count int) []*model.Message {
 	var out []*model.Message
 	var page []*model.Message
@@ -489,7 +489,7 @@ func purgeable(b model.Backend, chat string, reply *model.Message, count int) []
 	}
 	for len(page) > 0 {
 		for i := len(page) - 1; i >= 0 && len(out) < count; i-- {
-			if page[i].Kind != model.KindDeleted {
+			if page[i].Kind != model.KindDeleted && page[i].Revoked.IsZero() {
 				out = append(out, page[i])
 			}
 		}

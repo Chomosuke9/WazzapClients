@@ -348,10 +348,10 @@ func (b *Backend) onChannelMessage(e *events.Message) bool {
 }
 
 // deletePost applies a channel's delete of a post at at. With
-// model.PrefKeepDeleted on, a post of a channel that isn't yours keeps its
-// content and is only flagged, as a chat's message is (revoke).
+// model.PrefKeepDeleted on, it keeps its content and is only flagged, as a
+// chat's message is (revoke).
 func (b *Backend) deletePost(ctx context.Context, chat, id string, at time.Time) {
-	if meta, _ := b.store.channelMeta(ctx, chat); !meta.owner && b.Pref(model.PrefKeepDeleted) == "on" {
+	if b.Pref(model.PrefKeepDeleted) == "on" {
 		if at.IsZero() {
 			at = b.now()
 		}

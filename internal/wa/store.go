@@ -188,6 +188,8 @@ var migrations = []string{
 	`ALTER TABLE wz_messages ADD COLUMN whisper TEXT NOT NULL DEFAULT ''`,
 	// The admin who deleted someone else's message.
 	`ALTER TABLE wz_messages ADD COLUMN revoked_by TEXT NOT NULL DEFAULT ''`,
+	// The admin who deleted someone else's reply to an announcement.
+	`ALTER TABLE wz_comments ADD COLUMN crevoked_by TEXT NOT NULL DEFAULT ''`,
 	// The chat's disappearing-messages timer in seconds, 0 = off (timer.go).
 	`ALTER TABLE wz_chats ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0`,
 	// 1 for a group you left or were removed from (model.Chat.Left).
@@ -658,6 +660,13 @@ func (s *msgStore) markDeleted(ctx context.Context, chat, id, by string) error {
 func (s *msgStore) markRevoked(ctx context.Context, chat, id string, at time.Time, by string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET revoked = ?, revoked_by = ?, pinned = 0
 		WHERE chat = ? AND id = ? AND kind != ? AND revoked = 0`, at.UnixMilli(), by, chat, id, int(model.KindDeleted))
+	return err
+}
+
+// unmarkRevoked takes markRevoked back: the delete didn't go.
+func (s *msgStore) unmarkRevoked(ctx context.Context, chat, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE wz_messages SET revoked = 0, revoked_by = ''
+		WHERE chat = ? AND id = ? AND kind != ?`, chat, id, int(model.KindDeleted))
 	return err
 }
 

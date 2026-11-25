@@ -131,7 +131,7 @@ func (u *UI) confirmDelete(msgs []*model.Message) {
 		admin = u.amAdmin(c.ID)
 	}
 	for _, m := range msgs {
-		if (!m.FromMe && !admin) || m.Kind == model.KindDeleted || u.now().Sub(m.Time) > 60*time.Hour {
+		if (!m.FromMe && !admin) || m.Kind == model.KindDeleted || !m.Revoked.IsZero() || u.now().Sub(m.Time) > 60*time.Hour {
 			everyone = false
 		}
 	}

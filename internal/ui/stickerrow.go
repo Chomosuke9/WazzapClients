@@ -14,7 +14,7 @@ import (
 // before it: a sticker that doesn't reply to anything (one that does sits
 // in a bubble).
 func groupsSticker(m *model.Message) bool {
-	return m.Kind == model.KindSticker && m.Quote == nil
+	return m.Kind == model.KindSticker && m.Quote == nil && m.Revoked.IsZero()
 }
 
 // stickerGap is the room between two stickers side by side.

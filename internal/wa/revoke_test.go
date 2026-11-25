@@ -14,8 +14,8 @@ import (
 )
 
 // TestKeepDeleted checks that with Keep deleted messages on, a message
-// someone deletes for everyone keeps its text and is flagged, while your
-// own deletes and deletes with the feature off still remove it.
+// deleted for everyone, by you too, keeps its text and is flagged, while
+// deletes with the feature off still remove it.
 func TestKeepDeleted(t *testing.T) {
 	b := testBackend(t)
 	ctx := b.ctx
@@ -71,11 +71,18 @@ func TestKeepDeleted(t *testing.T) {
 		t.Errorf("the message again cleared revoked: %v", m.Revoked)
 	}
 
-	// Your own delete, from another device, still removes it.
+	// So does your own delete, from another device.
 	send("M3", true)
 	revoke("M3", at, true)
-	if m := stored("M3"); m.Kind != model.KindDeleted {
-		t.Errorf("own delete kept the message: kind %v text %q", m.Kind, m.Text)
+	if m := stored("M3"); m.Kind != model.KindText || m.Text != "secret M3" || !m.Revoked.Equal(at) {
+		t.Errorf("own delete: kind %v text %q revoked %v", m.Kind, m.Text, m.Revoked)
+	}
+	// A delete that couldn't be sent is taken back.
+	if err := b.store.unmarkRevoked(ctx, chat, "M3"); err != nil {
+		t.Fatal(err)
+	}
+	if m := stored("M3"); !m.Revoked.IsZero() {
+		t.Errorf("taken back: revoked %v", m.Revoked)
 	}
 }
 

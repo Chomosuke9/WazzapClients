@@ -26,10 +26,12 @@ func albumMember(m *model.Message) bool {
 }
 
 // joinsAlbum reports whether m goes in the grid first starts. A picture
-// that replies to something else starts one of its own.
+// that replies to something else starts one of its own, and so does one
+// kept after it was deleted, which says who deleted it.
 func joinsAlbum(first, m *model.Message) bool {
 	return albumMember(first) && albumMember(m) && m.Album == first.Album &&
 		(m.Quote == nil || first.Quote != nil && m.Quote.ID == first.Quote.ID && m.Quote.ID != "") &&
+		m.Revoked.IsZero() == first.Revoked.IsZero() && m.DeletedBy == first.DeletedBy && m.DeletedByMe == first.DeletedByMe &&
 		m.FromMe == first.FromMe && m.SenderID == first.SenderID && m.Sender == first.Sender
 }
 

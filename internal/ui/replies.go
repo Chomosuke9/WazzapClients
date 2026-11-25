@@ -113,7 +113,8 @@ func (u *UI) loadReplies() {
 	s.msgs = s.msgs[:0:0]
 	for _, r := range s.list {
 		s.msgs = append(s.msgs, &model.Message{ID: "reply:" + r.ID, ChatID: s.msg.ChatID, SenderID: r.SenderID, Sender: r.Sender,
-			FromMe: r.Me, Text: r.Text, Time: r.Time, Receipt: r.Receipt, Revoked: r.Revoked})
+			FromMe: r.Me, Text: r.Text, Time: r.Time, Receipt: r.Receipt, Revoked: r.Revoked,
+			DeletedBy: r.DeletedBy, DeletedByMe: r.DeletedByMe})
 	}
 }
 

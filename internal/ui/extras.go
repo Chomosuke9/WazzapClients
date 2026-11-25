@@ -205,7 +205,7 @@ func (u *UI) graySettings() []settingsSection {
 		u.grayToggle(prefEditHistory, "Edit history", "See what an edited message said before: right-click it and pick Edit history",
 			&u.editHistory, nil),
 		u.grayToggle(model.PrefKeepDeleted, "Keep deleted messages",
-			"When someone deletes a message for everyone or a status, keep showing it, marked Deleted",
+			"When a message is deleted for everyone, by you too, or someone deletes a status, keep showing it, marked with who deleted it",
 			&u.keepDeleted, nil),
 		u.grayToggle(model.PrefViewOnceReplay, "Replay view once",
 			"Open view once photos, videos and voice messages as often as you like, and take screenshots of them",

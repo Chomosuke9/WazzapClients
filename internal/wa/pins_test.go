@@ -159,8 +159,8 @@ func TestStatusQuote(t *testing.T) {
 }
 
 // TestKeepDeletedChannel checks that with Keep deleted messages on, a
-// channel's deleted post keeps its content and is flagged, unless the
-// channel is yours.
+// channel's deleted post keeps its content and is flagged, your own
+// channel's too.
 func TestKeepDeletedChannel(t *testing.T) {
 	b := testBackend(t)
 	ctx := b.ctx
@@ -185,8 +185,8 @@ func TestKeepDeletedChannel(t *testing.T) {
 	}
 	own := types.NewJID("120363000000000002", types.NewsletterServer)
 	b.storeChannel(ctx, channelMeta{jid: own.String(), name: "Mine", following: true, owner: true})
-	if m := del(own, "p3"); m.Kind != model.KindDeleted {
-		t.Errorf("your own channel: kind %v", m.Kind)
+	if m := del(own, "p3"); m.Kind != model.KindText || m.Revoked.IsZero() {
+		t.Errorf("your own channel: kind %v revoked %v", m.Kind, m.Revoked)
 	}
 }
 

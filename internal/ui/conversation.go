@@ -882,15 +882,20 @@ func (u *UI) nbspWidth(gtx C, size unit.Sp) float32 {
 }
 
 // deletedTag is the meta of a message kept with Keep deleted messages,
-// which says whether a group admin deleted it rather than its sender.
-func deletedTag(m *model.Message) string {
-	if m.DeletedBy != "" || m.DeletedByMe {
-		return "Deleted by admin"
+// and the name after it: the group admin's who deleted it, rather than its
+// sender.
+func deletedTag(m *model.Message) (tag, name string) {
+	switch {
+	case m.DeletedBy != "":
+		return "Deleted by", plainText(m.DeletedBy)
+	case m.DeletedByMe || m.FromMe:
+		return "Deleted by you", ""
 	}
-	return "Deleted"
+	return "Deleted", ""
 }
 
 func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color.NRGBA) D {
+	secret := u.secret
 	defer u.unhidden()()
 	gtx.Constraints.Min = image.Point{}
 	var children []layout.FlexChild
@@ -907,11 +912,25 @@ func (u *UI) layoutMeta(gtx C, m *model.Message, col color.NRGBA, tickCol *color
 	}
 	if !m.Revoked.IsZero() && m.Kind != model.KindDeleted {
 		// Kept with Keep deleted messages (extras.go).
+		tag, name := deletedTag(m)
 		children = append(children,
 			layout.Rigid(iconW(icBlock, 14, u.pal.Danger)),
 			layout.Rigid(layout.Spacer{Width: 2}.Layout),
-			layout.Rigid(u.label(12.5, deletedTag(m), u.pal.Danger).Layout),
-			layout.Rigid(layout.Spacer{Width: 4}.Layout))
+			layout.Rigid(u.label(12.5, tag, u.pal.Danger).Layout))
+		if name != "" {
+			// Cut short rather than push the time out, and hidden in
+			// privacy mode.
+			l := u.label(12.5, name, u.pal.Danger)
+			l.hide = secret
+			children = append(children,
+				layout.Rigid(layout.Spacer{Width: 3}.Layout),
+				layout.Flexed(1, func(gtx C) D {
+					gtx.Constraints.Min.X = 0
+					gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(120))
+					return l.Layout(gtx)
+				}))
+		}
+		children = append(children, layout.Rigid(layout.Spacer{Width: 4}.Layout))
 	}
 	if !m.Edited.IsZero() && m.Kind != model.KindDeleted {
 		children = append(children,
@@ -1921,7 +1940,11 @@ func (u *UI) layoutSticker(gtx C, m *model.Message, sz int) D {
 		})
 	})
 	y := sz + gtx.Dp(2)
-	meta.at(gtx, sz-meta.size.X, y)
+	x := sz - meta.size.X
+	if x < 0 && !m.FromMe { // a long one ("Deleted by Alice") grows to the right
+		x = 0
+	}
+	meta.at(gtx, x, y)
 	return D{Size: image.Pt(sz, y+meta.size.Y)}
 }
 

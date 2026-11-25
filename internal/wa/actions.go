@@ -691,13 +691,24 @@ func (b *Backend) Delete(m *model.Message, forEveryone bool) {
 			sender = b.senderOf(m) // as a group admin
 			by = b.ownJID(m.ChatID).String()
 		}
-		_ = b.store.markDeleted(ctx, m.ChatID, m.ID, by)
+		// One that never went isn't kept: nobody else has it.
+		keep := m.Receipt != model.Failed && b.Pref(model.PrefKeepDeleted) == "on"
+		if keep {
+			_ = b.store.markRevoked(ctx, m.ChatID, m.ID, b.now(), by)
+		} else {
+			_ = b.store.markDeleted(ctx, m.ChatID, m.ID, by)
+		}
 		b.emitMessage(m.ChatID, m.ID)
 		b.emitChat(m.ChatID)
 		go func() {
 			if _, err := b.sendMessage(ctx, cli, jid, cli.BuildRevoke(jid, sender, m.ID)); err != nil {
 				b.log.Warnf("revoke in %s: %v", m.ChatID, err)
 				b.emit(model.NoticeEvent{Text: "Couldn't delete the message for everyone."})
+				if keep { // it's still there, and can be deleted again
+					_ = b.store.unmarkRevoked(ctx, m.ChatID, m.ID)
+					b.emitMessage(m.ChatID, m.ID)
+					b.emitChat(m.ChatID)
+				}
 			}
 		}()
 		return

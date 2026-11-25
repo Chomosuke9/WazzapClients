@@ -154,7 +154,8 @@ the next; without one, the app makes one once, prints it and keeps it.
 A page of its own, *Ethically gray features*, holds the ones that show more than the sender
 meant you to see. Each has its own switch:
 
-- 🗑️ **Keep deleted messages** keeps messages and statuses deleted for everyone, marked Deleted.
+- 🗑️ **Keep deleted messages** keeps messages and statuses deleted for everyone, marked Deleted, with who deleted it
+  when that was you or a group admin.
 - 👁️ **Replay view once** opens view once messages as often as you like, screenshots allowed.
 - 👻 **`/ghost`** and ✏️ **Edit history**, above.
 - **`/whisper @member @member <text>`** submits group text, or photos, videos and files, to the selected members' devices only (experimental).

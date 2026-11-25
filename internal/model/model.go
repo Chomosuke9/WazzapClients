@@ -165,8 +165,11 @@ type Reply struct {
 	Text             string
 	Time             time.Time
 	Receipt          Receipt // of yours: Pending, Sent or Failed
-	// Revoked is when it was deleted, for one kept with PrefKeepDeleted.
-	Revoked time.Time
+	// Revoked is when it was deleted, for one kept with PrefKeepDeleted;
+	// DeletedBy and DeletedByMe are as in Message.
+	Revoked     time.Time
+	DeletedBy   string
+	DeletedByMe bool
 }
 
 // PinsMax is how many messages a chat keeps pinned: a further pin takes
@@ -519,7 +522,7 @@ func (m *Message) DeletedNote() string {
 // CanEdit reports whether you can still edit m at now: one of your own
 // sent text messages, photos or videos.
 func (m *Message) CanEdit(now time.Time) bool {
-	if !m.FromMe || m.Kind == KindDeleted || m.Kind == KindUnsupported || m.Kind == KindWaiting || m.Forwarded ||
+	if !m.FromMe || m.Kind == KindDeleted || !m.Revoked.IsZero() || m.Kind == KindUnsupported || m.Kind == KindWaiting || m.Forwarded ||
 		m.Receipt == Pending || m.Receipt == Failed || now.Sub(m.Time) > EditWindow {
 		return false
 	}
@@ -1640,9 +1643,9 @@ const HistoryDefaultDays = 90
 const PrefGhost = "ghost"
 
 // PrefKeepDeleted is the Pref key of the "Keep deleted messages" extra
-// feature, on when "on": a message someone else deletes for everyone keeps
+// feature, on when "on": a message deleted for everyone, by you too, keeps
 // its content and gets Revoked instead of turning into "This message was
-// deleted".
+// deleted". So does a status update someone else deletes.
 const PrefKeepDeleted = "keep_deleted"
 
 // PrefViewOnceReplay is the Pref key of the "Replay view once" extra

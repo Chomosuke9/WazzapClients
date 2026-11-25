@@ -155,6 +155,11 @@ func (b *Backend) update(m *model.Message, f func(*model.Message)) {
 func (b *Backend) Delete(m *model.Message, forEveryone bool) {
 	if forEveryone {
 		b.update(m, func(x *model.Message) {
+			x.DeletedByMe = !x.FromMe
+			if b.Pref(model.PrefKeepDeleted) == "on" {
+				x.Revoked, x.Pinned = b.now(), false
+				return
+			}
 			x.Kind, x.Media, x.Text, x.Quote, x.Thumb, x.ImageA, x.ImageB = model.KindDeleted, model.MediaNone, "", nil, nil, 0, 0
 		})
 		return

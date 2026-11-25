@@ -26,7 +26,17 @@ func (b *Backend) SendReply(m *model.Message, text string) {
 
 // DeleteReply implements model.Backend.
 func (b *Backend) DeleteReply(m *model.Message, r model.Reply) {
-	b.setReplies(m, slices.DeleteFunc(b.Replies(m), func(x model.Reply) bool { return x.ID == r.ID }))
+	rs := b.Replies(m)
+	if b.Pref(model.PrefKeepDeleted) == "on" {
+		for i := range rs {
+			if rs[i].ID == r.ID {
+				rs[i].Revoked, rs[i].DeletedByMe = b.now(), !r.Me
+			}
+		}
+		b.setReplies(m, rs)
+		return
+	}
+	b.setReplies(m, slices.DeleteFunc(rs, func(x model.Reply) bool { return x.ID == r.ID }))
 }
 
 // Reply adds a reply from someone else to m, for tests.
