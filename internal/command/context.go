@@ -73,7 +73,7 @@ type Host interface {
 	SnippetVars(chatID string, reply *model.Message) map[string]string
 	// SnippetsChanged drops what the UI knows of the saved snippets.
 	SnippetsChanged()
-	// EditSnippet opens a snippet in Settings > Snippets.
+	// EditSnippet opens a snippet in Settings > Extra features > Snippets.
 	EditSnippet(id int64)
 	// ShowPayload shows a message's payload (/catch).
 	ShowPayload(chatID, messageID string)

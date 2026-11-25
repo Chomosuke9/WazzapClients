@@ -145,6 +145,8 @@ func (u *UI) extrasSettings() []settingsSection {
 				&u.slash.on, func() { u.conv.richFor = "" }), // the composer starts or stops showing commands
 			{key: "usercmds", title: "Your commands", sub: "Add commands from files, and turn them off or remove them",
 				trailing: icChevronRight, run: func() { u.openSettingsSub("commands") }},
+			{key: "snippets", title: "Snippets", sub: "Messages and payloads /snippet sends",
+				trailing: icChevronRight, run: func() { u.openSettingsSub("snippets") }},
 		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
 		{title: "Mentions", rows: []settingRow{
 			u.extraToggle(prefExtendedMentions, "Extended mentions",

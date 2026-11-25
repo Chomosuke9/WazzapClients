@@ -116,7 +116,7 @@ var settingsViews = map[string]struct {
 	"accounts":       {settingAccount, ""},
 	"accountmode":    {settingAccount, "acct:accounts/2"},
 	"accountcheck":   {settingAccount, "acct:accounts/3"},
-	"snippets":       {settingSnippets, ""},
+	"snippets":       {settingExtras, "snippets"},
 	"gray":           {settingExtras, "gray"},
 	"commands":       {settingExtras, "commands"},
 	"transcripts":    {settingChats, "transcripts"},
@@ -142,9 +142,6 @@ func (u *UI) openSettings(k int) {
 	s.detailList.Position = layout.Position{}
 	s.stale = true
 	s.snippets = nil
-	if k == settingSnippets {
-		u.loadSnippetSettings()
-	}
 }
 
 // openSettingsSub opens a page inside the open category.
@@ -153,6 +150,10 @@ func (u *UI) openSettingsSub(sub string) {
 	s.sub = sub
 	s.detailList.Position = layout.Position{}
 	s.stale = true
+	s.snippets = nil
+	if sub == "snippets" {
+		u.loadSnippetSettings()
+	}
 }
 
 // settingsRows returns the open page's rows. They are listed again only
@@ -169,7 +170,7 @@ func (u *UI) settingsRows() []settingsSection {
 // category to the list. Editing a profile field is cancelled first.
 func (u *UI) settingsBack() {
 	s := &u.settings
-	if s.detail == settingSnippets+1 && s.snippets != nil && s.snippets.editing {
+	if s.sub == "snippets" && s.snippets != nil && s.snippets.editing {
 		u.loadSnippetSettings()
 		return
 	}
@@ -186,10 +187,6 @@ func (u *UI) settingsBack() {
 	case s.sub != "":
 		u.openSettingsSub("")
 	default:
-		if s.detail == settingSnippets+1 {
-			s.snippets = nil
-			s.page = nil
-		}
 		s.detail = 0
 	}
 }
@@ -238,6 +235,8 @@ func settingsSubTitle(sub string) string {
 		return "Ethically gray features"
 	case "commands":
 		return "Your commands"
+	case "snippets":
+		return "Snippets"
 	case "transcripts":
 		return "Transcripts"
 	case "transcriptlang":
@@ -295,6 +294,8 @@ func (u *UI) settingsSubPage(sub string) []settingsSection {
 		return u.graySettings()
 	case "commands":
 		return u.userCommandSettings()
+	case "snippets":
+		return u.snippetSettingsRows()
 	case "transcripts":
 		return u.transcriptSettings()
 	case "transcriptlang":
@@ -392,8 +393,6 @@ func (u *UI) categoryPage(k int) []settingsSection {
 		return u.perfSettingsPage()
 	case settingExtras:
 		return u.extrasSettings()
-	case settingSnippets:
-		return u.snippetSettingsRows()
 	case settingHelp:
 		return u.helpSettings()
 	}
@@ -1007,7 +1006,7 @@ func (u *UI) helpSettings() []settingsSection {
 func (u *UI) layoutSettingsDetail(gtx C) D {
 	p := u.pal
 	s := &u.settings
-	if s.detail == settingSnippets+1 && s.snippets != nil && !s.snippets.editing {
+	if s.sub == "snippets" && s.snippets != nil && !s.snippets.editing {
 		for {
 			if _, ok := s.snippets.search.Update(gtx); !ok {
 				break

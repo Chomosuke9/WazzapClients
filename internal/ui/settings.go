@@ -50,8 +50,7 @@ type settingsState struct {
 }
 
 // settingsItems mirrors WhatsApp Web's settings menu. General, Appearance,
-// Video & voice, Performance, Extra features and Snippets are this app's
-// own.
+// Video & voice, Performance and Extra features are this app's own.
 var settingsItems = [...]listItem{
 	{ic: icLaptop, title: "General", sub: "Startup and close"},
 	{ic: icAccount, title: "Profile", sub: "Name, profile picture, about"},
@@ -64,7 +63,6 @@ var settingsItems = [...]listItem{
 	{ic: icKeyboard, title: "Keyboard shortcuts", sub: "Quick actions"},
 	{ic: icSpeed, title: "Performance", sub: "Animations, media, memory and CPU"},
 	{ic: icExtension, title: "Extra features", sub: "Slash commands and more, not in WhatsApp"},
-	{ic: icDocument, title: "Snippets", sub: "Saved messages and payloads"},
 	{ic: icHelp, title: "Help and feedback", sub: "Help centre, contact us, privacy policy"},
 	{ic: icLogout, title: "Log out", danger: true},
 }
@@ -81,7 +79,6 @@ const (
 	settingShortcuts   // a dialog (openShortcuts)
 	settingPerformance // perf.go
 	settingExtras      // this app's own features (extras.go)
-	settingSnippets
 	settingHelp
 	settingLogout
 )
@@ -249,15 +246,14 @@ func (u *UI) layoutSettingsHits(gtx C, q string) D {
 }
 
 // settingsSearchHits finds q in the categories' names and in the titles
-// of the settings on their pages. Snippets, which load from the database,
-// are found only by name.
+// of the settings on their pages.
 func (u *UI) settingsSearchHits(q string) []settingsHit {
 	var cats, rows []settingsHit
 	for k, it := range settingsItems {
 		if strings.Contains(strings.ToLower(it.title+" "+it.sub), q) {
 			cats = append(cats, settingsHit{category: k, title: it.title})
 		}
-		if k == settingSnippets || k == settingLogout {
+		if k == settingLogout {
 			continue
 		}
 		for _, sub := range append([]string{""}, settingsSearched[k]...) {

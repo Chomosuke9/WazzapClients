@@ -36,7 +36,7 @@ func runSnippet(c *Context) error {
 					return
 				}
 			}
-			fail(c.note(), "There's no snippet called "+v+". Add one in Settings > Snippets.")
+			fail(c.note(), "There's no snippet called "+v+". Add one in Settings > Extra features > Snippets.")
 		}
 	})
 	return nil

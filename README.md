@@ -217,7 +217,7 @@ back to a group broadcast. A partial failure may leave some devices with the mes
 manually resending can duplicate it. Live recipient interoperability has not been
 verified; local tests exercise routing, validation, and failure handling.
 
-Manage saved messages in **Settings > Snippets**: search, add text or message JSON,
+Manage saved messages in **Settings > Extra features > Snippets**: search, add text or message JSON,
 edit, rename, and delete. Snippets belong to the current account. Their text (and a
 payload's text and captions) can use variables, filled in when you send: `{name}` (the
 contact, or in a group the author of the message you reply to), `{first}`, `{mention}`

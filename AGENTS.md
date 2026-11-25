@@ -684,7 +684,7 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    ":moai:" becomes 🗿, Discord style) in shortcode.go; scheduled
                    messages as bubbles after a chat's newest (send now, edit, cancel) and
                    the AFK bar above the chat list, the send button's menu (Schedule message,
-                   View once) and the Schedule message dialog in scheduled.go; saved messages (Settings >
+                   View once) and the Schedule message dialog in scheduled.go; saved messages (Settings > Extra features >
                    Snippets, the snippets /snippet send offers in the slash picker, their {variables}
                    and /catch's payload dialog) in snippets.go; and
                    the Extra features settings page in extras.go (the app's own features,

@@ -24,7 +24,8 @@ type snippetSettings struct {
 
 func (u *UI) openSnippetSettings(id int64) {
 	u.setPage(pageSettings)
-	u.openSettings(settingSnippets)
+	u.openSettings(settingExtras)
+	u.openSettingsSub("snippets")
 	if id != 0 {
 		u.editSnippet(id)
 	}

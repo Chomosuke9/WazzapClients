@@ -209,3 +209,27 @@ func TestSnippetSavesWholeMessage(t *testing.T) {
 		}
 	}
 }
+
+// Snippets is a page of Extra features: Back from the editor is the list,
+// then Extra features, and its state goes with it.
+func TestSnippetsInExtras(t *testing.T) {
+	st := newSlashTest(t, "rina")
+	u := st.u
+	u.ShowPage("extras")
+	u.btn("settings:snippets").Click()
+	waitSnippetUI(t, st, func() bool { return u.settings.snippets != nil && !u.settings.snippets.loading })
+	if u.settings.detail != settingExtras+1 || u.settingsTitle() != "Snippets" {
+		t.Fatalf("opened %q of category %d", u.settingsTitle(), u.settings.detail-1)
+	}
+	u.editSnippet(0)
+	st.frame()
+	u.settingsBack()
+	if s := u.settings.snippets; s == nil || s.editing {
+		t.Fatal("Back from the editor isn't the list")
+	}
+	u.settingsBack()
+	st.frame()
+	if u.settings.snippets != nil || u.settings.detail != settingExtras+1 || u.settings.sub != "" {
+		t.Fatal("Back from the list isn't Extra features")
+	}
+}
