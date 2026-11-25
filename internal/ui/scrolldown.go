@@ -18,8 +18,9 @@ import (
 // Three things float over the open chat's messages, like WhatsApp's:
 //   - a round ⌄ button at the bottom right while you're scrolled up from
 //     the newest message, which goes back down to it, with the number of
-//     unread messages below on it. After a click on a reply's quote it goes
-//     back to that reply first;
+//     unread messages below on it. After clicks on replies' quotes it goes
+//     back to those replies first, the oldest one first, and shows a single
+//     ⌄ while it does: going to the newest message it's a double one;
 //   - in a group, an @ button above it while unread messages mention you (or
 //     reply to you), with how many: each click goes to the next;
 //   - the day you're looking at, pinned at the top of the chat while you
@@ -37,9 +38,11 @@ type convFloat struct {
 	// below is the unread messages under the screen, on the button: the
 	// chat's unread ones when it opened, and those that came since.
 	below int
-	// back are the replies whose quotes were clicked, the last one last:
-	// where the button goes before the newest message.
-	back []backJump
+	// back are the replies whose quotes were clicked that are below the
+	// screen, oldest first whatever the order of the clicks: where the
+	// button goes before the newest message.
+	back     []backJump
+	backAnim tween // the button's icon: ⌄ while there are any
 	// mentions are the unread messages for you that weren't on screen
 	// yet, oldest first.
 	mentions []string
@@ -55,8 +58,18 @@ type convFloat struct {
 
 // backJump is a reply to go back to.
 type backJump struct {
-	id   string
-	left bool // it went off the screen
+	id string
+	at time.Time // when it was sent
+}
+
+// addBack adds reply m to the replies to go back to.
+func (f *convFloat) addBack(m *model.Message) {
+	f.back = slices.DeleteFunc(f.back, func(b backJump) bool { return b.id == m.ID })
+	i := slices.IndexFunc(f.back, func(b backJump) bool { return !b.at.Before(m.Time) })
+	if i < 0 {
+		i = len(f.back)
+	}
+	f.back = slices.Insert(f.back, i, backJump{id: m.ID, at: m.Time})
 }
 
 // dayChip is a day chip of the list, recorded while it laid out.
@@ -115,16 +128,14 @@ func (u *UI) trackFloats(rows []convRow) {
 		return false
 	}
 	if g := &u.conv.glide; !g.pending && !g.active && u.conv.scrollTo == nil {
-		for len(f.back) > 0 {
-			b := &f.back[len(f.back)-1]
+		f.back = slices.DeleteFunc(f.back, func(b backJump) bool {
 			at := slices.IndexFunc(rows, func(r convRow) bool { return r.has(b.id) })
-			// Not loaded, it's below the loaded messages: still to come.
-			if at < 0 && u.conv.newerMore || at >= last {
-				b.left = true
-				break
+			if at < 0 {
+				// Not loaded: still to come when it's below the loaded ones.
+				return !u.conv.newerMore || len(u.msgs) > 0 && b.at.Before(u.msgs[len(u.msgs)-1].Time)
 			}
-			f.back = f.back[:len(f.back)-1]
-		}
+			return at < last
+		})
 		f.mentions = slices.DeleteFunc(f.mentions, seen)
 	}
 }
@@ -232,18 +243,17 @@ func (u *UI) layoutFloats(gtx C, c *model.Chat, rows []convRow) {
 	u.layoutMentionButton(gtx, sz)
 }
 
-// goDown is the ⌄ button: back to the reply whose quote was clicked last,
-// or else to the newest message.
+// goDown is the ⌄ button: back to the oldest of the replies whose quotes
+// were clicked, or else to the newest message.
 func (u *UI) goDown() {
 	f := &u.conv.float
-	if n := len(f.back); n > 0 {
-		id := f.back[n-1].id
-		f.back = f.back[:n-1]
+	for len(f.back) > 0 {
+		id := f.back[0].id
+		f.back = f.back[1:]
 		if u.jumpTo(id) {
 			return
 		}
 	}
-	f.back = nil
 	u.scrollMessages(layout.Position{})
 	f.below = 0
 }
@@ -314,7 +324,8 @@ func (u *UI) layoutMentionButton(gtx C, sz image.Point) {
 }
 
 // layoutDownButton draws the ⌄ button at the bottom right of a list of
-// size sz while it's scrolled up, with the unread count over it.
+// size sz while it's scrolled up, with the unread count over it. One ⌄
+// goes back to a reply, two to the newest message.
 func (u *UI) layoutDownButton(gtx C, sz image.Point) {
 	f := &u.conv.float
 	if f.down.Clicked(gtx) {
@@ -326,5 +337,10 @@ func (u *UI) layoutDownButton(gtx C, sz image.Point) {
 	}
 	s := gtx.Dp(42)
 	at := image.Pt(sz.X-s-gtx.Dp(18), sz.Y-s-gtx.Dp(14))
-	u.floatButton(gtx, &f.down, at, s, v, f.away, f.below, iconW(icChevron, 28, u.pal.Icon))
+	u.floatButton(gtx, &f.down, at, s, v, f.away, f.below, func(gtx C) D {
+		b := f.backAnim.step(gtx, len(f.back) > 0, durHoverOut)
+		withOpacity(gtx, b, func() { drawIcon(gtx, icChevron, 28, u.pal.Icon) })
+		withOpacity(gtx, 1-b, func() { drawIcon(gtx, icChevronTwice, 28, u.pal.Icon) })
+		return D{Size: image.Pt(gtx.Dp(28), gtx.Dp(28))}
+	})
 }

@@ -36,6 +36,7 @@ var (
 	icGroup         = icon.GroupFill
 	icPerson        = icon.PersonFill
 	icChevron       = icon.KeyboardArrowDown
+	icChevronTwice  = icon.KeyboardDoubleArrowDown
 	icDocument      = icon.Description
 	icLocation      = icon.LocationOn
 	icSticker       = icon.StickyNote2

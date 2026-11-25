@@ -164,6 +164,47 @@ func TestJumpBack(t *testing.T) {
 	}
 }
 
+// After clicks on several replies' quotes, the down button goes back to
+// them from the oldest, whatever the order they were clicked in, with the
+// single arrow until the newest message is next.
+func TestJumpBackOrder(t *testing.T) {
+	ft := newFloatTest("long")
+	f := &ft.conv.float
+	old, first, second := ft.msgs[5], ft.msgs[30], ft.msgs[60]
+	for _, m := range []*model.Message{first, second, first} {
+		ft.jumpFrom(m, old.ID)
+	}
+	ft.frames(12)
+	if !ft.onScreen(old.ID) || len(f.back) != 2 || f.backAnim.v != 1 {
+		t.Fatalf("after the clicks: back %v, single arrow %v", f.back, f.backAnim.v)
+	}
+	f.down.Click()
+	ft.frames(12)
+	if !ft.onScreen(first.ID) || len(f.back) != 1 || f.backAnim.v != 1 {
+		t.Fatalf("not at the oldest reply: back %v, single arrow %v", f.back, f.backAnim.v)
+	}
+	f.down.Click()
+	ft.frames(12)
+	if !ft.onScreen(second.ID) || len(f.back) != 0 || f.backAnim.v != 0 || !f.away {
+		t.Fatalf("not at the next reply: back %v, single arrow %v", f.back, f.backAnim.v)
+	}
+	f.down.Click()
+	ft.frames(12)
+	if last := ft.msgs[len(ft.msgs)-1]; !ft.onScreen(last.ID) || f.away {
+		t.Error("not at the newest message")
+	}
+
+	// Scrolled past, a reply no longer counts, but those below it do.
+	ft.jumpFrom(second, old.ID)
+	ft.jumpFrom(first, old.ID)
+	ft.frames(12)
+	ft.jumpTo(ft.msgs[40].ID)
+	ft.frames(12)
+	if len(f.back) != 1 || f.back[0].id != second.ID {
+		t.Errorf("past the first reply: back %v", f.back)
+	}
+}
+
 // The @ button counts a group's unread messages for you and goes to them
 // in turn, oldest first; one that comes on screen no longer counts.
 func TestMentionButton(t *testing.T) {

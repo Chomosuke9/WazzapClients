@@ -1789,7 +1789,7 @@ func (u *UI) quoteClicked(gtx C, m *model.Message) {
 			id = first
 		}
 	}
-	u.jumpFrom(m.ID, id)
+	u.jumpFrom(m, id)
 }
 
 // layoutStickerMessage draws a sticker. A sticker that replies to a

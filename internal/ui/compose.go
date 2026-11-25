@@ -138,10 +138,9 @@ func (u *UI) scrollMessages(p layout.Position) {
 
 // jumpFrom jumps to message id from the message from, which replies to
 // it: the ⌄ button then goes back there first (scrolldown.go).
-func (u *UI) jumpFrom(from, id string) {
+func (u *UI) jumpFrom(from *model.Message, id string) {
 	if u.jumpTo(id) {
-		f := &u.conv.float
-		f.back = append(f.back, backJump{id: from})
+		u.conv.float.addBack(from)
 	}
 }
 
