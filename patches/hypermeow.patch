@@ -23,6 +23,62 @@ index 0000000..f200f59
 +		t.Errorf("mediatype %q, want sticker", got)
 +	}
 +}
+diff --git a/chattheme_patch_test.go b/chattheme_patch_test.go
+new file mode 100644
+index 0000000..494125f
+--- /dev/null
++++ b/chattheme_patch_test.go
+@@ -0,0 +1,26 @@
++package whatsmeow
++
++import (
++	"testing"
++
++	"github.com/polymorfa/hypermeow/proto/waE2E"
++)
++
++// A chat's theme goes as type="media" with mediatype="chat_theme", as
++// WhatsApp's clients want it, and its photo under keys of its own.
++func TestChatThemeStanza(t *testing.T) {
++	msg := &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
++		Type:             waE2E.ProtocolMessage_CHAT_THEME_SETTING.Enum(),
++		ChatThemeSetting: &waE2E.ChatThemeSetting{},
++	}}
++	if typ, media := getTypeFromMessage(msg), getMediaTypeFromMessage(msg); typ != "media" || media != "chat_theme" {
++		t.Errorf("sent as type %q, mediatype %q", typ, media)
++	}
++	if got := mediaTypeToMMSType[MediaChatWallpaper]; got != "chat-wallpaper-image" {
++		t.Errorf("the photo is uploaded as %q", got)
++	}
++	// Other protocol messages stay text.
++	if media := getMediaTypeFromMessage(&waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{Type: waE2E.ProtocolMessage_REVOKE.Enum()}}); media != "" {
++		t.Errorf("a revoke got mediatype %q", media)
++	}
++}
+diff --git a/download.go b/download.go
+index 3a78292..487ad0c 100644
+--- a/download.go
++++ b/download.go
+@@ -50,6 +50,9 @@ const (
+ 	MediaStickerPackThumbnail MediaType = "WhatsApp Sticker Pack Thumbnail Keys"
+ 	MediaStickerPack          MediaType = "WhatsApp Sticker Pack Keys"
+ 	MediaLinkThumbnail        MediaType = "WhatsApp Link Thumbnail Keys"
++
++	// WazzapClients patch: a chat theme's photo (ChatCustomImageWallpaper).
++	MediaChatWallpaper MediaType = "WhatsApp Chat Wallpaper Keys"
+ )
+ 
+ // DownloadableMessage represents a protobuf message that contains attachment info.
+@@ -123,6 +126,9 @@ var mediaTypeToMMSType = map[MediaType]string{
+ 	MediaStickerPack:          "sticker-pack",
+ 	MediaLinkThumbnail:        "thumbnail-link",
+ 	MediaStickerPackThumbnail: "thumbnail-sticker-pack",
++
++	// WazzapClients patch: see MediaChatWallpaper.
++	MediaChatWallpaper: "chat-wallpaper-image",
+ }
+ 
+ // DownloadAny loops through the downloadable parts of the given message and downloads the first non-nil item.
 diff --git a/message.go b/message.go
 index 971974d..d17fef8 100644
 --- a/message.go
@@ -44,7 +100,7 @@ index 971974d..d17fef8 100644
  	if err != nil {
  		cli.Log.Warnf("Failed to parse message: %v", err)
 diff --git a/send.go b/send.go
-index 5fb006b..a09f3c9 100644
+index 5fb006b..10e278a 100644
 --- a/send.go
 +++ b/send.go
 @@ -174,6 +174,14 @@ type SendRequestExtra struct {
@@ -104,7 +160,18 @@ index 5fb006b..a09f3c9 100644
  	case msg.EphemeralMessage != nil:
  		return getMediaTypeFromMessage(msg.EphemeralMessage.Message)
  	case msg.DocumentWithCaptionMessage != nil:
-@@ -1156,6 +1178,12 @@ const RemoveReactionText = ""
+@@ -1055,6 +1077,10 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
+ 		return "product"
+ 	case msg.InteractiveResponseMessage != nil:
+ 		return "native_flow_response"
++	// WazzapClients patch: a chat's theme goes as type="media" with
++	// mediatype="chat_theme"; Android drops one that doesn't.
++	case msg.GetProtocolMessage().GetType() == waE2E.ProtocolMessage_CHAT_THEME_SETTING:
++		return "chat_theme"
+ 	default:
+ 		return ""
+ 	}
+@@ -1156,6 +1182,12 @@ const RemoveReactionText = ""
  
  func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  	switch {
@@ -117,7 +184,7 @@ index 5fb006b..a09f3c9 100644
  	case msg.EditedMessage != nil && msg.EditedMessage.Message != nil:
  		return getEditAttribute(msg.EditedMessage.Message)
  	case msg.ProtocolMessage != nil && msg.ProtocolMessage.GetKey() != nil:
-@@ -1170,6 +1198,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
+@@ -1170,6 +1202,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  			if msg.ProtocolMessage.EditedMessage != nil {
  				return types.EditAttributeMessageEdit
  			}

@@ -464,6 +464,18 @@ Gotchas already found in the pinned version (v0.10.x):
   unanswered ping reconnects; `InitialAutoReconnect` retries a first connect that
   failed; and `AutoReconnectHook` caps hypermeow's wait between tries (2 s more
   each time, without end) at 10 s.
+- A chat's theme set for everyone is a `CHAT_THEME_SETTING` protocol message (34,
+  `chatThemeSetting`), in groups and private chats, that goes as `type="media"` with
+  `mediatype="chat_theme"` (hypermeow's patch), or Android drops it. It names a color scheme
+  (`colorSchemeID`), a wallpaper, both, or `clearTheme`; what it leaves out stays, so
+  `mergeTheme` (`internal/wa/chattheme.go`) merges it into the chat's state in `wz_meta`, in
+  the order of the stanzas' times (`settingTimestampMS` is the sender's word). A photo is
+  uploaded as `chat-wallpaper-image` under `WhatsApp Chat Wallpaper Keys`; WhatsApp's own
+  (`stockImageID`) come from `static.whatsapp.net/downloadable`. The UI lays it over the
+  chat's look (`sharedLook`) and drops it when the user picks or resets one: whichever came
+  last shows. In a group any member may set it, unless only admins edit its settings (`Locked`).
+  Other clients send scheme IDs WhatsApp Web lacks (`Red@Minimal`). With `-debug`
+  each is logged whole, a photo's media key included.
 - Keep in chat is a `KeepInChatMessage` (kept in `wz_messages.kept`; history sync says it
   in `WebMessageInfo.keepInChat`). WhatsApp reports go only from the phone: hypermeow has
   no call for them, so Report asks and offers to block (`confirmReport`).
@@ -747,7 +759,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    pages; the doodles are one app-wide preference,
                    `prefDoodles`, which a chat's own theme can override) in chattheme.go, a photo
                    wallpaper (cropped around a point you pick on its Photo position page,
-                   only the part that shows decoded) in wallphoto.go, their tables
+                   only the part that shows decoded) in wallphoto.go, one set for everyone in a chat (theirs
+                   over yours, and the panel's Everyone rows) in sharedtheme.go, their tables
                    read from WhatsApp Web's modules in chatthemes.go, and the App theme color
                    (Settings > Appearance, the accent across the app) in apptheme.go; palettes
                    (the same page's Palette: Catppuccin, Tokyo Night, Gruvbox, Everforest, Solarized or Ayu
@@ -851,7 +864,8 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    each was set from a raw usync) and a chat's Restricted chat
                    (LIMIT_SHARING, kept with its info; it can't be set) in about.go;
                    a chat's disappearing-messages timer (wz_chats.ephemeral, for the
-                   avatars' timer badge) in timer.go;
+                   avatars' timer badge) in timer.go; chats' themes set for everyone
+                   (CHAT_THEME_SETTING, their photos in <data>/chat-themes) in chattheme.go;
                    voice messages' transcripts (wz_transcripts) in transcripts.go;
                    channels' details and suggestions (wz_channels) in channels.go, their posts,
                    reaction counts, live updates and actions in channelposts.go;

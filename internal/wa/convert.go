@@ -425,6 +425,10 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 			p.target = ""
 			p.msg, ok = timerSystem(evt, chat, pm)
 			return p, ok
+		case waE2E.ProtocolMessage_CHAT_THEME_SETTING:
+			p.target = ""
+			p.msg, ok = themeSystem(evt, chat, b.canonical(ctx, evt.Info.Sender), pm.GetChatThemeSetting())
+			return p, ok
 		case waE2E.ProtocolMessage_GROUP_MEMBER_LABEL_CHANGE:
 			if ml := pm.GetMemberLabel(); evt.Info.IsGroup && b.setMemberLabel(ctx, chat.String(), evt.Info.Sender, ml) {
 				b.emitLabel(chat.String(), evt.Info.Sender, ml.GetLabel())

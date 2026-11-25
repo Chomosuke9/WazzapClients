@@ -75,6 +75,8 @@ type solidWall struct {
 // wallpaperDir>". A third part says the wallpaper's doodles: "bare" draws
 // none and "doodles" some, whatever prefDoodles says. A chat without a
 // value takes lookAll's; "|" is a chat set back to the app's own look.
+// Over it goes the look someone set for everyone in the chat, until the
+// user picks another (sharedtheme.go).
 const (
 	prefChatTheme = "theme:"
 	lookAll       = "*"
@@ -147,12 +149,24 @@ func (u *UI) lookOf(id string) chatLook {
 		l = chatLook{scheme: schemeIndex(scheme), wall: wall,
 			bare: doodles != "" && doodles != "doodles", doodles: doodles == "doodles"}
 	}
+	if id != lookAll {
+		if s := u.backend.SharedTheme(id); s != nil {
+			l = u.sharedLook(l, s)
+		}
+	}
 	u.themes[id] = l
 	return l
 }
 
-// setLook keeps chat id's look.
+// setLook keeps chat id's look, in place of one set for everyone.
 func (u *UI) setLook(id string, l chatLook) {
+	if path, ok := strings.CutPrefix(l.wall, sharedWall); ok {
+		// Its file goes with the shared look: the user's keeps a copy.
+		l.wall = ""
+		if name, err := keepWallPhoto(path); err == nil {
+			l.wall = photoWallValue(name, wallFocusCenter)
+		}
+	}
 	v := chatThemes[l.scheme].id
 	if l.wall != "" || l.bare || l.doodles {
 		v += "|" + l.wall
@@ -167,6 +181,9 @@ func (u *UI) setLook(id string, l chatLook) {
 		v = "|" // the app's look, not every chat's
 	}
 	u.backend.SetPref(prefChatTheme+id, v)
+	if id != lookAll {
+		u.backend.DropSharedTheme(id)
+	}
 	u.themes = nil // lookAll's changes every chat without one
 	u.lookPal = lookPal{}
 }
@@ -182,10 +199,12 @@ func (u *UI) setChatTheme(id string, i int) {
 }
 
 // resetLook gives chat id the default look again: every chat's, or for
-// lookAll the app's own.
+// lookAll the app's own. One set for everyone goes too.
 func (u *UI) resetLook(id string) {
 	if id == lookAll {
 		u.setDoodles(true)
+	} else {
+		u.backend.DropSharedTheme(id)
 	}
 	u.backend.SetPref(prefChatTheme+id, "")
 	u.themes = nil
@@ -193,8 +212,10 @@ func (u *UI) resetLook(id string) {
 }
 
 // setBubbles changes a chat's bubbles and keeps its wallpaper.
-func (u *UI) setBubbles(id string, i int) {
-	l := u.lookOf(id)
+func (u *UI) setBubbles(id string, i int) { u.setLook(id, u.lookOf(id).withBubbles(i)) }
+
+// withBubbles is the look with scheme i's bubbles and its own wallpaper.
+func (l chatLook) withBubbles(i int) chatLook {
 	if l.wall == "" {
 		l.wall = "default"
 		if t := chatThemes[l.scheme]; t.id != "" && t.kind != minimal {
@@ -208,7 +229,7 @@ func (u *UI) setBubbles(id string, i int) {
 		l.wall == "plain" && t.kind == minimal {
 		l.wall = "" // what the scheme has anyway
 	}
-	u.setLook(id, l)
+	return l
 }
 
 // setWall changes a chat's wallpaper and keeps its bubbles.
@@ -273,6 +294,12 @@ func (u *UI) wallOf(p *Palette, l chatLook) wallLook {
 		if i, err := strconv.Atoi(arg); err == nil && i >= 0 && i < len(solidWalls) {
 			return solidLook(solidWalls[i], dark)
 		}
+	case "solid":
+		if w, ok := parseSolidWall(arg); ok {
+			return w.look(dark)
+		}
+	case "shared":
+		return wallLook{bg: def.bg, doodle: def.bg, plain: true, photo: arg, focus: wallFocusCenter}
 	case "photo":
 		if file, focus := parsePhotoWall(arg); wallpaperDir != "" && file != "" {
 			return wallLook{bg: def.bg, doodle: def.bg, plain: true, photo: filepath.Join(wallpaperDir, filepath.Base(file)), focus: focus}
@@ -813,7 +840,7 @@ func (u *UI) themeRows(gtx C, id string, w int) []layout.Widget {
 			})
 		},
 	)
-	return rows
+	return append(rows, u.shareRows(gtx, id)...)
 }
 
 // allThemeRows is See all's page: every Theme.
@@ -1028,7 +1055,7 @@ func (u *UI) wallRows(gtx C, id string, w int) []layout.Widget {
 		})
 	}}
 	walls := []string{"default", "plain"}
-	if strings.HasPrefix(cur, "photo:") || strings.HasPrefix(cur, "color:") {
+	if kind, _, _ := strings.Cut(cur, ":"); kind == "photo" || kind == "color" || kind == "solid" || kind+":" == sharedWall {
 		walls = append([]string{cur}, walls...)
 	}
 	seen := map[string]bool{}
@@ -1046,6 +1073,10 @@ func (u *UI) wallRows(gtx C, id string, w int) []layout.Widget {
 		if c.Clicked(gtx) {
 			if wall == cur && strings.HasPrefix(wall, "photo:") {
 				// The chosen photo again: its position.
+				u.themeGo("pos")
+			} else if wall == cur && strings.HasPrefix(wall, sharedWall) {
+				// Someone's photo becomes yours, to position.
+				u.setWall(id, wall)
 				u.themeGo("pos")
 			} else {
 				u.setWall(id, wall)

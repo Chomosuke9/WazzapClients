@@ -93,6 +93,7 @@ type Backend struct {
 	liveGen atomic.Int64
 	abouts  aboutCache // contacts' about texts (about.go)
 
+	themeMu      sync.Mutex // guards the chats' shared themes (chattheme.go)
 	statusPriv   statusPrivacy
 	searchMu     sync.Mutex
 	searchCancel context.CancelFunc // the running SearchMessages of a chat
@@ -547,6 +548,7 @@ func (b *Backend) wipeData() {
 		b.log.Errorf("wipe message store: %v", err)
 	}
 	b.cleanSnippetMedia()
+	_ = os.RemoveAll(b.themeDir())
 }
 
 func (b *Backend) Chats() []*model.Chat {
@@ -822,6 +824,7 @@ func (b *Backend) handle(evt any) {
 			b.refreshGroupNames()
 			b.resyncAppStateOnce()
 			b.refreshChannels()
+			b.fetchThemes(ctx)
 		})
 	case *events.OfflineSyncCompleted:
 		b.emit(model.CaughtUpEvent{})
@@ -1172,6 +1175,7 @@ func (b *Backend) resyncAppStateOnce() {
 
 func (b *Backend) onMessage(e *events.Message) {
 	ctx := b.ctx
+	b.logChatTheme(e)
 	if isStatus(e.Info.Chat) || isGroupStatus(e) || b.isGroupStatusRevoke(e) {
 		b.onStatus(e)
 		return
@@ -1180,6 +1184,7 @@ func (b *Backend) onMessage(e *events.Message) {
 		return
 	}
 	b.noteTimer(ctx, e)
+	b.noteTheme(ctx, b.canonical(ctx, e.Info.Chat).String(), e)
 	p, ok := b.parse(ctx, e)
 	if !ok || p.target != "" || p.msg.isCopy {
 		// What came after "Waiting for this message" may show nothing of its own.
@@ -1590,6 +1595,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 				}
 				continue
 			}
+			b.noteTheme(ctx, jid.String(), evt)
 			p, ok := b.parse(ctx, evt)
 			if !ok {
 				continue

@@ -4,8 +4,8 @@
 text library) to use far less memory for fonts, and lets the app swap emoji
 pictures. `gio.patch` patches Gio (`gioui.org`) so it lets go of pictures it
 drew. `hypermeow.patch` patches hypermeow (`github.com/polymorfa/hypermeow`)
-so it decrypts status updates, can send to some of status@broadcast, can take scheduled messages back
-and sends stickers with a sound as stickers. `go.mod` replaces the modules with
+so it decrypts status updates, can send to some of status@broadcast, can take scheduled messages back,
+sends stickers with a sound as stickers and chat themes as chat themes. `go.mod` replaces the modules with
 `third_party/typesetting`, `third_party/gio` and `third_party/hypermeow`,
 which `apply.sh` builds from the Go module cache and are not checked in:
 
@@ -89,6 +89,10 @@ What `hypermeow.patch` does (marked `WazzapClients patch`):
 - `send.go`: a sticker with a sound (`audioStickerMessage`) goes as
   `type="media"` with `mediatype="sticker"`, as phones send it. hypermeow sent
   it as `type="text"`. `audiosticker_patch_test.go` checks it.
+- `send.go`, `download.go`: a chat's theme for everyone (`CHAT_THEME_SETTING`)
+  goes as `type="media"` with `mediatype="chat_theme"`, without which phones
+  drop it, and `MediaChatWallpaper` uploads and downloads its photo.
+  `chattheme_patch_test.go` checks it.
 
 After `go get github.com/polymorfa/hypermeow@main` run `apply.sh` again; if
 the hunk no longer applies, regenerate the patch as below.

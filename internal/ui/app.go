@@ -1389,6 +1389,8 @@ func (u *UI) applyEvents() {
 			u.toast(e.Text)
 		case model.ScheduledEvent:
 			u.sched.ver++
+		case model.ChatThemeEvent:
+			u.themes, u.lookPal = nil, lookPal{}
 		case model.PhoneEvent:
 			if !u.slashPhoneEvent(e) && !u.cardPhoneEvent(e) {
 				u.phoneEvent(e)

@@ -1896,6 +1896,15 @@ type Backend interface {
 	// since this computer saw it, newest first.
 	MemberChanges(chatID string) []MemberChange
 
+	// SharedTheme returns the look someone set for everyone in a chat, or
+	// nil; a ChatThemeEvent follows its changes. DropSharedTheme forgets it,
+	// for the look the user chose since, or the default one.
+	SharedTheme(chatID string) *SharedTheme
+	DropSharedTheme(chatID string)
+	// ShareTheme sets a chat's look for everyone in it, in the background.
+	// A NoticeEvent says how it went.
+	ShareTheme(chatID string, t SharedTheme)
+
 	// Pref and SetPref keep small UI preferences (recent emoji).
 	Pref(key string) string
 	SetPref(key, value string)

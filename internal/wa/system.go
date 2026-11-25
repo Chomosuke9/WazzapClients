@@ -28,6 +28,10 @@ import (
 
 type stubType = waWeb.WebMessageInfo_StubType
 
+// stubChatTheme is a chat's theme set for everyone in it, which WhatsApp's
+// clients note in the chat without a stub of their own: a number of ours.
+const stubChatTheme stubType = 100034
+
 // shownStubs are the stubs the chat shows; the others aren't stored.
 var shownStubs = map[stubType]bool{
 	waWeb.WebMessageInfo_GROUP_CREATE:                        true,
@@ -56,6 +60,7 @@ var shownStubs = map[stubType]bool{
 	waWeb.WebMessageInfo_CALL_MISSED_GROUP_VOICE:             true,
 	waWeb.WebMessageInfo_CALL_MISSED_GROUP_VIDEO:             true,
 	waWeb.WebMessageInfo_PINNED_MESSAGE_IN_CHAT:              true,
+	stubChatTheme: true,
 }
 
 // systemMsg makes a system message of chat: stub t with params, made by
@@ -473,6 +478,11 @@ func (b *Backend) systemText(ctx context.Context, r rawMsg, t stubType, params [
 		return "Missed group video call", model.NoticeMissedCall
 	case waWeb.WebMessageInfo_PINNED_MESSAGE_IN_CHAT:
 		return by("pinned a message", "A message was pinned"), 0
+	case stubChatTheme:
+		if param(0) == "clear" {
+			return by("reset the chat theme", "The chat theme was reset"), 0
+		}
+		return by("changed the chat theme", "The chat theme was changed"), 0
 	}
 	return "", 0
 }

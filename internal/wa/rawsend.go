@@ -74,7 +74,8 @@ func (b *Backend) SendPayload(chat, body, messageID string, reply *model.Message
 		IsFromMe: true, IsGroup: jid.Server == types.GroupServer}, ID: mid, Timestamp: now}, Message: msg, RawMessage: msg}
 	e.UnwrapRaw()
 	p, ok := b.parse(b.ctx, e)
-	if groupStatus || !ok || p.target != "" || p.msg.isCopy {
+	// A system message's payload is its stub, made as it's noted (onMessage).
+	if groupStatus || !ok || p.target != "" || p.msg.isCopy || p.msg.Kind == model.KindSystem {
 		if !cli.IsConnected() {
 			return nil, false, errors.New("You're offline. Try again once connected.")
 		}

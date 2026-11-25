@@ -28,9 +28,13 @@ type Backend struct {
 	now        func() time.Time
 	meName     string
 	prefs      map[string]string
-	lists      []*model.ChatList
-	favs       map[string]bool // favourite stickers, by message
-	acc        *model.Account  // see demoAccount
+	// sharedThemes are chats' themes set for everyone, and SharedThemesSent
+	// those ShareTheme set (chattheme.go).
+	sharedThemes     map[string]*model.SharedTheme
+	SharedThemesSent []model.SharedTheme
+	lists            []*model.ChatList
+	favs             map[string]bool // favourite stickers, by message
+	acc              *model.Account  // see demoAccount
 	// media holds the pictures of stickers sent with SendNewSticker, by
 	// chat and message ID.
 	media      map[string][]byte
