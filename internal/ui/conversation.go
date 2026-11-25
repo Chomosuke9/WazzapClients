@@ -429,6 +429,7 @@ func growRow(gtx C, from int, e float32, w layout.Widget) D {
 
 func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	defer u.mediaChat.track(gtx, u)
+	seek := u.dragMessages(gtx, c)
 	u.pageMessages(c)
 	rows := u.rows(c)
 	// The typing bubble grows in and shrinks away like a message, instead
@@ -471,6 +472,9 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 	margin := max(gtx.Dp(12), min(gtx.Dp(63), width*13/100))
 	maxBubble := min(width*69/100, width-2*margin)
 
+	if seek {
+		u.seekTo(rows, gtx.Constraints.Max.Y)
+	}
 	if p := u.conv.scrollTo; p != nil {
 		u.conv.list.Position = *p
 		u.conv.list.Position.Offset -= gtx.Dp(u.conv.scrollAbove)
@@ -503,7 +507,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 		}
 		u.pruneLeaving(c.ID)
 	}()
-	dims := u.scrollList(gtx, &u.conv.list, len(rows), func(gtx C, i int) D {
+	dims := u.messageList(gtx, rows, func(gtx C, i int) D {
 		r := rows[i]
 		in := convInset(rows, i, msgRows)
 		in.Left, in.Right = dp(gtx, margin), dp(gtx, margin)
@@ -573,6 +577,7 @@ func (u *UI) layoutMessages(gtx C, c *model.Chat) D {
 			u.conv.typingH = dims.Size.Y + gtx.Dp(8)
 		}
 		u.conv.heights[i] = dims.Size.Y
+		u.conv.scroll.laidOut(&u.conv.list.List, i, dims.Size.Y)
 		return dims
 	})
 	u.layoutFloats(gtx, c, rows)

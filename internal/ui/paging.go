@@ -51,9 +51,10 @@ func (u *UI) reloadMessages() {
 }
 
 // pageMessages loads the next page when the list, as laid out last frame,
-// is near an end of the loaded messages.
+// is near an end of the loaded messages. A dragged scrollbar waits for its
+// release (convscroll.go).
 func (u *UI) pageMessages(c *model.Chat) {
-	if len(u.msgs) == 0 || u.conv.scrollTo != nil {
+	if len(u.msgs) == 0 || u.conv.scrollTo != nil || u.bar(&u.conv.list).dragging {
 		return
 	}
 	pos := u.conv.list.Position
@@ -100,6 +101,7 @@ func (u *UI) setMsgs(c *model.Chat, msgs []*model.Message) {
 	}
 	u.msgs = msgs
 	u.msgsVer++
+	u.bar(l).glide()
 	// The list sticks to its end only when that is the newest message.
 	l.ScrollToEnd = !u.conv.newerMore
 	if anchor < 0 {

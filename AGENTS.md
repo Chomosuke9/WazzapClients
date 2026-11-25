@@ -110,7 +110,11 @@ Gotchas already found in the pinned version (v0.10.x):
   whole process per-monitor aware at init.
 - `material.List`'s scrollbar turns thumb drags into "scroll by N items" against a length
   re-estimated from the visible rows, so the thumb drifts from the pointer. Use
-  `u.scrollList` (`internal/ui/scrollbar.go`) for every list.
+  `u.scrollList` (`internal/ui/scrollbar.go`) for every list. The open chat has a bar of
+  its own (`messageList`, `convscroll.go`) over the loaded messages. Don't load a page
+  while its thumb is dragged: the thumb's place is then on older messages, and a thumb
+  near the top read page after page. Nor make it stand for the whole chat: in one of
+  10k messages a pixel skipped too many to find any.
 - Gio's shaper keeps up to 1000 color-emoji bitmaps decoded at the font's full 136x128
   (70 KB each) for good. The emoji picker draws its emojis as pictures from
   `u.emojiImgs` instead (`emojiimg.go`); scrolling it through Labels pinned ~70 MB.

@@ -322,6 +322,7 @@ type UI struct {
 		// olderMore and newerMore report stored messages past either end
 		// of msgs (see paging.go).
 		olderMore, newerMore bool
+		scroll               convScroll      // the scrollbar (convscroll.go)
 		pins                 pinState        // the pinned banner's messages
 		members              *model.ChatInfo // group members for @mentions
 		membersFor           string
