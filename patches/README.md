@@ -110,6 +110,12 @@ What `typesetting.patch` does (each change is marked `WazzapClients patch`):
 - `font/font.go`, `renderer.go`: `Font.BitmapHook` can hand out another PNG
   for a bitmap glyph. The 3D emoji style (`internal/ui/emojistyle.go`) shows
   its downloaded pictures in place of the 2D font's this way.
+- `fontscan/anywhere.go`, `fontmap.go`: a character that no font of the query's
+  families (or close to them) has is looked for in every font there is before
+  it's drawn as a box. Upstream looks in the fonts of its script, which it
+  isn't told (Gio doesn't call `SetScript`): on Linux Thai, mathematical
+  letters (𝗯𝗼𝗹𝗱, 𝓼𝓬𝓻𝓲𝓹𝓽) and many symbols were boxes with Noto installed.
+  Private use runes still are: icon fonts cost up to 37 MB to open.
 
 To move to another go-text version (Gio decides which one it needs), change
 `go.mod`, run `apply.sh`, fix any rejected hunks in `third_party/typesetting`,

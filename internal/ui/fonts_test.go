@@ -84,6 +84,38 @@ func TestDigitsWithoutSegoe(t *testing.T) {
 	}
 }
 
+// TestFallbackAnywhere checks that a character none of the query's fonts
+// has comes from whichever font has it, of another family and weight
+// (patches/typesetting.patch): fancy letters, Thai and others drew as boxes
+// where fonts of theirs were installed.
+func TestFallbackAnywhere(t *testing.T) {
+	data, err := os.ReadFile(testEmojiFont)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := opentype.ParseCollection(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bold := parseInPlace(robotoBold)
+	fm := fontscan.NewFontMap(nil)
+	for i, f := range append(bold, other...) {
+		fm.AddFace(f.Face.Face(), fontscan.Location{File: fmt.Sprintf("font-%d", i)},
+			opentype.FontToDescription(f.Font))
+	}
+	fm.SetQuery(fontscan.Query{Families: []string{"Roboto"},
+		Aspect: opentype.FontToDescription(font.Font{Weight: font.Bold}).Aspect})
+	if _, ok := fm.ResolveFace('🎓').NominalGlyph('🎓'); !ok {
+		t.Error("a character only a font of another family has is drawn as a box")
+	}
+	// U+FE4E5 is private use, and only the emoji font has it.
+	for _, r := range "x\U000FE4E5" {
+		if family, _ := fm.FontMetadata(fm.ResolveFace(r).Font); family != "roboto" {
+			t.Errorf("%U is drawn with %s", r, family)
+		}
+	}
+}
+
 func checkEmojiSpaces(t *testing.T, u *UI) {
 	t.Helper()
 	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},

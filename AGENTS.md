@@ -76,6 +76,11 @@ Gotchas already found in the pinned version (v0.10.x):
 - Where Segoe UI isn't installed text falls back to the bundled Roboto (`internal/ui/fonts`),
   as WhatsApp Web looks on Linux. `robotoLineHeight` patches its line height to Segoe UI's
   (1.33 em), which the layouts were measured with.
+- Gio never tells go-text's font map the script (`SetScript`), so upstream found other
+  scripts and symbols only in the families `typeface` names and their substitutes, at the
+  weight asked for; the rest were boxes although installed. `resolveAnywhere`
+  (`patches/typesetting.patch`) then searches every font by coverage,
+  private use characters aside (opening an icon font for one took 37 MB).
 - The shaper never switches fonts for a space, so a space after an emoji takes the emoji
   font's (very wide) advance. `narrowEmojiSpaces` in `internal/ui/fonts.go` patches the
   emoji font's space glyphs at load time.

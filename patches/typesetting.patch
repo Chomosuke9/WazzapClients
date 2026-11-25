@@ -288,6 +288,92 @@ index 2d87701..7703457 100644
  		err := parseGlyphVariationSerializedData(vs.SerializedData,
  			vs.HasSharedPointNumbers(), pointsNumberCountAll, false, tvs)
  		if err != nil {
+diff --git a/fontscan/anywhere.go b/fontscan/anywhere.go
+new file mode 100644
+index 0000000..c015bc8
+--- /dev/null
++++ b/fontscan/anywhere.go
+@@ -0,0 +1,62 @@
++package fontscan
++
++import (
++	"sort"
++	"strings"
++	"unicode"
++
++	"github.com/go-text/typesetting/font"
++)
++
++// resolveAnywhere looks for r in every font there is, whatever its family
++// and scripts: sans serif ones first and monospaced ones last, then the
++// plainest name ("Noto Sans Thai" before "Noto Sans Thai Looped"), and of
++// that family's fonts the closest to the queried aspect. It returns nil if
++// no font covers r. (WazzapClients patch.)
++//
++// Private use runes stay boxes: they mean something only in a font of their
++// own, usually of icons, and Material Symbols' costs 37 MB to open.
++func (fm *FontMap) resolveAnywhere(r rune) *font.Face {
++	if unicode.Is(unicode.Co, r) {
++		return nil
++	}
++	var covering []int
++	for i := range fm.database {
++		// macOS' LastResort has a box for every rune.
++		if fp := &fm.database[i]; fp.Runes.Contains(r) && !strings.Contains(fp.Family, "lastresort") {
++			covering = append(covering, i)
++		}
++	}
++	rank := func(fp *Footprint) int {
++		switch {
++		case fp.isMonoHint():
++			return 2
++		case strings.Contains(fp.Family, "sans"):
++			return 0
++		}
++		return 1
++	}
++	sort.SliceStable(covering, func(i, j int) bool {
++		a, b := &fm.database[covering[i]], &fm.database[covering[j]]
++		if ra, rb := rank(a), rank(b); ra != rb {
++			return ra < rb
++		}
++		if len(a.Family) != len(b.Family) {
++			return len(a.Family) < len(b.Family)
++		}
++		return a.Family < b.Family
++	})
++	for len(covering) > 0 {
++		n := 1
++		for n < len(covering) && fm.database[covering[n]].Family == fm.database[covering[0]].Family {
++			n++
++		}
++		// The aspect's filters work in place.
++		family := fm.database.retainsBestMatches(covering[:n:n], fm.query.Aspect)
++		if face := fm.resolveForRune(family, r); face != nil {
++			return face
++		}
++		covering = covering[n:]
++	}
++	return nil
++}
+diff --git a/fontscan/fontmap.go b/fontscan/fontmap.go
+index 1c434a7..b70eae4 100644
+--- a/fontscan/fontmap.go
++++ b/fontscan/fontmap.go
+@@ -547,6 +547,13 @@ func (fm *FontMap) ResolveFace(r rune) (face *font.Face) {
+ 		return face
+ 	}
+ 
++	// WazzapClients patch: the steps above only look in fonts of the query's
++	// families and of the script, which is unknown unless [SetScript] was
++	// called (Gio doesn't), and of those only in the ones of the aspect.
++	if face := fm.resolveAnywhere(r); face != nil {
++		return face
++	}
++
+ 	fm.logger.Printf("No font matched for script %s and rune %U (%c) -> returning arbitrary face", fm.script, r, r)
+ 	// return an arbitrary face
+ 	if fm.firstFace == nil && len(fm.database) > 0 {
 diff --git a/fontscan/footprint.go b/fontscan/footprint.go
 index 92b4809..9bb4756 100644
 --- a/fontscan/footprint.go
