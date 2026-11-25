@@ -512,6 +512,13 @@ type Version struct {
 	Time time.Time // when it was sent or edited to this
 }
 
+// Transcript is what a voice message was transcribed to.
+type Transcript struct {
+	Lang  string // the language asked for (internal/transcribe's code, or its Auto)
+	Model string // the model that heard it
+	Text  string // "" when no words were heard
+}
+
 // MentionRef is an @mention in text to edit: the text shows "@" + Name,
 // and ID is who it notifies (a JID, or "@all", "@admin" or "@custom").
 type MentionRef struct {
@@ -1773,6 +1780,12 @@ type Backend interface {
 	// Versions returns the earlier texts of an edited message, oldest
 	// first; m.Text is the newest.
 	Versions(m *Message) []Version
+	// Transcript returns what a voice message was transcribed to on this
+	// computer, or nil.
+	Transcript(chatID, id string) *Transcript
+	// SetTranscript keeps a voice message's transcript. It can be called
+	// from any goroutine.
+	SetTranscript(chatID, id string, t Transcript)
 	// MessageInfo returns who got and read one of your messages, and
 	// when. A ReceiptEvent for the message says it may have changed.
 	MessageInfo(m *Message) *MessageInfo

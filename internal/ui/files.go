@@ -81,6 +81,7 @@ func (u *UI) fileDownloaded(e model.MediaEvent) {
 	delete(u.files.have, k)
 	delete(u.files.busy, k)
 	u.voiceDownloaded(e)
+	u.transcriptDownloaded(e)
 }
 
 // openDocument opens a document (downloading it first if needed).
@@ -525,13 +526,13 @@ func (u *UI) layoutAudio(gtx C, c *model.Chat, m *model.Message, maxW, metaW, me
 	picSz := gtx.Dp(52)
 
 	// The sender's picture (a headphones badge for audio files) sits at
-	// the outer side of the bubble.
-	picX := 0
-	x0 := picSz + gtx.Dp(8)
-	x1 := w - gtx.Dp(6)
+	// the end of a message received and at the start of yours, as on
+	// phones: towards the middle of the chat.
+	picX := w - picSz
+	x0, x1 := 0, w-picSz-gtx.Dp(14)
 	if m.FromMe {
-		picX = w - picSz
-		x0, x1 = 0, w-picSz-gtx.Dp(14)
+		picX = 0
+		x0, x1 = picSz+gtx.Dp(8), w-gtx.Dp(6)
 	}
 	rateBtn := u.btn("vrate:" + m.ID)
 	if rateBtn.Clicked(gtx) {
@@ -691,5 +692,13 @@ func (u *UI) layoutAudio(gtx C, c *model.Chat, m *model.Message, maxW, metaW, me
 	lg.Constraints = layout.Constraints{Max: image.Pt(max(0, w-tx0-metaW-gtx.Dp(8)), metaH)}
 	lbl := record(lg, u.label(12, clock(pos), cols.secondary, labelOpts{maxLines: 1}).Layout)
 	lbl.at(gtx, tx0, y+(metaH-lbl.size.Y)/2-gtx.Dp(2))
-	return D{Size: image.Pt(w, y+metaH)}
+	y += metaH
+	if u.takesTranscript(m) {
+		// The timestamp goes on its last row instead.
+		y += gtx.Dp(4)
+		t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+		y += u.layoutTranscript(gtx, m, w, metaW, metaH, cols).Size.Y
+		t.Pop()
+	}
+	return D{Size: image.Pt(w, y)}
 }

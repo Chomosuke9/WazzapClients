@@ -24,17 +24,18 @@ const (
 	dialogConfirm
 	dialogForward
 	dialogPoll
-	dialogInvite   // a group's invite link (invite.go)
-	dialogTheme    // every chat's theme (chattheme.go); title is lookAll
-	dialogEdits    // an edited message's earlier texts (edit.go)
-	dialogPayload  // a message's payload (/catch, snippets.go)
-	dialogList     // a bot's list of choices (listpick.go)
-	dialogEvent    // the attach menu's Create event (eventnew.go)
-	dialogAppLock  // App lock's password and auto-lock (applock.go)
-	dialogPack     // a sticker pack (stickerpack.go)
-	dialogMyPacks  // Your stickers: the packs added to the picker (stickermanage.go)
-	dialogChannel  // Create channel (channelinfo.go)
-	dialogSchedule // Schedule message (scheduled.go)
+	dialogInvite     // a group's invite link (invite.go)
+	dialogTheme      // every chat's theme (chattheme.go); title is lookAll
+	dialogEdits      // an edited message's earlier texts (edit.go)
+	dialogPayload    // a message's payload (/catch, snippets.go)
+	dialogList       // a bot's list of choices (listpick.go)
+	dialogEvent      // the attach menu's Create event (eventnew.go)
+	dialogAppLock    // App lock's password and auto-lock (applock.go)
+	dialogPack       // a sticker pack (stickerpack.go)
+	dialogMyPacks    // Your stickers: the packs added to the picker (stickermanage.go)
+	dialogChannel    // Create channel (channelinfo.go)
+	dialogSchedule   // Schedule message (scheduled.go)
+	dialogTranscript // why a voice message has no transcript (transcripts.go)
 )
 
 type dialogButton struct {
@@ -103,6 +104,8 @@ type dialogState struct {
 	// Edit history: the message and its earlier texts.
 	editOf   *model.Message
 	versions []model.Version
+
+	transcriptOf string // dialogTranscript's chat
 }
 
 // isOpen reports whether a dialog is open and not fading out.
@@ -228,6 +231,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.createChannelPanel)
 	case dialogSchedule:
 		panel = record(gtx, u.schedulePanel)
+	case dialogTranscript:
+		panel = record(gtx, u.transcriptWhyPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)

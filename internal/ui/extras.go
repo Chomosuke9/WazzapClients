@@ -60,6 +60,7 @@ func (u *UI) loadExtras() {
 			u.grayCmds[c.Name] = true
 		}
 	}
+	u.loadTranscripts()
 	u.loadUserCommands()
 	// A window opening in ghost mode shows it at once.
 	u.ghostFx.bar.snap(u.ghostMode())

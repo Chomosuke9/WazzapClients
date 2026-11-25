@@ -249,6 +249,7 @@ them all at once, and `@` in a private chat, to mention the person you're talkin
 - 🔔 System notifications, with Mark as read and (on Windows and KDE) Reply
 - 📝 Drafts that stay with each chat, @mentions, and a formatting toolbar (bold, italic, strikethrough, code)
 - 🎙️ Voice messages and videos played by the system's own decoders (no bundled codecs)
+- 🗒️ Voice message transcripts in 38 languages, made on this computer by [whisper.cpp](https://github.com/ggml-org/whisper.cpp), which downloads the first time (about 190 MB; Windows and Linux, with [ffmpeg](https://ffmpeg.org) installed)
 - 📌 Pinned, archived and muted chats, Favourites and custom lists, disappearing messages, chat themes
 - 📊 Polls with Hide voter names and an end time when you create one
 - 🔗 Link previews, sent and received, with WhatsApp's big picture; group invite links, albums and documents
@@ -329,6 +330,7 @@ internal/wa/       hypermeow backend and the SQLite message store
 internal/mock/     the demo backend
 internal/command/  slash commands
 internal/auto/     AFK replies
+internal/transcribe/ transcribes voice messages with whisper.cpp
 internal/sticker/  makes stickers, with its own small lossless WebP encoder (animated ones with ffmpeg)
 internal/video/    plays video and audio with the OS's decoder
 internal/notify/   system notifications

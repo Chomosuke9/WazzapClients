@@ -1214,13 +1214,14 @@ func (s *msgStore) deleteMessage(ctx context.Context, chat, id string) error {
 		DELETE FROM wz_edits WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_receipts WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_votes WHERE chat = ?1 AND id = ?2;
+		DELETE FROM wz_transcripts WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_reactions WHERE chat = ?1 AND id = ?2;
 		DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND parent = ?2;
 		DELETE FROM wz_comments WHERE cchat = ?1 AND cparent = ?2`, chat, id)
 	return err
 }
 
-// dropOrphanEdits deletes the versions, receipts, votes and reactions (sticker ones too) of
+// dropOrphanEdits deletes the versions, receipts, votes, transcripts and reactions (sticker ones too) of
 // chat ?1's messages that are gone.
 const dropOrphanEdits = `DELETE FROM wz_edits WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_edits.chat AND m.id = wz_edits.id);
@@ -1228,6 +1229,8 @@ const dropOrphanEdits = `DELETE FROM wz_edits WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_receipts.chat AND m.id = wz_receipts.id);
 	DELETE FROM wz_votes WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_votes.chat AND m.id = wz_votes.id);
+	DELETE FROM wz_transcripts WHERE chat = ?1 AND NOT EXISTS
+	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_transcripts.chat AND m.id = wz_transcripts.id);
 	DELETE FROM wz_reactions WHERE chat = ?1 AND NOT EXISTS
 	(SELECT 1 FROM wz_messages m WHERE m.chat = wz_reactions.chat AND m.id = wz_reactions.id);
 	DELETE FROM wz_sticker_reacts WHERE rchat = ?1 AND NOT EXISTS

@@ -131,14 +131,15 @@ func main() {
 		Hidden:    *background || *embedding,
 		NotifyDir: filepath.Join(*dataDir, "notifications"),
 		// Shared by the demo, which has no data of its own worth keeping.
-		EmojiDir:     filepath.Join(*dataDir, "emoji"),
-		WallpaperDir: filepath.Join(*dataDir, "wallpapers"),
-		StallLog:     filepath.Join(*dataDir, "stalls.log"),
-		Accounts:     list,
-		Open:         open,
-		Version:      version,
-		KlipyKey:     klipyKey,
-		Link:         link,
+		EmojiDir:      filepath.Join(*dataDir, "emoji"),
+		WallpaperDir:  filepath.Join(*dataDir, "wallpapers"),
+		TranscriptDir: filepath.Join(*dataDir, "transcripts"),
+		StallLog:      filepath.Join(*dataDir, "stalls.log"),
+		Accounts:      list,
+		Open:          open,
+		Version:       version,
+		KlipyKey:      klipyKey,
+		Link:          link,
 	}
 	if *headless {
 		opts.Headless = &ui.Headless{
@@ -153,7 +154,7 @@ func main() {
 			opts.Headless.In = os.Stdin
 		}
 		// Nothing draws emojis: don't download their font.
-		opts.EmojiDir = ""
+		opts.EmojiDir, opts.TranscriptDir = "", ""
 	}
 	if *demo {
 		opts.NotifyDir = demoDir

@@ -548,6 +548,15 @@ Gotchas already found in the pinned version (v0.10.x):
   element, so whatever opens on a right click opens from the keyboard too.
   Gio's `app.Window` moves the focus on Tab only when nothing asked for Tab:
   tests do the same (`slashTest.tab`).
+- Transcripts of voice messages are made on this computer, as phones make theirs: WhatsApp
+  syncs none, and WhatsApp Web's `wa_web_voice_note_transcript_enabled` was off
+  (November 2026). `internal/transcribe` runs whisper.cpp's own build (there's none to run
+  for macOS), once per message, so its hundreds of MB go as it exits. It, the models and
+  Silero's voice detector, without which Whisper makes words up for silence, are pinned by
+  SHA-256: a new release means new sizes and hashes in `models.go`. whisper-cli reads no
+  Opus, so ffmpeg makes a WAV. Its paths are relative to its own folder (a Windows profile's
+  accents), and `-of -` sends its JSON to stdout, which escapes only quotes and backslashes.
+  A long one is cut to three lines by the shaper (`cutTranscript`), as on phones, not by "Read more".
 - `widget.Clickable.Layout` reads and drops the clicks nobody has asked about yet.
   Check `Clicked` before laying the button out (the title bar's privacy button).
 - Many buttons act on their click while they're laid out, after parts of the window
@@ -642,7 +651,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    over the composer, in linkpreview.go; drafts (what a chat's composer
                    and send view held when another chat opened, and the list's "Draft:")
                    in draft.go;
-                   document cards and the voice/audio player in files.go; recording a voice
+                   document cards and the voice/audio player in files.go; voice messages' transcripts
+                   (the Transcribe link under the player, why there may be none, a chat's language, their
+                   page in Settings > Chats; on unless turned off, but nothing downloads unasked) in transcripts.go; recording a voice
                    message (the composer's mic: the recording bar, pause and play back, send)
                    in voicerec.go; polls (voting by
                    clicking an option), maps, shared contacts and events as cards in bubbles
@@ -826,6 +837,7 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    (LIMIT_SHARING, kept with its info; it can't be set) in about.go;
                    a chat's disappearing-messages timer (wz_chats.ephemeral, for the
                    avatars' timer badge) in timer.go;
+                   voice messages' transcripts (wz_transcripts) in transcripts.go;
                    channels' details and suggestions (wz_channels) in channels.go, their posts,
                    reaction counts, live updates and actions in channelposts.go;
                    the links only the server resolves (channels, business messages,
@@ -862,6 +874,8 @@ internal/record/   records voice messages: the microphone (winmm's waveIn throug
                    Windows; parec or arecord elsewhere) streams 16 kHz PCM into a temporary
                    WAV, keeping only its loudness in memory; the system's ffmpeg (on PATH)
                    encodes it to OGG Opus to send. -demo records a made-up voice (Demo)
+internal/transcribe/ turns voice messages into text with whisper.cpp, which downloads (with the
+                   model chosen) once the first Transcribe is agreed to, into <data>/transcripts
 internal/klipy/    searches KLIPY's GIFs (trending, search, the share count) and downloads
                    their media, for the picker's GIF tab
 internal/linkpreview/ reads a page's Open Graph tags (or title) for the preview of a link you
@@ -1116,7 +1130,8 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # channels: channelinfo (-ochat techdaily@newsletter, or wazzapnews@newsletter for one of your own, bola@newsletter for a
 # suggestion's preview; convmenu and msgmenu work there too), channelnew (Create channel), channeladd (the ⊕ menu);
 # custom mentions: mentions (a group's page), custommention, newmention (its name's error), custompick (the picker offering them);
-# privatemention (the picker in a private chat: -ochat rina);
+# privatemention (the picker in a private chat: -ochat rina); voice messages' transcripts: transcripts (in each of their states: -ochat work), transcriptwhy,
+# transcriptlang (a chat's language), transcriptinfo (its row in the chat's info), transcriptsettings;
 # a group's info being edited: groupname, groupdesc, groupphoto (its picture's menu); picview (the chat's picture, big); the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots

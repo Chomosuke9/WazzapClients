@@ -543,6 +543,26 @@ func (b *Backend) Versions(m *model.Message) []model.Version {
 	return b.versions[m.ChatID+"/"+m.ID]
 }
 
+// Transcript implements model.Backend.
+func (b *Backend) Transcript(chatID, id string) *model.Transcript {
+	b.transcriptMu.Lock()
+	defer b.transcriptMu.Unlock()
+	if t, ok := b.transcripts[chatID+"/"+id]; ok {
+		return &t
+	}
+	return nil
+}
+
+// SetTranscript implements model.Backend.
+func (b *Backend) SetTranscript(chatID, id string, t model.Transcript) {
+	b.transcriptMu.Lock()
+	defer b.transcriptMu.Unlock()
+	if b.transcripts == nil {
+		b.transcripts = map[string]model.Transcript{}
+	}
+	b.transcripts[chatID+"/"+id] = t
+}
+
 // MessageInfo makes up when the people a message went to got and read it,
 // in step with its ticks: a minute or two apart, after it was sent.
 func (b *Backend) MessageInfo(m *model.Message) *model.MessageInfo {

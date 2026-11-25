@@ -108,16 +108,18 @@ var settingsViews = map[string]struct {
 	"extras":        {settingExtras, ""},
 	// With demo accounts: the Account page's list of them, and the
 	// pages of the second (always connected) and third (checked).
-	"accounts":     {settingAccount, ""},
-	"accountmode":  {settingAccount, "acct:accounts/2"},
-	"accountcheck": {settingAccount, "acct:accounts/3"},
-	"snippets":     {settingSnippets, ""},
-	"gray":         {settingExtras, "gray"},
-	"commands":     {settingExtras, "commands"},
-	"help":         {settingHelp, ""},
-	"videovoice":   {settingMedia, ""},
-	"microphone":   {settingMedia, "mic"},
-	"storage":      {settingStorage, ""},
+	"accounts":       {settingAccount, ""},
+	"accountmode":    {settingAccount, "acct:accounts/2"},
+	"accountcheck":   {settingAccount, "acct:accounts/3"},
+	"snippets":       {settingSnippets, ""},
+	"gray":           {settingExtras, "gray"},
+	"commands":       {settingExtras, "commands"},
+	"transcripts":    {settingChats, "transcripts"},
+	"transcriptlang": {settingChats, "transcriptlang"},
+	"help":           {settingHelp, ""},
+	"videovoice":     {settingMedia, ""},
+	"microphone":     {settingMedia, "mic"},
+	"storage":        {settingStorage, ""},
 }
 
 // openSettings opens a settings category (an index of settingsItems).
@@ -147,7 +149,7 @@ func (u *UI) openSettingsSub(sub string) {
 // when something changed (stale), since prefs are read from the database.
 func (u *UI) settingsRows() []settingsSection {
 	s := &u.settings
-	if s.stale || s.page == nil {
+	if s.stale || s.page == nil || u.transcriptPageStale() {
 		s.page, s.stale = u.settingsPage(), false
 	}
 	return s.page
@@ -169,6 +171,8 @@ func (u *UI) settingsBack() {
 		u.openSettingsSub("advanced")
 	case s.sub == "emojianim":
 		u.openSettingsSub("emoji")
+	case s.sub == "transcriptlang":
+		u.openSettingsSub("transcripts")
 	case s.sub != "":
 		u.openSettingsSub("")
 	default:
@@ -202,6 +206,10 @@ func (u *UI) settingsTitle() string {
 		return "Ethically gray features"
 	case "commands":
 		return "Your commands"
+	case "transcripts":
+		return "Transcripts"
+	case "transcriptlang":
+		return "Transcript language"
 	case "advanced":
 		return "Advanced"
 	case "emoji":
@@ -253,6 +261,10 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.graySettings()
 	case "commands":
 		return u.userCommandSettings()
+	case "transcripts":
+		return u.transcriptSettings()
+	case "transcriptlang":
+		return u.transcriptLangSettings()
 	case "advanced":
 		return u.advancedSettings()
 	case "emoji":
@@ -306,7 +318,7 @@ func (u *UI) categoryPage(k int) []settingsSection {
 	case settingPrivacy:
 		return u.privacySettings()
 	case settingChats:
-		return []settingsSection{
+		secs := []settingsSection{
 			{title: "Display", rows: []settingRow{
 				{key: prefEmojiStyle, ic: icEmoji, title: "Emoji style", sub: emojiStyles[emojiStyle()].title,
 					trailing: icChevronRight, run: func() { u.openSettingsSub("emoji") }},
@@ -316,6 +328,10 @@ func (u *UI) categoryPage(k int) []settingsSection {
 					on: prefOn(b, prefEnterSend), run: func() { u.setEnterSend(!prefOn(b, prefEnterSend)) }},
 			}},
 		}
+		if rows := u.transcriptRows(); rows != nil {
+			secs = append(secs, settingsSection{title: "Voice messages", rows: rows})
+		}
+		return secs
 	case settingAppearance:
 		return []settingsSection{{rows: []settingRow{
 			{key: "chattheme", ic: icWallpaper, title: "Chat theme", sub: "Bubbles and wallpaper of every chat",

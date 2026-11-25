@@ -16,10 +16,11 @@ import (
 // mentions (custommention.go).
 
 const (
-	infoStarred  = "starred"
-	infoPerms    = "perms"
-	infoChanges  = "changes"
-	infoMentions = "mentions"
+	infoStarred     = "starred"
+	infoPerms       = "perms"
+	infoChanges     = "changes"
+	infoMentions    = "mentions"
+	infoTranscripts = "transcripts" // the chat's transcript language (transcripts.go)
 )
 
 // openInfoSub shows one of the panel's pages.
@@ -51,6 +52,8 @@ func infoSubTitle(sub string) string {
 		return "Member changes"
 	case infoMentions:
 		return "Custom mentions"
+	case infoTranscripts:
+		return "Chat transcript language"
 	}
 	return ""
 }
@@ -66,6 +69,8 @@ func (u *UI) infoSubRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 		return u.changeRows()
 	case infoMentions:
 		return u.customMentionPage(gtx, c, info)
+	case infoTranscripts:
+		return u.transcriptLangRows(gtx, c)
 	}
 	return nil
 }
@@ -378,6 +383,9 @@ func (u *UI) infoChatActions(gtx C, c *model.Chat, info *model.ChatInfo) {
 	}
 	if clicked("mentions") {
 		u.openInfoSub(infoMentions)
+	}
+	if clicked("transcripts") {
+		u.openInfoSub(infoTranscripts)
 	}
 	if clicked("theme") {
 		u.openChatTheme(chat)

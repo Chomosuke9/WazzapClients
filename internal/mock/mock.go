@@ -53,7 +53,11 @@ type Backend struct {
 	// stickerReacts counts the sticker reactions given, for their IDs.
 	stickerReacts int
 	extras
-	packs packs // sticker packs opened and added (packs.go)
+	// transcripts are voice messages' transcripts, by chat and message ID;
+	// transcriptMu guards them.
+	transcripts  map[string]model.Transcript
+	transcriptMu sync.Mutex
+	packs        packs // sticker packs opened and added (packs.go)
 
 	// Running as a background account (see background.go).
 	bg bgState

@@ -294,6 +294,7 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		}
 		add(menuItem{key: "copy", ic: icCopy, label: "Copy", run: func() { u.copyText(stripIsolates(txt)) }})
 	}
+	items = append(items, u.transcriptItems(m)...)
 	if canReact(c.ID, m) && !revoked {
 		add(menuItem{key: "react", ic: icAddReaction, label: "React", run: func() { u.openPicker(pickReaction, m) }})
 	}

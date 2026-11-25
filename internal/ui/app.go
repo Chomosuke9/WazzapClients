@@ -180,7 +180,8 @@ type UI struct {
 	replies                 repliesPopup   // the replies to an announcement (replies.go)
 	dialog                  dialogState
 	picker                  emojiPicker
-	gifs                    gifSearch // the picker's GIF tab (gifs.go)
+	gifs                    gifSearch   // the picker's GIF tab (gifs.go)
+	transcripts             transcripts // voice messages' (transcripts.go)
 	viewer                  mediaViewer
 	picView                 picView // a profile picture shown big (photoview.go)
 	toastMsg                toastState
@@ -441,6 +442,9 @@ func (u *UI) Start(notify func()) {
 	u.emojiImgs.invalidate = notify
 	if emojiStore != nil {
 		emojiStore.SetNotify(notify)
+	}
+	if speech != nil {
+		speech.SetNotify(notify)
 	}
 	u.setChats(u.backend.Chats())
 	u.loadLists()
@@ -1286,6 +1290,7 @@ func (u *UI) escape() {
 
 // applyEvents drains the backend queue into UI state.
 func (u *UI) applyEvents() {
+	u.takeTranscripts()
 	for _, ev := range u.backend.Poll() {
 		switch e := ev.(type) {
 		case model.ConnEvent:
@@ -1642,6 +1647,9 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // (-ochat clara), "packtab" the sticker picker with the chat's packs
 // added, and "mypacks" Your stickers with them ("mypacksdrag": its first
 // pack dragged 90 px down).
+// "transcripts" shows a voice message's transcript in each of its states
+// (-ochat work), "transcriptwhy" why there may be none, "transcriptlang" a
+// chat's language, "transcriptinfo" its row in the chat's info and "transcriptsettings" the settings.
 // "graywarning" opens the acknowledgment for Keep deleted messages.
 // Menus open at (x, y) px in content coordinates.
 func (u *UI) ShowOverlay(name string, x, y int) {
@@ -2369,6 +2377,26 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.info.anim.snap(true)
 		u.openInfoSub(name)
 		u.applyEvents()
+	case "transcripts", "transcriptwhy", "transcriptlang", "transcriptinfo", "transcriptsettings":
+		// A voice message's transcript in each of its states (-ochat work),
+		// why there may be none, a chat's language and the settings.
+		u.demoTranscripts()
+		switch name {
+		case "transcriptwhy":
+			u.openTranscriptWhy(u.selected.ID)
+			u.dialog.anim.snap(true)
+		case "transcriptlang":
+			u.openInfo(u.selected.ID)
+			u.info.anim.snap(true)
+			u.openInfoSub(infoTranscripts)
+			u.applyEvents()
+		case "transcriptinfo":
+			u.openInfo(u.selected.ID)
+			u.info.anim.snap(true)
+			u.applyEvents()
+		case "transcriptsettings":
+			u.ShowPage("transcripts")
+		}
 	case "mentions", "custommention", "newmention", "custompick":
 		// Custom mentions: a group's page, one being edited, a new one, and
 		// the mention picker offering them.

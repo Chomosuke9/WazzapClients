@@ -58,7 +58,7 @@ var settingsItems = [...]listItem{
 	{ic: icAccount, title: "Profile", sub: "Name, profile picture, about"},
 	{ic: icKey, title: "Account", sub: "Security notifications, account info, accounts"},
 	{ic: icLockOutline, title: "Privacy", sub: "Blocked contacts, disappearing messages"},
-	{title: "Chats", sub: "Emoji style, chat settings"},
+	{title: "Chats", sub: "Emoji style, transcripts, chat settings"},
 	{ic: icPalette, title: "Appearance", sub: "Chat theme, wallpaper, app theme"},
 	{ic: icVideoLine, title: "Video & voice", sub: "Camera, microphone and speakers"},
 	{ic: icBell, title: "Notifications", sub: "Messages, groups, sounds"},

@@ -94,6 +94,8 @@ var (
 	icVerified      = icon.VerifiedFill
 	icCampaign      = icon.CampaignFill
 	icInfo          = icon.Info
+	icPublic        = icon.Public
+	icLiveHelp      = icon.LiveHelp
 	icSort          = icon.Sort
 
 	// Chat and message menus.

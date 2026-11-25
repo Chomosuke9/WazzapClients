@@ -26,6 +26,7 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/notify"
 	"github.com/chomosuke9/wazzapclients/internal/remote"
+	"github.com/chomosuke9/wazzapclients/internal/transcribe"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
@@ -56,6 +57,9 @@ type Options struct {
 	// EmojiDir keeps the emoji pictures that download (the animated and
 	// 3D emoji styles). "" doesn't download any: every style draws 2D.
 	EmojiDir string
+	// TranscriptDir keeps what transcribes voice messages, once it
+	// downloads (transcripts.go). "" transcribes none.
+	TranscriptDir string
 	// WallpaperDir keeps the photos chosen as chat wallpapers.
 	WallpaperDir string
 	// Accounts lists the accounts linked on this computer, and Open opens
@@ -99,6 +103,9 @@ func Run(b model.Backend, o Options) error {
 		if p := emojiStore.FontPath(); p != "" && LoadEmojiFont(p) != nil {
 			os.Remove(p) // broken: downloaded again next time
 		}
+	}
+	if o.TranscriptDir != "" && transcribe.Supported() {
+		speech = transcribe.New(o.TranscriptDir)
 	}
 	wallpaperDir = o.WallpaperDir
 	klipyAppKey, klipyAgent = o.KlipyKey, "WazzapClients/"+cmp.Or(o.Version, "dev")
@@ -855,7 +862,7 @@ func dropCaches() {
 	previews.m = nil
 	richBlocks.m = nil
 	mdParsed.m, mdTexts.m, codeSpans.m = nil, nil, nil
-	readMoreCuts.m = nil
+	readMoreCuts.m, transcriptCuts.m = nil, nil
 	icon.FlushCache()
 	dropShapes()
 }

@@ -560,6 +560,7 @@ func (b *Backend) DeleteChannel(id string) {
 		}
 		_, err := b.db.ExecContext(ctx, `DELETE FROM wz_channels WHERE jid = ?1;
 			DELETE FROM wz_channel_posts WHERE chat = ?1;
+			DELETE FROM wz_transcripts WHERE chat = ?1;
 			DELETE FROM wz_messages WHERE chat = ?1;
 			DELETE FROM wz_chats WHERE jid = ?1`, id)
 		return err
