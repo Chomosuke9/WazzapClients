@@ -227,6 +227,11 @@ Gotchas already found in the pinned version (v0.10.x):
   and ~70 MB of drivers), so hardware decoders get rank 0 unless `WAZZAP_HWDEC=1`.
   libav's decoders get 2 threads (`max-threads`; by default one per core, ~90 MB more
   for a 1080p video), and a closed player hands the C heap back (`malloc_trim`).
+  Never set playbin's own `mute` or `volume`: they set the sound server's stream, and
+  PulseAudio and WirePlumber remember that by application name, so one muted GIF left
+  every later voice message and sticker silent, restarts included. A `volume` element
+  right before the sink does it (`wz_audio`; in `audio-filter` it lags by playbin's
+  1 s queue).
   Its tests make media with ffmpeg and skip without GStreamer's plugins. The viewer's video UI is `videoview.go`;
   `WAZZAP_DEMO_VIDEO=<file.mp4>` makes `-demo` play that file.
 - Upstream's `widget.Editor` ignores Ctrl+Backspace and Ctrl+Delete wherever

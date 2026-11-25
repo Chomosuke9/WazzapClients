@@ -3,10 +3,13 @@
 package video
 
 import (
+	"encoding/json"
 	"errors"
 	"image"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -134,5 +137,50 @@ func TestVoice(t *testing.T) {
 	// 1.5 s at twice the speed, plus setting up.
 	if d := time.Since(start); d > 1400*time.Millisecond {
 		t.Errorf("took %v at 2x, want well under 1.5s", d)
+	}
+}
+
+// The sound server remembers a stream's mute and volume for the app's next
+// streams, so a player's must not reach it: a muted GIF silenced every voice
+// message after it.
+func TestMuteStaysHere(t *testing.T) {
+	path := media(t, "clip.mp4", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=30:duration=5",
+		"-f", "lavfi", "-i", "anullsrc=duration=5",
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest")
+	p := open(t, path, false)
+	p.SetMuted(true)
+	p.SetVolume(0.1)
+	wait(t, p, "playing", func(s Status) bool { return s.Ready && s.Pos > 300*time.Millisecond })
+	out, err := exec.Command("pactl", "-f", "json", "list", "sink-inputs").Output()
+	if err != nil {
+		t.Skip("no sound server to ask")
+	}
+	var streams []struct {
+		Mute   bool `json:"mute"`
+		Volume map[string]struct {
+			Value int `json:"value"`
+		} `json:"volume"`
+		Properties map[string]string `json:"properties"`
+	}
+	if err := json.Unmarshal(out, &streams); err != nil {
+		t.Skipf("can't read pactl's answer: %v", err)
+	}
+	found := false
+	for _, s := range streams {
+		if s.Properties["application.process.id"] != strconv.Itoa(os.Getpid()) {
+			continue
+		}
+		found = true
+		if s.Mute {
+			t.Error("the sound server's stream is muted")
+		}
+		for ch, v := range s.Volume {
+			if v.Value < 1<<15 { // 0.1 is about 30000 of 65536
+				t.Errorf("the sound server's stream has volume %d on %s", v.Value, ch)
+			}
+		}
+	}
+	if !found {
+		t.Skip("the sound went to no PulseAudio or PipeWire stream")
 	}
 }

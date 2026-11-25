@@ -97,6 +97,7 @@ static void (*wz_g_error_free)(wz_error *);
 static unsigned long (*wz_g_signal_connect_data)(ptr, const char *, ptr, ptr, ptr, int);
 static char *(*wz_gst_object_get_name)(ptr);
 static void (*wz_g_free)(ptr);
+static void (*wz_g_set_application_name)(const char *);
 static wz_list *(*wz_gst_element_factory_list_get_elements)(uint64_t, int);
 static int (*wz_gst_element_factory_list_is_type)(ptr, uint64_t);
 static void (*wz_gst_plugin_feature_set_rank)(ptr, unsigned);
@@ -170,6 +171,7 @@ static const char *wz_load(int hw) {
 	WZ_SYM(gobject, g_signal_connect_data)
 	WZ_SYM(gst, gst_object_get_name)
 	WZ_SYM(glib, g_free)
+	WZ_SYM(glib, g_set_application_name)
 	WZ_SYM(gst, gst_element_factory_list_get_elements)
 	WZ_SYM(gst, gst_element_factory_list_is_type)
 	WZ_SYM(gst, gst_plugin_feature_set_rank)
@@ -179,20 +181,26 @@ static const char *wz_load(int hw) {
 		if (err) wz_g_error_free(err);
 		return "gst_init failed";
 	}
+	// What the system's volume mixer shows, and the name under which the sound
+	// server remembers what's set there. Without it that's the executable's
+	// name, under which earlier versions left the app muted (wz_audio).
+	wz_g_set_application_name("WazzapClients");
 	if (!hw) wz_no_hardware();
 	return NULL;
 }
 
-// GstPlayFlags: video, audio, soft-volume. No subtitles, deinterlacing or
-// color balance, which would add elements to every pipeline.
-enum { wz_flags_video = 0x13, wz_flags_audio = 0x12 };
+// GstPlayFlags: video, audio. No subtitles, deinterlacing or color balance,
+// which would add elements to every pipeline, and no soft-volume: the volume
+// element in front of the sink does that (see wz_audio).
+enum { wz_flags_video = 0x3, wz_flags_audio = 0x2 };
 
 typedef struct {
-	ptr pipe, bus, sink, caps, flip_src;
+	ptr pipe, bus, sink, caps, flip_src, volume;
 } wz_pipeline;
 
 static void wz_free(wz_pipeline *p) {
 	if (p->pipe) wz_gst_element_set_state(p->pipe, 1); // GST_STATE_NULL
+	if (p->volume) wz_gst_object_unref(p->volume);
 	if (p->flip_src) wz_gst_object_unref(p->flip_src);
 	if (p->caps) wz_gst_object_unref(p->caps);
 	if (p->sink) wz_gst_object_unref(p->sink);
@@ -201,15 +209,31 @@ static void wz_free(wz_pipeline *p) {
 	memset(p, 0, sizeof *p);
 }
 
+// wz_audio gives the pipeline its sound: scaletempo, which keeps the pitch at
+// other speeds, and a volume element of its own in front of the sink (in the
+// audio filter, before playbin's queue, it changed the sound a second late).
+// playbin's "volume" and "mute" must not be used: they set the PulseAudio or
+// PipeWire stream's, which the sound server remembers for the app and gives
+// its next streams. A muted GIF or video note left every voice message after
+// it silent, restarts included.
+static void wz_audio(wz_pipeline *p) {
+	ptr tempo = wz_gst_element_factory_make("scaletempo", NULL);
+	if (tempo) wz_g_object_set(p->pipe, "audio-filter", tempo, NULL);
+	wz_error *err = NULL;
+	ptr bin = wz_gst_parse_bin_from_description("volume name=volume ! autoaudiosink", 1, &err);
+	if (err) wz_g_error_free(err);
+	if (!bin) return; // no gst-plugins-good: playbin's own sink, at full volume
+	wz_g_object_set(p->pipe, "audio-sink", bin, NULL);
+	p->volume = wz_gst_bin_get_by_name(bin, "volume");
+}
+
 // wz_open builds the pipeline for uri, and reports whether it could.
 static int wz_open(wz_pipeline *p, const char *uri, int audio) {
 	memset(p, 0, sizeof *p);
 	p->pipe = wz_gst_element_factory_make("playbin", NULL);
 	if (!p->pipe) return 0; // no gst-plugins-base
 	wz_g_object_set(p->pipe, "uri", uri, "flags", audio ? wz_flags_audio : wz_flags_video, NULL);
-	// scaletempo keeps the pitch at other speeds.
-	ptr tempo = wz_gst_element_factory_make("scaletempo", NULL);
-	if (tempo) wz_g_object_set(p->pipe, "audio-filter", tempo, NULL);
+	wz_audio(p);
 	wz_g_signal_connect_data(p->pipe, "deep-element-added", (ptr)wz_element_added, NULL, NULL, 0);
 	if (!audio) {
 		// videoconvertscale (GStreamer 1.22) converts and scales in one pass.
@@ -280,12 +304,12 @@ static int wz_pop(wz_pipeline *p, int types) {
 	return t;
 }
 
-static void wz_set_bool(wz_pipeline *p, const char *name, int v) {
-	wz_g_object_set(p->pipe, name, v, NULL);
+static void wz_set_muted(wz_pipeline *p, int on) {
+	if (p->volume) wz_g_object_set(p->volume, "mute", on, NULL);
 }
 
-static void wz_set_double(wz_pipeline *p, const char *name, double v) {
-	wz_g_object_set(p->pipe, name, v, NULL);
+static void wz_set_volume(wz_pipeline *p, double v) {
+	if (p->volume) wz_g_object_set(p->volume, "volume", v, NULL);
 }
 
 // wz_native reports the picture's size as shown: turned upright, with
@@ -494,13 +518,9 @@ func (g *gstPlayer) do(c command) {
 		}
 		g.seek(c.pos, c.exact)
 	case cmdMute:
-		name := C.CString("mute")
-		C.wz_set_bool(&g.pipe, name, boolInt(c.on))
-		C.free(unsafe.Pointer(name))
+		C.wz_set_muted(&g.pipe, boolInt(c.on))
 	case cmdVolume:
-		name := C.CString("volume")
-		C.wz_set_double(&g.pipe, name, C.double(c.vol))
-		C.free(unsafe.Pointer(name))
+		C.wz_set_volume(&g.pipe, C.double(c.vol))
 	case cmdRate:
 		if c.rate <= 0 || c.rate == g.rate {
 			return
