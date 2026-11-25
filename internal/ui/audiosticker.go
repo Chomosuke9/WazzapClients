@@ -5,23 +5,24 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/unit"
 	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // Stickers with a sound (Message.Sound) carry a round speaker button in
-// their corner, as on phones. They play silently, as any sticker does,
+// their top right corner, as on WhatsApp Web. They play silently, as any sticker does,
 // until it's clicked: then the sound plays once, the animation starting
 // over with it, and a second click stops it. It's the voice messages'
 // player (voiceState), so only one of them all sounds at a time.
 
-// The speaker's size and its distance from the sticker's corner, in parts
-// of the sticker's side, and its icon's size, measured on a phone.
+// The speaker's disc, its distance from the sticker's corner and its icon's
+// size, measured on a WhatsApp Web screenshot.
 const (
-	soundBadge = 0.255
-	soundInset = 0.05
-	soundIcon  = 0.125
+	soundBadge unit.Dp = 28
+	soundInset unit.Dp = 8
+	soundIcon  unit.Dp = 18
 )
 
 // Where a sticker's only shown (the picker, a reaction) a badge marks one
@@ -64,7 +65,7 @@ func (u *UI) endStickerSound() {
 }
 
 // stickerSound draws the speaker of a sticker shown sz px wide.
-func (u *UI) stickerSound(gtx C, m *model.Message, sz int, animated, theirs bool) {
+func (u *UI) stickerSound(gtx C, m *model.Message, sz int, animated bool) {
 	btn := u.btn("stksound:" + m.ID)
 	if btn.Clicked(gtx) && !u.conv.selecting {
 		u.toggleStickerSound(m)
@@ -78,18 +79,12 @@ func (u *UI) stickerSound(gtx C, m *model.Message, sz int, animated, theirs bool
 			u.playSticker(m, sz)
 		}
 	}
-	side := int(float32(sz) * soundBadge)
-	at := int(float32(sz) * soundInset)
-	// Your own stickers have it in the top right corner, as on WhatsApp
-	// Web; someone else's, mirrored, in the top left.
-	x := sz - side - at
-	if theirs {
-		x = at
-	}
-	defer op.Offset(image.Pt(x, at)).Push(gtx.Ops).Pop()
+	side := min(gtx.Dp(soundBadge), sz/3)
+	at := min(gtx.Dp(soundInset), sz/12)
+	defer op.Offset(image.Pt(sz-side-at, at)).Push(gtx.Ops).Pop()
 	draw := func(gtx C) D {
-		// A phone's 45% of this color; Gio blends in linear space.
-		fillCircle(gtx, image.Pt(side/2, side/2), side/2, argb(0x0b141a, 0xa8+uint8(0x20*u.hover(gtx, btn))))
+		// WhatsApp Web's half of this color; Gio blends in linear space.
+		fillCircle(gtx, image.Pt(side/2, side/2), side/2, argb(0x0b141a, 0xbe+uint8(0x20*u.hover(gtx, btn))))
 		white := rgb(0xffffff)
 		if on && loading {
 			lg := gtx
@@ -102,11 +97,12 @@ func (u *UI) stickerSound(gtx C, m *model.Message, sz int, animated, theirs bool
 			t.Pop()
 			return D{Size: image.Pt(side, side)}
 		}
-		ic := icVolumeOff
+		// What a click does: the sound, or no more of it.
+		ic := icVolume
 		if on {
-			ic = icVolume
+			ic = icVolumeOff
 		}
-		centerIn(gtx, side, iconW(ic, dp(gtx, int(float32(sz)*soundIcon)), white))
+		centerIn(gtx, side, iconW(ic, dp(gtx, side*int(soundIcon)/int(soundBadge)), white))
 		return D{Size: image.Pt(side, side)}
 	}
 	cg := gtx
