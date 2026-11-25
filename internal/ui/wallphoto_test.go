@@ -31,51 +31,65 @@ func TestPhotoWallValue(t *testing.T) {
 	}
 }
 
-// TestWallView checks the part of a photo a pane shows has the focus in the
-// middle, whichever side is cut, and stays in the photo.
+// TestWallView checks the part of a photo a pane shows keeps the focus in
+// view, in the middle unless that shows past the photo's edge.
 func TestWallView(t *testing.T) {
-	portrait, landscape := image.Pt(1440, 2560), image.Pt(2560, 1440)
-	for _, src := range []image.Point{portrait, landscape} {
-		for _, pane := range []image.Point{{X: 1100, Y: 800}, {X: 500, Y: 1000}, {X: 2000, Y: 400}} {
-			for _, f := range []f32.Point{wallFocusCenter, {X: 0.637, Y: 0.546}, {X: 0.2, Y: 0.5}, {X: 0.5, Y: 0.13}, {X: 0.85, Y: 0.8}, {}, {X: 1, Y: 1}} {
-				v, s := wallView(src, pane, f)
-				mid := f32.Pt((v.x+v.w/2)/float32(src.X), (v.y+v.h/2)/float32(src.Y))
-				near := func(a, b float32) bool { return a-b < 0.001 && b-a < 0.001 }
-				// At the photo's edge the middle is as near as the zoom lets it.
-				want := f32.Pt(min(max(f.X, wallMinPart/2), 1-wallMinPart/2), min(max(f.Y, wallMinPart/2), 1-wallMinPart/2))
-				if !near(mid.X, want.X) || !near(mid.Y, want.Y) {
-					t.Errorf("%v in %v around %v: the middle is %v, want %v", src, pane, f, mid, want)
-				}
-				if v.x < -0.5 || v.y < -0.5 || v.x+v.w > float32(src.X)+0.5 || v.y+v.h > float32(src.Y)+0.5 {
-					t.Errorf("%v in %v around %v: shows %+v, past the photo", src, pane, f, v)
-				}
-				if w, h := v.w*s, v.h*s; w < float32(pane.X)-0.5 || h < float32(pane.Y)-0.5 {
-					t.Errorf("%v in %v around %v: shows %vx%v", src, pane, f, w, h)
-				}
-			}
+	for _, c := range []struct {
+		name         string
+		src, pane    image.Point
+		focus        f32.Point
+		wantX, wantY float32
+	}{
+		// A portrait photo in a wide pane: its full width, cut at the top.
+		{"portrait top", image.Pt(1440, 2560), image.Pt(1100, 800), f32.Pt(0.5, 0.1), 0, 0},
+		{"portrait middle", image.Pt(1440, 2560), image.Pt(1100, 800), f32.Pt(0.5, 0.5), 0, (2560 - 1440*800/1100.0) / 2},
+		// A landscape photo in a tall pane: a third of the width, at the left.
+		{"landscape left", image.Pt(2560, 1440), image.Pt(500, 1000), f32.Pt(0.2, 0.5), 2560*0.2 - 720/2, 0},
+	} {
+		v, s := wallView(c.src, c.pane, c.focus)
+		if d := v.x - c.wantX; d > 0.5 || d < -0.5 {
+			t.Errorf("%s: x = %v, want %v", c.name, v.x, c.wantX)
 		}
-	}
-	// In the middle the photo isn't zoomed in to: its full width.
-	if v, _ := wallView(portrait, image.Pt(1100, 800), wallFocusCenter); v.w != 1440 {
-		t.Errorf("around its middle %v of the photo's width shows", v.w)
+		if d := v.y - c.wantY; d > 0.5 || d < -0.5 {
+			t.Errorf("%s: y = %v, want %v", c.name, v.y, c.wantY)
+		}
+		if w, h := v.w*s, v.h*s; w < float32(c.pane.X)-0.5 || h < float32(c.pane.Y)-0.5 {
+			t.Errorf("%s: shows %vx%v of a %v pane", c.name, w, h, c.pane)
+		}
 	}
 }
 
-// TestSharedCrop checks a photo is set for everyone cropped so the focus is
-// its middle.
+// TestSharedCrop checks a photo is set for everyone in a phone's shape, the
+// focus halfway across.
 func TestSharedCrop(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "p.jpg")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	jpeg.Encode(f, image.NewRGBA(image.Rect(0, 0, 200, 400)), nil)
-	f.Close()
-	if c := sharedCrop(path, wallFocusCenter); !c.Empty() {
-		t.Errorf("a photo without a point picked is cropped to %v", c)
-	}
-	if c, want := sharedCrop(path, f32.Pt(0.6, 0.25)), image.Rect(40, 0, 200, 200); c != want {
-		t.Errorf("cropped to %v, want %v", c, want)
+	for _, c := range []struct {
+		src   image.Point
+		focus f32.Point
+		want  image.Rectangle
+	}{
+		{image.Pt(300, 400), wallFocusCenter, image.Rect(60, 0, 240, 400)},
+		// Up and down it's whole, wherever the point is.
+		{image.Pt(300, 400), f32.Pt(0.5, 0.1), image.Rect(60, 0, 240, 400)},
+		{image.Pt(300, 400), f32.Pt(0.6, 0.1), image.Rect(90, 0, 270, 400)},
+		{image.Pt(300, 400), f32.Pt(0.4, 0.5), image.Rect(30, 0, 210, 400)},
+		// Near an edge, up to the edge.
+		{image.Pt(300, 400), f32.Pt(1, 0.5), image.Rect(120, 0, 300, 400)},
+		{image.Pt(300, 400), f32.Pt(0, 0.5), image.Rect(0, 0, 180, 400)},
+		{image.Pt(800, 400), f32.Pt(0.75, 0.5), image.Rect(510, 0, 690, 400)},
+		// A phone's shape or narrower: whole.
+		{image.Pt(180, 400), f32.Pt(0.9, 0.5), image.Rectangle{}},
+		{image.Pt(100, 400), f32.Pt(0.9, 0.5), image.Rectangle{}},
+	} {
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		jpeg.Encode(f, image.NewRGBA(image.Rectangle{Max: c.src}), nil)
+		f.Close()
+		if got := sharedCrop(path, c.focus); got != c.want {
+			t.Errorf("%v around %v: cropped to %v, want %v", c.src, c.focus, got, c.want)
+		}
 	}
 }
 

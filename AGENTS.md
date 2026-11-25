@@ -473,8 +473,8 @@ Gotchas already found in the pinned version (v0.10.x):
   uploaded as `chat-wallpaper-image` under `WhatsApp Chat Wallpaper Keys`; WhatsApp's own
   (`stockImageID`) come from `static.whatsapp.net/downloadable`. The UI lays it over the
   chat's look (`sharedLook`) and drops it when the user picks or resets one: whichever came
-  last shows. A photo with a point picked goes cropped around it (`sharedCrop`): phones show one
-  from its middle. In a group any member may set it, unless only admins edit its settings (`Locked`).
+  last shows. A photo goes cut to a phone's shape with the point picked halfway across
+  (`sharedCrop`): a wider one showed off to the right on a phone. In a group any member may set it, unless only admins edit its settings (`Locked`).
   Other clients send scheme IDs WhatsApp Web lacks (`Red@Minimal`). With `-debug`
   each is logged whole, a photo's media key included.
 - Keep in chat is a `KeepInChatMessage` (kept in `wz_messages.kept`; history sync says it
@@ -759,7 +759,7 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    WhatsApp's, with a reset button, every chat's as a dialog of the same
                    pages; the doodles are one app-wide preference,
                    `prefDoodles`, which a chat's own theme can override) in chattheme.go, a photo
-                   wallpaper (a point you pick on its Photo position page in the middle,
+                   wallpaper (cropped around a point you pick on its Photo position page,
                    only the part that shows decoded) in wallphoto.go, one set for everyone in a chat (theirs
                    over yours, and the panel's Everyone rows) in sharedtheme.go, their tables
                    read from WhatsApp Web's modules in chatthemes.go, and the App theme color
