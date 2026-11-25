@@ -14,6 +14,7 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -535,7 +536,14 @@ func (u *UI) layoutSpans(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, o
 
 // layoutSpansLH is layoutSpans with lines lineH tall.
 func (u *UI) layoutSpansLH(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, lineH unit.Sp, onSpan func(gtx C, idx int, d D), carets *[]styledtext.Caret) D {
+	return u.layoutSpansAligned(gtx, spans, deco, lineH, text.Start, onSpan, carets)
+}
+
+// layoutSpansAligned is layoutSpansLH with its lines aligned in the width
+// given.
+func (u *UI) layoutSpansAligned(gtx C, spans []styledtext.SpanStyle, deco []spanDeco, lineH unit.Sp, align text.Alignment, onSpan func(gtx C, idx int, d D), carets *[]styledtext.Caret) D {
 	st := styledtext.Text(u.th.Shaper, spans...)
+	st.Alignment = align
 	st.LineHeight, st.LineHeightScale = lineH, 1
 	if hide := u.secret; hide > 0 {
 		return u.layoutHiddenSpans(gtx, st, hide, onSpan, carets)

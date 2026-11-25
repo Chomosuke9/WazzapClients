@@ -424,6 +424,14 @@ type statusViewer struct {
 	deleteBtn          widget.Clickable // delete your own group status
 	backdrop           tween            // the blurred update behind it fading in
 	views              statusViews      // who saw your own update (statusviews.go)
+	// more is the update whose whole text shows, after "Read more", in a
+	// list of its own over the darkened update.
+	more     string
+	moreBtn  widget.Clickable
+	moreList widget.List
+	moreDim  widget.Clickable // clicked, like the text, to show its first lines again
+	moreText widget.Clickable
+	moreAnim tween
 }
 
 // statusDuration is how long a picture or text update stays on screen. A
@@ -451,7 +459,15 @@ func (v *statusViewer) showAt(t *model.StatusThread, i int) {
 	v.reply.SingleLine, v.reply.Submit = true, true
 	v.views.open, v.views.loaded = false, false
 	v.reacts = false
+	v.more = ""
 	v.reply.SetText("")
+}
+
+// wholeText shows the update's whole text, which holds its timer.
+func (v *statusViewer) wholeText(up *model.StatusUpdate) {
+	v.more = up.ID
+	v.moreList.Axis = layout.Vertical
+	v.moreList.Position = layout.Position{}
 }
 
 // close fades the viewer out. A video stops at once.
@@ -604,6 +620,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	}
 	p := u.pal
 	advance := func(d int) {
+		v.more = ""
 		v.index += d
 		v.shownAt, v.zp, v.frac, v.held = time.Time{}, zoomPan{}, 0, 0
 		if v.index < 0 {
@@ -618,11 +635,25 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		if v.closeBtn.Clicked(gtx) || v.backBtn.Clicked(gtx) {
 			v.close()
 		}
+		// A click beside a text shown whole shows its first lines again.
+		turn := func(d int) {
+			if v.more != "" {
+				v.more = ""
+				return
+			}
+			advance(d)
+		}
 		if v.next.Clicked(gtx) {
-			advance(1)
+			turn(1)
 		}
 		if v.prev.Clicked(gtx) {
-			advance(-1)
+			turn(-1)
+		}
+		if noFocus(&v.moreDim).Clicked(gtx) || noFocus(&v.moreText).Clicked(gtx) {
+			v.more = ""
+		}
+		if v.moreBtn.Clicked(gtx) {
+			v.wholeText(t.Updates[v.index])
 		}
 		if v.pauseBtn.Clicked(gtx) {
 			v.paused = !v.paused
@@ -679,7 +710,7 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	if v.isOpen() {
 		u.syncStatusVideo(t, up)
 		// Its menu, and the dialog Hide asks in, hold it too.
-		hold := v.paused || v.zp.zoomed() || v.replying(gtx) || v.reacts || u.ctx.isOpen() || u.dialog.isOpen() || v.views.open
+		hold := v.paused || v.zp.zoomed() || v.replying(gtx) || v.reacts || u.ctx.isOpen() || u.dialog.isOpen() || v.views.open || v.more != ""
 		if u.statusTick(gtx, now, hold) {
 			advance(1)
 			gtx.Execute(op.InvalidateCmd{})
@@ -730,6 +761,19 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		shade(gtx, image.Rect(frame.Min.X, frame.Min.Y, frame.Max.X, frame.Min.Y+gtx.Dp(130)), 0x90, 0)
 		if up.Text != "" && up.Media != model.MediaNone || reply || t.Mine && !t.Group {
 			shade(gtx, image.Rect(frame.Min.X, barTop-gtx.Dp(110), frame.Max.X, frame.Max.Y), 0, 0xa0)
+		}
+	}
+
+	whole := v.more == up.ID
+	if up.Media == model.MediaNone || zoomed {
+		v.moreAnim.snap(false)
+	} else if a := easeOut(v.moreAnim.step(gtx, whole, durPopIn)); a > 0 {
+		// The caption shown whole, over the darkened update.
+		fillRect(gtx, frame, faded(argb(0x000000, 0xe0), a))
+		if whole {
+			dg := gtx
+			dg.Constraints = layout.Exact(sz)
+			noFocus(&v.moreDim).Layout(dg, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 		}
 	}
 
@@ -837,10 +881,8 @@ func (u *UI) layoutStatusViewer(gtx C) {
 		}
 		capW := max(0, frame.Dx()-gtx.Dp(32))
 		cap := record(gtx, func(gtx C) D {
-			gtx.Constraints = layout.Constraints{Min: image.Pt(capW, 0), Max: image.Pt(capW, frame.Dy()/2)}
-			l := u.label(16, up.Text, white, labelOpts{weight: font.SemiBold, align: text.Middle})
-			l.MaxLines = 4
-			return l.Layout(gtx)
+			gtx.Constraints = layout.Constraints{Min: image.Pt(capW, 0), Max: image.Pt(capW, max(0, bottom-cy-gtx.Dp(72)))}
+			return u.statusText(gtx, up, moreText{size: 16, lineH: 20, weight: font.SemiBold, link: statusMoreGreen, lines: captionLines})
 		})
 		cap.at(gtx, frame.Min.X+gtx.Dp(16), bottom-cap.size.Y)
 	}
@@ -1118,11 +1160,12 @@ func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusU
 		tg := gtx
 		tg.Constraints = layout.Exact(r.Size())
 		tr := op.Offset(r.Min).Push(gtx.Ops)
-		layout.UniformInset(32).Layout(tg, func(gtx C) D {
+		// What fits between the header and the reply bar.
+		const lineH = 34
+		layout.Inset{Left: 32, Right: 32, Top: 132, Bottom: 132}.Layout(tg, func(gtx C) D {
 			return layout.Center.Layout(gtx, func(gtx C) D {
-				l := u.label(28, up.Text, rgb(0xffffff), labelOpts{align: text.Middle})
-				l.MaxLines = 0
-				return l.Layout(gtx)
+				return u.statusText(gtx, up, moreText{size: 28, lineH: lineH, link: rgb(0xffffff),
+					lines: max(1, gtx.Constraints.Max.Y/gtx.Sp(lineH))})
 			})
 		})
 		tr.Pop()
@@ -1161,6 +1204,27 @@ func (u *UI) layoutStatusContent(gtx C, t *model.StatusThread, up *model.StatusU
 	if vid && u.status.viewer.isOpen() {
 		u.layoutStatusVideoCenter(gtx, t, up, r.Min.Add(r.Size().Div(2)))
 	}
+}
+
+// statusMoreGreen is "Read more" in a caption, over a dark shade in either
+// theme.
+var statusMoreGreen = rgb(0x21c063)
+
+// statusText draws an update's text with the size and lines of t: the
+// first ones, or all of it, scrolling, once "Read more" was clicked.
+func (u *UI) statusText(gtx C, up *model.StatusUpdate, t moreText) D {
+	v := &u.status.viewer
+	t.text, t.col, t.align, t.more = up.Text, rgb(0xffffff), text.Middle, &v.moreBtn
+	if v.more != up.ID {
+		return u.layoutMoreText(gtx, t)
+	}
+	t.lines = 0
+	return u.scrollList(gtx, &v.moreList, 1, func(gtx C, _ int) D {
+		return noFocus(&v.moreText).Layout(gtx, func(gtx C) D {
+			// Clear of the scrollbar.
+			return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D { return u.layoutMoreText(gtx, t) })
+		})
+	})
 }
 
 // layoutStatusVideoCenter draws a spinner while a video status downloads

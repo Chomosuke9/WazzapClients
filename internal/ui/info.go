@@ -37,6 +37,7 @@ type infoState struct {
 	closeBtn   widget.Clickable
 	allMembers bool  // the member list is expanded
 	allHours   bool  // a business's opening hours are expanded
+	allDesc    bool  // a group's whole description shows (readmore.go)
 	anim       tween // sliding in and out
 	// memberSearch filters a group's member list by memberQuery.
 	memberSearch bool
@@ -124,6 +125,7 @@ func (u *UI) showInfo(chatID, name string) {
 		u.info.list.Position = layout.Position{}
 		u.info.allMembers = false
 		u.info.allHours = false
+		u.info.allDesc = false
 		u.info.memberSearch = false
 	}
 	u.info.chatID = chatID
@@ -618,7 +620,8 @@ func (u *UI) infoAction(gtx C, key string, ic *icon.Icon, label string) D {
 }
 
 // infoAbout shows a group's description or a contact's about text. A
-// group's is edited in place: its pencil, or "Add group description".
+// group's is edited in place: its pencil, or "Add group description". A
+// long one shows its first lines, until "Read more" is clicked.
 func (u *UI) infoAbout(gtx C, c *model.Chat, info *model.ChatInfo) D {
 	p := u.pal
 	edit := u.btn("info:editdesc")
@@ -632,27 +635,36 @@ func (u *UI) infoAbout(gtx C, c *model.Chat, info *model.ChatInfo) D {
 		})
 	}
 	can := info.IsGroup && u.canEditGroup(c, info)
-	txt := info.About
-	col := p.Text
-	if txt == "" {
+	more := u.btn("info:moredesc")
+	if more.Clicked(gtx) {
+		u.info.allDesc = true
+	}
+	if info.About == "" {
 		if !can {
 			if info.IsGroup {
 				return layout.Spacer{Height: 8}.Layout(gtx)
 			}
 			return D{}
 		}
-		txt, col = "Add group description", p.Green
 	}
 	return layout.Inset{Left: infoPadX, Right: 30, Top: 6, Bottom: 31}.Layout(gtx, func(gtx C) D {
-		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+		// The pencil stays beside the first lines of a long one.
+		minH := 0
+		if can {
+			minH = gtx.Dp(40)
+		}
+		return layout.Flex{}.Layout(gtx,
 			layout.Flexed(1, func(gtx C) D {
-				l := u.label(17, txt, col, labelOpts{})
-				l.MaxLines = 6
-				l.LineHeight, l.LineHeightScale = 25, 1
-				if info.About == "" {
-					return clickable(gtx, edit, l.Layout) // "Add group description"
-				}
-				return l.Layout(gtx)
+				return vcenter(gtx, minH, func(gtx C) D {
+					if info.About == "" {
+						return clickable(gtx, edit, u.label(17, "Add group description", p.Green).Layout)
+					}
+					t := moreText{text: info.About, size: 17, lineH: 25, col: p.Text, link: p.Green, lines: descLines, more: more}
+					if u.info.allDesc {
+						t.lines = 0
+					}
+					return u.layoutMoreText(gtx, t)
+				})
 			}),
 			layout.Rigid(func(gtx C) D {
 				if !can {

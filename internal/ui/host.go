@@ -862,7 +862,7 @@ func dropCaches() {
 	previews.m = nil
 	richBlocks.m = nil
 	mdParsed.m, mdTexts.m, codeSpans.m = nil, nil, nil
-	readMoreCuts.m, transcriptCuts.m = nil, nil
+	readMoreCuts.m, lineCuts.m = nil, nil
 	icon.FlushCache()
 	dropShapes()
 }

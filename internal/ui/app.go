@@ -1295,6 +1295,8 @@ func (u *UI) escape() {
 		u.conv.reply = nil
 	case u.status.viewer.isOpen() && u.status.viewer.views.open:
 		u.status.viewer.views.close()
+	case u.status.viewer.isOpen() && u.status.viewer.more != "":
+		u.status.viewer.more = ""
 	case u.status.viewer.isOpen():
 		u.status.viewer.close()
 	case u.status.privacy.open():
@@ -2356,6 +2358,34 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 	case "invitelink":
 		u.openInviteLink(u.selected.ID)
 		u.applyEvents()
+	case "descmore", "statusmore", "statuscaption", "statuswhole":
+		// Long texts cut with "Read more": a group's description, a text
+		// status, a caption, and the caption shown whole.
+		long := "A place for anime fans to meet.\nDiscuss shows, favorite characters and recommendations." +
+			strings.Repeat("\n\nBe kind, mark your spoilers and keep the stickers to a minimum while an episode is airing.", 9)
+		if name == "descmore" {
+			u.openInfo(u.selected.ID)
+			u.info.data.About = long
+			u.info.anim.snap(true)
+			break
+		}
+		for _, t := range u.statuses {
+			if t.ID == "rina" && len(t.Updates) > 0 {
+				up := *t.Updates[0]
+				up.Text = long
+				if name == "statusmore" {
+					up.Media, up.Thumb, up.Background = model.MediaNone, nil, 0xff6e257e
+				}
+				v := &u.status.viewer
+				v.show(&model.StatusThread{ID: t.ID, Name: t.Name, Updates: []*model.StatusUpdate{&up}})
+				v.paused = true
+				v.anim.snap(true)
+				if name == "statuswhole" {
+					v.wholeText(&up)
+					v.moreAnim.snap(true)
+				}
+			}
+		}
 	case "groupname", "groupdesc", "groupphoto":
 		// A group's info being edited (groupedit.go).
 		u.openInfo(u.selected.ID)

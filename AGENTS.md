@@ -781,6 +781,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    changes, disappearing messages, Restricted chat, Edit group admins) in infopages.go, a chat's
                    Media, links and docs in infomedia.go; editing a group's name and description in
                    place and its picture's menu (view, change, remove) in groupedit.go;
+                   texts cut to a number of lines with "Read more" (a group's description, a status's
+                   text and caption) in readmore.go;
                    a profile picture shown big, full size (`Backend.ProfilePhoto`, not
                    kept on disk), in photoview.go; the Media panel (the rail's Media button:
                    media, docs and links from every chat, under headings by date) in gallery.go; the list column's
@@ -1169,7 +1171,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # custom mentions: mentions (a group's page), custommention, newmention (its name's error), custompick (the picker offering them);
 # privatemention (the picker in a private chat: -ochat rina); voice messages' transcripts: transcripts (in each of their states: -ochat work), transcriptwhy,
 # transcriptlang (a chat's language), transcriptinfo (its row in the chat's info), transcriptsettings;
-# a group's info being edited: groupname, groupdesc, groupphoto (its picture's menu); picview (the chat's picture, big); the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
+# a group's info being edited: groupname, groupdesc, groupphoto (its picture's menu); descmore (a long description cut with Read more); statusmore, statuscaption, statuswhole (a long text status and caption, and the caption shown whole); picview (the chat's picture, big); the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with
 # WAZZAP_DEMO_PHOTO=<a photo> to edit) into <out>/overlay-<name>.png:
 go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # Film an animation into <out>/film-<name>.png: frames -step apart, opening on top and

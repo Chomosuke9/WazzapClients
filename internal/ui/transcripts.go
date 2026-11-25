@@ -6,7 +6,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"strings"
 	"sync"
 
 	"gioui.org/font"
@@ -16,7 +15,6 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-	"golang.org/x/image/math/fixed"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/transcribe"
@@ -405,47 +403,11 @@ func (u *UI) layoutTranscript(gtx C, m *model.Message, w, metaW, metaH int, cols
 // phones.
 const transcriptLines = 3
 
-type transcriptCutKey struct {
-	text         string
-	px, w, arrow int
-}
-
-type transcriptCutVal struct {
-	text string
-	long bool
-}
-
-// transcriptCuts caches cutTranscript, which shapes the text.
-var transcriptCuts = memo[transcriptCutKey, transcriptCutVal]{limit: 100}
-
 // cutTranscript returns what fits of s in transcriptLines lines w wide,
 // with room for an arrow at the end of the last, and whether there's more.
 func (u *UI) cutTranscript(gtx C, s string, size unit.Sp, w, arrow int) (string, bool) {
-	v := transcriptCuts.get(transcriptCutKey{s, gtx.Sp(size), w, arrow}, func() transcriptCutVal {
-		// The room is spaces after the ellipsis.
-		room := strings.Repeat("\u00a0", int(float32(arrow)/u.nbspWidth(gtx, size))+1)
-		u.th.Shaper.LayoutString(text.Parameters{
-			Font:       font.Font{Typeface: typeface},
-			PxPerEm:    fixed.I(gtx.Sp(size)),
-			MaxLines:   transcriptLines,
-			Truncator:  "…" + room,
-			MaxWidth:   w,
-			Locale:     gtx.Locale,
-			WrapPolicy: text.WrapWords, // never half a word
-		}, displayText(s))
-		hidden := 0
-		for g, ok := u.th.Shaper.NextGlyph(); ok; g, ok = u.th.Shaper.NextGlyph() {
-			if g.Flags&text.FlagTruncator != 0 && g.Flags&text.FlagClusterBreak != 0 {
-				hidden = int(g.Runes)
-			}
-		}
-		rs := []rune(displayText(s))
-		if hidden <= 0 || hidden >= len(rs) {
-			return transcriptCutVal{text: s}
-		}
-		return transcriptCutVal{strings.TrimRight(string(rs[:len(rs)-hidden]), " ,;:-") + "…", true}
-	})
-	return v.text, v.long
+	// Never half a word.
+	return u.cutLines(gtx, lineCut{text: s, w: w, lines: transcriptLines, policy: text.WrapWords}, size, arrow)
 }
 
 // quoted puts a transcript in quotes, as WhatsApp shows it.
