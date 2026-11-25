@@ -206,7 +206,7 @@ func TestConvBarWheel(t *testing.T) {
 	b := bt.bar()
 	last, thumb, ver := b.top, b.thumb, bt.u.msgsVer
 	glide, pages := 0, 0
-	for i := 0; bt.u.conv.olderMore || bt.u.conv.list.Position.First > 0; i++ {
+	for i := 0; bt.u.conv.olderMore || bt.u.conv.list.Position.First > 0 || bt.u.conv.list.Position.Offset > 0; i++ {
 		if i > 20000 {
 			t.Fatal("never at the top")
 		}
