@@ -162,7 +162,21 @@ func (u *UI) layoutVideoCenter(gtx C, m *model.Message, c image.Point) {
 		st = vv.player.Status()
 	}
 	rad := gtx.Dp(34)
+	x, moving := u.transferOf(m)
 	switch {
+	case vv.loading && moving:
+		fillCircle(gtx, c, rad, argb(0x000000, 0x90))
+		s := gtx.Dp(60)
+		t := op.Offset(c.Sub(image.Pt(s/2, s/2))).Push(gtx.Ops)
+		u.transferButton(gtx, "view:"+m.ID, m, x.Transfer, 60, rgb(0xffffff))
+		t.Pop()
+		if txt := transferText(x.Transfer); txt != "" {
+			l := u.pillText(gtx, txt)
+			w, h := l.size.X+gtx.Dp(26), gtx.Dp(transferPillH)
+			r := image.Rectangle{Min: image.Pt(c.X-w/2, c.Y+rad+gtx.Dp(10)), Max: image.Pt(c.X-w/2+w, c.Y+rad+gtx.Dp(10)+h)}
+			fillRRect(gtx, r, h/2, argb(0x000000, 0x90))
+			l.at(gtx, r.Min.X+(w-l.size.X)/2, r.Min.Y+(h-l.size.Y)/2)
+		}
 	case vv.loading || vv.player != nil && vv.size == (image.Point{}):
 		s := gtx.Dp(44)
 		fillCircle(gtx, c, rad, argb(0x000000, 0x90))

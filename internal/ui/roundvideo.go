@@ -135,8 +135,11 @@ func (u *UI) roundPicture(gtx C, m *model.Message, sz int) {
 	key := fileKey(m)
 	cl := u.btn("round:" + m.ID)
 	size := image.Pt(sz, sz)
+	x, moving := u.transferOf(m)
 	if cl.Clicked(gtx) {
-		if ps.gifFetch[key] == gifFailed {
+		if moving {
+			u.cancelTransfer(m)
+		} else if ps.gifFetch[key] == gifFailed {
 			// Its file didn't come, or can't play: the viewer has what's left.
 			u.openViewer(m)
 			u.viewer.origin = u.viewerOrigin(gtx, cl, size)
@@ -167,6 +170,14 @@ func (u *UI) roundPicture(gtx C, m *model.Message, sz int) {
 	mid := image.Pt(sz/2, sz/2)
 	dark := argb(0x000000, 0x80)
 	switch {
+	case moving:
+		rad, isz := gtx.Dp(26), gtx.Dp(26)
+		fillCircle(gtx, mid, rad, dark)
+		u.transferRing(gtx, x.Transfer, f32.Pt(float32(sz)/2, float32(sz)/2), float32(rad)-float32(gtx.Dp(3)),
+			float32(max(1, gtx.Dp(2.5))), u.pal.Green, rgb(0xffffff))
+		t := op.Offset(mid.Sub(image.Pt(isz/2, isz/2))).Push(gtx.Ops)
+		drawIcon(gtx, icClose, 26, rgb(0xffffff))
+		t.Pop()
 	case sounding && !live:
 		rad := gtx.Dp(26)
 		fillCircle(gtx, mid, rad, dark)

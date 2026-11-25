@@ -814,7 +814,7 @@ type rawMsg struct {
 
 // msgColumns are what scanMessage reads.
 const msgColumns = `chat, id, sender_jid, sender_push, from_me, ts, kind, media, text, receipt, reaction, starred, pinned, pin_until,
-	edited, revoked, revoked_by, opened, whisper, kept, ` + stickerColumn + `, ` + commentColumn + `, raw_payload, edit_payload`
+	edited, revoked, revoked_by, opened, whisper, kept, ` + stickerColumn + `, ` + commentColumn + `, raw_payload, edit_payload, copy_payload`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -827,11 +827,11 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		edited, revoked         int64
 		fromMe, starred, opened bool
 		kept                    bool
-		raw, edit               []byte
+		raw, edit, cp           []byte
 		react, stickers         string
 	)
 	err := sc.Scan(&m.ChatID, &m.ID, &r.senderJID, &r.senderPush, &fromMe, &ts, &kind, &media, &m.Text, &receipt,
-		&react, &starred, &pinned, &pinUntil, &edited, &revoked, &r.revokedBy, &opened, &r.whisper, &kept, &stickers, &m.Replies, &raw, &edit)
+		&react, &starred, &pinned, &pinUntil, &edited, &revoked, &r.revokedBy, &opened, &r.whisper, &kept, &stickers, &m.Replies, &raw, &edit, &cp)
 	if err != nil {
 		return r, err
 	}
@@ -855,6 +855,7 @@ func scanMessage(sc scanner) (rawMsg, error) {
 	m.SenderID = r.senderJID
 	r.Message = &m
 	r.fill(raw, edit)
+	r.fillHD(cp)
 	if m.Kind == model.KindViewOnce {
 		// Your own, still uploading, is on this computer already, and so
 		// is a text that came with its text.

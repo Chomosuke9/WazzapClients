@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -29,34 +30,56 @@ const avatarTTL = 24 * time.Hour
 // the most recent requests are what's on screen right now.
 type fetcher struct {
 	mu      sync.Mutex
-	stack   []func()
+	stack   []fetchJob
 	pending map[string]bool
 	wake    chan struct{}
+}
+
+type fetchJob struct {
+	key string
+	run func()
 }
 
 func newFetcher() *fetcher {
 	return &fetcher{pending: make(map[string]bool), wake: make(chan struct{}, 1)}
 }
 
-// add queues job under key unless the same key is already queued.
-func (f *fetcher) add(key string, job func()) {
+// add queues job under key and reports whether it did: not when the same
+// key is already queued.
+func (f *fetcher) add(key string, job func()) bool {
 	f.mu.Lock()
 	if f.pending[key] {
 		f.mu.Unlock()
-		return
+		return false
 	}
 	f.pending[key] = true
-	f.stack = append(f.stack, func() {
+	f.stack = append(f.stack, fetchJob{key, func() {
 		job()
 		f.mu.Lock()
 		delete(f.pending, key)
 		f.mu.Unlock()
-	})
+	}})
 	f.mu.Unlock()
 	select {
 	case f.wake <- struct{}{}:
 	default:
 	}
+	return true
+}
+
+// drop takes the job queued under key out of the queue, and reports
+// whether it was still in it: not when it already runs.
+func (f *fetcher) drop(key string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, j := range f.stack {
+		if j.key == key {
+			f.stack = slices.Delete(f.stack, i, i+1)
+			delete(f.pending, key)
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fetcher) run(ctx context.Context, gap time.Duration) {
@@ -64,7 +87,7 @@ func (f *fetcher) run(ctx context.Context, gap time.Duration) {
 		f.mu.Lock()
 		var job func()
 		if n := len(f.stack); n > 0 {
-			job = f.stack[n-1]
+			job = f.stack[n-1].run
 			f.stack = f.stack[:n-1]
 		}
 		f.mu.Unlock()
@@ -310,11 +333,28 @@ func (b *Backend) MediaData(chatID, msgID string) []byte {
 		}
 		_ = os.Remove(b.failedPath(chatID, msgID))
 	}
-	b.downloads.add(chatID+"/"+msgID, func() { b.download(chatID, msgID) })
+	b.queueDownload(chatID, msgID)
 	return nil
 }
 
-func (b *Backend) download(chatID, msgID string) {
+// queueDownload downloads a message's picture or sticker in the
+// background. The sticker picker's are many and small: nobody follows
+// those.
+func (b *Backend) queueDownload(chatID, msgID string) {
+	var t *transfer
+	if chatID != stickerChat {
+		t = b.beginTransfer(chatID, msgID, false)
+	}
+	queued := b.downloads.add(chatID+"/"+msgID, func() {
+		defer t.end() // after the MediaEvent
+		b.download(t.context(b.ctx), chatID, msgID)
+	})
+	if !queued {
+		t.end()
+	}
+}
+
+func (b *Backend) download(ctx context.Context, chatID, msgID string) {
 	cli := b.client()
 	if cli == nil || !cli.IsConnected() {
 		return
@@ -326,7 +366,7 @@ func (b *Backend) download(chatID, msgID string) {
 	if b.rmr.waiting(key, b.now()) {
 		return // the phone is uploading it again (reupload.go)
 	}
-	ctx, cancel := context.WithTimeout(b.ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	media, blob, err := b.store.mediaBlob(ctx, chatID, msgID)
 	if err != nil || len(blob) == 0 {

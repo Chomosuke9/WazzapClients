@@ -194,13 +194,13 @@ func (b *Backend) keepSnippetMedia(msg *waE2E.Message) (string, error) {
 	return strings.Join(hashes, ","), nil
 }
 
-func (b *Backend) uploadSnippetMedia(msg *waE2E.Message) error {
+func (b *Backend) uploadSnippetMedia(ctx context.Context, msg *waE2E.Message) error {
 	for _, d := range snippetMedia(msg) {
 		path, err := b.snippetMediaPath(d)
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		res, err := uploadFile(ctx, b.client(), path, whatsmeow.GetMediaType(d))
 		cancel()
 		if err != nil {

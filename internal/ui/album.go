@@ -337,9 +337,19 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 		m := ms[i]
 		tr = tr.Add(image.Pt(0, y))
 		tiles[i] = tr.Add(image.Pt(pad, pad))
-		u.layoutImage(gtx, tr, m, u.gifImage(m, u.messageImage(m, maxPx), maxPx))
-		u.photoBadge(gtx, tr, m)
-		if i == 3 && len(ms) > 4 {
+		img := u.gifImage(m, u.messageImage(m, maxPx), maxPx)
+		covered := i == 3 && len(ms) > 4
+		var pill part
+		if covered {
+			u.layoutImage(gtx, tr, m, img)
+		} else {
+			var metaSz image.Point
+			if i == len(tiles)-1 && len(captioned) == 0 {
+				metaSz = meta.size.Add(image.Pt(gtx.Dp(7), 0))
+			}
+			pill = u.layoutPicture(gtx, tr, m, img, metaSz)
+		}
+		if covered {
 			// The last tile is covered by how many it stands for.
 			more := len(ms) - 3
 			fillRRect(gtx, tr, gtx.Dp(6), argb(0x000000, 0x80))
@@ -351,6 +361,7 @@ func (u *UI) layoutAlbum(gtx C, c *model.Chat, r convRow, maxW int) (D, []image.
 		ig.Constraints = layout.Exact(tr.Size())
 		clickable(ig, u.btn("img:"+m.ID), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 		t.Pop()
+		pill.at(gtx, 0, 0)
 	}
 	y = tiles[len(tiles)-1].Max.Y - pad
 	var captions []albumCaption

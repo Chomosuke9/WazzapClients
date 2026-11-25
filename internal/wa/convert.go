@@ -226,7 +226,7 @@ func describe(m *waE2E.Message) content {
 	case m.GetImageMessage() != nil:
 		e := m.GetImageMessage()
 		return content{text: e.GetCaption(), kind: model.KindImage, media: model.MediaImage,
-			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo()}
+			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo(), file: fileInfo{Size: int64(e.GetFileLength())}}
 	case m.GetVideoMessage() != nil:
 		e := m.GetVideoMessage()
 		media := model.MediaVideo
@@ -234,11 +234,11 @@ func describe(m *waE2E.Message) content {
 			media = model.MediaGIF
 		}
 		return content{text: e.GetCaption(), kind: model.KindImage, media: media, duration: int(e.GetSeconds()),
-			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo()}
+			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo(), file: fileInfo{Size: int64(e.GetFileLength())}}
 	case m.GetPtvMessage() != nil:
 		e := m.GetPtvMessage()
 		return content{kind: model.KindImage, media: model.MediaVideo, round: true, duration: int(e.GetSeconds()),
-			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo()}
+			thumb: e.GetJPEGThumbnail(), inner: e, ctx: e.GetContextInfo(), file: fileInfo{Size: int64(e.GetFileLength())}}
 	case m.GetAudioMessage() != nil:
 		e := m.GetAudioMessage()
 		media := model.MediaAudio

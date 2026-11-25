@@ -242,9 +242,17 @@ func (u *UI) layoutDocument(gtx C, m *model.Message, maxW, metaW, metaH int, col
 		lbl.at(gtx, ix+(iw-lbl.size.X)/2, iy+ih-lbl.size.Y-gtx.Dp(4))
 	}
 
-	// The download button, or a spinner while it downloads.
+	// The download button, or how far the file has got.
 	right := w - pad
-	if !ready {
+	t, moving := u.transferOf(m)
+	if moving {
+		sz := gtx.Dp(34)
+		x, y := w-pad-sz, (cardH-sz)/2
+		right = x - gtx.Dp(8)
+		o := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+		u.transferButton(gtx, "doc:"+m.ID, m, t.Transfer, 34, cols.secondary)
+		o.Pop()
+	} else if !ready {
 		sz := gtx.Dp(34)
 		x, y := w-pad-sz, (cardH-sz)/2
 		right = x - gtx.Dp(8)
@@ -286,7 +294,11 @@ func (u *UI) layoutDocument(gtx C, m *model.Message, maxW, metaW, metaH int, col
 	y := cardH + gtx.Dp(4)
 	ig := gtx
 	ig.Constraints = layout.Constraints{Max: image.Pt(max(0, w-metaW-gtx.Dp(8)), metaH)}
-	info := record(ig, u.label(12, docInfo(m), cols.secondary, labelOpts{maxLines: 1}).Layout)
+	line := docInfo(m)
+	if s := transferText(t.Transfer); moving && s != "" {
+		line = s
+	}
+	info := record(ig, u.label(12, line, cols.secondary, labelOpts{maxLines: 1}).Layout)
 	info.at(gtx, gtx.Dp(2), y+(metaH-info.size.Y)/2)
 	return D{Size: image.Pt(w, y+metaH)}
 }
@@ -588,11 +600,15 @@ func (u *UI) layoutAudio(gtx C, c *model.Chat, m *model.Message, maxW, metaW, me
 		bt.Pop()
 	}()
 
-	// Play or pause, or a spinner while it downloads.
+	// Play or pause, or how far the file has got.
 	btnSz := gtx.Dp(36)
 	func() {
 		t := op.Offset(image.Pt(x0, (rowH-btnSz)/2)).Push(gtx.Ops)
 		defer t.Pop()
+		if x, ok := u.transferOf(m); ok && (u.voice.key != fileKey(m) || u.voice.player == nil) {
+			u.transferButton(gtx, "voice:"+m.ID, m, x.Transfer, 36, cols.secondary)
+			return
+		}
 		if loading {
 			lg := gtx
 			lg.Constraints = layout.Exact(image.Pt(btnSz, btnSz))

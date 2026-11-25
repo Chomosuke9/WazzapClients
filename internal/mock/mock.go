@@ -28,6 +28,10 @@ type Backend struct {
 	now        func() time.Time
 	meName     string
 	prefs      map[string]string
+	// transfers are what moves, and files the messages whose file is here,
+	// by chat and ID (transfer.go).
+	transfers []model.Transfer
+	files     map[string]bool
 	// sharedThemes are chats' themes set for everyone, and SharedThemesSent
 	// those ShareTheme set (chattheme.go).
 	sharedThemes     map[string]*model.SharedTheme

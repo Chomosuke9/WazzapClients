@@ -183,5 +183,5 @@ func (b *Backend) downloadSound(m *model.Message, path string) bool {
 		b.emit(model.NoticeEvent{Text: "This sticker's sound isn't available."})
 		return false
 	}
-	return b.downloadTo(ctx, s.GetAudioMessage(), m.ID, path)
+	return b.downloadTo(ctx, nil, s.GetAudioMessage(), m.ID, path)
 }

@@ -18,7 +18,7 @@ import (
 // also get a copy in HEVC or AV1, and a motion photo's clip comes the same way.
 // Reactions and replies go to the message itself, so a copy is no message of
 // its own here: parse files it under the message's ID, and its payload goes in
-// copy_payload, where only mediaBlob reads it.
+// copy_payload, where only mediaBlob (and fillHD, for its size) reads it.
 //
 // History sync sends the newest first, so a copy usually comes before its
 // message. It then stands in for the message (raw_payload is copy_payload)
@@ -68,6 +68,18 @@ func hdBlob(media model.Media, copyPayload []byte) []byte {
 		return nil
 	}
 	return c.keptBlob(m)
+}
+
+// fillHD marks a message whose stored copy is its better file HD, with
+// that file's size.
+func (r *rawMsg) fillHD(copyPayload []byte) {
+	m := r.Message
+	if len(copyPayload) == 0 || m.Kind != model.KindImage {
+		return
+	}
+	if c, pm := describeRaw(copyPayload); pm != nil && c.media == m.Media && isHD(pm) {
+		m.HD, m.FileSize = true, c.file.Size
+	}
 }
 
 // putCopy stores a copy of the message m.ID. If the message isn't here yet, or

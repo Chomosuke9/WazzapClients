@@ -128,7 +128,9 @@ func (b *Backend) OpenMedia(m *model.Message) {
 	go func() {
 		defer b.playing.Delete(path)
 		if _, err := os.Stat(path); err != nil {
-			ok := b.downloadFile(m, path)
+			t := b.beginTransfer(m.ChatID, m.ID, false)
+			defer t.end()
+			ok := b.downloadFile(t, m, path)
 			b.emit(model.MediaEvent{ChatID: m.ChatID, MsgID: m.ID, Failed: !ok})
 			if !ok {
 				return
@@ -150,7 +152,9 @@ func (b *Backend) MediaFile(m *model.Message) string {
 	if _, busy := b.playing.LoadOrStore(path, true); !busy {
 		go func() {
 			defer b.playing.Delete(path)
-			ok := b.downloadFile(m, path)
+			t := b.beginTransfer(m.ChatID, m.ID, false)
+			defer t.end() // after the MediaEvent
+			ok := b.downloadFile(t, m, path)
 			b.emit(model.MediaEvent{ChatID: m.ChatID, MsgID: m.ID, Failed: !ok})
 		}()
 	}
@@ -179,15 +183,18 @@ func downloadable(media model.Media, blob []byte) whatsmeow.DownloadableMessage 
 
 // downloadFile streams a message's media to path, so a big file never
 // sits in memory.
-func (b *Backend) downloadFile(m *model.Message, path string) bool {
-	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
+func (b *Backend) downloadFile(t *transfer, m *model.Message, path string) bool {
+	ctx, cancel := context.WithTimeout(t.context(b.ctx), 30*time.Minute)
 	defer cancel()
 	media, blob, _ := b.store.mediaBlob(ctx, m.ChatID, m.ID)
-	return b.downloadTo(ctx, downloadable(media, blob), m.ID, path)
+	return b.downloadTo(ctx, t, downloadable(media, blob), m.ID, path)
 }
 
 // downloadTo streams dl, part of message id, to path.
-func (b *Backend) downloadTo(ctx context.Context, dl whatsmeow.DownloadableMessage, id, path string) bool {
+func (b *Backend) downloadTo(ctx context.Context, t *transfer, dl whatsmeow.DownloadableMessage, id, path string) bool {
+	if t.canceled() {
+		return false
+	}
 	cli := b.client()
 	if dl == nil || cli == nil || !cli.IsConnected() {
 		b.emit(model.NoticeEvent{Text: "This file isn't available."})
@@ -208,6 +215,9 @@ func (b *Backend) downloadTo(ctx context.Context, dl whatsmeow.DownloadableMessa
 	}
 	if err != nil {
 		_ = os.Remove(path + ".part")
+		if t.canceled() {
+			return false
+		}
 		b.log.Infof("download %s: %v", id, err)
 		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
 			b.emit(model.NoticeEvent{Text: "This file is no longer on WhatsApp's servers. Ask the sender to send it again."})
@@ -466,17 +476,24 @@ func (b *Backend) uploadAndSend(jid types.JID, m *model.Message, up upload, msg 
 		fail(errors.New("not logged in"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
+	t := b.beginTransfer(m.ChatID, m.ID, true)
+	ctx, cancel := context.WithTimeout(t.context(b.ctx), 30*time.Minute)
 	defer cancel()
 	channel := jid.Server == types.NewsletterServer
 	res, err := up.push(ctx, cli, m.Media, channel)
+	if t.end() {
+		_ = os.Remove(b.mediaPath(m.ChatID, m.ID))
+		_ = os.Remove(b.mediaFilePath(payloadView(m, msg)))
+		b.takeBack(m.ChatID, m.ID)
+		return
+	}
 	if err != nil {
 		fail(err)
 		return
 	}
 	uploaded(inner, res)
 	if m.Album != "" {
-		b.waitAlbum(ctx, m.Album)
+		b.waitAlbum(b.ctx, m.Album) // the transfer's context is over
 	}
 	// A channel's post names its upload by the handle the upload got.
 	b.sendAsyncExtra(m.ChatID, jid, m.ID, msg, nil, nil, res.Handle) // stores it as it goes

@@ -211,9 +211,9 @@ func (b *Backend) onMediaRetry(e *events.MediaRetry) {
 	}
 	retry := func() {
 		if p.sticker != "" {
-			b.downloads.add(stickerChat+"/"+p.sticker, func() { b.download(stickerChat, p.sticker) })
+			b.queueDownload(stickerChat, p.sticker)
 		} else {
-			b.downloads.add(p.chat+"/"+p.id, func() { b.download(p.chat, p.id) })
+			b.queueDownload(p.chat, p.id)
 		}
 	}
 	n, err := whatsmeow.DecryptMediaRetryNotification(e, p.key)

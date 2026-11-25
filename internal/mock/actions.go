@@ -256,7 +256,7 @@ func (b *Backend) HasMediaFile(m *model.Message) bool {
 	if m.Media == model.MediaImage || m.Media == model.MediaSticker {
 		return b.MediaData(m.ChatID, m.ID) != nil
 	}
-	return b.demoFile(m) != ""
+	return b.files[m.ChatID+"/"+m.ID] || b.demoFile(m) != ""
 }
 
 func (b *Backend) demoFile(m *model.Message) string {

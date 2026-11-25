@@ -1382,8 +1382,11 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		meta.at(gtx, contentW-meta.size.X-gtx.Dp(8), y-meta.size.Y-gtx.Dp(5))
 	}
 	if isImg {
-		u.layoutImage(gtx, image.Rect(0, y, imgW, y+imgH), m, u.gifImage(m, img, max(imgW, imgH)))
-		u.photoBadge(gtx, image.Rect(0, y, imgW, y+imgH), m)
+		var metaSz image.Point
+		if metaOnImage {
+			metaSz = meta.size.Add(image.Pt(gtx.Dp(7), 0))
+		}
+		pill := u.layoutPicture(gtx, image.Rect(0, y, imgW, y+imgH), m, u.gifImage(m, img, max(imgW, imgH)), metaSz)
 		func() {
 			t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 			defer t.Pop()
@@ -1391,6 +1394,7 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 			ig.Constraints = layout.Exact(image.Pt(imgW, imgH))
 			clickable(ig, u.btn("img:"+m.ID), func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 		}()
+		pill.at(gtx, 0, 0)
 		y += imgH
 		if metaOnImage {
 			meta.at(gtx, imgW-meta.size.X-gtx.Dp(7), y-meta.size.Y-gtx.Dp(5))
@@ -1700,9 +1704,10 @@ func (u *UI) clearImage(m *model.Message, maxPx int) *imgEntry {
 
 // photoWanted reports whether a picture's bubble shows the picture itself,
 // downloading it if needed: always unless Settings > Chats turned photos
-// off, and then once it was downloaded (by opening it in the viewer).
+// off or its download was canceled, and then once it was downloaded (by
+// its pill, or opening it in the viewer).
 func (u *UI) photoWanted(m *model.Message) bool {
-	return u.autoPhotos || m.FromMe || u.fileReady(m)
+	return (u.autoPhotos || m.FromMe) && !u.transfers.stopped[fileKey(m)] || u.fileReady(m)
 }
 
 // blurredImage is messageImage in privacy mode: the thumbnail, or the
@@ -1727,24 +1732,28 @@ func (u *UI) blurredImage(m *model.Message) *imgEntry {
 	return e
 }
 
-// layoutImage draws a picture preview in r: the image, the demo gradient,
-// or a neutral placeholder. Videos get a play button and duration.
+// paintPicture paints a picture preview in r: the image, the demo
+// gradient, or a neutral placeholder.
+func (u *UI) paintPicture(gtx C, r image.Rectangle, m *model.Message, img *imgEntry) {
+	defer clip.UniformRRect(r, gtx.Dp(6)).Push(gtx.Ops).Pop()
+	switch {
+	case img != nil && img.state == imgReady:
+		paintCover(gtx, img.op, img.size, r)
+	case m.ImageA != 0 || m.ImageB != 0:
+		u.gradientImage(gtx, r, m.ImageA, m.ImageB)
+	default:
+		fillRect(gtx, r, u.pal.Hover)
+		isz := gtx.Dp(48)
+		t := op.Offset(r.Min.Add(r.Size().Div(2)).Sub(image.Pt(isz/2, isz/2))).Push(gtx.Ops)
+		drawIcon(gtx, icImage, 48, u.pal.TextSecondary)
+		t.Pop()
+	}
+}
+
+// layoutImage draws a picture preview in r, outside a chat's bubbles
+// (those have layoutPicture). Videos get a play button and duration.
 func (u *UI) layoutImage(gtx C, r image.Rectangle, m *model.Message, img *imgEntry) {
-	func() {
-		defer clip.UniformRRect(r, gtx.Dp(6)).Push(gtx.Ops).Pop()
-		switch {
-		case img != nil && img.state == imgReady:
-			paintCover(gtx, img.op, img.size, r)
-		case m.ImageA != 0 || m.ImageB != 0:
-			u.gradientImage(gtx, r, m.ImageA, m.ImageB)
-		default:
-			fillRect(gtx, r, u.pal.Hover)
-			isz := gtx.Dp(48)
-			t := op.Offset(r.Min.Add(r.Size().Div(2)).Sub(image.Pt(isz/2, isz/2))).Push(gtx.Ops)
-			drawIcon(gtx, icImage, 48, u.pal.TextSecondary)
-			t.Pop()
-		}
-	}()
+	u.paintPicture(gtx, r, m, img)
 	if m.Media != model.MediaVideo && m.Media != model.MediaGIF || img != nil && img.live {
 		return
 	}
@@ -1753,20 +1762,6 @@ func (u *UI) layoutImage(gtx C, r image.Rectangle, m *model.Message, img *imgEnt
 		d := record(gtx, u.label(11.5, fmt.Sprintf("%d:%02d", m.Duration/60, m.Duration%60), rgb(0xffffff)).Layout)
 		d.at(gtx, r.Min.X+gtx.Dp(8), r.Max.Y-d.size.Y-gtx.Dp(6))
 	}
-}
-
-// photoBadge marks a picture that isn't downloaded (Settings > Chats
-// turned photos off) with a download button; opening it downloads it.
-func (u *UI) photoBadge(gtx C, r image.Rectangle, m *model.Message) {
-	if m.Media != model.MediaImage || u.photoWanted(m) {
-		return
-	}
-	c := r.Min.Add(r.Size().Div(2))
-	fillCircle(gtx, c, gtx.Dp(26), argb(0x000000, 0x80))
-	isz := gtx.Dp(26)
-	t := op.Offset(c.Sub(image.Pt(isz/2, isz/2))).Push(gtx.Ops)
-	drawIcon(gtx, icDownload, 26, rgb(0xffffff))
-	t.Pop()
 }
 
 // playButton draws a round play button centered on c.

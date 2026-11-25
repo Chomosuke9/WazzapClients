@@ -1237,6 +1237,11 @@ func (u *UI) layoutStatusVideoCenter(gtx C, t *model.StatusThread, up *model.Sta
 	case vv.loading || vv.player != nil && vv.size == (image.Point{}) && up.Media != model.MediaAudio && up.Media != model.MediaVoice:
 		s := gtx.Dp(44)
 		fillCircle(gtx, c, rad, argb(0x000000, 0x90))
+		if x, ok := u.transferOf(statusMsg(t, up)); ok && vv.loading {
+			u.transferRing(gtx, x.Transfer, f32.Pt(float32(c.X), float32(c.Y)), float32(s)/2, float32(max(1, gtx.Dp(3))),
+				rgb(0xffffff), rgb(0xffffff))
+			break
+		}
 		tr := op.Offset(c.Sub(image.Pt(s/2, s/2))).Push(gtx.Ops)
 		lg := gtx
 		lg.Constraints = layout.Exact(image.Pt(s, s))

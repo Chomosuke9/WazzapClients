@@ -164,10 +164,12 @@ type UI struct {
 	// followed a channel followed from a link, opened once it's listed.
 	resolving, followed string
 
-	files  fileState   // documents and audio on disk
-	voice  voiceState  // the audio message playing
-	rec    recState    // the voice message being recorded (voicerec.go)
-	attach attachState // files picked to send
+	files fileState // documents and audio on disk
+	// transfers are the files uploading and downloading (transfer.go).
+	transfers transferState
+	voice     voiceState  // the audio message playing
+	rec       recState    // the voice message being recorded (voicerec.go)
+	attach    attachState // files picked to send
 
 	menu  menuState
 	split splitState // the list column's width, or hidden (split.go)
@@ -455,6 +457,7 @@ func (u *UI) Start(notify func()) {
 	u.setChats(u.backend.Chats())
 	u.loadLists()
 	u.loadPages()
+	u.loadTransfers()
 	u.backend.Start(notify)
 }
 
@@ -1390,6 +1393,8 @@ func (u *UI) applyEvents() {
 			u.videoDownloaded(e)
 			u.fileDownloaded(e)
 			u.gifDownloaded(e)
+		case model.TransferEvent:
+			u.transferEvent(e)
 		case model.NoticeEvent:
 			u.toast(e.Text)
 		case model.ScheduledEvent:
@@ -1655,7 +1660,7 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // "keptmenu" (a message kept in the chat), "report" (Report's question for the last message received), "emoji", "sticker", "gifs" (the GIF tab with demo results), "viewer", "forward", "reply", "replyphoto" (a reply to a photo), "linkpreview" (a link's preview
 // over the composer) and "linkloading" (the card while it loads), "delete", "select", "edit" (your last message in the composer to edit), "recording" (a voice message
 // being recorded) and "recordingpaused" (paused, to play back), "edits" (an edited message's Edit history), "listpick" (a bot's list of choices: -ochat shop), "msginfo" (your last message's Message info), "votes" (the
-// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "stickerreact" (sticker reactions on the chat's last messages), "stickerring" (more of them, around the bubbles), "stickerreactors" (who gave them), "stickersound" (stickers with a sound) and "soundpicker" (the picker with some), "reactpicker" (the reaction picker), "skintone" (the picker's tones under its tone button), "emojitones" (👍's tones, a right click at -at in the panel), "attach", "poll", "newevent" (the attach menu's Create event), "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
+// first poll's or event's votes), "reactions" (who reacted to the first message with reactions), "stickerreact" (sticker reactions on the chat's last messages), "stickerring" (more of them, around the bubbles), "stickerreactors" (who gave them), "stickersound" (stickers with a sound) and "soundpicker" (the picker with some), "reactpicker" (the reaction picker), "transfers" (files uploading and downloading, at the end of the chat), "skintone" (the picker's tones under its tone button), "emojitones" (👍's tones, a right click at -at in the panel), "attach", "poll", "newevent" (the attach menu's Create event), "contacts", "invite" (a demo group's invite link), "tray", "search" (the search panel, with
 // $WAZZAP_DEMO_SEARCH typed in), "membersearch"; the chat list's search "listsearch" (also
 // $WAZZAP_DEMO_SEARCH), its first list's chip "listchip" and the New list dialog "newlist"; on the Status page "statusadd",
 // "statusmenu", "statusprivacy", "statustext" and "statussend"; the zoom's "zoombubble" and
@@ -1993,6 +1998,17 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			}
 			u.picker.composerTab = tabSticker
 			u.openPicker(pickComposer, nil)
+		}
+	case "transfers":
+		// Files uploading and downloading, at the end of the chat.
+		raw := u.backend
+		if u.auto != nil {
+			raw = u.auto.Backend // the demo's, under the wrapper
+		}
+		if d, ok := raw.(interface{ DemoTransfers(string) []string }); ok && u.selected != nil {
+			d.DemoTransfers(u.selected.ID)
+			u.applyEvents()
+			u.scrollMessages(layout.Position{})
 		}
 	case "stickerreact", "stickerreactors", "stickerring":
 		// Sticker reactions on the chat's last messages, and who gave them.

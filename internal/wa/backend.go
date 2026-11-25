@@ -73,6 +73,7 @@ type Backend struct {
 	avatars   *fetcher
 	downloads *fetcher
 	rmr       reuploads // media retry requests waiting for the phone (reupload.go)
+	transfers transfers // files uploading and downloading (transfer.go)
 	playing   sync.Map  // files being downloaded for OpenMedia and MediaFile, by path
 	albums    sync.Map  // album ID → chan closed once the album message is sent (album.go)
 
@@ -289,6 +290,7 @@ func (b *Backend) goWork(f func()) {
 
 func (b *Backend) useDevice(device *store.Device) {
 	cli := whatsmeow.NewClient(device, b.log.Sub("Client"))
+	cli.SetMediaHTTPClient(mediaClient()) // tells how far files have got (transfer.go)
 	cli.EnableAutoReconnect = true
 	// A first connect that fails (started at login before the network is
 	// up) retries like a lost connection, instead of staying offline.

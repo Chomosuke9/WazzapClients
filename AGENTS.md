@@ -498,6 +498,13 @@ Gotchas already found in the pinned version (v0.10.x):
   replies go to the first, and the copy can come much later or, in history sync, before it.
   `parse` files a copy under the message's ID, in `copy_payload`, and `mediaBlob` downloads
   the HD file from it (`internal/wa/copies.go`).
+- hypermeow says nothing of how far a file has got. Its media requests carry the context
+  they're asked for with, so one made with a transfer's (`beginTransfer`,
+  `internal/wa/transfer.go`) has its body counted by the HTTP client
+  (`progressTransport`), and canceling it cancels that context. A transfer ends after
+  its `MediaEvent`, or the pill would offer the download again for a frame. A message
+  whose upload is canceled is removed. A picture that downloads by itself shows its
+  ring only after `transferGrace`.
 - Meta AI's answers are `richResponseMessage`s; a forwarded one comes in a
   `botForwardedMessage`, which `unwrapOnce` opens like any envelope. What's drawn is
   `unifiedResponse.data`, JSON of sections: markdown in WhatsApp's markup (*bold*,
@@ -752,6 +759,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    opens at in unread.go; sticker reactions (a row of stickers along
                    the bubble's bottom edge, the reaction picker's Sticker tab, and their rows in who reacted)
                    in stickerreact.go; stickers with a sound (their speaker button) in audiosticker.go;
+                   files uploading and downloading (the pill in a picture's corner, "⬇ HD" and then
+                   "71% (4s left)" beside a ring around an X, the ring alone on documents, audio and
+                   in the viewers; the HD badge) in transfer.go;
                    the Forward and React icons beside a message (Forward stays beside media,
                    the rest wait for the hover; React opens the reaction bar alone) in sidebuttons.go; the menus'
                    submenus (Mute notifications, Add to list) in submenu.go;
@@ -874,6 +884,7 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    sync's progress in syncprogress.go;
                    albums (an albumMessage, then each picture pointing back to it) in album.go;
                    the copies WhatsApp sends of a message in HD (filed under it) in copies.go;
+                   how far uploads and downloads have got, and canceling them, in transfer.go;
                    sticker reactions (sticker messages filed under the message they react
                    to, wz_sticker_reacts) in stickerreact.go; stickers with a sound
                    (audioStickerMessage) in audiosticker.go; replies to announcements
@@ -1181,7 +1192,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
 # Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashrun, scheduled (scheduled messages and the AFK bar), catchup (missed messages being counted), syncbar (the history sync's banner), syncing, syncwaiting, syncdone and syncstopped (its dialog), sendmenu (the send button's menu: -at 1858,1078 with -ochat work), schedule (Schedule message), ghost (/ghost; open a
 # group: -ochat work), statusviews (your status's Viewed by sheet), statusmention and statusmentioned (a status mention's card, and the status it opens: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
-# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), replies (an announcement's: -ochat work-ann), stickerreact (sticker reactions on the chat's last messages), stickerring (20 of them around a bubble), stickerreactors (who gave them), stickersound (stickers with a sound, and reactions: -ochat work), soundpicker (the picker with some), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
+# delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), replies (an announcement's: -ochat work-ann), stickerreact (sticker reactions on the chat's last messages), stickerring (20 of them around a bubble), stickerreactors (who gave them), stickersound (stickers with a sound, and reactions: -ochat work), soundpicker (the picker with some), reactpicker (the reaction picker, with its Sticker tab), transfers (files uploading and downloading: -ochat mom -h 2400), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); your own commands: usercmds (their page), usercmdadd (its dialog), usercmdpick (one in the picker); the Media panel:
 # gallery, gallerydocs, gallerylinks, galleryselect, starredall (the ⋮ menu's Starred messages); selectmenu, newlistchats; the open chat's convmenu, theme,
 # encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes, admins, timer, restricted, chatgallery;

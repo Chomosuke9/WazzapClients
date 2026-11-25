@@ -361,7 +361,13 @@ func (b *Backend) SendSnippet(chat string, id int64, reply *model.Message, vars 
 	async = true
 	go func() {
 		defer release()
-		if err := b.uploadSnippetMedia(msg); err != nil {
+		t := b.beginTransfer(chat, mid, true)
+		err := b.uploadSnippetMedia(t.context(b.ctx), msg)
+		if t.end() {
+			b.takeBack(chat, mid)
+			return
+		}
+		if err != nil {
 			b.sendFailed(chat, mid, "Couldn't upload snippet media: "+err.Error())
 			return
 		}

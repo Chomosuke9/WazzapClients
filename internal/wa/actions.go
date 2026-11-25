@@ -517,7 +517,12 @@ func (b *Backend) sendCopy(src *model.Message, chatID string, forwarded bool, re
 		// needs the file uploaded again, the way its new chat takes it.
 		id := m.ID
 		go func() {
-			handle, err := b.reupload(ctx, cli, part, isChannel(jid))
+			t := b.beginTransfer(chatID, id, true)
+			handle, err := b.reupload(t.context(ctx), cli, part, isChannel(jid))
+			if t.end() {
+				b.takeBack(chatID, id)
+				return
+			}
 			if err != nil {
 				b.log.Warnf("upload the copy of %s again: %v", src.ID, err)
 				b.sendFailed(chatID, id, "Couldn't send the file.")
@@ -857,8 +862,7 @@ func (b *Backend) emitAllMessages(chatID string) {
 // SaveMedia implements model.Backend.
 func (b *Backend) SaveMedia(m *model.Message) {
 	go func() {
-		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
-		defer cancel()
+		ctx := b.ctx
 		data, err := os.ReadFile(b.mediaPath(m.ChatID, m.ID))
 		if err != nil {
 			data, err = os.ReadFile(b.mediaFilePath(m))
@@ -871,7 +875,13 @@ func (b *Backend) SaveMedia(m *model.Message) {
 				b.emit(model.NoticeEvent{Text: "This media isn't available."})
 				return
 			}
-			if data, err = cli.DownloadAny(ctx, dl); err != nil {
+			t := b.beginTransfer(m.ChatID, m.ID, false)
+			defer t.end()
+			dctx, cancel := context.WithTimeout(t.context(ctx), 5*time.Minute)
+			defer cancel()
+			if data, err = cli.DownloadAny(dctx, dl); t.canceled() {
+				return
+			} else if err != nil {
 				b.log.Infof("download for saving %s: %v", m.ID, err)
 				b.emit(model.NoticeEvent{Text: "Couldn't download the media."})
 				return

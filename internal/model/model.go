@@ -226,8 +226,11 @@ type Message struct {
 	// Thumb is a small JPEG preview for image and video messages, and a
 	// link preview's picture.
 	Thumb []byte
+	// HD marks a picture or video that was sent in HD, which is the file
+	// that downloads.
+	HD bool
 	// FileName, FileSize (bytes), FileType (MIME type) and Pages describe a
-	// document or audio file. A document's Text is its caption, or its file
+	// document or audio file; FileSize a picture or video too. A document's Text is its caption, or its file
 	// name when it has none.
 	FileName string
 	FileSize int64
@@ -1284,6 +1287,32 @@ type MediaEvent struct {
 	Failed        bool // the download failed; a NoticeEvent says why
 }
 
+// Transfer is a message's file on its way, uploading or downloading.
+type Transfer struct {
+	ChatID, MsgID string
+	Upload        bool
+	// Done and Total count bytes. Total is 0 until it starts moving: it
+	// waits for others, or its file is being encrypted.
+	Done, Total int64
+	// Left is about how long the rest takes; 0 while that isn't known.
+	Left time.Duration
+}
+
+// Percent is how far the transfer has got, from 0 to 100.
+func (t Transfer) Percent() int {
+	if t.Total <= 0 {
+		return 0
+	}
+	return int(min(100, max(0, t.Done)*100/t.Total))
+}
+
+// TransferEvent reports that a transfer started, got further or ended
+// (End). A download's MediaEvent comes before its end.
+type TransferEvent struct {
+	Transfer
+	End bool
+}
+
 // LabelEvent reports that a group member changed the label beside their
 // name (Message.SenderLabel). Members holds their IDs, LID and phone JID.
 type LabelEvent struct {
@@ -1590,6 +1619,7 @@ func (CatchUpEvent) isEvent()        {}
 func (CaughtUpEvent) isEvent()       {}
 func (AvatarEvent) isEvent()         {}
 func (MediaEvent) isEvent()          {}
+func (TransferEvent) isEvent()       {}
 func (InfoEvent) isEvent()           {}
 func (LabelEvent) isEvent()          {}
 func (StatusEvent) isEvent()         {}
@@ -1856,6 +1886,13 @@ type Backend interface {
 	// HasMediaFile reports whether MediaFile has the file already (or
 	// MediaData, for a picture or sticker).
 	HasMediaFile(m *Message) bool
+	// Transfers lists the files uploading and downloading; TransferEvents
+	// tell of every change.
+	Transfers() []Transfer
+	// CancelTransfer stops the upload or download of a message's file, if
+	// one is going on. A message whose upload stops is removed: it never
+	// went.
+	CancelTransfer(chatID, msgID string)
 	// SendFile sends a file, with the draft's text as its caption (and its
 	// reply and mentions), and returns it in its pending state. The upload
 	// runs in the background.
