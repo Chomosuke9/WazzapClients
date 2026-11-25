@@ -1936,7 +1936,7 @@ func (u *UI) drawSticker(gtx C, m *model.Message, sz int, theirs bool) {
 		return
 	}
 	if img := u.paintSticker(gtx, m, sz, theirs); img != nil && m.Sound {
-		u.stickerSound(gtx, m, sz, img.animated)
+		u.stickerSound(gtx, m, sz, img.animated, theirs)
 	}
 }
 

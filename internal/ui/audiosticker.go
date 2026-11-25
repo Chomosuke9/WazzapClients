@@ -64,7 +64,7 @@ func (u *UI) endStickerSound() {
 }
 
 // stickerSound draws the speaker of a sticker shown sz px wide.
-func (u *UI) stickerSound(gtx C, m *model.Message, sz int, animated bool) {
+func (u *UI) stickerSound(gtx C, m *model.Message, sz int, animated, theirs bool) {
 	btn := u.btn("stksound:" + m.ID)
 	if btn.Clicked(gtx) && !u.conv.selecting {
 		u.toggleStickerSound(m)
@@ -80,7 +80,13 @@ func (u *UI) stickerSound(gtx C, m *model.Message, sz int, animated bool) {
 	}
 	side := int(float32(sz) * soundBadge)
 	at := int(float32(sz) * soundInset)
-	defer op.Offset(image.Pt(at, at)).Push(gtx.Ops).Pop()
+	// Your own stickers have it in the top right corner, as on WhatsApp
+	// Web; someone else's, mirrored, in the top left.
+	x := sz - side - at
+	if theirs {
+		x = at
+	}
+	defer op.Offset(image.Pt(x, at)).Push(gtx.Ops).Pop()
 	draw := func(gtx C) D {
 		// A phone's 45% of this color; Gio blends in linear space.
 		fillCircle(gtx, image.Pt(side/2, side/2), side/2, argb(0x0b141a, 0xa8+uint8(0x20*u.hover(gtx, btn))))
