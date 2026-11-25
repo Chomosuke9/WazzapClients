@@ -1243,8 +1243,29 @@ type PresenceEvent struct {
 	Text   string
 }
 
-// SyncEvent reports initial history sync progress (0–100).
-type SyncEvent struct{ Percent int }
+// SyncStage is what a history sync is at.
+type SyncStage int
+
+const (
+	SyncNone  SyncStage = iota
+	SyncChats           // the chats, with their latest messages
+	SyncOlder           // their older messages
+)
+
+// SyncEvent reports the progress of a new link's history sync.
+type SyncEvent struct {
+	Stage   SyncStage
+	Percent int // 0–100, of the stage
+	// Waiting means the phone stopped sending for now: it has to be open.
+	Waiting bool
+	// Done ends the sync; below 100% the phone never sent the rest.
+	Done bool
+}
+
+// CatchUpEvent reports how many of the messages missed while offline came
+// and were stored: Done of Total. Zeros mean the catch-up was cut short
+// (the connection was lost). It's over too at Done == Total.
+type CatchUpEvent struct{ Done, Total int }
 
 // CaughtUpEvent reports that the backend, once connected, has received
 // everything WhatsApp kept for it while it was offline. It comes once per
@@ -1562,6 +1583,7 @@ func (ReceiptEvent) isEvent()        {}
 func (TypingEvent) isEvent()         {}
 func (PresenceEvent) isEvent()       {}
 func (SyncEvent) isEvent()           {}
+func (CatchUpEvent) isEvent()        {}
 func (CaughtUpEvent) isEvent()       {}
 func (AvatarEvent) isEvent()         {}
 func (MediaEvent) isEvent()          {}

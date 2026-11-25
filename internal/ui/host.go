@@ -247,7 +247,6 @@ func newHost(b model.Backend, o Options) *host {
 		link:     o.Link,
 		wake:     make(chan struct{}, 1),
 		reqs:     make(chan request, 16),
-		syncPct:  -1,
 		drafts:   make(map[string]*chatDraft),
 		bg:       make(map[string]*bgAccount),
 		bgOpen:   make(chan bgOpened, 8),
@@ -324,9 +323,10 @@ type host struct {
 	maximized bool
 	pxPerDp   float32
 
-	queue    []model.Event   // backend events for u
-	conn     model.ConnEvent // the latest state, for new windows
-	syncPct  int
+	queue    []model.Event         // backend events for u
+	conn     model.ConnEvent       // the latest state, for new windows
+	sync     model.SyncEvent       // the history sync's progress, while it goes on
+	catchUp  model.CatchUpEvent    // the missed messages' progress
 	openChat string                // chat to open in the next window
 	link     string                // a WhatsApp link to open once online
 	drafts   map[string]*chatDraft // the chats' drafts, kept across windows
@@ -440,10 +440,12 @@ func (h *host) poll(invalidate bool) {
 		case model.AccountEvent:
 			h.noteAccount(nil)
 		case model.SyncEvent:
-			h.syncPct = e.Percent
-			if e.Percent >= 100 {
-				h.syncPct = -1
+			h.sync = e
+			if e.Done {
+				h.sync = model.SyncEvent{}
 			}
+		case model.CatchUpEvent:
+			h.catchUp = e
 		}
 		h.notes.event(ev)
 		if h.remote != nil {
@@ -692,8 +694,11 @@ func (h *host) newUI() {
 	u.idle = desktop.IdleTime
 	// A new UI starts from the stored chats and the current state.
 	h.queue = append(h.queue[:0], h.conn)
-	if h.syncPct >= 0 && h.conn.State.LoggedIn() {
-		h.queue = append(h.queue, model.SyncEvent{Percent: h.syncPct})
+	if h.sync.Stage != model.SyncNone && h.conn.State.LoggedIn() {
+		h.queue = append(h.queue, h.sync)
+	}
+	if h.catchUp.Done < h.catchUp.Total {
+		h.queue = append(h.queue, h.catchUp)
 	}
 	if h.notice != "" {
 		h.queue = append(h.queue, model.NoticeEvent{Text: h.notice})

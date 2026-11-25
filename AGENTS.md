@@ -599,6 +599,15 @@ Gotchas already found in the pinned version (v0.10.x):
   messages) and marks the setting in `wz_chats.settled`, so the history's older
   copy (`setMeta`) doesn't undo it. Reading on the phone with read receipts on comes
   as a plain read receipt from your own device, not `read-self`.
+- On connecting, `<ib><offline_preview message="…"/>` says how many messages were missed,
+  each missed stanza has an `offline` attribute, and `<ib><offline/>` ends them
+  (`internal/wa/catchup.go`). hypermeow queues stanzas and handles them in order, so the
+  count goes by the messages handled, not those that arrived. The stanzas are read in the
+  `RawNodeHandler`, in the order they came: hypermeow's `OfflineSyncPreview` waits in the queue.
+- History sync's chunks say how far their kind has got (`internal/wa/syncprogress.go`):
+  INITIAL_BOOTSTRAP brings the chats, RECENT and FULL their older messages, each from 0%.
+  The phone doesn't reliably send 100% and can stop for minutes, so older messages are
+  waited for (`SyncEvent.Waiting`), across restarts too (`history_progress` in `wz_meta`).
 - A connected client that sends presence "available" shows you online and stops the
   phone from notifying. The open account sends it as it connects (`sendPresence`); a
   background account sends "unavailable" (`SetBackground`).
@@ -732,7 +741,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    statusmention.go;
                    who saw one of your own status updates and the replies to it (the eye under
                    it in the viewer, and its "Viewed by" sheet) in statusviews.go;
-                   animation helpers in anim.go; the "N unread messages" divider a chat
+                   animation helpers in anim.go; the missed messages' count over the chat list's bottom
+                   (100 or more of them) in catchup.go; the banner above the chat list and the history
+                   sync's dialog in syncprogress.go; the "N unread messages" divider a chat
                    opens at in unread.go; sticker reactions (a row of stickers along
                    the bubble's bottom edge, the reaction picker's Sticker tab, and their rows in who reacted)
                    in stickerreact.go; stickers with a sound (their speaker button) in audiosticker.go;
@@ -853,6 +864,8 @@ internal/sticker/  turns a picture into a 512x512 sticker, with meme text in the
 internal/wa/       hypermeow backend: pairing, events, SQLite message store, name resolution;
                    what a stored message shows, read from its payload (raw_payload, which
                    /catch shows, and edit_payload), in payload.go;
+                   counting the messages missed while offline as they come in catchup.go, the history
+                   sync's progress in syncprogress.go;
                    albums (an albumMessage, then each picture pointing back to it) in album.go;
                    the copies WhatsApp sends of a message in HD (filed under it) in copies.go;
                    sticker reactions (sticker messages filed under the message they react
@@ -1159,7 +1172,7 @@ go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view
 # A crop of the right edge of a 2560x1600 window, with the info panel scrolled:
 go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -right \
     -scale 1.5616 -view info -infoscroll 7 -infooffset 40
-# Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashrun, scheduled (scheduled messages and the AFK bar), sendmenu (the send button's menu: -at 1858,1078 with -ochat work), schedule (Schedule message), ghost (/ghost; open a
+# Render one overlay with demo data (menu, accounts, loginaccounts, acctmode (an account's background modes, over the switcher: -at 1170,455), slash, slashkick, slashcalc, slashrun, scheduled (scheduled messages and the AFK bar), catchup (missed messages being counted), syncbar (the history sync's banner), syncing, syncwaiting, syncdone and syncstopped (its dialog), sendmenu (the send button's menu: -at 1858,1078 with -ochat work), schedule (Schedule message), ghost (/ghost; open a
 # group: -ochat work), statusviews (your status's Viewed by sheet), statusmention and statusmentioned (a status mention's card, and the status it opens: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
 # delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), replies (an announcement's: -ochat work-ann), stickerreact (sticker reactions on the chat's last messages), stickerring (20 of them around a bubble), stickerreactors (who gave them), stickersound (stickers with a sound, and reactions: -ochat work), soundpicker (the picker with some), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); your own commands: usercmds (their page), usercmdadd (its dialog), usercmdpick (one in the picker); the Media panel:

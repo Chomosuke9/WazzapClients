@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,8 +64,9 @@ type Backend struct {
 	events []model.Event
 	notify func()
 
-	names     nameCache
-	syncTimer *time.Timer
+	names   nameCache
+	history historyProgress // the history sync's (syncprogress.go)
+	catchUp catchUp         // the missed messages' (catchup.go)
 	// schedKick wakes runScheduled (schedule.go).
 	schedKick chan struct{}
 
@@ -394,7 +394,7 @@ func (b *Backend) pair() {
 			at.readyOnce.Do(func() { close(at.ready) })
 		case whatsmeow.QRChannelSuccess.Event:
 			b.emit(model.ConnEvent{State: model.StateConnecting})
-			b.emit(model.SyncEvent{Percent: 0})
+			b.emit(model.SyncEvent{Stage: model.SyncChats})
 		case whatsmeow.QRChannelTimeout.Event:
 			b.emit(model.ConnEvent{State: model.StateQRExpired})
 		case whatsmeow.QRChannelEventPasskeyRequest:
@@ -520,6 +520,8 @@ func (b *Backend) Close() {
 // starts linking again.
 func (b *Backend) resetSession() {
 	b.client().Disconnect()
+	b.endCatchUp(false)
+	b.dropHistory()
 	b.wipeData()
 	b.names.clear()
 	b.emit(model.ChatsEvent{})
@@ -821,16 +823,21 @@ func (b *Backend) handle(evt any) {
 		b.emit(model.ConnEvent{State: model.StateOnline, Me: cli.Store.PushName, MeID: meID})
 		b.goWork(func() {
 			b.sendPresence(cli)
+			b.resumeHistory()
 			b.refreshGroupNames()
 			b.resyncAppStateOnce()
 			b.refreshChannels()
 			b.fetchThemes(ctx)
 		})
 	case *events.OfflineSyncCompleted:
+		b.endCatchUp(true)
 		b.emit(model.CaughtUpEvent{})
 	case *events.NewsletterJoin, *events.NewsletterLeave, *events.NewsletterMuteChange, *events.NewsletterLiveUpdate:
 		b.onChannelEvent(evt)
 	case *events.Disconnected, *events.KeepAliveTimeout:
+		if _, ok := evt.(*events.Disconnected); ok {
+			b.endCatchUp(false)
+		}
 		b.emit(model.ConnEvent{State: model.StateOffline})
 	case *events.KeepAliveRestored:
 		b.emit(model.ConnEvent{State: model.StateOnline})
@@ -851,8 +858,10 @@ func (b *Backend) handle(evt any) {
 		b.onHistory(e)
 	case *events.Message:
 		b.onMessage(e)
+		b.caughtUpTo(e.Info.ID)
 	case *events.UndecryptableMessage:
 		b.onUndecryptable(e)
+		b.caughtUpTo(e.Info.ID)
 	case *events.MediaRetry:
 		b.onMediaRetry(e)
 	case *events.Receipt:
@@ -1743,25 +1752,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		b.emit(model.StatusEvent{})
 	}
 
-	switch data.GetSyncType() {
-	case waHistorySync.HistorySync_INITIAL_BOOTSTRAP, waHistorySync.HistorySync_RECENT, waHistorySync.HistorySync_FULL:
-		b.emit(model.SyncEvent{Percent: int(min(data.GetProgress(), 99))})
-		// WhatsApp doesn't reliably send a final 100%; call it done once chunks stop.
-		b.mu.Lock()
-		if b.syncTimer != nil {
-			b.syncTimer.Stop()
-		}
-		b.syncTimer = time.AfterFunc(20*time.Second, func() {
-			// Names and LID mappings from history are stored in the
-			// background, so re-resolve everything once the chunks stop.
-			b.names.clear()
-			b.refreshChatNames()
-			b.emit(model.SyncEvent{Percent: 100})
-			// History sync allocates a lot briefly; give it back to the OS.
-			debug.FreeOSMemory()
-		})
-		b.mu.Unlock()
-	}
+	b.noteHistory(data.GetSyncType(), int(data.GetProgress()))
 }
 
 // refreshChatNames re-resolves one-to-one chat titles from the contact store.

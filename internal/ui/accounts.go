@@ -290,7 +290,7 @@ func (h *host) closeAccount(next model.Backend) {
 // toBackground keeps the open account's backend running in the
 // background as the next one opens, with its notifier.
 func (h *host) toBackground(dir string) {
-	bg := &bgAccount{dir: dir, b: h.b, notes: h.notes, conn: h.conn, sending: map[string]bool{}}
+	bg := &bgAccount{dir: dir, b: h.b, notes: h.notes, conn: h.conn, sync: h.sync, catchUp: h.catchUp, sending: map[string]bool{}}
 	h.bg[dir] = bg
 	if x, ok := bg.b.(model.Backgrounder); ok {
 		x.SetBackground(true)
@@ -307,9 +307,10 @@ func (h *host) useBackend(b model.Backend, bg *bgAccount) {
 	h.b = b
 	loadPerf(b)
 	running := bg != nil && bg.b != nil
-	h.conn, h.syncPct, h.queue, h.later = model.ConnEvent{}, -1, nil, nil
+	h.conn, h.queue, h.later = model.ConnEvent{}, nil, nil
+	h.sync, h.catchUp = model.SyncEvent{}, model.CatchUpEvent{}
 	if cur := h.o.Accounts.Current(); running {
-		h.conn = bg.conn
+		h.conn, h.sync, h.catchUp = bg.conn, bg.sync, bg.catchUp
 	} else if cur != nil && cur.Linked() {
 		// Show the chats right away; the backend reports the real state
 		// once it starts.

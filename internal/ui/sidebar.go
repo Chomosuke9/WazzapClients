@@ -39,7 +39,7 @@ func (u *UI) layoutSidebar(gtx C) D {
 	case u.sidebar.showArchived:
 		search, chips = u.layoutArchivedNote, none
 	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(u.layoutSidebarHeader),
 		layout.Rigid(search),
 		layout.Rigid(chips),
@@ -49,6 +49,8 @@ func (u *UI) layoutSidebar(gtx C) D {
 		layout.Rigid(u.layoutGhostBar),
 		layout.Flexed(1, u.layoutChatList),
 	)
+	u.layoutCatchUp(gtx)
+	return d
 }
 
 func (u *UI) layoutSidebarHeader(gtx C) D {
@@ -917,30 +919,6 @@ func receiptIcon(r model.Receipt, p *Palette, out bool) (*icon.Icon, color.NRGBA
 		}
 		return icTicks, p.TickRead
 	}
-}
-
-// layoutBanner shows connection and sync status above the chat list, like
-// WhatsApp's "Computer not connected" notice.
-func (u *UI) layoutBanner(gtx C) D {
-	var msg string
-	switch {
-	case u.conn.State == model.StateConnecting:
-		msg = "Connecting…"
-	case u.conn.State == model.StateOffline:
-		msg = "Computer not connected. Reconnecting…"
-	case u.syncPct >= 0:
-		msg = "Syncing chats… " + itoa(u.syncPct) + "%"
-	default:
-		return D{}
-	}
-	p := u.pal
-	return layout.Inset{Left: 21, Right: 21, Bottom: 10}.Layout(gtx, func(gtx C) D {
-		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		return background(gtx, p.Banner, 12, func(gtx C) D {
-			return layout.Inset{Left: 14, Right: 14, Top: 10, Bottom: 10}.Layout(gtx,
-				u.label(14, msg, p.BannerText, labelOpts{maxLines: 2}).Layout)
-		})
-	})
 }
 
 // mix blends a toward b by t (0–1).

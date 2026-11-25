@@ -54,6 +54,8 @@ type bgAccount struct {
 	b       model.Backend
 	notes   *notifier
 	conn    model.ConnEvent
+	sync    model.SyncEvent // as the host's
+	catchUp model.CatchUpEvent
 	opening bool // openBg runs
 	// A check: it closes checkGrace after it caught up, once nothing it
 	// sent is still on its way, or at checkTimeout.
@@ -299,6 +301,7 @@ func (h *host) startBg(bg *bgAccount, b model.Backend, chats []*model.Chat) {
 	h.backgroundNotes(bg.notes, bg.dir)
 	bg.notes.setChats(chats)
 	bg.b, bg.conn = b, model.ConnEvent{State: model.StateConnecting}
+	bg.sync, bg.catchUp = model.SyncEvent{}, model.CatchUpEvent{}
 	bg.caughtUp, bg.sending = time.Time{}, map[string]bool{}
 	b.Start(h.poke)
 	h.armBg()
@@ -420,6 +423,13 @@ func (h *host) bgEvents(bg *bgAccount, evs []model.Event) {
 			case model.StateStarting, model.StateQR, model.StateQRExpired, model.StateError:
 				out = &e
 			}
+		case model.SyncEvent:
+			bg.sync = e
+			if e.Done {
+				bg.sync = model.SyncEvent{}
+			}
+		case model.CatchUpEvent:
+			bg.catchUp = e
 		case model.CaughtUpEvent:
 			bg.caughtUp = timeNow()
 		case model.MessageEvent:

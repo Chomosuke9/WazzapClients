@@ -75,7 +75,9 @@ type UI struct {
 	// auto is the backend's scheduled messages and AFK (see withAuto).
 	auto    *auto.Backend
 	conn    model.ConnEvent
-	syncPct int // initial history sync progress; -1 when not syncing
+	sync    model.SyncEvent // the history sync's progress (syncprogress.go)
+	syncBar follower        // its dialog's bar
+	catchUp catchUp         // the missed messages' progress (catchup.go)
 	me      string
 	meID    string
 	// fetchLink reads a page for a link preview: linkpreview.Fetch, or a
@@ -387,7 +389,7 @@ var timeNow = time.Now
 // New builds the UI on top of a backend. Call Start before the first frame.
 func New(b model.Backend) *UI {
 	b, a := withAuto(b)
-	u := &UI{th: newTheme(), now: timeNow, backend: b, auto: a, syncPct: -1, fetchLink: linkpreview.Fetch}
+	u := &UI{th: newTheme(), now: timeNow, backend: b, auto: a, fetchLink: linkpreview.Fetch}
 	u.SetDark(true)
 	u.doodles = true
 	u.autoPhotos = true
@@ -1359,10 +1361,9 @@ func (u *UI) applyEvents() {
 				c.Presence = e.Text
 			}
 		case model.SyncEvent:
-			u.syncPct = e.Percent
-			if e.Percent >= 100 {
-				u.syncPct = -1
-			}
+			u.sync = e
+		case model.CatchUpEvent:
+			u.catchUp.event(e, u.now())
 		case model.AvatarEvent:
 			u.images.forget("a:" + e.ID)
 		case model.AccountEvent:
@@ -1665,6 +1666,9 @@ func (u *UI) applyReceipt(e model.ReceiptEvent) {
 // mode turned on with /ghost "ghost". The send button's menu "sendmenu" (-at the button) and
 // Schedule message "schedule". The chat list's Select chats "selectchats"; App lock's dialog "applock"
 // (setting it up) or "applockon", and its lock screen "lockscreen".
+// "catchup" shows how many missed messages came, "syncbar" the history
+// sync's banner, and "syncing", "syncwaiting", "syncdone" and "syncstopped"
+// its dialog.
 // "linkbar" shows the bar that asks to open WhatsApp links here, and
 // "channellink" a channel's link, to follow, and "sharelink" a share
 // link's chat picker. "pack" opens the last sticker pack the chat shares
@@ -1754,6 +1758,20 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		}
 	case "linkbar":
 		u.linkBar.demo = true
+	case "catchup":
+		u.catchUp.event(model.CatchUpEvent{Done: 45, Total: 120}, u.now().Add(-catchUpDelay))
+	case "syncbar", "syncing", "syncwaiting", "syncdone", "syncstopped":
+		// The history sync's banner, and its dialog in each state.
+		u.sync = model.SyncEvent{Stage: model.SyncOlder, Percent: 43, Waiting: name == "syncwaiting"}
+		if name != "syncbar" {
+			u.openSyncDialog()
+		}
+		switch name {
+		case "syncdone":
+			u.sync.Percent, u.sync.Done = 100, true
+		case "syncstopped":
+			u.sync.Done = true
+		}
 	case "sharelink":
 		u.openAppLink("https://api.whatsapp.com/send/?text=Look+at+this+https%3A%2F%2Fexample.com")
 	case "channellink":

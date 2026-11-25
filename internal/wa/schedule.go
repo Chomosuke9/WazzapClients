@@ -670,6 +670,7 @@ func (b *Backend) rawNodes(ctx context.Context, node *waBinary.Node) (*waBinary.
 		b.noteScheduledMex(ctx, node)
 	}
 	b.noteRevealKeys(ctx, node)
+	b.noteOffline(node)
 	return b.groupedReceipts(ctx, node)
 }
 

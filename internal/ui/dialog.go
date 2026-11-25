@@ -37,6 +37,7 @@ const (
 	dialogSchedule   // Schedule message (scheduled.go)
 	dialogTranscript // why a voice message has no transcript (transcripts.go)
 	dialogShortcuts  // Keyboard shortcuts (settingsdetail.go)
+	dialogSync       // the history sync's progress (syncprogress.go)
 )
 
 type dialogButton struct {
@@ -234,6 +235,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.transcriptWhyPanel)
 	case dialogShortcuts:
 		panel = record(gtx, u.shortcutsPanel)
+	case dialogSync:
+		panel = record(gtx, u.syncPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
