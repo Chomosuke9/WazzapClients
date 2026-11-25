@@ -5,7 +5,7 @@ text library) to use far less memory for fonts, and lets the app swap emoji
 pictures. `gio.patch` patches Gio (`gioui.org`) so it lets go of pictures it
 drew. `hypermeow.patch` patches hypermeow (`github.com/polymorfa/hypermeow`)
 so it decrypts status updates, can send to some of status@broadcast, can take scheduled messages back,
-sends stickers with a sound as stickers and chat themes as chat themes. `go.mod` replaces the modules with
+sends stickers with a sound as stickers and chat themes as chat themes, and asks for missed messages in batches. `go.mod` replaces the modules with
 `third_party/typesetting`, `third_party/gio` and `third_party/hypermeow`,
 which `apply.sh` builds from the Go module cache and are not checked in:
 
@@ -93,6 +93,13 @@ What `hypermeow.patch` does (marked `WazzapClients patch`):
   goes as `type="media"` with `mediatype="chat_theme"`, without which phones
   drop it, and `MediaChatWallpaper` uploads and downloads its photo.
   `chattheme_patch_test.go` checks it.
+- `offline_patch.go`, `client.go`: missed stanzas are asked for in batches
+  (`<ib><offline_batch count="200"/></ib>`). The login says pull mode, but
+  nothing asked, and the server sent about 20 messages a second (10,000 of them
+  took nine minutes). `handlerQueueLoop` counts the stanzas it has handled and
+  asks again while two batches or less are left, so at most 600 are under way.
+  The handler queue holds 2048 for that (256 upstream): a full one resets the
+  connection. `offline_patch_test.go` checks it.
 
 After `go get github.com/polymorfa/hypermeow@main` run `apply.sh` again; if
 the hunk no longer applies, regenerate the patch as below.

@@ -55,6 +55,65 @@ index 0000000..494125f
 +		t.Errorf("a revoke got mediatype %q", media)
 +	}
 +}
+diff --git a/client.go b/client.go
+index 7630e47..31dcb89 100644
+--- a/client.go
++++ b/client.go
+@@ -103,6 +103,8 @@ type Client struct {
+ 	socketLock       sync.RWMutex
+ 	socketWait       chan struct{}
+ 	handlerQueueWait chan struct{}
++	// WazzapClients patch: tests set it to see the batches asked for.
++	offlineBatchSent func(n int)
+ 
+ 	isLoggedIn            atomic.Bool
+ 	paired                atomic.Bool
+@@ -353,7 +355,9 @@ type SocketConfig struct {
+ 	RaceURLs []string
+ }
+ 
+-const handlerQueueSize = 256
++// WazzapClients patch: 256 upstream. Missed stanzas are asked for hundreds
++// at a time (offline_patch.go), and a full queue resets the connection.
++const handlerQueueSize = 2048
+ 
+ var sharedHTTPTransport = func() *http.Transport {
+ 	transport := http.DefaultTransport.(*http.Transport).Clone()
+@@ -1089,6 +1093,11 @@ func (cli *Client) enqueueNode(ctx context.Context, queue chan *waBinary.Node, n
+ func (cli *Client) handlerQueueLoop(evtCtx, connCtx context.Context, queue chan *waBinary.Node, closeWait chan struct{}) {
+ 	ticker := time.NewTicker(30 * time.Second)
+ 	ticker.Stop()
++	// WazzapClients patch: see offline_patch.go.
++	var pull offlinePull
++	stall := time.NewTimer(offlineStall)
++	stall.Stop()
++	defer stall.Stop()
+ 	cli.Log.Debugf("Starting handler queue loop")
+ 	defer func() {
+ 	Loop:
+@@ -1133,6 +1142,7 @@ Loop:
+ 				select {
+ 				case <-doneChan:
+ 					ticker.Stop()
++					cli.afterOfflineNode(connCtx, &pull, node, stall)
+ 					continue Loop
+ 				case <-connCtx.Done():
+ 					ticker.Stop()
+@@ -1145,6 +1155,14 @@ Loop:
+ 			}
+ 			cli.Log.Warnf("Continuing handling of %s in background as it's taking too long", node)
+ 			ticker.Stop()
++			cli.afterOfflineNode(connCtx, &pull, node, stall)
++		case <-stall.C:
++			if len(queue) > 0 {
++				stall.Reset(offlineStall)
++			} else if n := pull.stalled(); n > 0 {
++				cli.requestOfflineBatch(connCtx, n)
++				stall.Reset(offlineStall)
++			}
+ 		case <-connCtx.Done():
+ 			cli.Log.Debugf("Closing handler queue loop")
+ 			return
 diff --git a/download.go b/download.go
 index 3a78292..487ad0c 100644
 --- a/download.go
@@ -99,6 +158,322 @@ index 971974d..d17fef8 100644
  	info, err := cli.parseMessageInfo(node)
  	if err != nil {
  		cli.Log.Warnf("Failed to parse message: %v", err)
+diff --git a/offline_patch.go b/offline_patch.go
+new file mode 100644
+index 0000000..708ddf9
+--- /dev/null
++++ b/offline_patch.go
+@@ -0,0 +1,131 @@
++package whatsmeow
++
++import (
++	"context"
++	"time"
++
++	waBinary "github.com/polymorfa/hypermeow/binary"
++)
++
++// WazzapClients patch: the login asks for pull mode (ClientPayload.Pull),
++// in which the client asks for what it missed while offline in batches, an
++// <ib><offline_batch count="100"/></ib> each. Nothing ever asked, and the
++// server sent about twenty messages a second: ten thousand took
++// nine minutes. WhatsApp Web (WAWebOfflineHandler) asks for 200 at a time,
++// and for more while 200 wait to be handled. With at most 150 asked for and
++// not handled 250 stanzas a second came, a fifth of what can be handled.
++
++const (
++	maxOfflineBatch = 200
++	minOfflineBatch = 10
++	// offlineAhead is how many batches may be left when the next one is
++	// asked for. All of them must fit in the handler queue
++	// (handlerQueueSize) besides what's live.
++	offlineAhead = 2
++	// offlineStall is how long nothing may come, with nothing left to
++	// handle, before a small batch is asked for anyway: stanzas that never
++	// reach the queue aren't counted. A few times at most, since what was
++	// asked for may only be late, and would then all come at once.
++	offlineStall     = 10 * time.Second
++	maxOfflineStalls = 6
++)
++
++// offlinePull works out when to ask for the next batch. It belongs to one
++// connection's handlerQueueLoop.
++type offlinePull struct {
++	active      bool
++	batch       int // the next one's size
++	outstanding int // asked for and not handled yet
++	stalls      int // since the last one handled
++
++	start            time.Time
++	handled, batches int
++}
++
++// handledNode notes that a node was handled, and returns how many stanzas
++// to ask for, 0 for none.
++func (p *offlinePull) handledNode(node *waBinary.Node) int {
++	if node.Tag == "ib" {
++		if preview, ok := node.GetOptionalChildByTag("offline_preview"); ok {
++			*p = offlinePull{}
++			if preview.AttrGetter().OptionalInt("count") > 0 {
++				p.active, p.batch, p.start = true, maxOfflineBatch, time.Now()
++				return p.ask()
++			}
++		} else if _, ok = node.GetOptionalChildByTag("offline"); ok {
++			p.active = false
++		}
++		return 0
++	}
++	if _, ok := node.Attrs["offline"]; !ok || !p.active {
++		return 0
++	}
++	p.handled++
++	p.stalls = 0
++	p.outstanding = max(p.outstanding-1, 0)
++	// The attribute counts the times the stanza was sent before: smaller
++	// batches then, as WhatsApp Web's, so that one that breaks the client
++	// each time doesn't keep the rest from being acked.
++	tries := min(max(node.AttrGetter().OptionalInt("offline"), 0), 10)
++	p.batch = max(min(p.batch, maxOfflineBatch>>tries), minOfflineBatch)
++	if p.outstanding <= p.batch*offlineAhead {
++		return p.ask()
++	}
++	return 0
++}
++
++// stalled returns how many to ask for after offlineStall without a stanza.
++func (p *offlinePull) stalled() int {
++	if !p.active || p.stalls >= maxOfflineStalls {
++		return 0
++	}
++	p.stalls++
++	p.outstanding, p.batch = 0, minOfflineBatch
++	return p.ask()
++}
++
++func (p *offlinePull) ask() int {
++	n := p.batch
++	p.outstanding += n
++	p.batches++
++	// Back up, unless the stanzas that come were sent before too.
++	p.batch = maxOfflineBatch
++	return n
++}
++
++// afterOfflineNode asks for the next batch when it's time, and starts or
++// stops the stall timer.
++func (cli *Client) afterOfflineNode(ctx context.Context, p *offlinePull, node *waBinary.Node, stall *time.Timer) {
++	was := *p
++	n := p.handledNode(node)
++	_, offline := node.Attrs["offline"]
++	if p.active && (offline || n > 0) {
++		stall.Reset(offlineStall)
++	} else if was.active && !p.active {
++		stall.Stop()
++		cli.Log.Infof("Caught up with %d missed stanzas in %s, asked for in %d batches",
++			was.handled, time.Since(was.start).Round(time.Millisecond), was.batches)
++	}
++	cli.requestOfflineBatch(ctx, n)
++}
++
++func (cli *Client) requestOfflineBatch(ctx context.Context, n int) {
++	if n <= 0 {
++		return
++	}
++	if f := cli.offlineBatchSent; f != nil {
++		f(n)
++		return
++	}
++	go func() {
++		if err := cli.sendNode(ctx, offlineBatchNode(n)); err != nil && ctx.Err() == nil {
++			cli.Log.Warnf("Failed to ask for %d missed stanzas: %v", n, err)
++		}
++	}()
++}
++
++func offlineBatchNode(n int) waBinary.Node {
++	return waBinary.Node{Tag: "ib", Content: []waBinary.Node{
++		{Tag: "offline_batch", Attrs: waBinary.Attrs{"count": n}},
++	}}
++}
+diff --git a/offline_patch_test.go b/offline_patch_test.go
+new file mode 100644
+index 0000000..2081444
+--- /dev/null
++++ b/offline_patch_test.go
+@@ -0,0 +1,173 @@
++package whatsmeow
++
++import (
++	"context"
++	"strconv"
++	"testing"
++	"time"
++
++	waBinary "github.com/polymorfa/hypermeow/binary"
++	"github.com/polymorfa/hypermeow/store"
++	waLog "github.com/polymorfa/hypermeow/util/log"
++)
++
++func offlinePreview(count int) *waBinary.Node {
++	return &waBinary.Node{Tag: "ib", Content: []waBinary.Node{
++		{Tag: "offline_preview", Attrs: waBinary.Attrs{"count": strconv.Itoa(count)}}}}
++}
++
++func offlineNode(tag string, tries int) *waBinary.Node {
++	return &waBinary.Node{Tag: tag, Attrs: waBinary.Attrs{"offline": strconv.Itoa(tries)}}
++}
++
++var offlineEnd = &waBinary.Node{Tag: "ib", Content: []waBinary.Node{{Tag: "offline"}}}
++
++// WazzapClients patch: what was missed is asked for in batches, the next one
++// before the last is handled, and never more than the handler queue holds.
++func TestOfflinePull(t *testing.T) {
++	const total = 10739
++	var p offlinePull
++	asked, handled := p.handledNode(offlinePreview(total)), 0
++	if asked != maxOfflineBatch {
++		t.Fatalf("asked for %d first, want %d", asked, maxOfflineBatch)
++	}
++	tags := []string{"message", "receipt", "notification", "status"}
++	for handled < total {
++		if asked <= handled {
++			t.Fatalf("stuck: asked for %d, handled %d", asked, handled)
++		}
++		if n := asked - handled; n > maxOfflineBatch*(offlineAhead+1) || n > handlerQueueSize/2 {
++			t.Fatalf("%d stanzas asked for at once", n)
++		}
++		asked += p.handledNode(offlineNode(tags[handled%len(tags)], 0))
++		handled++
++	}
++	if p.handled != total {
++		t.Errorf("counted %d, want %d", p.handled, total)
++	}
++	p.handledNode(offlineEnd)
++	if p.active || p.handledNode(offlineNode("message", 0)) != 0 || p.stalled() != 0 {
++		t.Error("goes on after the end")
++	}
++}
++
++// Live stanzas aren't part of a batch, and nothing is asked for when nothing
++// was missed.
++func TestOfflinePullIgnoresLive(t *testing.T) {
++	var p offlinePull
++	if n := p.handledNode(offlinePreview(0)); n != 0 || p.active {
++		t.Errorf("asked for %d of nothing", n)
++	}
++	p.handledNode(offlinePreview(500))
++	for range 300 {
++		if n := p.handledNode(&waBinary.Node{Tag: "message"}); n != 0 {
++			t.Fatalf("a live message asked for %d", n)
++		}
++	}
++	if p.outstanding != maxOfflineBatch {
++		t.Errorf("outstanding %d after live messages", p.outstanding)
++	}
++}
++
++// Stanzas sent before make the next batch smaller; it goes back up after.
++func TestOfflinePullRedelivered(t *testing.T) {
++	var p offlinePull
++	p.handledNode(offlinePreview(5000))
++	next := func(tries int) int {
++		for range 1000 {
++			if n := p.handledNode(offlineNode("message", tries)); n != 0 {
++				return n
++			}
++		}
++		t.Fatal("no batch")
++		return 0
++	}
++	for _, c := range []struct{ tries, want int }{{1, 100}, {2, 50}, {9, 10}, {1000, 10}, {-1, 200}, {0, 200}} {
++		if got := next(c.tries); got != c.want {
++			t.Errorf("sent %d times before: asked for %d, want %d", c.tries, got, c.want)
++		}
++	}
++}
++
++func TestOfflinePullStall(t *testing.T) {
++	var p offlinePull
++	p.handledNode(offlinePreview(5000))
++	for range maxOfflineStalls {
++		if n := p.stalled(); n != minOfflineBatch {
++			t.Fatalf("stalled: asked for %d, want %d", n, minOfflineBatch)
++		}
++	}
++	if n := p.stalled(); n != 0 {
++		t.Errorf("still asks for %d", n)
++	}
++	if n := p.handledNode(offlineNode("message", 0)); n != maxOfflineBatch {
++		t.Errorf("going again: asked for %d, want %d", n, maxOfflineBatch)
++	}
++}
++
++// The stanza goes out as WhatsApp Web's does.
++func TestOfflineBatchStanza(t *testing.T) {
++	data, err := waBinary.Marshal(offlineBatchNode(100))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if data, err = waBinary.Unpack(data); err != nil {
++		t.Fatal(err)
++	}
++	got, err := waBinary.Unmarshal(data)
++	if err != nil {
++		t.Fatal(err)
++	}
++	batch, ok := got.GetOptionalChildByTag("offline_batch")
++	if got.Tag != "ib" || !ok || batch.AttrGetter().Int("count") != 100 {
++		t.Errorf("sent %s", got)
++	}
++}
++
++// The queue's loop counts each node once it's handled.
++func TestQueueLoopPullsOffline(t *testing.T) {
++	cli := NewClient(&store.Device{}, waLog.Noop)
++	asked := make(chan int, 10)
++	cli.offlineBatchSent = func(n int) { asked <- n }
++	nop := func(context.Context, *waBinary.Node) {}
++	cli.nodeHandlers = map[string]nodeHandler{"ib": nop, "message": nop}
++	ctx, cancel := context.WithCancel(t.Context())
++	queue, closed := make(chan *waBinary.Node, handlerQueueSize), make(chan struct{})
++	go cli.handlerQueueLoop(ctx, ctx, queue, closed)
++	want := func(n int) {
++		t.Helper()
++		select {
++		case got := <-asked:
++			if got != n {
++				t.Fatalf("asked for %d, want %d", got, n)
++			}
++		case <-time.After(5 * time.Second):
++			t.Fatal("asked for nothing")
++		}
++	}
++	queue <- offlinePreview(1500)
++	for range offlineAhead + 1 {
++		want(maxOfflineBatch)
++		queue <- offlineNode("message", 0)
++	}
++	// Enough are under way now, until a batch's worth was handled.
++	for range maxOfflineBatch - offlineAhead - 2 {
++		queue <- offlineNode("message", 0)
++	}
++	for len(queue) > 0 {
++		time.Sleep(time.Millisecond)
++	}
++	if len(asked) != 0 {
++		t.Fatalf("asked for %d too soon", <-asked)
++	}
++	for range offlineAhead + 2 {
++		queue <- offlineNode("message", 0)
++	}
++	want(maxOfflineBatch)
++	queue <- offlineEnd
++	cancel()
++	<-closed
++	if len(asked) != 0 {
++		t.Errorf("asked for %d more", <-asked)
++	}
++}
 diff --git a/send.go b/send.go
 index 5fb006b..10e278a 100644
 --- a/send.go

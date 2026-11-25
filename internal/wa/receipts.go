@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"sort"
+	"sync"
 	"time"
 
 	waBinary "github.com/polymorfa/hypermeow/binary"
@@ -129,38 +130,92 @@ func (b *Backend) groupedReceipts(_ context.Context, node *waBinary.Node) (*waBi
 		}
 	}
 	if len(rs) > 0 {
-		b.goWork(func() { b.onGroupedReceipts(chat.String(), rs) })
+		b.queueReceipts(groupReceipts{chat.String(), rs})
 	}
 	out := *node
 	out.Content = kept
 	return &out, false
 }
 
-// onGroupedReceipts stores what a grouped receipt says, then moves the
-// ticks of its messages on, once.
-func (b *Backend) onGroupedReceipts(chat string, rs []userReceipt) {
+// groupReceipts is one grouped receipt.
+type groupReceipts struct {
+	chat string
+	rs   []userReceipt
+}
+
+// receiptQueue holds the grouped receipts that wait to be stored. After a
+// while offline thousands come within seconds. Stored by a goroutine each,
+// they fought over the database, opening connections to it by the hundreds,
+// and slowed the messages that came with them.
+type receiptQueue struct {
+	mu      sync.Mutex
+	waiting []groupReceipts
+	running bool
+}
+
+// receiptBatch is how many grouped receipts one transaction stores at
+// most: nothing else can write meanwhile.
+const receiptBatch = 64
+
+// queueReceipts stores a grouped receipt soon, after those before it.
+func (b *Backend) queueReceipts(g groupReceipts) {
+	q := &b.receiptQueue
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.waiting = append(q.waiting, g)
+	if !q.running {
+		q.running = true
+		b.goWork(b.storeReceipts)
+	}
+}
+
+// storeReceipts stores the grouped receipts that wait, until none do.
+func (b *Backend) storeReceipts() {
+	q := &b.receiptQueue
+	for {
+		q.mu.Lock()
+		gs := q.waiting
+		if len(gs) > receiptBatch {
+			gs = gs[:receiptBatch]
+		}
+		q.waiting = q.waiting[len(gs):]
+		if len(gs) == 0 || b.ctx.Err() != nil {
+			q.waiting, q.running = nil, false
+			q.mu.Unlock()
+			return
+		}
+		q.mu.Unlock()
+		b.onGroupedReceipts(gs)
+	}
+}
+
+// onGroupedReceipts stores what grouped receipts say, then moves the ticks
+// of their messages on, once.
+func (b *Backend) onGroupedReceipts(gs []groupReceipts) {
 	ctx := b.ctx
 	// Names first: the device store must not be read inside a wz_* write
 	// transaction.
 	var prs []personReceipt
-	for _, r := range rs {
-		pr := personReceipt{chat: chat, id: r.id, delivered: r.at}
-		switch types.ReceiptType(r.typ) {
-		case "delivery", types.ReceiptTypeDelivered:
-		case types.ReceiptTypeRead:
-			pr.read = r.at
-		case types.ReceiptTypePlayed:
-			pr.played = r.at
-		default:
-			// "inactive": one of their devices that hasn't been online
-			// for a while, which doesn't mean they got it.
-			continue
+	for _, g := range gs {
+		for _, r := range g.rs {
+			pr := personReceipt{chat: g.chat, id: r.id, delivered: r.at}
+			switch types.ReceiptType(r.typ) {
+			case "delivery", types.ReceiptTypeDelivered:
+			case types.ReceiptTypeRead:
+				pr.read = r.at
+			case types.ReceiptTypePlayed:
+				pr.played = r.at
+			default:
+				// "inactive": one of their devices that hasn't been online
+				// for a while, which doesn't mean they got it.
+				continue
+			}
+			if b.isMe(r.who) {
+				continue
+			}
+			pr.who = b.canonical(ctx, r.who).String()
+			prs = append(prs, pr)
 		}
-		if b.isMe(r.who) {
-			continue
-		}
-		pr.who = b.canonical(ctx, r.who).String()
-		prs = append(prs, pr)
 	}
 	if len(prs) == 0 {
 		return
@@ -171,23 +226,29 @@ func (b *Backend) onGroupedReceipts(chat string, rs []userReceipt) {
 		return
 	}
 	defer tx.Rollback()
-	var ids []string
-	seen := map[string]bool{}
+	var chats []string
+	ids := map[string][]string{} // by chat
+	seen := map[[2]string]bool{}
 	for _, pr := range prs {
 		if err := b.store.putReceipt(ctx, tx, pr); err != nil {
 			b.log.Warnf("store receipt: %v", err)
 			return
 		}
-		if !seen[pr.id] {
-			seen[pr.id] = true
-			ids = append(ids, pr.id)
+		if k := [2]string{pr.chat, pr.id}; !seen[k] {
+			seen[k] = true
+			if ids[pr.chat] == nil {
+				chats = append(chats, pr.chat)
+			}
+			ids[pr.chat] = append(ids[pr.chat], pr.id)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		b.log.Warnf("store receipts: %v", err)
 		return
 	}
-	b.setTicks(ctx, chat, ids, model.Delivered, true)
+	for _, chat := range chats {
+		b.setTicks(ctx, chat, ids[chat], model.Delivered, true)
+	}
 }
 
 // otherMembers returns a group's stored members other than you.

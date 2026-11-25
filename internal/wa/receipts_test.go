@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	waBinary "github.com/polymorfa/hypermeow/binary"
 	"github.com/polymorfa/hypermeow/types"
+
+	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // TestPutReceipt checks that each person's receipts keep the earliest time
@@ -120,5 +123,56 @@ func TestGroupedReceipts(t *testing.T) {
 	one := &waBinary.Node{Tag: "receipt", Attrs: waBinary.Attrs{"from": group, "id": "x", "participant": "1@lid"}}
 	if out, drop := b.groupedReceipts(ctx, one); out != nil || drop {
 		t.Errorf("one person's receipt changed: %v, %v", out, drop)
+	}
+}
+
+// Many grouped receipts at once, as after a while offline, are all stored,
+// in the order they came, and the ones that come later too.
+func TestManyGroupedReceipts(t *testing.T) {
+	b, err := Open(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	groups := []types.JID{types.NewJID("120363408109130578", types.GroupServer), types.NewJID("120363408109130579", types.GroupServer)}
+	who := types.NewJID("132598911267037", types.HiddenUserServer)
+	receipt := func(i int, typ string, at int) {
+		id := strconv.Itoa(i / 2)
+		b.groupedReceipts(b.ctx, &waBinary.Node{Tag: "receipt", Attrs: waBinary.Attrs{"from": groups[i%2], "id": "r" + id},
+			Content: []waBinary.Node{{Tag: "participants", Attrs: waBinary.Attrs{"message_id": id}, Content: []waBinary.Node{
+				{Tag: "user", Attrs: waBinary.Attrs{"jid": who, "t": strconv.Itoa(at), "type": typ}}}}}})
+	}
+	check := func(n int) {
+		t.Helper()
+		b.work.Wait()
+		for i := range n {
+			r := b.store.receipts(b.ctx, groups[i%2].String(), strconv.Itoa(i/2))
+			if len(r) != 1 || r[0].delivered != 1000 || r[0].read != 2000 {
+				t.Fatalf("message %d of %s: %+v", i/2, groups[i%2], r)
+			}
+		}
+	}
+	n := receiptBatch*4 + 6
+	for _, n := range []int{n, 2} {
+		for i := range n {
+			receipt(i, "delivery", 1000)
+			receipt(i, "read", 2000)
+		}
+		check(n)
+		if q := &b.receiptQueue; q.running || len(q.waiting) != 0 {
+			t.Fatalf("still running: %v, %d waiting", q.running, len(q.waiting))
+		}
+	}
+	check(n)
+	ticks := map[string]int{}
+	for _, e := range b.Poll() {
+		if e, ok := e.(model.ReceiptEvent); ok {
+			ticks[e.ChatID] += len(e.IDs)
+		}
+	}
+	for _, g := range groups {
+		if ticks[g.String()] < n/2 {
+			t.Errorf("ticks of %d messages of %s, want %d", ticks[g.String()], g, n/2)
+		}
 	}
 }

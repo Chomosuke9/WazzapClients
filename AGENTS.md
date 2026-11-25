@@ -616,6 +616,11 @@ Gotchas already found in the pinned version (v0.10.x):
   (`internal/wa/catchup.go`). hypermeow queues stanzas and handles them in order, so the
   count goes by the messages handled, not those that arrived. The stanzas are read in the
   `RawNodeHandler`, in the order they came: hypermeow's `OfflineSyncPreview` waits in the queue.
+  The client has to ask for them, a batch at a time (`<ib><offline_batch count="200"/></ib>`,
+  `offline_patch.go` in hypermeow's patch): unasked, the server sent about 20 messages a second.
+  How long it took is in `wazzap.log` ("Caught up with"). Thousands of stanzas come within
+  seconds, so what handles one mustn't start a goroutine that uses the database: they opened
+  connections by the hundreds (the pool keeps two) and fought over writing.
 - History sync's chunks say how far their kind has got (`internal/wa/syncprogress.go`):
   INITIAL_BOOTSTRAP brings the chats, RECENT and FULL their older messages, each from 0%.
   The phone doesn't reliably send 100% and can stop for minutes, so older messages are

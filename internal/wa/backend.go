@@ -67,6 +67,8 @@ type Backend struct {
 	names   nameCache
 	history historyProgress // the history sync's (syncprogress.go)
 	catchUp catchUp         // the missed messages' (catchup.go)
+
+	receiptQueue receiptQueue // the grouped receipts' (receipts.go)
 	// schedKick wakes runScheduled (schedule.go).
 	schedKick chan struct{}
 
