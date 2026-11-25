@@ -25,8 +25,10 @@ import (
 
 // A photo wallpaper covers the conversation like CSS's object-fit: cover,
 // cropped around a point of the photo the user picks (the Photo position
-// page), which stays in view at any window size: in the middle, unless
-// that would show past the photo's edge.
+// page), which is the middle at any window size: what the point leaves out
+// on one side goes from the other too, so it zooms in. Set for everyone,
+// the photo goes cropped around it the same way (focusPart), since phones
+// show a photo from its middle.
 //
 // Only the part that shows is decoded, at the size it shows, so the photo
 // is sharp and costs no more than a pane of pixels. While the pane changes
@@ -41,6 +43,11 @@ const wallSettle = 200 * time.Millisecond
 // wallThumbSide is the size the whole photo decodes at, for the tiles of
 // the Wallpaper page and under a part that doesn't cover the pane yet.
 const wallThumbSide = 512
+
+// wallMinPart is the least of a photo's width and height to zoom in to for
+// the focus to be the middle: nearer an edge than half of it, the focus is
+// off the middle.
+const wallMinPart = 0.25
 
 // wallFocusCenter is a photo's focus until one is picked.
 var wallFocusCenter = f32.Pt(0.5, 0.5)
@@ -76,16 +83,39 @@ func clampFocus(f f32.Point) f32.Point {
 // viewRect is a part of a photo, in its pixels.
 type viewRect struct{ x, y, w, h float32 }
 
+// focusPart returns the biggest part of a photo of size src with its focus
+// in the middle.
+func focusPart(src image.Point, focus f32.Point) viewRect {
+	side := func(n, f float32) (at, size float32) {
+		size = n * max(wallMinPart, 2*min(f, 1-f))
+		return min(max(f*n-size/2, 0), n-size), size
+	}
+	var v viewRect
+	v.x, v.w = side(float32(src.X), focus.X)
+	v.y, v.h = side(float32(src.Y), focus.Y)
+	return v
+}
+
 // wallView returns the part of a photo of size src that covers a pane of
-// size pane, its focus as near the middle as the photo allows, and the
-// scale from the photo's pixels to the pane's.
+// size pane, its focus in the middle, and the scale from the photo's pixels
+// to the pane's.
 func wallView(src, pane image.Point, focus f32.Point) (v viewRect, s float32) {
-	sw, sh := float32(src.X), float32(src.Y)
-	s = max(float32(pane.X)/sw, float32(pane.Y)/sh)
+	p := focusPart(src, focus)
+	s = max(float32(pane.X)/p.w, float32(pane.Y)/p.h)
 	v.w, v.h = float32(pane.X)/s, float32(pane.Y)/s
-	v.x = min(max(focus.X*sw-v.w/2, 0), sw-v.w)
-	v.y = min(max(focus.Y*sh-v.h/2, 0), sh-v.h)
+	v.x, v.y = p.x+(p.w-v.w)/2, p.y+(p.h-v.h)/2
 	return v, s
+}
+
+// sharedCrop is the part of the photo at path to set for everyone, in its
+// pixels: empty for all of it.
+func sharedCrop(path string, focus f32.Point) image.Rectangle {
+	src := photoSize(path)
+	if src.X <= 0 || src.Y <= 0 || focus == wallFocusCenter {
+		return image.Rectangle{}
+	}
+	p := focusPart(src, focus)
+	return image.Rect(int(p.x+0.5), int(p.y+0.5), int(p.x+p.w+0.5), int(p.y+p.h+0.5))
 }
 
 // paintPart paints img, the part crop of a photo decoded at img's size,
@@ -262,8 +292,8 @@ func (u *UI) dropWallPhoto() {
 }
 
 // wallPosRows is the Photo position page: the photo whole, the part this
-// window's chat shows framed in it, and the point that stays in view,
-// which a click or a drag moves.
+// window's chat shows framed in it, and the point in its middle, which a
+// click or a drag moves.
 func (u *UI) wallPosRows(gtx C, id string, w int) []layout.Widget {
 	t := &u.themeUI
 	kind, arg, _ := strings.Cut(u.lookOf(id).wall, ":")
@@ -347,7 +377,7 @@ func (u *UI) wallPosRows(gtx C, id string, w int) []layout.Widget {
 		},
 		func(gtx C) D {
 			return layout.Inset{Top: 12, Bottom: 8}.Layout(gtx,
-				u.label(13.5, "Click or drag to choose what stays in view. The frame is what this window's chat shows; at any size, the point stays in view.",
+				u.label(13.5, "Click or drag to choose the photo's middle. The frame is what this window's chat shows; nearer an edge it zooms in.",
 					u.pal.TextSecondary, labelOpts{maxLines: 3}).Layout)
 		},
 	}

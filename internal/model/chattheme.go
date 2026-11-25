@@ -1,5 +1,7 @@
 package model
 
+import "image"
+
 // A chat's theme can be set for everyone in it, and then each of their
 // devices shows it (WhatsApp's "for everyone").
 
@@ -38,8 +40,10 @@ type SharedWall struct {
 	// the color.
 	Light, Dark             uint32
 	DoodleLight, DoodleDark uint32
-	// Photo is a WallPhoto's file.
+	// Photo is a WallPhoto's file, and Crop the part of it to send, in its
+	// pixels: empty for all of it.
 	Photo string
+	Crop  image.Rectangle
 }
 
 // ChatThemeEvent says a chat's shared theme changed.

@@ -346,7 +346,7 @@ func (b *Backend) shareTheme(ctx context.Context, cli *whatsmeow.Client, jid typ
 		return err
 	}
 	if t.Wall.Kind == model.WallPhoto {
-		data, err := sharedPhoto(t.Wall.Photo)
+		data, err := sharedPhoto(t.Wall.Photo, t.Wall.Crop)
 		if err != nil {
 			return err
 		}
@@ -403,9 +403,10 @@ func themeSetting(t model.SharedTheme, now time.Time) (*waE2E.ChatThemeSetting, 
 	return set, nil
 }
 
-// sharedPhoto is the photo at path as it's sent: always encoded again, so
-// nothing of the file's but the picture (where it was taken) goes.
-func sharedPhoto(path string) ([]byte, error) {
+// sharedPhoto is the part crop of the photo at path, or all of it when
+// that's empty, as it's sent: always encoded again, so nothing of the
+// file's but the picture (where it was taken) goes.
+func sharedPhoto(path string, crop image.Rectangle) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -413,6 +414,16 @@ func sharedPhoto(path string) ([]byte, error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
+	}
+	if !crop.Empty() {
+		sub, ok := img.(interface {
+			SubImage(image.Rectangle) image.Image
+		})
+		crop = crop.Add(img.Bounds().Min).Intersect(img.Bounds())
+		if !ok || crop.Empty() {
+			return nil, fmt.Errorf("can't crop a %T of %v to %v", img, img.Bounds(), crop)
+		}
+		img = sub.SubImage(crop)
 	}
 	out, _, _, err := photo.Fit(img, shareSide)
 	return out, err

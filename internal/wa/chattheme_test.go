@@ -3,10 +3,14 @@ package wa
 import (
 	"bytes"
 	"image"
+	"image/color"
+	"image/draw"
 	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -202,6 +206,42 @@ func TestKeepThemePhoto(t *testing.T) {
 	}
 	if _, err := b.keepThemePhoto(themeGroup, buf.Bytes()); err == nil {
 		t.Error("a 54 megapixel picture was kept")
+	}
+}
+
+// A photo is sent cropped to the part that has the point picked in its middle.
+func TestSharedPhotoCrop(t *testing.T) {
+	// A red photo, blue where the crop is.
+	img := image.NewRGBA(image.Rect(0, 0, 200, 400))
+	draw.Draw(img, img.Bounds(), image.NewUniform(color.RGBA{R: 255, A: 255}), image.Point{}, draw.Src)
+	crop := image.Rect(40, 0, 200, 200)
+	draw.Draw(img, crop, image.NewUniform(color.RGBA{B: 255, A: 255}), image.Point{}, draw.Src)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "p.png")
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		crop image.Rectangle
+		size image.Point
+	}{{image.Rectangle{}, image.Pt(200, 400)}, {crop, image.Pt(160, 200)}} {
+		data, err := sharedPhoto(path, c.crop)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil || got.Bounds().Size() != c.size {
+			t.Fatalf("crop %v: sent %v, %v, want %v", c.crop, got.Bounds(), err, c.size)
+		}
+		if r, _, b, _ := got.At(4, 4).RGBA(); (b > r) == c.crop.Empty() {
+			t.Errorf("crop %v: the corner is red %d blue %d", c.crop, r>>8, b>>8)
+		}
+	}
+	if _, err := sharedPhoto(path, image.Rect(900, 900, 950, 950)); err == nil {
+		t.Error("a crop outside the photo was sent")
 	}
 }
 

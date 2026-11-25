@@ -140,8 +140,9 @@ func (u *UI) shareable(l chatLook) model.SharedTheme {
 	case "shared":
 		s.Wall = model.SharedWall{Kind: model.WallPhoto, Photo: arg}
 	case "photo":
-		if file, _ := parsePhotoWall(arg); wallpaperDir != "" && file != "" {
-			s.Wall = model.SharedWall{Kind: model.WallPhoto, Photo: filepath.Join(wallpaperDir, filepath.Base(file))}
+		if file, focus := parsePhotoWall(arg); wallpaperDir != "" && file != "" {
+			path := filepath.Join(wallpaperDir, filepath.Base(file))
+			s.Wall = model.SharedWall{Kind: model.WallPhoto, Photo: path, Crop: sharedCrop(path, focus)}
 		}
 	}
 	return s
