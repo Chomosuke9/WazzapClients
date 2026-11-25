@@ -195,7 +195,9 @@ Gotchas already found in the pinned version (v0.10.x):
 - An album's `albumMessage` is no message here, but phones reply to it, pin it and react
   to it by its ID. `Quote.Album` marks such a reply (its text is made from the counts the
   quoted albumMessage carries), `AlbumMessage` finds the album's first stored picture for
-  a jump, and `albumTarget` moves what's done to the album's ID to that picture. Only
+  a jump, and `albumTarget` moves what's done to the album's ID to that picture. A reply of
+  yours to one is to its first picture with `Message.Whole` set, which `quote` turns into
+  the album's ID and an albumMessage of its counts. Only
   payloads hold an album's ID, so both search them. A grid takes every picture of its
   album, whatever came in between, with the captions under it.
 - A chat keeps its latest `model.PinsMax` pins, each until it ends (`pin_until`, from
@@ -244,6 +246,10 @@ Gotchas already found in the pinned version (v0.10.x):
 - Upstream's `widget.Editor` ignores Ctrl+Backspace and Ctrl+Delete wherever
   `key.ModShortcut` and `key.ModShortcutAlt` are both Ctrl (everywhere but macOS): its
   shortcut branch returns before the word delete. `patches/gio.patch` lets them through.
+- Privacy mode hides what is drawn between `u.hiding` and its restore: every kind of row
+  in a chat (album, sticker run, scheduled, system...) and banner calls it itself. What's
+  hidden takes the room it takes shown: size a picture by `clearImage`, never by the
+  blurred one, which is 12 px across.
 - A list in the composer: a line's leading "- " or "* " is drawn as a bullet
   (`bulletAt`, `composertext.go`), and `listKeys` reads Shift+Enter (Enter too, when
   it adds a line) before the editor: it starts the next item, or ends the list on an

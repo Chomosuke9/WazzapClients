@@ -276,7 +276,16 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 		add(menuItem{key: "edit", ic: icEdit, label: "Edit", run: func() { u.startEdit(m) }})
 	}
 	if !deleted && !revoked && !isChannelID(c.ID) && u.sendBlocked(c) == "" {
-		add(menuItem{key: "reply", ic: icReply, label: "Reply", run: func() { u.startReply(m) }})
+		if ms := u.albumOf(c, m); ms != nil {
+			what := "photo"
+			if m.Media == model.MediaVideo {
+				what = "video"
+			}
+			add(menuItem{key: "reply", ic: icReply, label: "Reply", run: func() { u.startReply(wholeAlbum(ms)) }})
+			add(menuItem{key: "replyone", ic: icReply, label: "Reply to this " + what, run: func() { u.startReply(m) }})
+		} else {
+			add(menuItem{key: "reply", ic: icReply, label: "Reply", run: func() { u.startReply(m) }})
+		}
 	}
 	if u.announcementsOf(c) != nil && u.takesReplies(m) {
 		label := "Reply to announcement"

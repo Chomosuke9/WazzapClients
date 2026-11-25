@@ -96,6 +96,7 @@ func (u *UI) layoutPinnedBanner(gtx C, m *model.Message) D {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	defer u.hiding(gtx, "pinned", cl.Hovered())()
 	return clickable(gtx, cl, func(gtx C) D {
 		bg := mix(p.Panel, p.Hover, u.hover(gtx, cl))
 		d := background(gtx, bg, 0, func(gtx C) D {

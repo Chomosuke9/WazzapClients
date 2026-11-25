@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"hash/fnv"
 	"image"
 	"image/color"
 	"runtime"
@@ -135,7 +134,8 @@ func (l labelStyle) Layout(gtx C) D {
 	mg := gtx
 	mg.Constraints.Min = image.Point{}
 	m := op.Record(gtx.Ops)
-	td := layoutLabel(mg, l.LabelStyle, l.bitmap)
+	var lines []labelLine
+	td := layoutLabelLines(mg, l.LabelStyle, l.bitmap, &lines)
 	m.Stop()
 	d := D{Size: gtx.Constraints.Constrain(td.Size), Baseline: td.Baseline + gtx.Constraints.Constrain(td.Size).Y - td.Size.Y}
 	x := 0
@@ -150,35 +150,12 @@ func (l labelStyle) Layout(gtx C) D {
 		t.Color = faded(t.Color, 1-l.hide)
 		layoutLabel(gtx, t, l.bitmap)
 	}
-	lh := float32(gtx.Sp(l.TextSize))
-	if l.LineHeight != 0 {
-		lh = float32(gtx.Sp(l.LineHeight))
+	for _, ln := range lines {
+		t := op.Offset(image.Pt(x+ln.min, 0)).Push(gtx.Ops)
+		redactBar(gtx, ln.max-ln.min, ln.baseline, gtx.Sp(l.TextSize), l.Color, l.hide)
+		t.Pop()
 	}
-	scale := l.LineHeightScale
-	if scale == 0 {
-		scale = 1.2
-	}
-	lh *= scale
-	n := max(1, int(float32(td.Size.Y)/lh+0.5))
-	last := td.Size.Y - td.Baseline // the last line's baseline
-	t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-	for i := range n {
-		w := td.Size.X
-		if i == n-1 && n > 1 {
-			w = int(float32(w) * lastLineShare(l.Text))
-		}
-		redactBar(gtx, w, last-int(float32(n-1-i)*lh), gtx.Sp(l.TextSize), l.Color, l.hide)
-	}
-	t.Pop()
 	return d
-}
-
-// lastLineShare is how much of a hidden text's width its last line's bar
-// takes, between 30% and 90%, the same for the same text.
-func lastLineShare(s string) float32 {
-	h := fnv.New32a()
-	h.Write([]byte(s))
-	return 0.3 + float32(h.Sum32()%61)/100
 }
 
 // redactBar draws the bar that stands for w px of text on a line whose

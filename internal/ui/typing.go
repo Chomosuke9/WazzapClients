@@ -103,6 +103,7 @@ func (u *UI) syncTypists(ts []model.Typist, snap bool) {
 func (u *UI) layoutTypists(gtx C, x0 int) int {
 	const size = 29
 	sz, ring := gtx.Dp(size), gtx.Dp(2)
+	defer u.hiding(gtx, "typists", false)()
 	step := float32(sz - ring) // they overlap a little, each ringed in the chat's color
 	x := float32(x0)
 	shown := 0

@@ -1,7 +1,8 @@
 // Copied from gioui.org/widget's Label v0.10.3 (SPDX-License-Identifier:
-// Unlicense OR MIT) with one change: bitmap glyphs (color emoji) are
+// Unlicense OR MIT) with two changes: bitmap glyphs (color emoji) are
 // offered to a hook first, as styledtext's TextStyle.Bitmap does, so they
-// can be drawn animated or from the app's own pictures.
+// can be drawn animated or from the app's own pictures, and it tells where
+// its lines are (privacy mode draws a bar over each).
 
 package ui
 
@@ -28,6 +29,16 @@ type bitmapHook func(gtx C, g text.Glyph, r image.Rectangle) bool
 // layoutLabel draws l as material.LabelStyle.Layout does (without a
 // selectable State), offering its bitmap glyphs to bitmap.
 func layoutLabel(gtx C, l material.LabelStyle, bitmap bitmapHook) D {
+	return layoutLabelLines(gtx, l, bitmap, nil)
+}
+
+// labelLine is where the words of one line of a label are: its baseline
+// and how far they reach, without the spaces around them.
+type labelLine struct{ baseline, min, max int }
+
+// layoutLabelLines is layoutLabel that adds the label's lines to lines,
+// if not nil.
+func layoutLabelLines(gtx C, l material.LabelStyle, bitmap bitmapHook, lines *[]labelLine) D {
 	m := op.Record(gtx.Ops)
 	paint.ColorOp{Color: l.Color}.Add(gtx.Ops)
 	col := m.Stop()
@@ -39,6 +50,7 @@ func layoutLabel(gtx C, l material.LabelStyle, bitmap bitmapHook) D {
 		LineHeight:      l.LineHeight,
 		LineHeightScale: l.LineHeightScale,
 		bitmap:          bitmap,
+		lines:           lines,
 	}.Layout(gtx, l.Shaper, l.Font, l.TextSize, l.Text, col)
 }
 
@@ -51,6 +63,7 @@ type hookLabel struct {
 	LineHeight      unit.Sp
 	LineHeightScale float32
 	bitmap          bitmapHook
+	lines           *[]labelLine // gets the lines drawn, if not nil
 }
 
 func (l hookLabel) Layout(gtx C, lt *text.Shaper, font font.Font, size unit.Sp, txt string, textMaterial op.CallOp) D {
@@ -77,6 +90,7 @@ func (l hookLabel) Layout(gtx C, lt *text.Shaper, font font.Font, size unit.Sp, 
 		maxLines: l.MaxLines,
 		material: textMaterial,
 		bitmap:   l.bitmap,
+		lines:    l.lines,
 	}
 	semantic.LabelOp(txt).Add(gtx.Ops)
 	var glyphs [32]text.Glyph
@@ -105,6 +119,7 @@ type labelIterator struct {
 	maxLines  int
 	material  op.CallOp
 	bitmap    bitmapHook
+	lines     *[]labelLine
 	linesSeen int
 	lineOff   f32.Point
 	padding   image.Rectangle
@@ -154,8 +169,21 @@ func (it *labelIterator) processGlyph(g text.Glyph, ok bool) (visibleOrBefore bo
 		it.bounds.Min.Y = min(it.bounds.Min.Y, logicalBounds.Min.Y)
 		it.bounds.Max.X = max(it.bounds.Max.X, logicalBounds.Max.X)
 		it.bounds.Max.Y = max(it.bounds.Max.Y, logicalBounds.Max.Y)
+		if it.lines != nil && g.Bounds.Max.X > g.Bounds.Min.X {
+			it.addToLine(int(g.Y), logicalBounds.Min.X, logicalBounds.Max.X)
+		}
 	}
 	return ok && !below
+}
+
+// addToLine grows the line at baseline to reach from x0 to x1.
+func (it *labelIterator) addToLine(baseline, x0, x1 int) {
+	ls := *it.lines
+	if n := len(ls); n > 0 && ls[n-1].baseline == baseline {
+		ls[n-1].min, ls[n-1].max = min(ls[n-1].min, x0), max(ls[n-1].max, x1)
+		return
+	}
+	*it.lines = append(ls, labelLine{baseline, x0, x1})
 }
 
 func (it *labelIterator) paintGlyph(gtx C, shaper *text.Shaper, glyph text.Glyph, line []text.Glyph) ([]text.Glyph, bool) {

@@ -1087,8 +1087,10 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		}
 		imgH = imgW * 3 / 4
 		img = u.messageImage(m, maxPx)
-		if img != nil && img.state == imgReady {
-			ratio := float32(img.size.Y) / float32(img.size.X)
+		// Sized by the picture itself, in privacy mode too: a blurred one
+		// is a few pixels, and only roughly its shape.
+		if pic := u.clearImage(m, maxPx); pic != nil && pic.state == imgReady {
+			ratio := float32(pic.size.Y) / float32(pic.size.X)
 			imgH = int(float32(imgW) * min(max(ratio, 0.4), 1.4))
 		}
 		contentW = max(contentW, imgW)
@@ -1651,10 +1653,15 @@ func (u *UI) layoutQuote(gtx C, chat string, q *model.Quote, bg, secondary color
 // messageImage returns the best available picture for an image message:
 // the downloaded media, or the embedded thumbnail while that loads.
 func (u *UI) messageImage(m *model.Message, maxPx int) *imgEntry {
-	b := u.backend
 	if u.blurred() {
 		return u.blurredImage(m)
 	}
+	return u.clearImage(m, maxPx)
+}
+
+// clearImage is messageImage out of privacy mode.
+func (u *UI) clearImage(m *model.Message, maxPx int) *imgEntry {
+	b := u.backend
 	if (m.Media == model.MediaImage && u.photoWanted(m)) || m.Media == model.MediaSticker || wideLink(m) {
 		get := u.images.get
 		if perf.sharpPhotos && m.Media == model.MediaImage {

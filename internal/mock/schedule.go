@@ -50,7 +50,7 @@ func (b *Backend) schedule(chatID string, d model.Draft, shown string, at time.T
 	}
 	b.schedSeq++
 	if d.Reply != nil {
-		d.Reply = &model.Message{ID: d.Reply.ID, ChatID: d.Reply.ChatID}
+		d.Reply = &model.Message{ID: d.Reply.ID, ChatID: d.Reply.ChatID, Whole: d.Reply.Whole}
 	}
 	s := &model.Scheduled{ID: fmt.Sprintf("sched-%d", b.schedSeq), ChatID: chatID, At: at, Draft: d, Shown: shown}
 	i, _ := slices.BinarySearchFunc(b.scheduled, at, func(s *model.Scheduled, at time.Time) int {
@@ -99,7 +99,10 @@ func (b *Backend) revealDue() {
 		if d.Reply != nil {
 			for _, m := range b.msgs[s.ChatID] {
 				if m.ID == d.Reply.ID {
-					d.Reply = m
+					r := *m
+					r.Whole = d.Reply.Whole
+					d.Reply = &r
+					break
 				}
 			}
 		}

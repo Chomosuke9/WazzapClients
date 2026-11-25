@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"slices"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -46,6 +47,12 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	var head part
 	hx, y := 0, 0
 	hasHead := c.IsGroup && r.first && !out && ms[0].Sender != ""
+	// Privacy mode shows each sticker under the pointer, and the sender
+	// with any of them.
+	reveal := func(m *model.Message) bool {
+		return u.hovered[m.ID] || (u.ctx.isOpen() && u.ctx.msg == m)
+	}
+	unhide := u.hiding(gtx, "srow:"+ms[0].ID, slices.ContainsFunc(ms, reveal))
 	if hasHead {
 		head = u.stickerHeader(gtx, ms[0], cell, maxW)
 		hx, y = stickerUnderHeader(gtx, head, cell)
@@ -88,6 +95,7 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 		u.senderButton(gtx, ms[0], image.Point{}, image.Pt(sz, sz))
 		t.Pop()
 	}
+	unhide()
 	lineGap := gtx.Dp(8)
 	for _, l := range lines {
 		line := ms[l[0]:l[1]]
@@ -97,6 +105,7 @@ func (u *UI) layoutStickerRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 			cgtx := gtx
 			cgtx.Constraints = layout.Constraints{Max: image.Pt(cell, gtx.Constraints.Max.Y)}
 			parts[i] = record(cgtx, func(gtx C) D {
+				defer u.hiding(gtx, "msg:"+m.ID, reveal(m))()
 				return u.layoutMessage(gtx, c, convRow{kind: rowMessage, msg: m}, maxW)
 			})
 			lh = max(lh, parts[i].size.Y)
@@ -176,9 +185,7 @@ func (u *UI) stickerCell(gtx C, c *model.Chat, m *model.Message, pt part, at ima
 	}
 	pt.at(gtx, 0, 0)
 	fx.Pop()
-	if perf.autoplay == "hover" {
-		u.hoverArea(gtx, m.ID, pt.size) // plays it (autoplays)
-	}
+	u.hoverArea(gtx, m.ID, pt.size) // plays it (autoplays), shows it in privacy mode
 	if sel {
 		cg := gtx
 		cg.Constraints = layout.Exact(pt.size)

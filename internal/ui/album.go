@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"slices"
 	"strconv"
 
 	"gioui.org/layout"
@@ -15,8 +16,9 @@ import (
 // show as one bubble, a grid of up to four tiles; from five on, the fourth
 // is covered by "+N" for it and the rest, and the viewer pages through all
 // of them. Their captions (usually one picture's, the first) go under the
-// grid. Each picture keeps its own menu, reply and selection, from its
-// tile or its caption.
+// grid. Each picture keeps its own menu and selection, from its tile or
+// its caption; a reply from there is to the whole album, unless the menu's
+// "Reply to this photo" is picked.
 
 // albumMember reports whether m shows in its album's grid.
 func albumMember(m *model.Message) bool {
@@ -89,6 +91,36 @@ func albumTiles(n, w, gap int) []image.Rectangle {
 	return []image.Rectangle{r(0, 0, half, half), r(w-half, 0, w, half), r(0, y, half, y+half), r(w-half, y, w, y+half)}
 }
 
+// wholeAlbum is the message to reply to for a reply to all of ms, the
+// pictures of an album.
+func wholeAlbum(ms []*model.Message) *model.Message {
+	whole := *ms[0]
+	n := &model.AlbumSize{}
+	for _, m := range ms {
+		if m.Media == model.MediaVideo {
+			n.Videos++
+		} else {
+			n.Photos++
+		}
+	}
+	whole.Whole = n
+	return &whole
+}
+
+// albumOf returns the pictures of the open chat's grid that m is in, or
+// nil.
+func (u *UI) albumOf(c *model.Chat, m *model.Message) []*model.Message {
+	if c == nil || !albumMember(m) {
+		return nil
+	}
+	for _, r := range u.rows(c) {
+		if r.album && r.has(m.ID) {
+			return r.group
+		}
+	}
+	return nil
+}
+
 // albumMeta is the message whose time and ticks an album's grid shows:
 // its last picture's time, with the ticks of the least far along of them.
 func albumMeta(ms []*model.Message) *model.Message {
@@ -125,6 +157,12 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
 	var tiles []image.Rectangle // in the bubble
 	var captions []albumCaption
+	// Privacy mode shows the album under the pointer, or being used.
+	hoverKey := "album:" + m0.ID
+	reveal := u.hovered[hoverKey] || slices.ContainsFunc(ms, func(m *model.Message) bool {
+		return u.ctx.isOpen() && u.ctx.msg == m || u.textSel.id == m.ID
+	})
+	unhide := u.hiding(gtx, "msg:"+m0.ID, reveal)
 	bubble := record(cgtx, func(gtx C) D {
 		var dims D
 		dims, tiles, captions = u.layoutAlbum(gtx, c, r, maxW)
@@ -151,13 +189,25 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 		u.senderButton(gtx, m0, image.Point{}, image.Pt(sz, sz))
 		t.Pop()
 	}
+	unhide()
 	if !sel {
+		// A double click on the album or beside it replies to all of it.
+		// On a caption's words it selects one instead.
+		_, _, double := u.pressArea(gtx, hoverKey, image.Rect(-margin, 0, w+margin, h))
+		words := u.textSel.clicks >= 2 && slices.ContainsFunc(ms, func(m *model.Message) bool { return m.ID == u.textSel.id })
+		if double && !words && u.sendBlocked(c) == "" {
+			u.startReply(wholeAlbum(ms))
+		}
 		for i, tr := range tiles {
-			u.albumTile(gtx, c, ms[i], tr.Add(image.Pt(x, 0)))
+			u.albumTile(gtx, ms[i], tr.Add(image.Pt(x, 0)))
 		}
 		for _, cp := range captions {
-			u.albumCaptionArea(gtx, c, cp.msg, cp.r.Add(image.Pt(x, 0)))
+			u.albumCaptionArea(gtx, cp.msg, cp.r.Add(image.Pt(x, 0)))
 		}
+		// On top of the tiles and their chevrons, letting events through.
+		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+		u.hoverArea(gtx, hoverKey, bubble.size)
+		t.Pop()
 	}
 	if sel {
 		t := op.Offset(image.Pt(-margin, -u.conv.band[0])).Push(gtx.Ops)
@@ -170,18 +220,13 @@ func (u *UI) layoutAlbumRow(gtx C, c *model.Chat, r convRow, maxW, margin int) D
 }
 
 // albumTile handles one tile of an album, at tr: right click opens its
-// picture's menu, a double click replies to it, and hovering shows its
-// chevron.
-func (u *UI) albumTile(gtx C, c *model.Chat, m *model.Message, tr image.Rectangle) {
+// picture's menu, and hovering shows its chevron.
+func (u *UI) albumTile(gtx C, m *model.Message, tr image.Rectangle) {
 	defer op.Offset(tr.Min).Push(gtx.Ops).Pop()
 	sz := tr.Size()
 	hovered := u.hoverArea(gtx, m.ID, sz)
-	right, _, double := u.pressArea(gtx, m.ID, image.Rectangle{Max: sz})
-	if right {
+	if u.rightClick(gtx, m.ID, sz) {
 		u.openMessageMenu(m)
-	}
-	if double && u.sendBlocked(c) == "" {
-		u.startReply(m)
 	}
 	chev := u.btn("chev:" + m.ID)
 	if chev.Clicked(gtx) {
@@ -198,15 +243,10 @@ func (u *UI) albumTile(gtx C, c *model.Chat, m *model.Message, tr image.Rectangl
 }
 
 // albumCaptionArea handles the caption of m, at r: right click opens its
-// picture's menu and a double click beside its words replies to it.
-func (u *UI) albumCaptionArea(gtx C, c *model.Chat, m *model.Message, r image.Rectangle) {
-	right, _, double := u.pressArea(gtx, "caption:"+m.ID, r)
-	if right {
+// picture's menu.
+func (u *UI) albumCaptionArea(gtx C, m *model.Message, r image.Rectangle) {
+	if right, _, _ := u.pressArea(gtx, "caption:"+m.ID, r); right {
 		u.openMessageMenu(m)
-	}
-	// On its words it selects one instead.
-	if double && (u.textSel.id != m.ID || u.textSel.clicks < 2) && u.sendBlocked(c) == "" {
-		u.startReply(m)
 	}
 }
 

@@ -124,6 +124,18 @@ func TestAlbumReplies(t *testing.T) {
 	if q := reply.Quote; !q.Album || q.ID != "ALBUM1" || q.Text != "2 photos" || q.Media != model.MediaImage {
 		t.Errorf("quote %+v", q)
 	}
+	// A reply of yours to all of it quotes it the same way.
+	first := *b.Messages(chat, 10)[0]
+	first.Whole = &model.AlbumSize{Photos: 2}
+	ci := &waE2E.ContextInfo{}
+	q := b.quote(chat, &first, ci)
+	if a := ci.GetQuotedMessage().GetAlbumMessage(); ci.GetStanzaID() != "ALBUM1" || ci.GetParticipant() != sender.String() ||
+		a.GetExpectedImageCount() != 2 || !q.Album || q.ID != "ALBUM1" || q.Text != "2 photos" {
+		t.Errorf("quoted as %v, shown %+v", ci, q)
+	}
+	if rq := quoteOf(ci); !rq.album || rq.id != "ALBUM1" || rq.text != "2 photos" {
+		t.Errorf("read back as %+v", rq)
+	}
 	if got := b.AlbumMessage(chat, "ALBUM1"); got != "p1" {
 		t.Errorf("the album's first message is %q", got)
 	}

@@ -297,6 +297,14 @@ func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) 
 		// "Reply privately" quotes a group message in a one-to-one chat.
 		ci.RemoteJID = proto.String(r.ChatID)
 	}
+	if r.Whole != nil && r.Album != "" {
+		// The album is named by its own message, which isn't stored.
+		ci.StanzaID = proto.String(r.Album)
+		ci.QuotedMessage = &waE2E.Message{AlbumMessage: albumOfSize(r.Whole.Photos, r.Whole.Videos)}
+		q := &model.Quote{ID: r.Album, SenderID: sender.String(), Album: true}
+		q.Text, q.Media = r.Whole.Text()
+		return q
+	}
 	q := &model.Quote{ID: r.ID, SenderID: sender.String(), Text: r.Text, Media: r.Media, Round: r.Round,
 		Status: r.ChatID == statusChat}
 	// Store the raw quoted text, not the display text with resolved names.

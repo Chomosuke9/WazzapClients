@@ -81,6 +81,11 @@ func quoteOf(r *model.Message) *model.Quote {
 	if r.FromMe {
 		name = ""
 	}
+	if r.Whole != nil {
+		q := &model.Quote{ID: r.Album, Sender: name, SenderID: r.SenderID, Album: true}
+		q.Text, q.Media = r.Whole.Text()
+		return q
+	}
 	return &model.Quote{ID: r.ID, Sender: name, SenderID: r.SenderID, Text: r.Text, Media: r.Media, Round: r.Round,
 		Status: r.ChatID == "status@broadcast"}
 }

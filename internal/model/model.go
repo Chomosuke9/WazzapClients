@@ -133,6 +133,29 @@ type Quote struct {
 	Album bool
 }
 
+// AlbumSize is how many pictures an album has.
+type AlbumSize struct{ Photos, Videos int }
+
+// Text words an album, as a reply to it shows it ("Album" when its size
+// isn't known), and tells what it's of, for its icon.
+func (a AlbumSize) Text() (string, Media) {
+	count := func(n int, one, more string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return strconv.Itoa(n) + " " + more
+	}
+	switch {
+	case a.Photos > 0 && a.Videos > 0:
+		return count(a.Photos, "photo", "photos") + ", " + count(a.Videos, "video", "videos"), MediaImage
+	case a.Videos > 0:
+		return count(a.Videos, "video", "videos"), MediaVideo
+	case a.Photos > 0:
+		return count(a.Photos, "photo", "photos"), MediaImage
+	}
+	return "Album", MediaImage
+}
+
 // Reply is a reply to an announcement of a community, by a member who
 // needn't be an admin.
 type Reply struct {
@@ -215,6 +238,9 @@ type Message struct {
 	// Album is the ID of the album a photo or video was sent in, with
 	// others, or "". The chat shows an album's pictures as one grid.
 	Album string
+	// Whole makes a picture given as the message to reply to stand for its
+	// whole album, Album. No stored message has it.
+	Whole *AlbumSize
 	// Edited is when the text (or caption) was last edited; zero when it
 	// never was.
 	Edited time.Time

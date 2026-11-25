@@ -112,6 +112,7 @@ func (u *UI) layoutScheduled(gtx C, s *model.Scheduled, tail bool, maxW int) D {
 		col = p.MetaOut
 	}
 	body := record(cgtx, func(gtx C) D {
+		defer u.hiding(gtx, key, cl.Hovered())()
 		var kids []layout.FlexChild
 		if s.Media != model.MediaNone {
 			kids = append(kids, layout.Rigid(func(gtx C) D { return u.layoutScheduledFile(gtx, s) }))
@@ -248,6 +249,11 @@ func (u *UI) scheduledReply(s *model.Scheduled) *model.Message {
 		return nil
 	}
 	if ms := u.backend.MessagesFrom(s.ChatID, r.ID, 1); len(ms) > 0 && ms[0].ID == r.ID {
+		if r.Whole != nil {
+			m := *ms[0]
+			m.Whole = r.Whole
+			return &m
+		}
 		return ms[0]
 	}
 	return nil

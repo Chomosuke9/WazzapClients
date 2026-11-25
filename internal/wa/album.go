@@ -3,7 +3,6 @@ package wa
 import (
 	"context"
 	"crypto/rand"
-	"strconv"
 	"time"
 
 	"github.com/polymorfa/hypermeow"
@@ -31,10 +30,7 @@ func (b *Backend) NewAlbum(chatID string, photos, videos int) string {
 	}
 	id := cli.GenerateMessageID()
 	msg := &waE2E.Message{
-		AlbumMessage: &waE2E.AlbumMessage{
-			ExpectedImageCount: proto.Uint32(uint32(photos)),
-			ExpectedVideoCount: proto.Uint32(uint32(videos)),
-		},
+		AlbumMessage:       albumOfSize(photos, videos),
 		MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: messageSecret()},
 	}
 	// The pictures upload meanwhile, and wait for it before they're sent:
@@ -50,6 +46,14 @@ func (b *Backend) NewAlbum(chatID string, photos, videos int) string {
 		}
 	}()
 	return id
+}
+
+// albumOfSize is the albumMessage of photos and videos to expect.
+func albumOfSize(photos, videos int) *waE2E.AlbumMessage {
+	return &waE2E.AlbumMessage{
+		ExpectedImageCount: proto.Uint32(uint32(photos)),
+		ExpectedVideoCount: proto.Uint32(uint32(videos)),
+	}
 }
 
 // waitAlbum waits until album's message has gone out (or failed to), for
@@ -85,27 +89,6 @@ func inAlbum(msg *waE2E.Message, chat types.JID, album string) {
 			ID:        proto.String(album),
 		},
 	}
-}
-
-// albumText words an album of photos and videos, as a reply to it shows
-// it (the counts are 0 when the reply doesn't say), and tells what it's
-// of, for its icon.
-func albumText(photos, videos int) (string, model.Media) {
-	count := func(n int, one, more string) string {
-		if n == 1 {
-			return "1 " + one
-		}
-		return strconv.Itoa(n) + " " + more
-	}
-	switch {
-	case photos > 0 && videos > 0:
-		return count(photos, "photo", "photos") + ", " + count(videos, "video", "videos"), model.MediaImage
-	case videos > 0:
-		return count(videos, "video", "videos"), model.MediaVideo
-	case photos > 0:
-		return count(photos, "photo", "photos"), model.MediaImage
-	}
-	return "Album", model.MediaImage
 }
 
 // albumFirst returns the ID of the first of the messages of album in

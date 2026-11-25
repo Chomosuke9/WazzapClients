@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/pointer"
+
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -136,5 +139,67 @@ func TestSendAlbum(t *testing.T) {
 	}
 	if sent[2].Album != "" {
 		t.Errorf("the document went in album %q", sent[2].Album)
+	}
+}
+
+// TestReplyAlbum checks a picture's menu replies to its whole album, or to
+// it alone, and that the reply quotes the album.
+func TestReplyAlbum(t *testing.T) {
+	ft := newFloatTest("family")
+	var ms []*model.Message
+	for _, r := range ft.rows(ft.selected) {
+		if r.album {
+			ms = r.group
+		}
+	}
+	if len(ms) < 2 {
+		t.Fatal("no album")
+	}
+	pick := func(key string) *model.Message {
+		for _, it := range ft.messageMenuItems(ft.selected, ms[1]) {
+			if it.key == key {
+				it.run()
+				return ft.conv.reply
+			}
+		}
+		t.Fatalf("no %s in the menu", key)
+		return nil
+	}
+	if r := pick("replyone"); r != ms[1] {
+		t.Errorf("replies to %+v", r)
+	}
+	r := pick("reply")
+	if r.Album != ms[0].Album || r.Whole == nil || r.Whole.Photos != len(ms) {
+		t.Fatalf("replies to %+v", r)
+	}
+	ft.frames(5)
+	ft.conv.composer.SetText("lovely")
+	ft.sendComposer()
+	q := ft.msgs[len(ft.msgs)-1].Quote
+	if q == nil || !q.Album || q.ID != ms[0].Album || q.Text != "5 photos" {
+		t.Errorf("the reply quotes %+v", q)
+	}
+	if ft.quotedMessage(q) != ms[0] {
+		t.Error("the quote isn't found")
+	}
+
+	// A double click beside the album replies to it too.
+	ft.conv.reply = nil
+	ft.jumpTo(ms[0].ID)
+	ft.frames(10)
+	for y := 120; y < 640 && ft.conv.reply == nil; y += 40 {
+		p := f32.Pt(1040, float32(y))
+		for range 2 {
+			ft.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p},
+				pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Position: p, Buttons: pointer.ButtonPrimary, Time: time.Duration(y) * time.Second},
+				pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: p, Time: time.Duration(y) * time.Second})
+			ft.frames(1)
+		}
+		if ft.conv.reply != nil && ft.conv.reply.Whole == nil {
+			ft.conv.reply = nil // another message
+		}
+	}
+	if ft.conv.reply == nil {
+		t.Error("a double click didn't reply to the album")
 	}
 }

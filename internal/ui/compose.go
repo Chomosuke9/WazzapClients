@@ -733,6 +733,9 @@ func (u *UI) layoutReplyPreview(gtx C, m *model.Message) D {
 	if m.Kind == model.KindImage && m.Text == "" {
 		q.Text = ""
 	}
+	if m.Whole != nil {
+		q.Text, q.Media = m.Whole.Text()
+	}
 	return layout.Inset{Left: 8, Right: 8, Top: 8}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 			layout.Flexed(1, func(gtx C) D {

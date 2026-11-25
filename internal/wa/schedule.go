@@ -87,7 +87,9 @@ type schedDraft struct {
 	MentionChat   string   `json:"named,omitempty"`
 	GroupNames    []string `json:"names,omitempty"`
 	Reply         string   `json:"reply,omitempty"`
-	ViewOnce      bool     `json:"viewOnce,omitempty"`
+	// ReplyWhole is set when it replies to Reply's whole album.
+	ReplyWhole *model.AlbumSize `json:"replyWhole,omitempty"`
+	ViewOnce   bool             `json:"viewOnce,omitempty"`
 	// A file's: how it's sent (model.Media), a document's name and a
 	// photo's or video's thumbnail.
 	Media int    `json:"media,omitempty"`
@@ -190,7 +192,7 @@ func newSchedDraft(d model.Draft, shown string) schedDraft {
 	sd := schedDraft{Text: d.Text, Shown: shown, Mentions: d.Mentions, MentionAll: d.MentionAll,
 		MentionAdmins: d.MentionAdmins, MentionChat: d.MentionChat, GroupNames: d.GroupNames, ViewOnce: d.ViewOnce}
 	if d.Reply != nil {
-		sd.Reply = d.Reply.ID
+		sd.Reply, sd.ReplyWhole = d.Reply.ID, d.Reply.Whole
 	}
 	return sd
 }
@@ -347,7 +349,7 @@ func (b *Backend) Scheduled(chatID string) []*model.Scheduled {
 				MentionAdmins: sd.MentionAdmins, MentionChat: sd.MentionChat, GroupNames: sd.GroupNames,
 				ViewOnce: sd.ViewOnce}
 			if sd.Reply != "" {
-				s.Draft.Reply = &model.Message{ID: sd.Reply, ChatID: s.ChatID}
+				s.Draft.Reply = &model.Message{ID: sd.Reply, ChatID: s.ChatID, Whole: sd.ReplyWhole}
 			}
 			s.Shown = sd.Shown
 			s.Media, s.FileName, s.Thumb = model.Media(sd.Media), sd.File, sd.Thumb

@@ -142,7 +142,7 @@ func quoteOf(ci *waE2E.ContextInfo) *rawQuote {
 	album := false
 	if a := unwrap(q).GetAlbumMessage(); a != nil {
 		album = true
-		qc.text, qc.media = albumText(int(a.GetExpectedImageCount()), int(a.GetExpectedVideoCount()))
+		qc.text, qc.media = model.AlbumSize{Photos: int(a.GetExpectedImageCount()), Videos: int(a.GetExpectedVideoCount())}.Text()
 	}
 	return &rawQuote{album: album, id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, round: qc.round, quoted: q != nil,
 		mentions: strings.Join(mentionsOf(qc.ctx), ","), remote: ci.GetRemoteJID()}
