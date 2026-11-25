@@ -33,6 +33,9 @@ func TestClickRedraws(t *testing.T) {
 	}
 	b := mock.New()
 	u := New(b)
+	// One that came between two frames made them differ, at random. Drawing
+	// again whenever one comes would hide a click that doesn't ask for it.
+	u.images.inline, u.emojiImgs.inline = true, true
 	u.Start(func() {})
 	u.SelectID("rina")
 	now := testNow()

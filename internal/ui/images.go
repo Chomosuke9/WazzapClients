@@ -82,6 +82,8 @@ type imageCache struct {
 	budget     int // decoded bytes
 	bytes      int
 	invalidate func()
+	// inline loads pictures in get itself, for a test that compares frames.
+	inline bool
 }
 
 func newImageCache(limit, budget int) *imageCache {
@@ -227,7 +229,7 @@ func (c *imageCache) getSized(key string, load func() []byte, decode func([]byte
 		e = &imgEntry{state: imgLoading, used: c.frame}
 		c.m[key] = e
 	}
-	go func() {
+	fetch := func() {
 		data := load()
 		release := acquireDecode(data)
 		img, animated := decode(data)
@@ -262,7 +264,17 @@ func (c *imageCache) getSized(key string, load func() []byte, decode func([]byte
 		if c.invalidate != nil {
 			c.invalidate()
 		}
-	}()
+	}
+	if c.inline {
+		c.mu.Unlock()
+		fetch()
+		c.mu.Lock()
+		if done := c.m[key]; done != nil {
+			return done
+		}
+		return e
+	}
+	go fetch()
 	return e
 }
 
