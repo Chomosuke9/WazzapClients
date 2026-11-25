@@ -73,6 +73,9 @@ Gotchas already found in the pinned version (v0.10.x):
   `LoadEmojiFont` maps it copy-on-write (`internal/mapfile`), and `refreshEmoji` loads it
   into a new shaper when it arrives. Tests, `cmd/screenshot` and `cmd/memprobe` load the
   copy in `internal/ui/testdata`.
+- Where Segoe UI isn't installed text falls back to the bundled Roboto (`internal/ui/fonts`),
+  as WhatsApp Web looks on Linux. `robotoLineHeight` patches its line height to Segoe UI's
+  (1.33 em), which the layouts were measured with.
 - The shaper never switches fonts for a space, so a space after an emoji takes the emoji
   font's (very wide) advance. `narrowEmojiSpaces` in `internal/ui/fonts.go` patches the
   emoji font's space glyphs at load time.
@@ -667,9 +670,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    text in textsel.go; searching a chat's messages (the panel that takes the info
                    panel's place) and a group's members in chatsearch.go; the chat list's
                    search (chats, archived ones too, contacts and every chat's messages) in
-                   listsearch.go; custom lists as filter chips and New list in lists.go, the chip row,
-                   with unread counts and a ▾ for those that don't fit, in chips.go; Select chats (the ⋮ menu: checkboxes
-                   and a bar of bulk actions) in selectchats.go; App lock (a salted PBKDF2
+                   listsearch.go; custom lists as filter chips and the Create new list page in lists.go, the chip row,
+                   with unread counts and a ▾ for those that don't fit and New list, in chips.go; Select chats (the ⋮ menu: checkboxes
+                   and a bar whose ⋮ has the bulk actions) in selectchats.go; App lock (a salted PBKDF2
                    hash in the prefs, the lock screen, auto-lock; shared by the host's UIs)
                    in applock.go; the composer's
                    formatting toolbar in formatbar.go; the attach
@@ -710,8 +713,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    opens at in unread.go; sticker reactions (a row of stickers along
                    the bubble's bottom edge, the reaction picker's Sticker tab, and their rows in who reacted)
                    in stickerreact.go; stickers with a sound (their speaker button) in audiosticker.go;
-                   the round React and Forward buttons beside a
-                   hovered message (React opens the reaction bar alone) in sidebuttons.go;
+                   the Forward and React icons beside a message (Forward stays beside media,
+                   the rest wait for the hover; React opens the reaction bar alone) in sidebuttons.go; the menus'
+                   submenus (Mute notifications, Add to list) in submenu.go;
                    the ⌄ button that goes back to the newest message
                    (with the unread count; after a click on a quote, to the reply first), the @
                    button that goes through a group's unread messages for you, and the day pinned
@@ -730,17 +734,18 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    lasts in pins.go;
                    chat actions shared by menus and info panels (mute choices, lists,
                    clear/exit/delete confirms) in chatactions.go; the open chat's ⋮ menu and
-                   the settings it shares with the info panel (disappearing timer, chat
+                   the settings it shares with the info panel (chat
                    theme, encryption code, Add member, invite link) in chatmenu.go; chat
                    themes (WhatsApp's color schemes, vibrant, tonal and minimal, and the
                    wallpaper: a theme's, a plain color or a photo of yours; per chat or for
                    every chat; a chat's opens as a panel in the info panel's place, like
                    WhatsApp's, with a reset button, every chat's as a dialog of the same
-                   pages; WhatsApp doodles is a switch per look) in chattheme.go, a photo
+                   pages; the doodles are one app-wide preference,
+                   `prefDoodles`, which a chat's own theme can override) in chattheme.go, a photo
                    wallpaper (cropped around a point you pick on its Photo position page,
                    only the part that shows decoded) in wallphoto.go, their tables
                    read from WhatsApp Web's modules in chatthemes.go, and the App theme color
-                   (Settings > Appearance > App theme, the accent across the app) in apptheme.go; palettes
+                   (Settings > Appearance, the accent across the app) in apptheme.go; palettes
                    (the same page's Palette: Catppuccin, Tokyo Night, Gruvbox, Everforest, Solarized or Ayu
                    instead of WhatsApp's colors,
                    a flavor each for the light and the dark theme, the Color grid then offering the
@@ -749,14 +754,15 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    palette with the theme's hue as the accent (`UI.themed`, `themeHues`), never
                    WhatsApp's colors; the
                    info panel's own pages (starred messages, group permissions, member
-                   changes) in infopages.go; editing a group's name and description in
+                   changes, disappearing messages, Restricted chat, Edit group admins) in infopages.go, a chat's
+                   Media, links and docs in infomedia.go; editing a group's name and description in
                    place and its picture's menu (view, change, remove) in groupedit.go;
                    a profile picture shown big, full size (`Backend.ProfilePhoto`, not
                    kept on disk), in photoview.go; the Media panel (the rail's Media button:
-                   media, docs and links from every chat, or one chat's) in gallery.go; the list column's
+                   media, docs and links from every chat, under headings by date) in gallery.go; the list column's
                    draggable edge and hiding it (the open page's rail button, Ctrl+Shift+L) in split.go; keyboard use
                    (the focus ring, menus and dialogs trapping the focus, arrows along the chat list,
-                   messages and menus, Shift+F10, F6 and the shortcuts on Settings > Keyboard shortcuts;
+                   messages and menus, Shift+F10, F6 and the shortcuts of the Settings > Keyboard shortcuts dialog;
                    Esc itself is `escape` in app.go: the topmost overlay, then the chat list's
                    search, then the open chat)
                    in keyboard.go; a sender's run of stickers, side by side as many to a
@@ -781,8 +787,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
                    settingsdetail.go (the home's search finds settings on every page, in
-                   settings.go); Video & voice (device choices kept as prefs) and Storage
-                   (automatic downloads, `model.AutoDownload`) in settingsmedia.go; the window's zoom (Settings > General > Font size,
+                   settings.go); Video & voice (device choices kept as prefs) and Chats' Media upload quality
+                   and Media auto-download (`model.AutoDownload`) in settingsmedia.go; the window's zoom (Settings > General > Font size,
                    Ctrl with +, - and 0, and the bubble that shows it) in scale.go; privacy
                    mode (names and messages drawn as bars, pictures blurred, shown under
                    the pointer; the title bar's eye and Ctrl+Shift+P, once the Privacy mode
@@ -838,7 +844,7 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    each person's receipts of your messages (wz_receipts, for Message info;
                    a group message's ticks wait for every member) in receipts.go;
                    contacts' abouts (cached in wz_meta for the forward picker, with when
-                   each was set from a raw usync) and a chat's Advanced chat privacy
+                   each was set from a raw usync) and a chat's Restricted chat
                    (LIMIT_SHARING, kept with its info; it can't be set) in about.go;
                    a chat's disappearing-messages timer (wz_chats.ephemeral, for the
                    avatars' timer badge) in timer.go;
@@ -922,7 +928,7 @@ internal/desktop/  tray icon, one instance per data directory, start at login, w
                    idle time comes from the compositor (ext-idle-notify-v1, on a small
                    Wayland connection of its own, idle_linux.go) or GNOME's or KDE's session;
                    devices from pactl; dropped files and raising the window from Gio's patch
-internal/update/   updates from GitHub releases (Settings > Help; automatic updates, on by
+internal/update/   updates from GitHub releases (Settings > Help and feedback; automatic updates, on by
                    default, check every few hours and install without restarting, ui/update.go):
                    downloads a patch from the running version when the update-patches
                    prerelease has one (bspatch.go, on the standard library's bzip2; kept off
@@ -990,7 +996,8 @@ while the window is minimized and Gio draws no frames.
 - Notification rules follow WhatsApp: one per chat, nothing while the window has focus,
   muted and archived chats only for mentions and replies to you, removed once the chat
   is read (here or on another device). Preferences are `Backend.Pref` keys, on unless
-  "off" (`prefNotify*`, `prefBackground`). Each account's notifier follows its own
+  "off" (`prefNotify*`, `prefBackground`; `notify_group_sound` follows the messages' sound
+  until it's set). Each account's notifier follows its own
   account's preferences; its notifications' IDs are `<account Dir>|<chat>`, and a
   background account's name the account ("Alice · Work") and show while the window
   has focus. Clicking one, or its Reply or Mark as read, switches to its account
@@ -1118,7 +1125,7 @@ go vet ./... && go build ./...
 # -view: chats, archived, status, channels, communities, settings, general, profile,
 # account, accounts (Settings > Account with demo accounts), accountmode and
 # accountcheck (the pages of an account always connected and of one checked),
-# privacy, lastseen, blocked, chatsettings, appearance, apptheme, notifications, shortcuts, extras, help,
+# privacy, lastseen, blocked, chatsettings, theme, uploadquality, appearance, apptheme, notifications, notifygroups, shortcuts, extras, help,
 # videovoice, microphone, storage, stickers, info, statusviewer, contact (a group member's contact info:
 # -contact <id>, default the demo business nova@lid)
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 -view status
@@ -1129,8 +1136,8 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # group: -ochat work), statusviews (your status's Viewed by sheet), statusmention and statusmentioned (a status mention's card, and the status it opens: -ochat work), chatmenu, mute, lists, msgmenu, stickermenu, emoji, sticker, gifs (the GIF tab with demo results), viewer, forward, forwardpick (two chats picked), reply, replyphoto, linkpreview, linkloading (its card while it loads), invite,
 # delete, select, edit, edits, recording, recordingpaused (a voice message being recorded, paused), reactions (who reacted: -ochat work), replies (an announcement's: -ochat work-ann), stickerreact (sticker reactions on the chat's last messages), stickerring (20 of them around a bubble), stickerreactors (who gave them), stickersound (stickers with a sound, and reactions: -ochat work), soundpicker (the picker with some), reactpicker (the reaction picker, with its Sticker tab), mention, mentioned, shortcode (the :emoji: picker), votes (a poll's or event's votes: -ochat design or family), search (WAZZAP_DEMO_SEARCH=<query>), membersearch, listsearch (the chat list's search, the same variable), listchip, newlist, selectchats, applock, applockon, lockscreen, linkbar (the bar asking to open WhatsApp links here), pack and packtab (a sticker pack's dialog, and the picker with the chat's packs added: -ochat clara), mypacks and mypacksdrag (Your stickers with them, and its first pack dragged), channellink (a channel's link, to follow), sharelink (a share link's chat picker), zoombubble, zoommenu, privacy (also
 # privacystatus, privacycommunities); your own commands: usercmds (their page), usercmdadd (its dialog), usercmdpick (one in the picker); the Media panel:
-# gallery, gallerydocs, gallerylinks, galleryselect, chatgallery, starredall (the ⋮ menu's Starred messages); the open chat's convmenu, timer, theme,
-# encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes;
+# gallery, gallerydocs, gallerylinks, galleryselect, starredall (the ⋮ menu's Starred messages); selectmenu, newlistchats; the open chat's convmenu, theme,
+# encryption, addmember, invitelink, left (a group you left: -ochat family), and its info pages perms, starred, changes, admins, timer, restricted, chatgallery;
 # the Chat theme panel's pages theme, themebubble, themewall, themecolor, and accent (the App theme color Red);
 # channels: channelinfo (-ochat techdaily@newsletter, or wazzapnews@newsletter for one of your own, bola@newsletter for a
 # suggestion's preview; convmenu and msgmenu work there too), channelnew (Create channel), channeladd (the ⊕ menu);
@@ -1152,7 +1159,7 @@ go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 
 go run ./cmd/screenshot -emoji 3d -emojidir "$APPDATA/WazzapClients/emoji"
 # Draw with a palette (catppuccin, catppuccin-macchiato, catppuccin-frappe, tokyonight,
 # tokyonight-storm, tokyonight-moon, gruvbox, everforest, solarized, ayu), or palette:hue for another of its accents; the
-# overlay palette is the App theme page with Catppuccin chosen:
+# overlay palette is the Appearance page with Catppuccin chosen:
 go run ./cmd/screenshot -scheme tokyonight:red -out /tmp/shots
 # Render your real stored chats instead of demo data (no network):
 go run ./cmd/screenshot -compare shot.webp -crop 0,0,2000,1250 -scale 1.22 \

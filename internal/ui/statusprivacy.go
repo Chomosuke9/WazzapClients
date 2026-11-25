@@ -116,8 +116,12 @@ func (u *UI) closeStatusPrivacy() {
 }
 
 // statusPrivacyEvent reads the setting again after a StatusEvent, while
-// the panel shows it.
+// the panel or the text status composer shows it.
 func (u *UI) statusPrivacyEvent() {
+	if s := &u.status.text; s.isOpen() {
+		s.audience = statusAudienceLabel(u.backend.StatusPrivacy())
+	}
+	u.settings.stale = true
 	if sp := &u.status.privacy; sp.open() {
 		sp.p = u.backend.StatusPrivacy()
 	}
@@ -152,6 +156,7 @@ func (u *UI) setStatusPrivacy(p model.StatusPrivacy) {
 	}
 	u.status.privacy.p = &p
 	u.backend.SetStatusPrivacy(p)
+	u.settings.stale = true // Privacy names the audience
 }
 
 // chooseAudience chooses an audience. One without people, or whose people

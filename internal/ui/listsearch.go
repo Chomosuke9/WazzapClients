@@ -34,8 +34,14 @@ type findRow struct {
 	msg     *model.Message
 }
 
-// listQuery is the chat list's search query, trimmed.
-func (u *UI) listQuery() string { return trimSpace(u.sidebar.search.Text()) }
+// listQuery is the chat list's search query, trimmed. The Archived page
+// has no search.
+func (u *UI) listQuery() string {
+	if u.sidebar.showArchived {
+		return ""
+	}
+	return trimSpace(u.sidebar.search.Text())
+}
 
 // clearListSearch closes the search: the chat list shows again.
 func (u *UI) clearListSearch() {
@@ -82,7 +88,7 @@ func (u *UI) findRows(q string) []findRow {
 			rows = append(rows, findRow{chat: c})
 		}
 	}
-	if u.sidebar.filter == filterAll && !u.sidebar.showArchived {
+	if u.sidebar.filter == filterAll {
 		lq := strings.ToLower(q)
 		digits := phoneDigits(q)
 		start := len(rows)
@@ -115,7 +121,7 @@ func (u *UI) layoutFindList(gtx C, q string) D {
 	p := u.pal
 	rows := u.findRows(q)
 	if len(rows) == 0 {
-		if u.sidebar.find.got != q && u.sidebar.filter == filterAll && !u.sidebar.showArchived {
+		if u.sidebar.find.got != q && u.sidebar.filter == filterAll {
 			return D{Size: gtx.Constraints.Max} // still looking through messages
 		}
 		return layout.Inset{Left: 40, Right: 40, Top: 48}.Layout(gtx, func(gtx C) D {

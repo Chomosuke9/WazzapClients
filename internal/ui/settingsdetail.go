@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ import (
 // Preferences of the Chats and Account settings (Backend.Pref keys).
 const (
 	prefTheme       = "theme"      // "light", "dark" or "" (the system's, the default)
-	prefDoodles     = "doodles"    // wallpaper doodles; on unless "off"
+	prefDoodles     = "doodles"    // wallpaper doodles, unless a chat's own theme says (bareWall); on unless "off"
 	prefEnterSend   = "enter_send" // Enter sends; on unless "off"
 	prefSecurityMsg = "security_notifications"
 	// Previews of the links you send, which ask the linked site for its
@@ -48,12 +49,12 @@ type settingKind int
 
 const (
 	setLink    settingKind = iota // runs run; sub is its current value
-	setToggle                     // a checkbox
+	setToggle                     // a switch, at the right unless left
 	setRadio                      // one of a choice's options
 	setInfo                       // read-only; clicking copies sub
 	setContact                    // a contact's picture and name
 	setAccount                    // an account's picture and name (acct)
-	setKeys                       // a keyboard shortcut: title and key caps
+	setKeys                       // a keyboard shortcut, drawn by the dialog (shortcutsPanel)
 	setCustom                     // w draws it
 )
 
@@ -64,6 +65,7 @@ type settingRow struct {
 	ic         *icon.Icon
 	title, sub string
 	on         bool   // setToggle and setRadio
+	left       bool   // setToggle: the switch goes before the title
 	id         string // setContact
 	acct       *accountRow
 	keys       []string // setKeys
@@ -96,11 +98,14 @@ var settingsViews = map[string]struct {
 	"lastseen":      {settingPrivacy, "lastseen"},
 	"blocked":       {settingPrivacy, "blocked"},
 	"chatsettings":  {settingChats, ""},
+	"theme":         {settingChats, "theme"},
+	"uploadquality": {settingChats, "uploadquality"},
 	"appearance":    {settingAppearance, ""},
-	"apptheme":      {settingAppearance, "theme"},
+	"apptheme":      {settingAppearance, ""},
 	"emojistyle":    {settingChats, "emoji"},
 	"emojianim":     {settingChats, "emojianim"},
 	"notifications": {settingNotifications, ""},
+	"notifygroups":  {settingNotifications, "notifygroups"},
 	"shortcuts":     {settingShortcuts, ""},
 	"performance":   {settingPerformance, ""},
 	"advanced":      {settingPerformance, "advanced"},
@@ -119,12 +124,17 @@ var settingsViews = map[string]struct {
 	"help":           {settingHelp, ""},
 	"videovoice":     {settingMedia, ""},
 	"microphone":     {settingMedia, "mic"},
-	"storage":        {settingStorage, ""},
+	"storage":        {settingChats, "autodownload"},
 }
 
 // openSettings opens a settings category (an index of settingsItems).
 func (u *UI) openSettings(k int) {
 	s := &u.settings
+	u.closeStatusPrivacy()
+	if k == settingShortcuts {
+		u.openShortcuts()
+		return
+	}
 	s.detail = k + 1
 	s.sub = ""
 	s.editing = 0
@@ -187,11 +197,25 @@ func (u *UI) settingsBack() {
 // settingsTitle is the header of the open settings page.
 func (u *UI) settingsTitle() string {
 	s := &u.settings
-	switch s.sub {
+	if t := settingsSubTitle(s.sub); t != "" {
+		return t
+	}
+	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
+		if a := u.accountByDir(dir); a != nil {
+			return u.accountTitle(a)
+		}
+		return "Account"
+	}
+	return settingsItems[s.detail-1].title
+}
+
+// settingsSubTitle names a page inside a category.
+func settingsSubTitle(sub string) string {
+	switch sub {
 	case "lastseen":
 		return "Last seen and online"
 	case "photo":
-		return "Profile photo"
+		return "Profile picture"
 	case "about":
 		return "About"
 	case "groups":
@@ -201,7 +225,15 @@ func (u *UI) settingsTitle() string {
 	case "blocked":
 		return "Blocked contacts"
 	case "theme":
-		return "App theme"
+		return "Theme"
+	case "uploadquality":
+		return "Media upload quality"
+	case "autodownload":
+		return "Media auto-download"
+	case "notifymessages":
+		return "Messages"
+	case "notifygroups":
+		return "Groups"
 	case "gray":
 		return "Ethically gray features"
 	case "commands":
@@ -225,24 +257,15 @@ func (u *UI) settingsTitle() string {
 	case "speaker":
 		return "Speakers"
 	}
-	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
-		if a := u.accountByDir(dir); a != nil {
-			return u.accountTitle(a)
-		}
-		return "Account"
-	}
-	if k := knobNamed(strings.TrimPrefix(s.sub, "knob:")); k != nil {
+	if k := knobNamed(strings.TrimPrefix(sub, "knob:")); k != nil {
 		return k.title
 	}
-	return settingsItems[s.detail-1].title
+	return ""
 }
 
 // settingsPage lists the settings of the open page.
 func (u *UI) settingsPage() []settingsSection {
 	s := &u.settings
-	if key, ok := strings.CutPrefix(s.sub, "knob:"); ok {
-		return u.knobSettings(key)
-	}
 	if dir, ok := strings.CutPrefix(s.sub, "acct:"); ok {
 		if u.accountByDir(dir) != nil {
 			return u.accountPage(dir)
@@ -250,9 +273,20 @@ func (u *UI) settingsPage() []settingsSection {
 		s.sub = "" // logged out meanwhile
 		return u.accountSettings()
 	}
-	switch s.sub {
+	if s.sub != "" {
+		return u.settingsSubPage(s.sub)
+	}
+	return u.categoryPage(s.detail - 1)
+}
+
+// settingsSubPage lists the settings of a page inside a category.
+func (u *UI) settingsSubPage(sub string) []settingsSection {
+	if key, ok := strings.CutPrefix(sub, "knob:"); ok {
+		return u.knobSettings(key)
+	}
+	switch sub {
 	case "lastseen", "photo", "about", "groups":
-		return u.privacyChoices(s.sub)
+		return u.privacyChoices(sub)
 	case "timer":
 		return u.timerChoices()
 	case "blocked":
@@ -275,15 +309,21 @@ func (u *UI) settingsPage() []settingsSection {
 		return u.emojiPlaceSettings()
 	case "theme":
 		t := u.backend.Pref(prefTheme)
-		return []settingsSection{{title: "Dark mode", rows: []settingRow{
-			{key: "system", kind: setRadio, title: "System default", on: t != "light" && t != "dark", run: func() { u.setTheme("") }},
-			{key: "light", kind: setRadio, title: "Light", on: t == "light", run: func() { u.setTheme("light") }},
-			{key: "dark", kind: setRadio, title: "Dark", on: t == "dark", run: func() { u.setTheme("dark") }},
-		}}, {title: "Palette", rows: u.schemeRows()}, {title: "Color", rows: []settingRow{{key: "accent", kind: setCustom, w: u.accentRows()}}}}
+		return []settingsSection{{rows: []settingRow{
+			{key: "light", kind: setRadio, title: themeNames["light"], on: t == "light", run: func() { u.setTheme("light") }},
+			{key: "dark", kind: setRadio, title: themeNames["dark"], on: t == "dark", run: func() { u.setTheme("dark") }},
+			{key: "system", kind: setRadio, title: themeNames[""], on: t != "light" && t != "dark", run: func() { u.setTheme("") }},
+		}}}
+	case "uploadquality":
+		return u.uploadQuality()
+	case "autodownload":
+		return u.autoDownloads()
+	case "notifymessages", "notifygroups":
+		return u.notifySettings(sub)
 	case "camera", "mic", "speaker":
-		return u.deviceChoices(s.sub)
+		return u.deviceChoices(sub)
 	}
-	return u.categoryPage(s.detail - 1)
+	return nil
 }
 
 // categoryPage lists the settings of category k's own page.
@@ -296,18 +336,21 @@ func (u *UI) categoryPage(k int) []settingsSection {
 	switch k {
 	case settingMedia:
 		return u.mediaSettings()
-	case settingStorage:
-		return u.storageSettings()
 	case settingNotifications:
+		kind := func(sub, key string, ic *icon.Icon) settingRow {
+			v := "Off"
+			if prefOn(b, key) {
+				v = "On"
+			}
+			return settingRow{key: sub, ic: ic, title: settingsSubTitle(sub), sub: v,
+				trailing: icChevronRight, run: func() { u.openSettingsSub(sub) }}
+		}
 		return []settingsSection{
-			{title: "Messages", rows: []settingRow{
-				pref(prefNotifyMessages, "Message notifications", "Show notifications for new messages"),
-				pref(prefNotifyPreviews, "Show previews", "Show message text in notifications"),
-				pref(prefNotifySound, "Sounds", "Play a sound for new messages"),
+			{rows: []settingRow{
+				kind("notifymessages", prefNotifyMessages, icBubble),
+				kind("notifygroups", prefNotifyGroups, icGroupsLine),
 			}},
-			{title: "Groups", rows: []settingRow{
-				pref(prefNotifyGroups, "Group notifications", "Show notifications for group messages"),
-			}},
+			{rows: []settingRow{pref(prefNotifyPreviews, "Show previews", "Preview message text inside message notifications.")}},
 		}
 	case settingGeneral:
 		return u.generalSettings(pref)
@@ -320,10 +363,18 @@ func (u *UI) categoryPage(k int) []settingsSection {
 	case settingChats:
 		secs := []settingsSection{
 			{title: "Display", rows: []settingRow{
-				{key: prefEmojiStyle, ic: icEmoji, title: "Emoji style", sub: emojiStyles[emojiStyle()].title,
+				{key: "theme", title: "Theme", sub: u.themeSummary(),
+					trailing: icChevronRight, run: func() { u.openSettingsSub("theme") }},
+				{key: "chattheme", title: "Default chat theme",
+					trailing: icChevronRight, run: func() { u.openChatTheme(nil) }},
+				{key: prefEmojiStyle, title: "Emoji style", sub: emojiStyles[emojiStyle()].title,
 					trailing: icChevronRight, run: func() { u.openSettingsSub("emoji") }},
 			}},
 			{title: "Chat settings", rows: []settingRow{
+				{key: "uploadquality", title: "Media upload quality",
+					trailing: icChevronRight, run: func() { u.openSettingsSub("uploadquality") }},
+				{key: "autodownload", title: "Media auto-download",
+					trailing: icChevronRight, run: func() { u.openSettingsSub("autodownload") }},
 				{key: prefEnterSend, kind: setToggle, title: "Enter is send", sub: "Enter key will send your message",
 					on: prefOn(b, prefEnterSend), run: func() { u.setEnterSend(!prefOn(b, prefEnterSend)) }},
 			}},
@@ -333,14 +384,8 @@ func (u *UI) categoryPage(k int) []settingsSection {
 		}
 		return secs
 	case settingAppearance:
-		return []settingsSection{{rows: []settingRow{
-			{key: "chattheme", ic: icWallpaper, title: "Chat theme", sub: "Bubbles and wallpaper of every chat",
-				trailing: icChevronRight, run: func() { u.openChatTheme(nil) }},
-			{key: "theme", ic: icPalette, title: "App theme", sub: u.themeSummary(),
-				trailing: icChevronRight, run: func() { u.openSettingsSub("theme") }},
-			{key: prefDoodles, kind: setToggle, title: "Wallpaper doodles", sub: "Draw doodles on the chat background",
-				on: u.doodles, run: func() { u.doodles = !u.doodles; setPref(b, prefDoodles, u.doodles) }},
-		}}}
+		return []settingsSection{{title: "Palette", rows: u.schemeRows()},
+			{title: "App theme color", rows: []settingRow{{key: "accent", kind: setCustom, w: u.accentRows()}}}}
 	case settingShortcuts:
 		return shortcutSettings(prefOn(b, prefEnterSend))
 	case settingPerformance:
@@ -417,12 +462,12 @@ func (u *UI) profileSettings() []settingsSection {
 				})
 			})
 		}, run: u.pickProfilePhoto},
-		{key: "setphoto", ic: icAddPhoto, title: "Change profile photo", run: u.pickProfilePhoto},
+		{key: "setphoto", ic: icAddPhoto, title: "Change profile picture", run: u.pickProfilePhoto},
 	}}
-	photo.rows = append(photo.rows, settingRow{key: "rmphoto", ic: icDelete, title: "Remove profile photo", danger: true,
+	photo.rows = append(photo.rows, settingRow{key: "rmphoto", ic: icDelete, title: "Remove profile picture", danger: true,
 		show: func() bool { return u.avatarImage(u.meID) != nil },
 		run: func() {
-			u.confirm("Remove your profile photo?", "",
+			u.confirm("Remove your profile picture?", "",
 				dialogButton{label: "Remove", danger: true, run: func() { u.backend.SetProfilePhoto("") }})
 		}})
 	name := a.Name
@@ -452,9 +497,9 @@ func (u *UI) profileSettings() []settingsSection {
 	}
 	secs := []settingsSection{
 		photo,
+		{title: "About", rows: []settingRow{field(editAbout, "about", a.About, "Add a few words about you")}},
 		{title: "Name", rows: []settingRow{field(editName, "name", name, "Add your name")},
 			note: "This is not your username or PIN. This name will be visible to your WhatsApp contacts."},
-		{title: "About", rows: []settingRow{field(editAbout, "about", a.About, "Add a few words about you")}},
 	}
 	if a.Phone != "" {
 		secs = append(secs, settingsSection{title: "Phone", rows: []settingRow{u.settingInfoRow("phone", a.Phone, "")}})
@@ -513,7 +558,7 @@ func (u *UI) saveProfileField() {
 	s.stale = true
 }
 
-// pickProfilePhoto asks for a picture to use as your profile photo.
+// pickProfilePhoto asks for a picture to use as your profile picture.
 func (u *UI) pickProfilePhoto() {
 	s := &u.settings
 	if s.picking {
@@ -525,7 +570,7 @@ func (u *UI) pickProfilePhoto() {
 	s.picking = true
 	notify, picked := u.images.invalidate, s.picked
 	go func() {
-		paths, err := filepick.Open("Choose a profile photo", false,
+		paths, err := filepick.Open("Choose a profile picture", false,
 			filepick.Filter{Name: "Pictures", Exts: []string{"jpg", "jpeg", "png", "webp"}})
 		path := ""
 		if err == nil && len(paths) > 0 {
@@ -579,22 +624,21 @@ func (u *UI) accountSettings() []settingsSection {
 	}
 	info = append(info, u.settingInfoRow("device", "This device", appName+" on "+osName()))
 	secure := b.Pref(prefSecurityMsg) == "on"
-	return append(u.accountsSection(),
-		settingsSection{title: "Account info", rows: info},
-		settingsSection{title: "Security notifications", rows: []settingRow{{
-			key: "security", kind: setToggle, on: secure,
-			title: "Show security notifications",
-			sub:   "On this computer, when a contact's security code changes",
-			run: func() {
-				v := "on"
-				if secure {
-					v = "off"
-				}
-				b.SetPref(prefSecurityMsg, v)
-			},
-		}}, note: "Messages and calls in end-to-end encrypted chats stay between you and the people you choose. " +
-			"A contact's security code changes when they reinstall WhatsApp or change phones."},
-	)
+	secs := []settingsSection{{title: "Security notifications", rows: []settingRow{{
+		key: "security", kind: setToggle, on: secure,
+		title: "Show security notifications on this computer",
+		sub:   "When a contact's security code changes",
+		run: func() {
+			v := "on"
+			if secure {
+				v = "off"
+			}
+			b.SetPref(prefSecurityMsg, v)
+		},
+	}}, note: "Messages and calls in end-to-end encrypted chats stay between you and the people you choose. " +
+		"A contact's security code changes when they reinstall WhatsApp or change phones."}}
+	secs = append(secs, u.accountsSection()...)
+	return append(secs, settingsSection{title: "Account info", rows: info})
 }
 
 func osName() string {
@@ -677,17 +721,23 @@ func (u *UI) privacySettings() []settingsSection {
 	return []settingsSection{
 		{title: "Who can see my personal info", rows: []settingRow{
 			link("lastseen", "Last seen and online", whoLabel(a.Privacy[model.PrivacyLastSeen])),
-			link("photo", "Profile photo", whoLabel(a.Privacy[model.PrivacyPhoto])),
+			link("photo", "Profile picture", whoLabel(a.Privacy[model.PrivacyPhoto])),
 			link("about", "About", whoLabel(a.Privacy[model.PrivacyAbout])),
+			{key: "statusprivacy", title: "Status", sub: chosenAudienceTitle(u.backend.StatusPrivacy()),
+				trailing: icChevronRight, run: u.openStatusPrivacy},
 			receipts,
 		}},
 		{title: "Disappearing messages", rows: []settingRow{link("timer", "Default message timer", timer)},
 			note: "Start new chats with disappearing messages set to your timer."},
-		{title: "Groups", rows: []settingRow{link("groups", "Groups", whoLabel(a.Privacy[model.PrivacyGroups]))}},
-		{title: "Blocked contacts", rows: []settingRow{link("blocked", "Blocked contacts", blocked)}},
+		{rows: []settingRow{
+			link("groups", "Groups", whoLabel(a.Privacy[model.PrivacyGroups])),
+			link("blocked", "Blocked contacts", blocked),
+			{key: "applock", title: "App lock", sub: "Require password to unlock " + appName,
+				trailing: icChevronRight, run: u.openAppLock},
+		}},
 		{title: "Advanced", rows: []settingRow{{key: "linkpreviews", kind: setToggle,
 			on:    !prefOn(u.backend, prefLinkPreviews),
-			title: "Disable link previews",
+			title: "Turn off link previews",
 			sub: "To help protect your IP address from being inferred by third-party websites, previews for " +
 				"the links you share in chats will no longer be generated.",
 			run: func() {
@@ -698,6 +748,14 @@ func (u *UI) privacySettings() []settingsSection {
 				u.backend.SetPref(prefLinkPreviews, v)
 			}}}},
 	}
+}
+
+// chosenAudienceTitle names the chosen audience.
+func chosenAudienceTitle(p *model.StatusPrivacy) string {
+	if p == nil {
+		return "Not loaded yet"
+	}
+	return audienceTitle(p, p.Audience, slices.IndexFunc(p.Lists, func(l model.StatusList) bool { return l.ID == p.ListID }))
 }
 
 // setPrivacy changes a privacy setting, showing the new value right away.
@@ -744,10 +802,10 @@ func (u *UI) privacyChoices(sub string) []settingsSection {
 			choices("Who can see when I'm online", model.PrivacyOnline, model.WhoEveryone, model.WhoSameAsLastSeen),
 		}
 	case "photo":
-		return []settingsSection{choices("Who can see my profile photo", model.PrivacyPhoto,
+		return []settingsSection{choices("Who can see my profile picture", model.PrivacyPhoto,
 			model.WhoEveryone, model.WhoContacts, model.WhoNobody)}
 	case "about":
-		return []settingsSection{choices("Who can see my about", model.PrivacyAbout,
+		return []settingsSection{choices("Who can see my About", model.PrivacyAbout,
 			model.WhoEveryone, model.WhoContacts, model.WhoNobody)}
 	case "groups":
 		sec := choices("Who can add me to groups", model.PrivacyGroups, model.WhoEveryone, model.WhoContacts)
@@ -760,7 +818,7 @@ func (u *UI) privacyChoices(sub string) []settingsSection {
 // timerChoices is the Default message timer page.
 func (u *UI) timerChoices() []settingsSection {
 	a := u.settings.account
-	sec := settingsSection{title: "Start new chats with a timer",
+	sec := settingsSection{title: "Start new chats with disappearing messages",
 		note: "When turned on, all new one-to-one chats you start will begin with disappearing messages set to this " +
 			"timer. Your existing chats aren't affected."}
 	for _, d := range []time.Duration{0, 24 * time.Hour, 7 * 24 * time.Hour, 90 * 24 * time.Hour} {
@@ -797,15 +855,8 @@ func (u *UI) blockedContacts() []settingsSection {
 // themeNames names the values of prefTheme.
 var themeNames = map[string]string{"": "System default", "light": "Light", "dark": "Dark"}
 
-// themeSummary is what the App theme row says: the theme and, when one is
-// chosen, the palette.
-func (u *UI) themeSummary() string {
-	t := themeNames[u.backend.Pref(prefTheme)]
-	if s := schemeOf(u.scheme); s != nil {
-		t += " · " + s.name
-	}
-	return t
-}
+// themeSummary is what the Theme row says: the theme chosen.
+func (u *UI) themeSummary() string { return themeNames[u.backend.Pref(prefTheme)] }
 
 // systemDark asks the system for its theme (tests pin it).
 var systemDark = desktop.SystemDark
@@ -1069,13 +1120,12 @@ func (u *UI) layoutSettingRow(gtx C, r *settingRow) D {
 	}
 	switch r.kind {
 	case setToggle:
-		on := r.on
-		it.glyph = func(gtx C, col color.NRGBA) D {
-			box, col := icCheckBoxEmpty, p.TextSecondary
-			if on {
-				box, col = icCheckBox, p.Green
-			}
-			return drawIcon(gtx, box, 24, col)
+		it.wrap = true
+		sw := func(gtx C) D { return u.themeSwitch(gtx, "settings:"+r.key, r.on) }
+		if r.left {
+			it.glyph = func(gtx C, _ color.NRGBA) D { return sw(gtx) }
+		} else {
+			it.trailing = func(gtx C) D { return layout.Inset{Left: 16, Right: 10}.Layout(gtx, sw) }
 		}
 	case setRadio:
 		on := r.on
@@ -1086,8 +1136,6 @@ func (u *UI) layoutSettingRow(gtx C, r *settingRow) D {
 	case setAccount:
 		a := r.acct
 		it.glyph = func(gtx C, _ color.NRGBA) D { return u.accountAvatar(gtx, a, 40) }
-	case setKeys:
-		return u.layoutShortcut(gtx, r.title, r.keys)
 	}
 	g := settingsGeom
 	if it.ic == nil && it.glyph == nil {
@@ -1106,21 +1154,88 @@ var settingsGeomPlain = func() listGeom {
 	return g
 }()
 
-// layoutShortcut is a row of the Keyboard shortcuts page: what it does,
-// then its keys.
-func (u *UI) layoutShortcut(gtx C, title string, keys []string) D {
-	return layout.Inset{Left: 29.5, Right: 29}.Layout(gtx, func(gtx C) D {
-		return vcenter(gtx, gtx.Dp(48), func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, func(gtx C) D {
-					d := u.label(16, title, u.pal.Text, labelOpts{maxLines: 2}).Layout(gtx)
-					d.Size.X = gtx.Constraints.Max.X
-					return d
-				}),
-				layout.Rigid(func(gtx C) D { return u.keyCaps(gtx, keys) }),
-			)
+// openShortcuts opens the Keyboard shortcuts dialog.
+func (u *UI) openShortcuts() {
+	u.dialog = dialogState{kind: dialogShortcuts, shortcuts: shortcutSettings(prefOn(u.backend, prefEnterSend))}
+	u.dialog.list.Axis = layout.Vertical
+}
+
+// shortcutsPanel is the Keyboard shortcuts dialog: the shortcuts in two
+// columns under their headings, or in one where the window is narrow.
+func (u *UI) shortcutsPanel(gtx C) D {
+	d := &u.dialog
+	p := u.pal
+	if u.btn("shortcuts:ok").Clicked(gtx) {
+		u.closeDialog()
+	}
+	w := min(gtx.Dp(820), gtx.Constraints.Max.X-gtx.Dp(32))
+	h := min(gtx.Dp(666), gtx.Constraints.Max.Y-gtx.Dp(48))
+	cols := 2
+	if w < gtx.Dp(640) {
+		cols = 1
+	}
+	var rows []layout.Widget
+	for _, sec := range d.shortcuts {
+		rows = append(rows, func(gtx C) D {
+			top := unit.Dp(18)
+			if sec.title == d.shortcuts[0].title {
+				top = 0
+			}
+			return u.sectionLabel(gtx, sec.title, layout.Inset{Top: top, Bottom: 8}, labelOpts{})
 		})
+		for i := 0; i < len(sec.rows); i += cols {
+			rows = append(rows, func(gtx C) D {
+				var cells []layout.FlexChild
+				for c := range cols {
+					if c > 0 {
+						cells = append(cells, layout.Rigid(layout.Spacer{Width: 40}.Layout))
+					}
+					cells = append(cells, layout.Flexed(1/float32(cols), func(gtx C) D {
+						if i+c >= len(sec.rows) {
+							return D{Size: image.Pt(gtx.Constraints.Max.X, 0)}
+						}
+						return u.layoutShortcut(gtx, sec.rows[i+c].title, sec.rows[i+c].keys)
+					}))
+				}
+				return layout.Flex{}.Layout(gtx, cells...)
+			})
+		}
+	}
+	gtx.Constraints = layout.Exact(image.Pt(w, h))
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Left: 34, Right: 34, Top: 24, Bottom: 18}.Layout(gtx,
+				u.label(21, "Keyboard shortcuts", p.Text, labelOpts{maxLines: 1}).Layout)
+		}),
+		layout.Flexed(1, func(gtx C) D {
+			return u.scrollList(gtx, &d.list, len(rows), func(gtx C, i int) D {
+				return layout.Inset{Left: 34, Right: 43}.Layout(gtx, rows[i])
+			})
+		}),
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Left: 28, Right: 28, Top: 14, Bottom: 22}.Layout(gtx, func(gtx C) D {
+				return layout.E.Layout(gtx, func(gtx C) D {
+					return u.dialogButton(gtx, "shortcuts:ok", dialogButton{label: "OK", primary: true})
+				})
+			})
+		}),
+	)
+}
+
+// layoutShortcut is a shortcut of that dialog: what it does, then its
+// keys.
+func (u *UI) layoutShortcut(gtx C, title string, keys []string) D {
+	return vcenter(gtx, gtx.Dp(48), func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Flexed(1, func(gtx C) D {
+				d := u.label(16, title, u.pal.Text, labelOpts{maxLines: 2}).Layout(gtx)
+				d.Size.X = gtx.Constraints.Max.X
+				return d
+			}),
+			layout.Rigid(layout.Spacer{Width: 8}.Layout),
+			layout.Rigid(func(gtx C) D { return u.keyCaps(gtx, keys) }),
+		)
 	})
 }
 

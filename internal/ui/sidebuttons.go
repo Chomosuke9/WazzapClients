@@ -12,11 +12,12 @@ import (
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
-// Hovering a message shows round buttons beside its bubble, on the side
-// away from the bubble's edge of the screen, like WhatsApp: React, which
-// opens the reaction bar, and for media, links, documents and big emojis
-// Forward.
-// An announcement's Forward is always there instead.
+// Hovering a message shows buttons beside its bubble, on the side away
+// from the bubble's edge of the screen, like WhatsApp: Forward, for media,
+// links, documents and big emojis, and then React, which opens the
+// reaction bar. They're bare icons on the wallpaper.
+// Beside photos, videos, GIFs and documents (forwardStays), and beside an
+// announcement, Forward is always there.
 
 const (
 	sideBtn    unit.Dp = 28 // a side button's size
@@ -28,6 +29,7 @@ const (
 // before its bubble (to the left of your own messages) or after it.
 type sideButtons struct {
 	react, forward, before bool
+	stays                  bool // Forward shows without a hover too
 }
 
 // sideHover registers the hover area of m's bubble of size bub, drawn at
@@ -56,7 +58,8 @@ func (u *UI) sideHover(gtx C, c *model.Chat, m *model.Message, bub image.Point, 
 }
 
 // sideButtonsFor picks the side buttons of message m of chat c that fit in
-// room, the space beside its bubble, leaving out Forward first.
+// room, the space beside its bubble, leaving out the one that shows only
+// on hover first, or else Forward.
 func (u *UI) sideButtonsFor(gtx C, c *model.Chat, m *model.Message, before bool, room int) sideButtons {
 	gone := m.Kind == model.KindDeleted || m.Kind == model.KindUnsupported || !m.Revoked.IsZero()
 	if gone {
@@ -68,11 +71,16 @@ func (u *UI) sideButtonsFor(gtx C, c *model.Chat, m *model.Message, before bool,
 			!(m.FromMe && (m.Receipt == model.Pending || m.Receipt == model.Failed)),
 		forward: m.Kind != model.KindViewOnce && (forwardsBeside(m) || hasLinkCard(m) || u.jumbo(c, m) != nil),
 	}
+	sb.stays = sb.forward && forwardStays(m)
 	if sb.width(gtx) > room {
-		sb.forward = false
+		if sb.stays {
+			sb.react = false
+		} else {
+			sb.forward = false
+		}
 	}
 	if sb.width(gtx) > room {
-		sb.react = false
+		return sideButtons{before: before}
 	}
 	return sb
 }
@@ -88,6 +96,20 @@ func forwardsBeside(m *model.Message) bool {
 		return true
 	}
 	return false
+}
+
+// forwardStays reports whether a message's Forward button is always there:
+// beside a photo, a video, a GIF or a document. A sticker's, a link's and
+// a big emoji's wait for the hover.
+func forwardStays(m *model.Message) bool {
+	if m.Kind == model.KindSticker {
+		return false
+	}
+	switch m.Media {
+	case model.MediaImage, model.MediaVideo, model.MediaGIF, model.MediaDocument:
+		return true
+	}
+	return m.Kind == model.KindImage
 }
 
 func (sb sideButtons) any() bool { return sb.react || sb.forward }
@@ -115,7 +137,7 @@ func (u *UI) sideHovered(m *model.Message) bool {
 }
 
 // layoutSideButtons draws m's side buttons beside its bubble of size bub,
-// fading them in while show.
+// fading them in while show. Forward may be there all along (sb.stays).
 func (u *UI) layoutSideButtons(gtx C, m *model.Message, sb sideButtons, bub image.Point, show bool) {
 	if !sb.any() {
 		return
@@ -126,50 +148,48 @@ func (u *UI) layoutSideButtons(gtx C, m *model.Message, sb sideButtons, bub imag
 	}
 	show = show || u.sideHovered(m) || (u.ctx.isOpen() && u.ctx.kind == ctxReact && u.ctx.msg == m)
 	v := smooth(u.anims.fade(gtx, animKey{p: react, tag: tagShow}, show, durHoverIn, durHoverOut))
-	if v == 0 {
+	if v == 0 && !sb.stays {
 		return
 	}
 	sz, sep := gtx.Dp(sideBtn), gtx.Dp(sideBtnSep)
-	// React goes nearest the bubble.
-	var btns []func(gtx C, h int)
-	if sb.react {
-		btns = append(btns, func(gtx C, h int) {
-			defer op.Offset(image.Pt(0, (h-sz)/2)).Push(gtx.Ops).Pop()
-			u.sideButton(gtx, react, icReact)
-		})
-	}
-	if sb.forward {
-		btns = append(btns, func(gtx C, h int) { u.forwardButton(gtx, m, h) })
-	}
 	x, dir := bub.X+gtx.Dp(sideBtnGap), 1
 	if sb.before {
 		x, dir = -gtx.Dp(sideBtnGap)-sz, -1
 	}
-	fx := pushFx(gtx, v, moveBy(float32(dir*gtx.Dp(6))*(v-1), 0))
-	for _, b := range btns {
+	// Forward goes nearest the bubble: React comes and goes beyond it.
+	if sb.forward {
+		fv := v
+		if sb.stays {
+			fv = 1
+		}
+		fx := pushFx(gtx, fv, moveBy(float32(dir*gtx.Dp(6))*(fv-1), 0))
 		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-		b(gtx, bub.Y)
+		u.forwardButton(gtx, m, bub.Y)
 		t.Pop()
+		fx.Pop()
 		x += dir * (sz + sep)
 	}
-	fx.Pop()
+	if sb.react && v > 0 {
+		fx := pushFx(gtx, v, moveBy(float32(dir*gtx.Dp(6))*(v-1), 0))
+		t := op.Offset(image.Pt(x, (bub.Y-sz)/2)).Push(gtx.Ops)
+		u.sideButton(gtx, react, icReact)
+		t.Pop()
+		fx.Pop()
+	}
 }
 
-// sideButton draws a round button beside a message.
+// sideButton draws a button beside a message: an icon alone, which gets
+// stronger under the pointer.
 func (u *UI) sideButton(gtx C, c *widget.Clickable, ic *icon.Icon) D {
 	p := u.pal
 	gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(sideBtn), gtx.Dp(sideBtn)))
 	return clickable(gtx, c, func(gtx C) D {
 		sz := gtx.Dp(sideBtn)
-		// Room is left for light mode's 1px shadow, which the Clickable
-		// would clip.
-		r := sz/2 - 1
-		ctr := image.Pt(sz/2, sz/2-1)
-		if !u.dark {
-			fillCircle(gtx, ctr.Add(image.Pt(0, 1)), r, argb(0x0b141a, 0x21))
+		d := centerIn(gtx, sz, iconW(ic, 20, p.Icon))
+		if h := u.hover(gtx, c); h > 0 {
+			withOpacity(gtx, h, func() { centerIn(gtx, sz, iconW(ic, 20, p.IconStrong)) })
 		}
-		fillCircle(gtx, ctr, r, mix(p.Menu, p.MenuHover, u.hover(gtx, c)))
-		return centerIn(gtx, sz, iconW(ic, 20, p.Icon))
+		return d
 	})
 }
 

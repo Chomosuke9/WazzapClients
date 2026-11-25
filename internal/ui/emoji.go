@@ -78,6 +78,7 @@ const (
 	pickReaction
 	pickMedia    // an emoji or sticker to put on a photo in the send view
 	pickAudience // an audience of your own's emoji (statusprivacy.go)
+	pickStatus   // an emoji for the text status being written (statuspost.go)
 )
 
 type pickTab int
@@ -211,6 +212,12 @@ func (u *UI) pickEmoji(ch string) {
 		return
 	case pickAudience:
 		u.status.privacy.emoji = ch
+		u.closePicker()
+		return
+	}
+	if e.mode == pickStatus {
+		u.status.text.ed.Insert(ch)
+		u.requestFocus(&u.status.text.ed)
 		u.closePicker()
 		return
 	}

@@ -77,7 +77,7 @@ dihapus. Defaultnya tidak. Ikon dibuat oleh `go generate ./cmd/wazzap` (`cmd/win
 
 ## Update dari dalam aplikasi
 
-**Settings > Help** menampilkan versi aplikasi dan tombol **Check for updates**.
+**Settings > Help and feedback** menampilkan versi aplikasi dan tombol **Check for updates**.
 Kalau ada versi yang lebih baru, tombol yang sama mengunduh exe untuk sistem ini,
 mencocokkannya dengan `SHA256SUMS`, memeriksa tanda tangan `SHA256SUMS.sig` dengan
 kunci publik di `internal/update`, menukar exe yang sedang berjalan, lalu
@@ -86,7 +86,7 @@ me-restart aplikasi.
 Di bawahnya ada toggle **Automatic updates** (default menyala). Selama menyala,
 aplikasi mengecek sendiri satu menit setelah mulai, lalu setiap 4 jam. Rilis baru
 diunduh dan dipasang dengan cara yang sama, tapi aplikasi tidak langsung
-me-restart: versi baru jalan saat aplikasi dibuka lagi, baris di Settings > Help
+me-restart: versi baru jalan saat aplikasi dibuka lagi, baris di Settings > Help and feedback
 menawarkan restart sekarang, dan kalau tidak ada jendela yang terbuka (aplikasi
 hanya di tray), aplikasi me-restart sendiri di background. Cek otomatis yang gagal
 (misalnya offline) tidak menampilkan apa-apa.

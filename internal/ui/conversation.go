@@ -243,6 +243,9 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 				if t := typingText(c); t != "" {
 					sub = t
 				}
+				if c.Self {
+					sub = "Message yourself"
+				}
 				if sub == "" {
 					sub = "click here for contact info"
 					if c.IsGroup {
@@ -257,7 +260,8 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 					name = cm.Name
 				}
 				calls := func(gtx C) D {
-					// Video call with a drop-down arrow, like WhatsApp's call picker.
+					// A group's: video call with a drop-down arrow, like
+					// WhatsApp's call picker.
 					return clickable(gtx, &u.conv.video, func(gtx C) D {
 						h := gtx.Dp(40)
 						if a := u.hover(gtx, &u.conv.video); a > 0 {
@@ -272,6 +276,7 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 						})
 					})
 				}
+				gap := unit.Dp(12) // beside the divider
 				divider := func(gtx C) D {
 					h := gtx.Dp(24)
 					fillRect(gtx, image.Rect(0, 0, max(1, gtx.Dp(1)), h), p.Divider)
@@ -282,10 +287,22 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 					calls = func(gtx C) D { return u.layoutCommunityButton(gtx, cm) }
 					divider = func(C) D { return D{} }
 				}
-				if isChannelID(c.ID) {
-					// Nobody calls a channel.
+				if !c.IsGroup {
+					gap, divider = 4, func(C) D { return D{} }
+					calls = func(gtx C) D {
+						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.conv.video, icVideo, 40, 27, p.IconStrong) }),
+							layout.Rigid(layout.Spacer{Width: 8}.Layout),
+							layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("conv:voice"), icCallLine, 40, 26, p.IconStrong) }),
+						)
+					}
+					if u.btn("conv:voice").Clicked(gtx) {
+						u.callsUnsupported()
+					}
+				}
+				if isChannelID(c.ID) || c.Self || isAgentID(c.ID) {
+					// Nobody calls a channel, themselves or an agent.
 					calls = func(C) D { return D{} }
-					divider = func(C) D { return D{} }
 				}
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Flexed(1, func(gtx C) D {
@@ -317,9 +334,9 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 						})
 					}),
 					layout.Rigid(calls),
-					layout.Rigid(layout.Spacer{Width: 12}.Layout),
+					layout.Rigid(layout.Spacer{Width: gap}.Layout),
 					layout.Rigid(divider),
-					layout.Rigid(layout.Spacer{Width: 12}.Layout),
+					layout.Rigid(layout.Spacer{Width: gap}.Layout),
 					layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.conv.search, icSearch, 40, 26, p.IconStrong) }),
 					layout.Rigid(layout.Spacer{Width: 8}.Layout),
 					layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.conv.menu, icMenu, 40, 26, p.IconStrong) }),
@@ -328,6 +345,9 @@ func (u *UI) layoutConvHeader(gtx C, c *model.Chat) D {
 		})
 	})
 }
+
+// isAgentID reports whether id is a chat with one of Meta's AI agents.
+func isAgentID(id string) bool { return strings.HasSuffix(id, "@bot") }
 
 func dp(gtx C, px int) unit.Dp { return unit.Dp(float32(px) / gtx.Metric.PxPerDp) }
 
@@ -693,7 +713,7 @@ func (u *UI) layoutMessageRow(gtx C, c *model.Chat, r convRow, maxW, margin int)
 	unhide()
 	if !sel {
 		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-		// Round buttons beside the bubble (sidebuttons.go); announcements
+		// Buttons beside the bubble (sidebuttons.go); announcements
 		// have their Forward instead.
 		hovered, side := u.sideHover(gtx, c, m, bubble.size, x, w, margin, !ann)
 		// A double click beside the bubble replies too, as in WhatsApp; a
@@ -792,9 +812,15 @@ func (u *UI) encryptionNotice(gtx C, maxW int) D {
 	return u.card(gtx, 8, p.Encryption, func(gtx C) D {
 		return layout.Inset{Left: 12, Right: 12, Top: 6, Bottom: 7}.Layout(gtx, func(gtx C) D {
 			txt := "🔒 Messages and calls are end-to-end encrypted. Only people in this chat can read, listen to, or share them."
-			if u.selected != nil && isChannelID(u.selected.ID) {
+			switch c := u.selected; {
+			case c == nil:
+			case isChannelID(c.ID):
 				// WhatsApp's note in a channel: its updates aren't encrypted.
 				txt = "🔒 This channel has added privacy for your profile and phone number."
+			case c.Self:
+				txt = "🔒 Messages to yourself are end-to-end encrypted. No one else, not even WhatsApp, can read, listen to, or share them."
+			case isAgentID(c.ID):
+				txt = "Messages in this chat are sent through a secure Meta service."
 			}
 			l := u.label(12.5, txt, p.EncryptionText, labelOpts{align: text.Middle})
 			l.MaxLines = 0
@@ -1642,7 +1668,7 @@ func (u *UI) messageImage(m *model.Message, maxPx int) *imgEntry {
 }
 
 // photoWanted reports whether a picture's bubble shows the picture itself,
-// downloading it if needed: always unless Settings > Storage turned photos
+// downloading it if needed: always unless Settings > Chats turned photos
 // off, and then once it was downloaded (by opening it in the viewer).
 func (u *UI) photoWanted(m *model.Message) bool {
 	return u.autoPhotos || m.FromMe || u.fileReady(m)
@@ -1698,7 +1724,7 @@ func (u *UI) layoutImage(gtx C, r image.Rectangle, m *model.Message, img *imgEnt
 	}
 }
 
-// photoBadge marks a picture that isn't downloaded (Settings > Storage
+// photoBadge marks a picture that isn't downloaded (Settings > Chats
 // turned photos off) with a download button; opening it downloads it.
 func (u *UI) photoBadge(gtx C, r image.Rectangle, m *model.Message) {
 	if m.Media != model.MediaImage || u.photoWanted(m) {
@@ -1975,7 +2001,7 @@ func (u *UI) gradientImage(gtx C, r image.Rectangle, a, b uint32) {
 // layoutEmpty is the welcome pane shown when no chat is open.
 func (u *UI) layoutEmpty(gtx C) D {
 	p := u.pal
-	dims := fill(gtx, p.Panel)
+	dims := fill(gtx, p.EmptyPane)
 	gtx.Constraints.Min = gtx.Constraints.Max
 	layout.Center.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(460))

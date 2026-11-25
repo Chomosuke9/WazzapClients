@@ -8,10 +8,12 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/text"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
 type channelState struct {
@@ -26,8 +28,8 @@ type channelState struct {
 	creating         bool
 }
 
-// followers formats a follower count the way WhatsApp does: 17k, 736k,
-// 1.4m. Counts are truncated, with one decimal below 10.
+// followers formats a follower count the way WhatsApp does: 17K, 736K,
+// 1.4M. Counts are truncated, with one decimal below 10.
 func followers(n int) string {
 	short := func(v float64, unit string) string {
 		if v < 10 {
@@ -39,9 +41,9 @@ func followers(n int) string {
 	case n <= 0:
 		return "Channel"
 	case n >= 1_000_000:
-		return short(float64(n)/1e6, "m") + " followers"
+		return short(float64(n)/1e6, "M") + " followers"
 	case n >= 1_000:
-		return short(float64(n)/1e3, "k") + " followers"
+		return short(float64(n)/1e3, "K") + " followers"
 	case n == 1:
 		return "1 follower"
 	}
@@ -98,7 +100,10 @@ func channelChat(ch *model.Channel) *model.Chat {
 // layoutChannelList draws the Channels page: followed channels, then
 // suggestions with Follow buttons.
 func (u *UI) layoutChannelList(gtx C) D {
-	q := strings.ToLower(trimSpace(u.channel.search.Text()))
+	q := ""
+	if len(u.channels) > 0 { // without any there's no search
+		q = strings.ToLower(trimSpace(u.channel.search.Text()))
+	}
 	var followed []*model.Channel
 	for _, ch := range u.channels {
 		if q == "" || strings.Contains(strings.ToLower(ch.Name), q) {
@@ -121,11 +126,19 @@ func (u *UI) layoutChannelList(gtx C) D {
 		u.channel.discovering = true
 		u.backend.DiscoverChannels()
 	}
+	if u.btn("channel-create").Clicked(gtx) {
+		u.openCreateChannel()
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return u.pageHeader(gtx, "Channels", u.headerButton(&u.channel.add, icAddCircle, 27))
 		}),
-		layout.Rigid(func(gtx C) D { return u.searchBox(gtx, &u.channel.search, "Search") }),
+		layout.Rigid(func(gtx C) D {
+			if len(u.channels) == 0 {
+				return D{}
+			}
+			return u.searchBox(gtx, &u.channel.search, "Search")
+		}),
 		layout.Flexed(1, func(gtx C) D {
 			return u.scrollList(gtx, &u.channel.list, n, func(gtx C, i int) D {
 				if i < len(followed) {
@@ -136,21 +149,56 @@ func (u *UI) layoutChannelList(gtx C) D {
 				}
 				i -= len(followed)
 				switch {
+				case i == 0 && len(u.channels) == 0:
+					return u.noChannelsHeading(gtx)
 				case i == 0:
 					return u.sectionLabel(gtx, "Find channels to follow", layout.Inset{Left: 20, Top: 24, Bottom: 10},
 						labelOpts{weight: font.SemiBold, maxLines: 1})
 				case i <= len(suggested):
 					return u.suggestedRow(gtx, suggested[i-1])
 				}
-				if !more {
-					return layout.Spacer{Height: 20}.Layout(gtx)
-				}
-				return layout.Inset{Left: 20, Right: 30, Top: 14, Bottom: 20}.Layout(gtx, func(gtx C) D {
-					return u.outlineButton(gtx, &u.channel.discover, "Discover more")
-				})
+				return u.channelButtons(gtx, more, len(u.channels) == 0)
 			})
 		}),
 	)
+}
+
+// noChannelsHeading is over the suggestions while you follow no channel.
+func (u *UI) noChannelsHeading(gtx C) D {
+	p := u.pal
+	return layout.Inset{Left: 20, Right: 20, Top: 4, Bottom: 14}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(u.label(20.5, "Stay updated on your favourite topics", p.Text, labelOpts{weight: font.Medium, maxLines: 2, align: text.Middle}).Layout),
+			layout.Rigid(layout.Spacer{Height: 10}.Layout),
+			layout.Rigid(u.label(15.2, "Find channels to follow below", p.TextSecondary, labelOpts{maxLines: 1, align: text.Middle}).Layout),
+		)
+	})
+}
+
+// channelButtons are under the suggestions: Discover more, and Create
+// channel while you follow none.
+func (u *UI) channelButtons(gtx C, more, create bool) D {
+	children := make([]layout.FlexChild, 0, 3)
+	if more {
+		children = append(children, layout.Rigid(func(gtx C) D {
+			return u.outlineButton(gtx, &u.channel.discover, icExplore, "Discover more")
+		}))
+	}
+	if create {
+		if more {
+			children = append(children, layout.Rigid(layout.Spacer{Height: 10}.Layout))
+		}
+		children = append(children, layout.Rigid(func(gtx C) D {
+			return u.outlineButton(gtx, u.btn("channel-create"), icAdd, "Create channel")
+		}))
+	}
+	if len(children) == 0 {
+		return layout.Spacer{Height: 20}.Layout(gtx)
+	}
+	return layout.Inset{Left: 20, Right: 30, Top: 14, Bottom: 20}.Layout(gtx, func(gtx C) D {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	})
 }
 
 func (u *UI) channelRow(gtx C, ch *model.Channel) D {
@@ -221,15 +269,21 @@ func (u *UI) suggestedRow(gtx C, ch *model.Channel) D {
 	})
 }
 
-// outlineButton is a full-width pill with a thin border.
-func (u *UI) outlineButton(gtx C, c *widget.Clickable, txt string) D {
+// outlineButton is a full-width pill with a thin border, an icon and a label.
+func (u *UI) outlineButton(gtx C, c *widget.Clickable, ic *icon.Icon, txt string) D {
 	p := u.pal
 	return clickable(gtx, c, func(gtx C) D {
 		sz := image.Pt(gtx.Constraints.Max.X, gtx.Dp(44))
 		bg := mix(p.Panel, p.Hover, u.hover(gtx, c))
 		borderRRect(gtx, image.Rectangle{Max: sz}, sz.Y/2, bg, p.ChipBorder)
 		gtx.Constraints = layout.Exact(sz)
-		return layout.Center.Layout(gtx, u.label(15.5, txt, p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout)
+		return layout.Center.Layout(gtx, func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(iconW(ic, 20, p.Green)),
+				layout.Rigid(layout.Spacer{Width: 9}.Layout),
+				layout.Rigid(u.label(15.5, txt, p.Green, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
+			)
+		})
 	})
 }
 

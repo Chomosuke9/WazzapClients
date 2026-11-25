@@ -9,9 +9,9 @@ import (
 )
 
 // layoutChips draws the filter chips (chipItems: All, Unread, Favourites,
-// Groups, the custom lists and "+"), each with the number of unread chats
-// it holds. Chips that don't fit collapse, like WhatsApp's, into a round
-// ▾ chip whose menu lists them (chipMenuItems).
+// Groups and the custom lists), each with the number of unread chats it
+// holds, then, like WhatsApp's, a round ▾ chip whose menu lists the chips
+// that don't fit and New list (chipMenuItems).
 func (u *UI) layoutChips(gtx C) D {
 	p := u.pal
 	return layout.Inset{Left: 21, Right: 21, Bottom: 10}.Layout(gtx, func(gtx C) D {
@@ -20,6 +20,7 @@ func (u *UI) layoutChips(gtx C) D {
 		cgtx.Constraints.Min = image.Point{}
 		sel := &u.sidebar.chipSel
 		items := u.chipItems()
+		items = items[:len(items)-1] // New list is in ▾'s menu alone
 		counts := u.chipCounts(items)
 		sel.step(gtx, u.activeChip(items), durSwitch)
 		parts := make([]part, len(items))
@@ -28,11 +29,6 @@ func (u *UI) layoutChips(gtx C) D {
 			fg := mix(p.ChipText, p.ChipActiveText, active)
 			parts[i] = record(cgtx, func(gtx C) D {
 				return u.chip(gtx, u.btn("chip:"+itoa(i)), active, func(gtx C) D {
-					if it.add {
-						// A round "+", as wide as it is tall.
-						gtx.Constraints.Min.X = gtx.Dp(38)
-						return layout.Center.Layout(gtx, iconW(icAdd, 22, p.ChipText))
-					}
 					return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
 						name := u.label(15, it.name, fg, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout
 						if counts[i] == 0 {
@@ -47,15 +43,11 @@ func (u *UI) layoutChips(gtx C) D {
 			})
 		}
 
-		// As many chips as fit, keeping room for ▾ if any are left over.
+		// As many chips as fit, keeping room for ▾.
 		avail := gtx.Constraints.Max.X
 		shown, x := 0, 0
 		for i, pt := range parts {
-			need := pt.size.X
-			if i < len(parts)-1 {
-				need += gap + more
-			}
-			if x+need > avail && i >= 1 {
+			if x+pt.size.X+gap+more > avail && i >= 1 {
 				break
 			}
 			x += pt.size.X + gap
@@ -68,25 +60,23 @@ func (u *UI) layoutChips(gtx C) D {
 			x += parts[i].size.X + gap
 			h = max(h, parts[i].size.Y)
 		}
-		if shown < len(parts) {
-			var hiddenActive float32
-			for i := shown; i < len(parts); i++ {
-				hiddenActive = max(hiddenActive, sel.of(i))
-			}
-			t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-			d := u.chip(cgtx, u.btn("chip:more"), hiddenActive, func(gtx C) D {
-				gtx.Constraints.Min.X = more
-				return layout.Center.Layout(gtx, func(gtx C) D {
-					d := iconW(icDropDown, 22, p.ChipText)(gtx)
-					withOpacity(gtx, hiddenActive, func() { iconW(icDropDown, 22, p.ChipActiveText)(gtx) })
-					return d
-				})
-			})
-			t.Pop()
-			u.sidebar.chipMoreH = d.Size.Y
-			x += d.Size.X
-			h = max(h, d.Size.Y)
+		var hiddenActive float32
+		for i := shown; i < len(parts); i++ {
+			hiddenActive = max(hiddenActive, sel.of(i))
 		}
+		t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+		d := u.chip(cgtx, u.btn("chip:more"), hiddenActive, func(gtx C) D {
+			gtx.Constraints.Min.X = more
+			return layout.Center.Layout(gtx, func(gtx C) D {
+				d := iconW(icDropDown, 22, p.ChipText)(gtx)
+				withOpacity(gtx, hiddenActive, func() { iconW(icDropDown, 22, p.ChipActiveText)(gtx) })
+				return d
+			})
+		})
+		t.Pop()
+		u.sidebar.chipMoreH = d.Size.Y
+		x += d.Size.X
+		h = max(h, d.Size.Y)
 		return D{Size: image.Pt(min(x, avail), h)}
 	})
 }
@@ -144,7 +134,8 @@ func (u *UI) openChipMenu() {
 	u.ctx = ctxMenu{kind: ctxChips, at: at}
 }
 
-// chipMenuItems are the chips that didn't fit, the one on ticked.
+// chipMenuItems are the chips that didn't fit, the one on ticked, and New
+// list.
 func (u *UI) chipMenuItems() []menuItem {
 	items := u.chipItems()
 	on := u.activeChip(items)

@@ -29,7 +29,8 @@ type Palette struct {
 	Text, TextSecondary, Icon, IconActive color.NRGBA
 	IconStrong                            color.NRGBA // header, composer and menu buttons
 	Green, OnGreen                        color.NRGBA
-	RailActive, RailSeparator             color.NRGBA
+	RailActive                            color.NRGBA
+	EmptyPane                             color.NRGBA // the conversation's place with no chat open
 
 	Doodle                    color.NRGBA
 	BubbleIn, BubbleOut       color.NRGBA
@@ -134,7 +135,7 @@ var darkPalette = Palette{
 	Text: rgb(0xfafafa), TextSecondary: rgb(0xa2a2a2), Icon: rgb(0xa2a2a2), IconActive: rgb(0xfafafa),
 	IconStrong: rgb(0xfafafa),
 	Green:      rgb(0x21c063), OnGreen: rgb(0x0a0a0a),
-	RailActive: rgb(0x333535), RailSeparator: rgb(0x2f3131),
+	RailActive: rgb(0x333535), EmptyPane: rgb(0x1d1f1f),
 
 	Doodle:   rgb(0x292c2b),
 	BubbleIn: rgb(0x242626), BubbleOut: rgb(0x144d37),
@@ -192,7 +193,7 @@ var lightPalette = Palette{
 	Text: rgb(0x0a0a0a), TextSecondary: rgb(0x666666), Icon: rgb(0x666666), IconActive: rgb(0x0a0a0a),
 	IconStrong: rgb(0x0a0a0a),
 	Green:      rgb(0x1daa61), OnGreen: rgb(0xffffff),
-	RailActive: rgb(0xe8e6e3), RailSeparator: rgb(0xe3e0dc),
+	RailActive: rgb(0xe8e6e3), EmptyPane: rgb(0xffffff),
 
 	Doodle:   rgb(0xe8e1d8),
 	BubbleIn: rgb(0xffffff), BubbleOut: rgb(0xd9fdd3),
@@ -261,14 +262,15 @@ func personTint(id, name string) int {
 }
 
 // Typeface prefers Segoe UI (what WhatsApp Desktop uses on Windows), color
-// emoji from Noto, then common system UI fonts and the bundled Go fonts.
+// emoji from Noto, then the bundled Roboto, common system UI fonts and the
+// bundled Go fonts.
 //
 // MS Gothic covers Japanese and most Chinese text in a single file for
 // every weight. Without it the fallback picks Yu Gothic, whose weights are
 // separate files that each cost ~40 MB of heap once loaded (the whole
 // glyph table is parsed), so a bold name plus a regular message would load
 // two of them.
-const typeface font.Typeface = "Segoe UI, " + emojiTypeface + ", Segoe UI Symbol, MS Gothic, Cambria Math, Helvetica Neue, Roboto, Noto Sans, sans-serif, Go"
+const typeface font.Typeface = "Segoe UI, " + emojiTypeface + ", Segoe UI Symbol, MS Gothic, Cambria Math, Roboto, Helvetica Neue, Noto Sans, sans-serif, Go"
 
 // newShaper returns a shaper of the bundled fonts and the system's.
 func newShaper() *text.Shaper { return text.NewShaper(text.WithCollection(bundledFonts())) }

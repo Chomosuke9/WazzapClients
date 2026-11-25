@@ -18,8 +18,11 @@ const (
 	prefNotifyMessages = "notify_messages" // one-to-one chats
 	prefNotifyGroups   = "notify_groups"
 	prefNotifyPreviews = "notify_previews" // message text in notifications
-	prefNotifySound    = "notify_sound"
-	prefBackground     = "background" // keep running when the window closes
+	prefNotifySound    = "notify_sound"    // one-to-one chats'
+	// Groups' sound: "on" or "off"; "" is as prefNotifySound, which was
+	// both's (groupSound).
+	prefNotifyGroupSound = "notify_group_sound"
+	prefBackground       = "background" // keep running when the window closes
 )
 
 func prefOn(b model.Backend, key string) bool { return b.Pref(key) != "off" }
@@ -30,6 +33,52 @@ func setPref(b model.Backend, key string, on bool) {
 		v = "off"
 	}
 	b.SetPref(key, v)
+}
+
+// groupSound reports whether group notifications play a sound.
+func groupSound(b model.Backend) bool {
+	switch b.Pref(prefNotifyGroupSound) {
+	case "on":
+		return true
+	case "off":
+		return false
+	}
+	return prefOn(b, prefNotifySound)
+}
+
+// setSound turns the sound of a kind of notifications on or off, and
+// leaves the other kind's as it is.
+func setSound(b model.Backend, groups, on bool) {
+	g := groupSound(b)
+	if groups {
+		g = on
+	} else {
+		setPref(b, prefNotifySound, on)
+	}
+	v := "off"
+	if g {
+		v = "on"
+	}
+	b.SetPref(prefNotifyGroupSound, v)
+}
+
+// notifySettings is the page of a kind of notifications in Settings >
+// Notifications. Status updates and reactions have none: they don't notify.
+func (u *UI) notifySettings(sub string) []settingsSection {
+	b, groups := u.backend, sub == "notifygroups"
+	key, sound := prefNotifyMessages, prefOn(b, prefNotifySound)
+	sec := settingsSection{}
+	if groups {
+		key, sound = prefNotifyGroups, groupSound(b)
+	} else {
+		sec.note = "For one-to-one chats, and the updates of channels you follow."
+	}
+	on := prefOn(b, key)
+	sec.rows = []settingRow{
+		{key: key, kind: setToggle, title: "Show notifications", on: on, run: func() { setPref(b, key, !on) }},
+		{key: sub + ":sound", kind: setToggle, title: "Play sound", on: sound, run: func() { setSound(b, groups, !sound) }},
+	}
+	return []settingsSection{sec}
 }
 
 // notifyDelay is how long new messages wait before they notify, so a
@@ -287,6 +336,10 @@ func (n *notifier) notification(id string, c chatInfo, m *model.Message, count i
 	if n.account != "" {
 		title += " · " + n.account
 	}
+	sound := prefOn(n.b, prefNotifySound)
+	if c.group || strings.HasSuffix(id, "@g.us") {
+		sound = groupSound(n.b)
+	}
 	footer := ""
 	if count > 1 {
 		footer = fmt.Sprintf("%d new messages", count)
@@ -315,7 +368,7 @@ func (n *notifier) notification(id string, c chatInfo, m *model.Message, count i
 		Footer: footer,
 		Image:  img,
 		Time:   m.Time,
-		Silent: !prefOn(n.b, prefNotifySound),
+		Silent: !sound,
 		Reply:  !channel, // only a channel's admins post
 	}
 }

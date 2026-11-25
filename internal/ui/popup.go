@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"io"
+	"runtime"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
+	"github.com/chomosuke9/wazzapclients/internal/osclip"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
@@ -112,13 +115,15 @@ type menuItem struct {
 	ic      *icon.Icon
 	glyph   func(gtx C, col color.NRGBA) D // drawn instead of ic
 	label   string
-	sub     string      // second line, e.g. "Muted always"
-	arrow   bool        // opens a submenu
+	sub     string // second line, e.g. "Muted always"
+	arrow   bool   // opens the submenu that more lists
+	more    func() []menuItem
 	check   int         // 1 checked box, -1 empty box, 0 none
 	tick    bool        // a check mark on the right: the chosen option
 	note    bool        // explanatory text under the options, wrapped
 	col     color.NRGBA // the icon's color, if not the text's
 	divider bool
+	stay    bool // a click leaves the menu open, for the next one
 	run     func()
 }
 
@@ -141,7 +146,6 @@ const (
 	ctxGroupTimer  // the new group's disappearing messages
 	ctxCommunity   // the announcements' groups (chatID is the community's)
 	ctxConv        // the open chat's ⋮ menu
-	ctxTimer       // a chat's disappearing message timers
 	ctxPin         // how long a message stays pinned (pins.go)
 	ctxReply       // a reply to an announcement (replies.go)
 	ctxGallerySort // the Media panel's sort order
@@ -150,7 +154,8 @@ const (
 	ctxAcctMode    // an account's background modes (chatID is its Dir)
 	ctxInfoPhoto   // a group's picture in its info panel (groupedit.go)
 	ctxReact       // a message's reaction bar alone, from its React button (sidebuttons.go)
-	ctxPickMute    // mute durations for the chats picked (selectchats.go)
+	ctxPick        // what to do with the chats picked (selectchats.go)
+	ctxPickMute    // mute durations for them
 	ctxChips       // the filter chips that didn't fit (chips.go)
 	ctxChannel     // a channel's row in the Channels page (channelinfo.go)
 	ctxChannelAdd  // the Channels page's ⊕
@@ -167,8 +172,8 @@ type ctxMenu struct {
 	job    string      // the scheduled message's ID, for ctxScheduled, or the reply's, for ctxReply
 	at     image.Point // where it was opened, in content coordinates
 	scrim  widget.Clickable
-	lists  bool // "Add to list" submenu open
 	all    []*model.ChatList
+	sub    submenu // the open submenu (submenu.go)
 
 	// A closed menu fades out showing the items it had.
 	closing bool
@@ -203,10 +208,8 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 	} else {
 		add(menuItem{key: "archive", ic: icArchive, label: "Archive chat", run: func() { b.SetArchived(id, true) }})
 	}
-	if c.Muted {
-		add(menuItem{key: "mute", ic: icBellLine, label: "Unmute notifications", sub: muteStatus(c), run: func() { b.SetMuted(id, false, 0) }})
-	} else {
-		add(menuItem{key: "mute", ic: icMuted, label: "Mute notifications", run: func() { u.openMuteMenu(c) }})
+	if !c.Self || c.Muted {
+		add(u.muteRow(c))
 	}
 	if !c.Archived {
 		if c.Pinned {
@@ -229,13 +232,13 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 		}})
 	}
 	if c.Favorite {
-		add(menuItem{key: "fav", ic: icHeart, label: "Remove from favourites", run: func() { b.SetFavorite(id, false) }})
+		add(menuItem{key: "fav", ic: icHeart, label: "Remove from Favourites", run: func() { b.SetFavorite(id, false) }})
 	} else {
-		add(menuItem{key: "fav", ic: icHeart, label: "Add to favourites", run: func() { b.SetFavorite(id, true) }})
+		add(menuItem{key: "fav", ic: icHeart, label: "Add to Favourites", run: func() { b.SetFavorite(id, true) }})
 	}
-	add(menuItem{key: "lists", ic: icAddToList, label: "Add to list", arrow: true})
+	add(u.listsRow(c))
 	add(menuItem{divider: true})
-	if !c.IsGroup && !c.Self && !isChannelID(id) {
+	if !c.IsGroup && !c.Self && !isChannelID(id) && !isAgentID(id) {
 		name := c.Name
 		add(menuItem{key: "block", ic: icBlock, label: "Block", run: func() { u.confirmBlock(id, name) }})
 	}
@@ -260,8 +263,6 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 	add := func(it menuItem) { items = append(items, it) }
 	if m.Kind == model.KindWaiting {
 		// Nothing came to act on yet.
-		add(menuItem{key: "select", ic: icCheckBox, label: "Select", run: func() { u.startSelect(m) }})
-		add(menuItem{divider: true})
 		add(menuItem{key: "delete", ic: icDelete, label: "Delete", run: func() { u.confirmDelete([]*model.Message{m}) }})
 		return items
 	}
@@ -293,21 +294,20 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 			txt = sel
 		}
 		add(menuItem{key: "copy", ic: icCopy, label: "Copy", run: func() { u.copyText(stripIsolates(txt)) }})
+	} else if u.canCopyPhoto(m) {
+		add(menuItem{key: "copy", ic: icCopy, label: "Copy", run: func() { u.copyPhoto(m) }})
 	}
 	items = append(items, u.transcriptItems(m)...)
 	if canReact(c.ID, m) && !revoked {
-		add(menuItem{key: "react", ic: icAddReaction, label: "React", run: func() { u.openPicker(pickReaction, m) }})
+		add(menuItem{key: "react", ic: icReact, label: "React", run: func() { u.openPicker(pickReaction, m) }})
 	}
 	if u.editHistory && !m.Edited.IsZero() && !deleted {
 		add(menuItem{key: "edits", ic: icEditNote, label: "Edit history", run: func() { u.openEditHistory(m) }})
 	}
 	if canSave(m) {
-		// A file that isn't on this computer yet can be downloaded first,
-		// as its card's button does.
-		if downloadable(m) && !u.fileReady(m) && !u.files.busy[fileKey(m)] {
-			add(menuItem{key: "download", ic: icDownload, label: "Download", run: func() { u.downloadDocument(m) }})
-		}
-		add(menuItem{key: "save", ic: icDownload, label: "Save as…", run: func() { b.SaveMedia(m) }})
+		// It saves the file in the Downloads folder, getting it first when
+		// it isn't on this computer yet.
+		add(menuItem{key: "save", ic: icDownload, label: "Download", run: func() { b.SaveMedia(m) }})
 	}
 	if !deleted {
 		if m.Kind != model.KindUnsupported && m.Kind != model.KindViewOnce {
@@ -341,29 +341,19 @@ func (u *UI) messageMenuItems(c *model.Chat, m *model.Message) []menuItem {
 			}
 		}
 	}
-	add(menuItem{divider: true})
-	add(menuItem{key: "select", ic: icCheckBox, label: "Select", run: func() { u.startSelect(m) }})
-	add(menuItem{divider: true})
-	add(menuItem{key: "delete", ic: icDelete, label: "Delete", run: func() { u.confirmDelete([]*model.Message{m}) }})
+	if len(items) > 0 {
+		add(menuItem{divider: true})
+	}
 	if !m.FromMe && !deleted && !isChannelID(c.ID) {
 		add(menuItem{key: "report", ic: icThumbDown, label: "Report", run: func() { u.confirmReport(c, m) }})
 	}
+	add(menuItem{key: "delete", ic: icDelete, label: "Delete", run: func() { u.confirmDelete([]*model.Message{m}) }})
 	return items
 }
 
 // canReact reports whether m, in chat chatID, takes reactions.
 func canReact(chatID string, m *model.Message) bool {
 	return m.Kind != model.KindDeleted && m.Kind != model.KindWaiting
-}
-
-// downloadable reports whether m's media is a file the bubble downloads
-// on demand (a picture downloads to show).
-func downloadable(m *model.Message) bool {
-	switch m.Media {
-	case model.MediaDocument, model.MediaAudio, model.MediaVoice, model.MediaVideo:
-		return true
-	}
-	return false
 }
 
 func canSave(m *model.Message) bool {
@@ -386,6 +376,43 @@ func stripIsolates(s string) string {
 func (u *UI) copyText(s string) {
 	u.pendingCopy = s
 	u.toast("Message copied")
+}
+
+// canCopyPhoto reports whether Copy can put m's photo on the clipboard:
+// once it's on this computer, and not on macOS (osclip).
+func (u *UI) canCopyPhoto(m *model.Message) bool {
+	return runtime.GOOS != "darwin" && m.Media == model.MediaImage && m.Kind != model.KindDeleted &&
+		m.Kind != model.KindViewOnce && u.fileReady(m)
+}
+
+// copyPhoto puts m's photo on the clipboard; renderDone says how it went.
+func (u *UI) copyPhoto(m *model.Message) {
+	if u.attach.renders == nil {
+		u.attach.renders = make(chan *renderJob, 16)
+	}
+	out, notify, b := u.attach.renders, u.images.invalidate, u.backend
+	var owner uintptr
+	if u.host != nil {
+		owner = u.host.hwnd
+	}
+	go func() {
+		j := &renderJob{sink: sinkCopy, done: true}
+		defer func() {
+			out <- j
+			if notify != nil {
+				notify()
+			}
+		}()
+		data := b.MediaData(m.ChatID, m.ID)
+		release := acquireDecode(data)
+		defer release()
+		img, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			j.err = err
+			return
+		}
+		j.err = osclip.SetImage(owner, img)
+	}()
 }
 
 // layoutCtxMenu draws the open context menu over everything.
@@ -458,10 +485,6 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			items = u.pinItems(m.msg)
 		case ctxReply:
 			items = u.replyItems()
-		case ctxTimer:
-			if c := u.chatByID(m.chatID); c != nil {
-				items = u.timerItems(c)
-			}
 		case ctxCommunity:
 			for _, cm := range u.communities {
 				if cm.ID == m.chatID {
@@ -494,6 +517,8 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			if u.info.open {
 				items = u.infoPhotoItems(m.chatID)
 			}
+		case ctxPick:
+			items = u.pickItems()
 		case ctxPickMute:
 			if u.sidebar.pick.on {
 				items = u.pickMuteItems()
@@ -511,23 +536,19 @@ func (u *UI) layoutCtxMenu(gtx C) {
 			if it.key == "" || !u.btn("menu:"+it.key).Clicked(gtx) {
 				continue
 			}
-			if it.arrow {
-				m.lists = !m.lists
-				continue
-			}
-			if m.kind == ctxLists {
-				// Ticking a box leaves the menu open for the next one.
-				if it.run != nil {
-					it.run()
-				}
+			if it.more != nil {
+				u.openSubmenu(gtx, it)
 				break
 			}
-			u.closeMenu()
+			if !it.stay {
+				u.closeMenu()
+			}
 			if it.run != nil {
 				it.run()
 			}
 			break
 		}
+		u.updateSubmenu(gtx)
 		if m.items == nil {
 			return // the action opened another menu
 		}
@@ -552,6 +573,7 @@ func (u *UI) layoutCtxMenu(gtx C) {
 	}
 
 	menu := record(gtx, func(gtx C) D { return u.menuPanel(gtx, "menu:", items) })
+	u.hoverSubmenu(gtx)
 	reactH := 0
 	if m.kind == ctxMessage && canReact(m.chatID, m.msg) {
 		reactH = gtx.Dp(43 + 7)
@@ -585,15 +607,7 @@ func (u *UI) layoutCtxMenu(gtx C) {
 	if reactH > 0 {
 		u.layoutReactionBar(gtx, m.msg, image.Pt(pos.X+menu.size.X/2, pos.Y-gtx.Dp(7)))
 	}
-	if c := u.chatByID(m.chatID); m.kind == ctxChat && m.lists && c != nil {
-		sub := record(gtx, func(gtx C) D { return u.menuPanel(gtx, "list:", u.listItems(c)) })
-		x := pos.X + menu.size.X - gtx.Dp(8)
-		if x+sub.size.X > sz.X {
-			x = pos.X - sub.size.X + gtx.Dp(8)
-		}
-		y := min(pos.Y+menu.size.Y-sub.size.Y-gtx.Dp(60), sz.Y-sub.size.Y-gtx.Dp(8))
-		sub.at(gtx, x, max(y, gtx.Dp(8)))
-	}
+	u.layoutSubmenu(gtx, image.Rectangle{Min: pos, Max: pos.Add(menu.size)})
 }
 
 // listItems is the "Add to list" submenu. Clicks toggle membership.
@@ -609,7 +623,7 @@ func (u *UI) listItems(c *model.Chat) []menuItem {
 		if in {
 			check = 1
 		}
-		items = append(items, menuItem{key: l.ID, label: l.Name, check: check, run: func() {
+		items = append(items, menuItem{key: l.ID, label: l.Name, check: check, stay: true, run: func() {
 			u.backend.SetInList(c.ID, l.ID, !in)
 			if in {
 				l.Chats = removeString(l.Chats, c.ID)
@@ -619,7 +633,10 @@ func (u *UI) listItems(c *model.Chat) []menuItem {
 		}})
 	}
 	id := c.ID
-	items = append(items, menuItem{key: "newlist", ic: icAdd, label: "New list", run: func() { u.closeMenu(); u.openNewList([]string{id}) }})
+	if len(items) > 0 {
+		items = append(items, menuItem{divider: true})
+	}
+	items = append(items, menuItem{key: "newlist", ic: icAdd, label: "New list", run: func() { u.openNewList([]string{id}) }})
 	return items
 }
 
@@ -634,17 +651,9 @@ func removeString(s []string, v string) []string {
 }
 
 // menuPanel draws a popup menu's rows on its bordered, rounded panel. Row
-// clicks are read by the caller through u.btn(prefix+key); submenu rows
-// run their own actions here.
+// clicks are read by the caller through u.btn(prefix+key).
 func (u *UI) menuPanel(gtx C, prefix string, items []menuItem) D {
 	p := u.pal
-	if prefix == "list:" {
-		for _, it := range items {
-			if it.key != "" && u.btn(prefix+it.key).Clicked(gtx) && it.run != nil {
-				it.run()
-			}
-		}
-	}
 	gtx.Constraints.Min = image.Point{}
 	// Width fits the longest row.
 	w := gtx.Dp(150)
@@ -675,9 +684,17 @@ func (u *UI) menuPanel(gtx C, prefix string, items []menuItem) D {
 	mgtx.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, gtx.Constraints.Max.Y)}
 	dims := layout.Inset{Top: 9, Bottom: 9}.Layout(mgtx, func(gtx C) D {
 		var children []layout.FlexChild
+		y := 0
 		for _, it := range items {
 			it := it
-			children = append(children, layout.Rigid(func(gtx C) D { return u.menuRow(gtx, prefix, it) }))
+			children = append(children, layout.Rigid(func(gtx C) D {
+				if u.submenuOf(prefix, it) {
+					u.ctx.sub.y = y
+				}
+				d := u.menuRow(gtx, prefix, it)
+				y += d.Size.Y
+				return d
+			}))
 		}
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	})
@@ -782,7 +799,13 @@ func (u *UI) menuRow(gtx C, prefix string, it menuItem) D {
 		return draw(gtx, 0)
 	}
 	c := u.btn(prefix + it.key)
-	return clickable(gtx, c, func(gtx C) D { return draw(gtx, u.hover(gtx, c)) })
+	return clickable(gtx, c, func(gtx C) D {
+		h := u.hover(gtx, c)
+		if u.submenuOf(prefix, it) {
+			h = 1
+		}
+		return draw(gtx, h)
+	})
 }
 
 // quickReactions are the reaction bar's emoji, as in WhatsApp.

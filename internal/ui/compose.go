@@ -3,7 +3,6 @@ package ui
 import (
 	"image"
 	"image/color"
-	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -911,15 +910,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 									if h := u.hover(gtx, &u.conv.attach); h > 0 {
 										fillCircle(gtx, image.Pt(sz/2, sz/2), sz/2, faded(p.Hover, h))
 									}
-									// WhatsApp's "+" turns into an "x" while
-									// the menu it opened is up.
-									open := u.ctx.isOpen() && u.ctx.kind == ctxAttach
-									t := smooth(u.conv.attachTurn.step(gtx, open, popDur(open)))
-									mid := pointF(image.Pt(sz/2, sz/2))
-									fx := pushFx(gtx, 1, rotateAt(mid, t*math.Pi/4))
-									centerIn(gtx, sz, iconW(icAdd, 28, p.IconStrong))
-									fx.Pop()
-									return D{Size: image.Pt(sz, sz)}
+									return centerIn(gtx, sz, iconW(icAttach, 26, p.IconStrong))
 								})
 							}),
 							layout.Rigid(layout.Spacer{Width: 2}.Layout),
@@ -928,11 +919,7 @@ func (u *UI) layoutComposerBox(gtx C) D {
 								if u.picker.open && u.picker.mode == pickComposer {
 									col = p.Green
 								}
-								ic := icEmoji
-								if u.picker.composerTab == tabSticker {
-									ic = icStickerSmiley
-								}
-								return u.iconButton(gtx, &u.conv.emoji, ic, 40, 26, col)
+								return u.iconButton(gtx, &u.conv.emoji, icStickerSmiley, 40, 26, col)
 							}),
 							layout.Rigid(layout.Spacer{Width: 10}.Layout),
 							layout.Flexed(1, func(gtx C) D {

@@ -3,7 +3,10 @@ package ui
 import (
 	"image"
 	"image/color"
+	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"gioui.org/font"
 	"gioui.org/io/key"
@@ -24,10 +27,12 @@ import (
 type ncStep int
 
 const (
-	ncNone    ncStep = iota
-	ncChat           // New chat: search contacts or type a number
-	ncMembers        // New group: pick the members
-	ncGroup          // New group: name, picture, disappearing messages
+	ncNone      ncStep = iota
+	ncChat             // New chat: search contacts or type a number
+	ncMembers          // New group: pick the members
+	ncGroup            // New group: name, picture, disappearing messages
+	ncList             // Create new list: name, chats (lists.go)
+	ncListChats        // the chats to put in it
 )
 
 // groupNameMax is WhatsApp's limit on a group's name.
@@ -39,8 +44,8 @@ const groupPhotoPx = 640
 // newChatState is the New chat panel and the New group flow in it.
 type newChatState struct {
 	step ncStep
-	base ncStep             // the page it opened at; Back there closes it
-	in   [ncGroup + 1]tween // each page sliding in
+	base ncStep                 // the page it opened at; Back there closes it
+	in   [ncListChats + 1]tween // each page sliding in
 
 	search  widget.Editor // New chat
 	members widget.Editor // Add group members
@@ -51,6 +56,7 @@ type newChatState struct {
 
 	contacts []*model.Contact // loaded when the panel opens
 	shown    []*model.Contact // the contacts listed this frame, reused
+	rows     []contactRow     // their rows, with headings, reused
 	picked   []model.Contact  // new group's members, in the order picked
 	lookup   string           // phone number being checked, digits only
 
@@ -62,6 +68,13 @@ type newChatState struct {
 	creating     bool   // waiting for the GroupCreatedEvent
 	nextIn       tween  // the green buttons rising in
 	createIn     tween
+
+	// Create new list (lists.go).
+	listName, listSearch widget.Editor
+	listPicked           []string      // the chats in it
+	listRows             []*model.Chat // the chats to pick from this frame, reused
+	llist, lclist        widget.List
+	listIn               tween // the green button rising in
 }
 
 // groupPhoto is a picture picked in the file dialog, cropped and scaled.
@@ -75,19 +88,24 @@ func (nc *newChatState) open() bool { return nc.step != ncNone }
 
 // start sets the panel up as it opens.
 func (nc *newChatState) start(contacts []*model.Contact) {
-	nc.contacts = contacts
-	for _, ed := range []*widget.Editor{&nc.search, &nc.members, &nc.name} {
+	nc.contacts = byLetter(contacts)
+	for _, ed := range []*widget.Editor{&nc.search, &nc.members, &nc.name, &nc.listName, &nc.listSearch} {
 		ed.SingleLine, ed.Submit = true, true
 	}
 	nc.name.MaxLen = groupNameMax
-	nc.list.Axis, nc.mlist.Axis, nc.glist.Axis = layout.Vertical, layout.Vertical, layout.Vertical
+	for _, l := range []*widget.List{&nc.list, &nc.mlist, &nc.glist, &nc.llist, &nc.lclist} {
+		l.Axis = layout.Vertical
+	}
 }
+
+// listing reports whether Create new list is open, which loads no contacts.
+func (nc *newChatState) listing() bool { return nc.step == ncList || nc.step == ncListChats }
 
 // openNewChat slides the New chat panel in over the chat list.
 func (u *UI) openNewChat() {
 	nc := &u.newChat
 	u.newChatPage()
-	if nc.step == ncNone {
+	if nc.step == ncNone || nc.listing() {
 		nc.start(u.backend.Contacts())
 	}
 	nc.step, nc.base = ncChat, ncChat
@@ -101,7 +119,7 @@ func (u *UI) openNewChat() {
 func (u *UI) openNewGroup(members []model.Contact) {
 	nc := &u.newChat
 	u.newChatPage()
-	if nc.step == ncNone {
+	if nc.step == ncNone || nc.listing() {
 		nc.start(u.backend.Contacts())
 		nc.base = ncMembers
 	}
@@ -113,11 +131,12 @@ func (u *UI) openNewGroup(members []model.Contact) {
 
 // snap finishes the pages' slides (for screenshots).
 func (nc *newChatState) snap() {
-	for s := ncChat; s <= ncGroup; s++ {
+	for s := ncChat; s <= ncListChats; s++ {
 		nc.in[s].snap(s >= nc.base && s <= nc.step)
 	}
 	nc.nextIn.snap(len(nc.picked) > 0)
 	nc.createIn.snap(trimSpace(nc.name.Text()) != "")
+	nc.listIn.snap(len(nc.listPicked) > 0)
 }
 
 // newChatPage shows the chat list, which the panel covers.
@@ -146,6 +165,9 @@ func (u *UI) newChatBack() {
 		nc.step = ncChat
 		nc.picked = nil
 		u.requestFocus(&nc.search)
+	case nc.step == ncListChats:
+		nc.step = ncList
+		u.requestFocus(&nc.listName)
 	default:
 		nc.step--
 		u.requestFocus(&nc.members)
@@ -186,6 +208,7 @@ func (u *UI) updateNewChat(gtx C) {
 	if u.btn("nc:back").Clicked(gtx) {
 		u.newChatBack()
 	}
+	u.updateNewList(gtx)
 	for {
 		ev, ok := nc.search.Update(gtx)
 		if !ok {
@@ -444,27 +467,83 @@ func (u *UI) matchContacts(q string, skipPicked bool) []*model.Contact {
 	return out
 }
 
+// contactRow is a row of the contacts: a letter's heading, or a contact.
+type contactRow struct {
+	heading string
+	contact *model.Contact
+}
+
+// contactLetter is the heading a contact is listed under: their name's
+// first letter, or # when it doesn't start with one.
+func contactLetter(name string) rune {
+	r, _ := utf8.DecodeRuneInString(trimSpace(name))
+	if !unicode.IsLetter(r) {
+		return '#'
+	}
+	return unicode.ToUpper(r)
+}
+
+// byLetter puts the contacts under # after the others, whose order (by
+// name) it keeps.
+func byLetter(contacts []*model.Contact) []*model.Contact {
+	slices.SortStableFunc(contacts, func(a, b *model.Contact) int {
+		x, y := contactLetter(a.Name), contactLetter(b.Name)
+		switch {
+		case x == y:
+			return 0
+		case x == '#':
+			return 1
+		case y == '#':
+			return -1
+		}
+		return int(x) - int(y)
+	})
+	return contacts
+}
+
+// contactRows puts a heading before each letter's contacts.
+func (nc *newChatState) contactRows(contacts []*model.Contact) []contactRow {
+	rows := nc.rows[:0]
+	last := rune(0)
+	for _, c := range contacts {
+		if l := contactLetter(c.Name); l != last {
+			rows = append(rows, contactRow{heading: string(l)})
+			last = l
+		}
+		rows = append(rows, contactRow{contact: c})
+	}
+	nc.rows = rows
+	return rows
+}
+
+// contactHeading is the heading over a letter's contacts.
+func (u *UI) contactHeading(gtx C, txt string) D {
+	return u.sectionLabel(gtx, txt, layout.Inset{Left: 28, Right: 28, Top: 24, Bottom: 16}, labelOpts{})
+}
+
 // layoutNewChat draws the panel's pages over the chat list, sliding in
 // from the left.
 func (u *UI) layoutNewChat(gtx C) {
 	nc := &u.newChat
 	p := u.pal
 	sz := gtx.Constraints.Max
-	var vs [ncGroup + 1]float32
+	var vs [ncListChats + 1]float32
 	top := ncNone // the highest page fully in
-	for s := ncChat; s <= ncGroup; s++ {
+	moving := false
+	for s := ncChat; s <= ncListChats; s++ {
 		vs[s] = nc.in[s].step(gtx, s >= nc.base && s <= nc.step, durPanel)
 		if vs[s] == 1 {
 			top = s
 		}
+		moving = moving || vs[s] > 0
 	}
-	if nc.step == ncNone && top == ncNone && vs[ncChat]+vs[ncMembers]+vs[ncGroup] == 0 {
-		if nc.contacts != nil || nc.picked != nil {
+	if nc.step == ncNone && !moving {
+		if nc.contacts != nil || nc.picked != nil || nc.listPicked != nil {
 			u.closeNewChat() // done sliding out: drop the contacts
 		}
 		return
 	}
-	for s := max(top, ncChat); s <= ncGroup; s++ {
+	for s := max(top, ncChat); s <= ncListChats; s++ {
 		if vs[s] == 0 {
 			continue
 		}
@@ -490,6 +569,10 @@ func (u *UI) layoutNewChat(gtx C) {
 			u.layoutMembersPage(pg)
 		case ncGroup:
 			u.layoutNewGroupPage(pg)
+		case ncList:
+			u.layoutNewListPage(pg)
+		case ncListChats:
+			u.layoutListChatsPage(pg)
 		}
 		cl.Pop()
 		done()
@@ -500,7 +583,7 @@ func (u *UI) layoutNewChat(gtx C) {
 // newChatCovers reports whether a page of the panel hides the chat list.
 func (u *UI) newChatCovers() bool {
 	nc := &u.newChat
-	for s := ncChat; s <= ncGroup; s++ {
+	for s := ncChat; s <= ncListChats; s++ {
 		if nc.in[s].v == 1 && s >= nc.base && s <= nc.step {
 			return true
 		}
@@ -615,17 +698,7 @@ func (u *UI) layoutNewChatPage(gtx C) D {
 			}
 		}
 	}
-	contacts := u.matchContacts(q, false)
-	if len(contacts) > 0 {
-		rows = append(rows, func(gtx C) D {
-			return u.sectionLabel(gtx, "Contacts on WhatsApp", layout.Inset{Left: 32, Right: 29, Top: 18, Bottom: 12}, labelOpts{})
-		})
-	}
-	for _, c := range contacts {
-		rows = append(rows, func(gtx C) D {
-			return u.ncRow(gtx, u.btn("nc:c:"+c.ID), u.contactPic(c), c.Name, c.Phone)
-		})
-	}
+	contacts := nc.contactRows(u.matchContacts(q, false))
 	if len(contacts) == 0 {
 		switch {
 		case q != "" && len(rows) == 0:
@@ -640,7 +713,17 @@ func (u *UI) layoutNewChatPage(gtx C) D {
 		layout.Rigid(func(gtx C) D { return u.ncHeader(gtx, "New chat") }),
 		layout.Rigid(func(gtx C) D { return u.ncSearch(gtx, &nc.search, "Search name or number") }),
 		layout.Flexed(1, func(gtx C) D {
-			return u.scrollList(gtx, &nc.list, len(rows), func(gtx C, i int) D { return rows[i](gtx) })
+			return u.scrollList(gtx, &nc.list, len(rows)+len(contacts), func(gtx C, i int) D {
+				if i < len(rows) {
+					return rows[i](gtx)
+				}
+				r := contacts[i-len(rows)]
+				if r.heading != "" {
+					return u.contactHeading(gtx, r.heading)
+				}
+				c := r.contact
+				return u.ncRow(gtx, u.btn("nc:c:"+c.ID), u.contactPic(c), c.Name, c.Phone)
+			})
 		}),
 	)
 }
@@ -667,8 +750,12 @@ func (u *UI) layoutMembersPage(gtx C) D {
 				}
 				return u.ncNote(gtx, msg)
 			}
-			return u.scrollList(gtx, &nc.mlist, len(contacts), func(gtx C, i int) D {
-				c := contacts[i]
+			rows := nc.contactRows(contacts)
+			return u.scrollList(gtx, &nc.mlist, len(rows), func(gtx C, i int) D {
+				if rows[i].heading != "" {
+					return u.contactHeading(gtx, rows[i].heading)
+				}
+				c := rows[i].contact
 				return u.ncRow(gtx, u.btn("nc:m:"+c.ID), u.contactPic(c), c.Name, c.Phone)
 			})
 		}),

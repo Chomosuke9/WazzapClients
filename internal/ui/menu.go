@@ -65,15 +65,20 @@ func (u *UI) updateMenu(gtx C) {
 	}
 }
 
-// markAllRead marks every unread chat read, archived ones too.
-func (u *UI) markAllRead() {
+// unreadChats are the unread chats' IDs, archived ones' too.
+func (u *UI) unreadChats() []string {
 	var ids []string
 	for _, c := range u.chats {
 		if c.Unread != 0 {
 			ids = append(ids, c.ID)
 		}
 	}
-	if len(ids) > 0 {
+	return ids
+}
+
+// markAllRead marks every unread chat read, archived ones too.
+func (u *UI) markAllRead() {
+	if ids := u.unreadChats(); len(ids) > 0 {
 		u.backend.MarkRead(ids)
 	}
 }
@@ -115,13 +120,15 @@ func (u *UI) layoutMenu(gtx C) {
 		{click: &m.newGroup, label: "New group", ic: icGroupAdd},
 		{click: &m.starred, label: "Starred messages", ic: icStar},
 		{click: &m.selChats, label: "Select chats", ic: icCheckBox},
-		{click: &m.readAll, label: "Mark all as read", ic: icChats},
-		{click: &m.appLock, label: "App lock", ic: icLockOutline},
 	}
+	if len(u.unreadChats()) > 0 {
+		items = append(items, menuEntry{click: &m.readAll, label: "Mark all as read", ic: icChats})
+	}
+	items = append(items, menuEntry{divider: true},
+		menuEntry{click: &m.appLock, label: "App lock", ic: icLockOutline})
 	if u.lockSet() {
 		items = append(items, menuEntry{click: &m.lockNow, label: "Lock app", ic: icLock})
 	}
-	items = append(items, menuEntry{divider: true})
 	switchY := -1 // the Switch account row's top, below the menu's padding
 	if len(u.accounts) > 0 {
 		switchY = (len(items)-1)*gtx.Dp(menuRowH) + gtx.Dp(menuDividerH)

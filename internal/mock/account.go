@@ -64,7 +64,7 @@ func (b *Backend) SetAbout(about string) {
 }
 
 func (b *Backend) SetProfilePhoto(string) {
-	b.emit(model.NoticeEvent{Text: "Demo mode doesn't change your profile photo."})
+	b.emit(model.NoticeEvent{Text: "Demo mode doesn't change your profile picture."})
 }
 
 func (b *Backend) SetPrivacy(key, value string) {

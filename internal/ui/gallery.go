@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"strings"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -19,8 +20,8 @@ import (
 )
 
 // The Media panel: photos and videos, documents and links from every
-// chat (the rail's Media button) or from one ("Media, links and docs" in
-// its info panel), like WhatsApp Desktop's. It slides up over the window;
+// chat (the rail's Media button); one chat's are a page of its info panel
+// (infomedia.go), like WhatsApp Desktop's. It slides up over the window;
 // pages of 60 load as it scrolls.
 
 // galleryPage is how many messages a page of the panel loads.
@@ -31,6 +32,7 @@ type galleryState struct {
 	anim   tween
 	chatID string // "" for every chat
 	name   string // the chat's name, for the subtitle
+	keys   string // what its messages' buttons' keys start with
 	tab    model.GalleryKind
 	tabX   follower // the tab underline sliding between tabs
 	oldest bool
@@ -40,6 +42,7 @@ type galleryState struct {
 	ran       string // the query the list shows
 
 	list   galleryList
+	lines  []galleryLine // this frame's (galleryLines), reused
 	scroll widget.List
 
 	selecting bool
@@ -110,8 +113,7 @@ func (g *galleryState) pickedAt(m *model.Message) int {
 }
 
 // galleryClick opens a message, or picks it in select mode.
-func (u *UI) galleryClick(m *model.Message) {
-	g := &u.gallery
+func (u *UI) galleryClick(g *galleryState, m *model.Message) {
 	if g.selecting {
 		if i := g.pickedAt(m); i >= 0 {
 			g.picked = append(g.picked[:i:i], g.picked[i+1:]...)
@@ -229,8 +231,8 @@ func (u *UI) gallerySortItems() []menuItem {
 		}
 	}
 	return []menuItem{
-		{key: "newest", label: "Newest first", tick: !g.oldest, run: set(false)},
-		{key: "oldest", label: "Oldest first", tick: g.oldest, run: set(true)},
+		{key: "newest", label: "Newest", tick: !g.oldest, run: set(false)},
+		{key: "oldest", label: "Oldest", tick: g.oldest, run: set(true)},
 	}
 }
 
@@ -292,7 +294,12 @@ func (u *UI) galleryHeader(gtx C) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	h := gtx.Dp(72)
 	w := gtx.Constraints.Max.X
-	title, sub := "Media", "Media from all chats"
+	title, sub := "Media", ""
+	for _, t := range galleryTabs {
+		if t.kind == g.tab {
+			sub = t.label + " from all chats"
+		}
+	}
 	if g.chatID != "" {
 		title, sub = "Media, links and docs", g.name
 	}
@@ -386,8 +393,110 @@ func (u *UI) galleryHeader(gtx C) D {
 	return D{Size: image.Pt(w, h)}
 }
 
-// galleryBody lists the tab's messages: a grid of pictures, or rows of
-// documents or links.
+// galleryLine is a line of the panel's list: a heading, or the messages
+// from from to to (a row of the grid, or one message).
+type galleryLine struct {
+	title, sub string
+	from, to   int
+}
+
+// galleryLines splits the loaded messages into lines of cols, under a
+// heading per period. What's from today has none at the top, as on
+// WhatsApp, and starred messages have none at all.
+func (g *galleryState) galleryLines(cols int, now time.Time) []galleryLine {
+	g.lines = g.lines[:0]
+	msgs := g.list.msgs
+	for i := 0; i < len(msgs); {
+		end := len(msgs)
+		if g.tab != model.GalleryStarred {
+			per := periodOf(msgs[i].Time, now)
+			for end = i + 1; end < len(msgs) && per.has(msgs[end].Time); {
+				end++
+			}
+			if i > 0 || per.title != "Today" {
+				g.lines = append(g.lines, galleryLine{title: per.title, sub: dateRange(per.from, per.to.AddDate(0, 0, -1))})
+			}
+		}
+		for ; i < end; i += cols {
+			g.lines = append(g.lines, galleryLine{from: i, to: min(i+cols, end)})
+		}
+		i = end
+	}
+	return g.lines
+}
+
+// galleryPeriod is the time a heading stands for: the days from from until
+// to (not included).
+type galleryPeriod struct {
+	title    string
+	from, to time.Time
+}
+
+func (p galleryPeriod) has(t time.Time) bool {
+	return !t.Before(p.from) && (t.Before(p.to) || p.title == "Today")
+}
+
+// periodOf is the heading t belongs under, as in WhatsApp's Media panel:
+// yesterday, the days a week back, the rest of this month, then a month
+// each.
+func periodOf(t, now time.Time) galleryPeriod {
+	t = t.In(now.Location())
+	midnight := func(y int, m time.Month, d int) time.Time {
+		return time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	}
+	y, m, d := now.Date()
+	today, yesterday, week := midnight(y, m, d), midnight(y, m, d-1), midnight(y, m, d-7)
+	switch month := midnight(y, m, 1); {
+	case !t.Before(today):
+		return galleryPeriod{"Today", today, midnight(y, m, d+1)}
+	case !t.Before(yesterday):
+		return galleryPeriod{"Yesterday", yesterday, today}
+	case !t.Before(week):
+		return galleryPeriod{"Last week", week, yesterday}
+	case !t.Before(month):
+		return galleryPeriod{"This month", month, week}
+	}
+	from, to := midnight(t.Year(), t.Month(), 1), midnight(t.Year(), t.Month()+1, 1)
+	if to.After(week) {
+		to = week // its last days are in "Last week"
+	}
+	return galleryPeriod{t.Month().String(), from, to}
+}
+
+// dateRange formats the days a to b: "24 November 2026", "18 – 23 November
+// 2026".
+func dateRange(a, b time.Time) string {
+	const day = "2 January 2006"
+	switch {
+	case sameDay(a, b):
+		return b.Format(day)
+	case a.Year() != b.Year():
+		return a.Format(day) + " – " + b.Format(day)
+	case a.Month() != b.Month():
+		return a.Format("2 January") + " – " + b.Format(day)
+	}
+	return a.Format("2") + " – " + b.Format(day)
+}
+
+// galleryHeading is a period over its messages.
+func (u *UI) galleryHeading(gtx C, l galleryLine) D {
+	p := u.pal
+	in := layout.Inset{Left: 30, Right: 30, Top: 24, Bottom: 10}
+	if u.gallery.tab == model.GalleryMedia {
+		in.Left = 12
+	}
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	return in.Layout(gtx, func(gtx C) D {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(u.label(16, l.title, p.Text, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
+			layout.Rigid(layout.Spacer{Height: 3}.Layout),
+			layout.Rigid(u.label(14, l.sub, p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+		)
+	})
+}
+
+// galleryBody lists the tab's messages under their dates: a grid of
+// pictures, or rows of documents or links.
 func (u *UI) galleryBody(gtx C) D {
 	defer u.mediaGallery.track(gtx, u)
 	g := &u.gallery
@@ -409,31 +518,36 @@ func (u *UI) galleryBody(gtx C) D {
 	if g.tab == model.GalleryMedia {
 		cols = max(2, (sz.X+gtx.Dp(120))/gtx.Dp(240))
 	}
-	n := (len(l.msgs) + cols - 1) / cols
+	lines := g.galleryLines(cols, u.now())
+	n := len(lines)
 	gtx.Constraints.Min = sz
 	return u.scrollList(gtx, &g.scroll, n, func(gtx C, i int) D {
 		if i == n-1 {
 			l.next(u.backend) // the last row is in view: load the next page
 		}
+		ln := lines[i]
+		if ln.title != "" {
+			return u.galleryHeading(gtx, ln)
+		}
 		switch g.tab {
 		case model.GalleryStarred:
-			return u.starredRow(gtx, l.msgs[i], true)
+			return u.starredRow(gtx, l.msgs[ln.from], true)
 		case model.GalleryDocs, model.GalleryLinks:
-			return u.galleryRow(gtx, l.msgs[i])
+			return u.galleryRow(gtx, g, l.msgs[ln.from])
 		}
 		gap := gtx.Dp(3)
 		w := gtx.Constraints.Max.X
 		tile := (w - (cols-1)*gap) / cols
 		for c := range cols {
-			k := i*cols + c
-			if k >= len(l.msgs) {
+			k := ln.from + c
+			if k >= ln.to {
 				break
 			}
 			func() {
 				defer op.Offset(image.Pt(c*(tile+gap), 0)).Push(gtx.Ops).Pop()
 				tg := gtx
 				tg.Constraints = layout.Exact(image.Pt(tile, tile))
-				u.galleryTile(tg, l.msgs[k])
+				u.galleryTile(tg, g, l.msgs[k])
 			}()
 		}
 		return D{Size: image.Pt(w, tile+gap)}
@@ -456,13 +570,12 @@ func (u *UI) galleryWho(m *model.Message) string {
 }
 
 // galleryTile is one picture or video of the grid.
-func (u *UI) galleryTile(gtx C, m *model.Message) D {
-	g := &u.gallery
+func (u *UI) galleryTile(gtx C, g *galleryState, m *model.Message) D {
 	p := u.pal
 	sz := gtx.Constraints.Max
-	c := u.btn("gal:m:" + galleryKey(m))
+	c := u.btn(g.keys + "gal:m:" + galleryKey(m))
 	if c.Clicked(gtx) {
-		u.galleryClick(m)
+		u.galleryClick(g, m)
 		if !g.selecting {
 			u.viewer.origin = u.viewerOrigin(gtx, c, sz)
 		}
@@ -532,12 +645,11 @@ func (u *UI) galleryTile(gtx C, m *model.Message) D {
 }
 
 // galleryRow is a document or a link, with who sent it and when.
-func (u *UI) galleryRow(gtx C, m *model.Message) D {
-	g := &u.gallery
+func (u *UI) galleryRow(gtx C, g *galleryState, m *model.Message) D {
 	p := u.pal
-	c := u.btn("gal:m:" + galleryKey(m))
+	c := u.btn(g.keys + "gal:m:" + galleryKey(m))
 	if c.Clicked(gtx) {
-		u.galleryClick(m)
+		u.galleryClick(g, m)
 	}
 	title, sub := m.FileName, docInfo(m)
 	pic := func(gtx C) D {

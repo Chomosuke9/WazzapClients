@@ -1602,7 +1602,7 @@ const PrefKeepDeleted = "keep_deleted"
 // and screenshots of it aren't blocked.
 const PrefViewOnceReplay = "view_once_replay"
 
-// Pref keys of Settings > Storage's automatic downloads: whether media of
+// Pref keys of Settings > Chats > Media auto-download: whether media of
 // a kind downloads by itself.
 const (
 	PrefAutoPhotos    = "autodl_photos"    // on unless "off"; pictures download as they show

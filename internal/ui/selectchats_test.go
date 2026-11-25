@@ -44,7 +44,7 @@ func TestChatRowMenu(t *testing.T) {
 	for _, it := range u.chatMenuItems(u.chatByID("rina")) {
 		labels = append(labels, it.label)
 	}
-	want := []string{"Archive chat", "Unmute notifications", "Unpin chat", "Mark as unread", "Add to favourites",
+	want := []string{"Archive chat", "Unmute notifications", "Unpin chat", "Mark as unread", "Add to Favourites",
 		"Add to list", "", "Block", "Clear chat", "Delete chat"}
 	// The demo's Rina may be muted or not, favourite or not, unread or not:
 	// compare the order of what's there.
@@ -57,8 +57,8 @@ func TestChatRowMenu(t *testing.T) {
 			l = "Unpin chat"
 		case "Mark as read":
 			l = "Mark as unread"
-		case "Remove from favourites":
-			l = "Add to favourites"
+		case "Remove from Favourites":
+			l = "Add to Favourites"
 		}
 		got = append(got, l)
 	}
@@ -109,7 +109,7 @@ func TestSelectChats(t *testing.T) {
 	if u.ctx.kind != ctxPickMute || !u.sidebar.pick.on {
 		t.Fatalf("Mute opened menu %v, select mode %v", u.ctx.kind, u.sidebar.pick.on)
 	}
-	u.pickMuteItems()[2].run() // Mute always
+	u.pickMuteItems()[2].run() // Always
 	frame()
 	if !u.chatByID("rina").Muted || !u.chatByID("work").Muted {
 		t.Error("Mute always didn't mute both chats")

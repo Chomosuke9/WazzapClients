@@ -29,8 +29,8 @@ import (
 // one of the Themes sets both (the wallpaper follows the scheme); Chat
 // bubble changes the bubbles alone and Wallpaper the wallpaper alone: a
 // theme's, a plain color (with or without doodles) or a photo of yours.
-// Every chat takes the look set for all chats (Settings > Appearance > Chat
-// theme) until it gets one of its own. The tables are in chatthemes.go.
+// Every chat takes the look set for all chats (Settings > Chats > Default
+// chat theme) until it gets one of its own. The tables are in chatthemes.go.
 
 type schemeKind uint8
 
@@ -72,8 +72,9 @@ type solidWall struct {
 // lookAll for every chat's. Its value is the scheme's ID, then "|" and the
 // wallpaper when that doesn't follow the scheme (wallFollow): "default",
 // "theme:<theme ID>", "color:<index in solidWalls>" or "photo:<file in
-// wallpaperDir>". A chat without a value takes lookAll's; "|" is a chat
-// set back to the app's own look.
+// wallpaperDir>". A third part says the wallpaper's doodles: "bare" draws
+// none and "doodles" some, whatever prefDoodles says. A chat without a
+// value takes lookAll's; "|" is a chat set back to the app's own look.
 const (
 	prefChatTheme = "theme:"
 	lookAll       = "*"
@@ -83,7 +84,26 @@ const (
 type chatLook struct {
 	scheme int
 	wall   string // "" follows the scheme
-	bare   bool   // no doodles on the wallpaper
+	// The doodles on the wallpaper: none (bare), some (doodles), or as
+	// prefDoodles says (neither).
+	bare, doodles bool
+}
+
+// bareWall reports whether look l draws no doodles: as it says itself, or
+// as prefDoodles does.
+func (u *UI) bareWall(l chatLook) bool { return l.bare || !l.doodles && !u.doodles }
+
+// setDoodles turns the wallpaper's doodles on or off in every chat whose
+// own theme doesn't say: the Default chat theme's switch, and the
+// Performance page's.
+func (u *UI) setDoodles(on bool) {
+	setPref(u.backend, prefDoodles, on)
+	u.doodles = on
+	if l := u.lookOf(lookAll); l.bare || l.doodles {
+		l.bare, l.doodles = false, false // older versions kept it there
+		u.setLook(lookAll, l)
+	}
+	u.lookPal = lookPal{}
 }
 
 // oldChatThemes are the themes kept before WhatsApp's and the ones they
@@ -123,8 +143,9 @@ func (u *UI) lookOf(id string) chatLook {
 		l = u.lookOf(lookAll)
 	} else {
 		scheme, wall, _ := strings.Cut(v, "|")
-		wall, bare, _ := strings.Cut(wall, "|")
-		l = chatLook{schemeIndex(scheme), wall, bare != ""}
+		wall, doodles, _ := strings.Cut(wall, "|")
+		l = chatLook{scheme: schemeIndex(scheme), wall: wall,
+			bare: doodles != "" && doodles != "doodles", doodles: doodles == "doodles"}
 	}
 	u.themes[id] = l
 	return l
@@ -133,11 +154,14 @@ func (u *UI) lookOf(id string) chatLook {
 // setLook keeps chat id's look.
 func (u *UI) setLook(id string, l chatLook) {
 	v := chatThemes[l.scheme].id
-	if l.wall != "" || l.bare {
+	if l.wall != "" || l.bare || l.doodles {
 		v += "|" + l.wall
 	}
-	if l.bare {
+	switch {
+	case l.bare:
 		v += "|bare"
+	case l.doodles:
+		v += "|doodles"
 	}
 	if v == "" && id != lookAll && u.backend.Pref(prefChatTheme+lookAll) != "" {
 		v = "|" // the app's look, not every chat's
@@ -153,12 +177,16 @@ func (u *UI) chatThemeOf(id string) int { return u.lookOf(id).scheme }
 // setChatTheme gives a chat one of the Themes: its scheme, and the
 // wallpaper that goes with it.
 func (u *UI) setChatTheme(id string, i int) {
-	u.setLook(id, chatLook{scheme: i, bare: u.lookOf(id).bare})
+	l := u.lookOf(id)
+	u.setLook(id, chatLook{scheme: i, bare: l.bare, doodles: l.doodles})
 }
 
 // resetLook gives chat id the default look again: every chat's, or for
 // lookAll the app's own.
 func (u *UI) resetLook(id string) {
+	if id == lookAll {
+		u.setDoodles(true)
+	}
 	u.backend.SetPref(prefChatTheme+id, "")
 	u.themes = nil
 	u.lookPal = lookPal{}
@@ -331,11 +359,11 @@ func (u *UI) lookPalette(l chatLook) *Palette {
 		return c.pal
 	}
 	p := u.themed(chatThemes[l.scheme])
-	if l.wall != "" || l.bare {
+	if bare := u.bareWall(l); l.wall != "" || bare {
 		w := u.wallOf(p, l)
 		q := *p // p may be the app's palette, or a palette's kept one
 		p = &q
-		p.ChatBg, p.Doodle, p.Plain, p.WallPhoto, p.WallFocus = w.bg, w.doodle, w.plain || l.bare, w.photo, w.focus
+		p.ChatBg, p.Doodle, p.Plain, p.WallPhoto, p.WallFocus = w.bg, w.doodle, w.plain || bare, w.photo, w.focus
 	}
 	u.lookPal = lookPal{l, u.pal, p}
 	return p
@@ -368,7 +396,7 @@ func (u *UI) layoutWallpaper(gtx C) {
 			return
 		}
 	}
-	u.conv.wallpaper.layout(gtx, p.ChatBg, p.Doodle, u.doodles && !p.Plain)
+	u.conv.wallpaper.layout(gtx, p.ChatBg, p.Doodle, !p.Plain)
 }
 
 // Chat theme: a panel beside the open chat, in the info panel's place,
@@ -558,7 +586,7 @@ func (u *UI) themePages(gtx C, id string, w int) (string, []layout.Widget) {
 		return "Photo position", u.wallPosRows(gtx, id, w)
 	}
 	if id == lookAll {
-		return "Chat theme for all chats", u.themeRows(gtx, id, w)
+		return "Default chat theme", u.themeRows(gtx, id, w)
 	}
 	return "Chat theme", u.themeRows(gtx, id, w)
 }
@@ -715,8 +743,15 @@ func (u *UI) themeRows(gtx C, id string, w int) []layout.Widget {
 		set[1] = l.scheme // the chat's own theme is always among them
 	}
 	if u.btn("theme:doodles").Clicked(gtx) {
-		l.bare = !l.bare
-		u.setLook(id, l)
+		on := u.bareWall(l)
+		if id == lookAll {
+			u.setDoodles(on)
+		} else {
+			// As every chat's are, or apart from them.
+			l.bare, l.doodles = !on && u.doodles, on && !u.doodles
+			u.setLook(id, l)
+		}
+		l = u.lookOf(id)
 	}
 	rows := []layout.Widget{func(gtx C) D {
 		return layout.Inset{Top: 8, Bottom: 18}.Layout(gtx, func(gtx C) D {
@@ -749,7 +784,7 @@ func (u *UI) themeRows(gtx C, id string, w int) []layout.Widget {
 		func(gtx C) D {
 			return layout.Inset{Top: 6}.Layout(gtx, func(gtx C) D {
 				return u.themeRow(gtx, "theme:doodles", icDoodles, "WhatsApp doodles", func(gtx C) D {
-					return u.themeSwitch(gtx, "theme:doodles", !l.bare)
+					return u.themeSwitch(gtx, "theme:doodles", !u.bareWall(l))
 				})
 			})
 		},
@@ -1033,7 +1068,7 @@ func (u *UI) wallRows(gtx C, id string, w int) []layout.Widget {
 					drawIcon(gtx, icEdit, 16, rgb(0xffffff))
 					t.Pop()
 				}
-			} else if !lp.plain && u.doodles {
+			} else if !lp.plain && !u.bareWall(l) {
 				// Rings in the doodles' color hint at the pattern.
 				step := gtx.Dp(20)
 				for y := step; y < sz.Y-step/2; y += step {

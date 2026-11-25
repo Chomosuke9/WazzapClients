@@ -17,14 +17,14 @@ func TestSettingsSearch(t *testing.T) {
 	var found *settingsHit
 	for i, h := range u.settings.hits {
 		if h.title == "Wallpaper doodles" && found == nil {
-			found = &u.settings.hits[i] // Performance has it too, after
+			found = &u.settings.hits[i]
 		}
 	}
-	if found == nil || found.category != settingAppearance {
+	if found == nil || found.category != settingPerformance {
 		t.Fatalf("hits for wallpaper: %+v", u.settings.hits)
 	}
-	if u.settings.hits[0].key != "" || u.settings.hits[0].category != settingAppearance {
-		t.Fatalf("Appearance (by its description) should come first: %+v", u.settings.hits)
+	if u.settings.hits[0].key != "" || u.settings.hits[0].category != settingChats {
+		t.Fatalf("Chats (by its description) should come first: %+v", u.settings.hits)
 	}
 	u.settings.search.SetText("microphone")
 	st.frame()
@@ -55,7 +55,10 @@ func TestAutoPhotosOff(t *testing.T) {
 	if !u.photoWanted(in) {
 		t.Fatal("photos download by default")
 	}
-	u.openSettings(settingStorage)
+	u.ShowPage("storage")
+	if u.settingsTitle() != "Media auto-download" {
+		t.Fatalf("storage opened %q", u.settingsTitle())
+	}
 	settingRowByKey(t, u, model.PrefAutoPhotos).run()
 	if u.autoPhotos || st.b.Pref(model.PrefAutoPhotos) != "off" {
 		t.Fatal("the Photos switch didn't turn them off")

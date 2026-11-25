@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"time"
 
 	"gioui.org/op"
@@ -20,6 +21,34 @@ func muteStatus(c *model.Chat) string {
 		return "Muted always"
 	}
 	return "Muted until " + c.MuteUntil.Format("02/01/2006 15:04")
+}
+
+// muteRow is a chat's mute in its menus: a submenu of WhatsApp's
+// durations, or unmuting.
+func (u *UI) muteRow(c *model.Chat) menuItem {
+	b, id := u.backend, c.ID
+	if c.Muted {
+		return menuItem{key: "mute", ic: icBellLine, label: "Unmute notifications", sub: muteStatus(c), run: func() { b.SetMuted(id, false, 0) }}
+	}
+	mute := func(d time.Duration) func() { return func() { b.SetMuted(id, true, d) } }
+	return menuItem{key: "mute", ic: icMuted, label: "Mute notifications", arrow: true, more: func() []menuItem {
+		return []menuItem{
+			{key: "8h", label: "8 hours", run: mute(8 * time.Hour)},
+			{key: "week", label: "1 week", run: mute(7 * 24 * time.Hour)},
+			{key: "always", label: "Always", run: mute(0)},
+		}
+	}}
+}
+
+// listsRow is a chat's lists in its menus, a submenu of checkboxes.
+func (u *UI) listsRow(c *model.Chat) menuItem {
+	label := "Add to list"
+	for _, l := range u.ctx.all {
+		if slices.Contains(l.Chats, c.ID) {
+			label = "Change list"
+		}
+	}
+	return menuItem{key: "lists", ic: icAddToList, label: label, arrow: true, more: func() []menuItem { return u.listItems(c) }}
 }
 
 // openMuteMenu opens the mute choices at the pointer.

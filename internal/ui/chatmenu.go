@@ -17,7 +17,7 @@ import (
 // openConvMenu opens the conversation header's ⋮ menu at the pointer.
 func (u *UI) openConvMenu() {
 	if c := u.selected; c != nil {
-		u.ctx = ctxMenu{kind: ctxConv, chatID: c.ID, at: u.mouse}
+		u.ctx = ctxMenu{kind: ctxConv, chatID: c.ID, at: u.mouse, all: u.backend.Lists()}
 	}
 }
 
@@ -49,25 +49,23 @@ func (u *UI) convMenuItems(c *model.Chat) []menuItem {
 	}
 	add(menuItem{key: "search", ic: icSearch, label: "Search", run: u.openChatSearch})
 	add(menuItem{key: "select", ic: icCheckBox, label: "Select messages", run: u.startSelectNone})
-	if c.Muted {
-		add(menuItem{key: "mute", ic: icBellLine, label: "Unmute notifications", sub: muteStatus(c), run: func() { b.SetMuted(id, false, 0) }})
-	} else {
-		add(menuItem{key: "mute", ic: icMuted, label: "Mute notifications", run: func() { u.openMuteMenu(c) }})
+	if !c.Self || c.Muted {
+		add(u.muteRow(c))
 	}
 	if !c.Left {
 		add(menuItem{key: "timer", glyph: disappearingIcon, label: "Disappearing messages", run: func() { u.openTimerMenu(c) }})
 	}
 	add(menuItem{key: "theme", ic: icPalette, label: "Chat theme", run: func() { u.openChatTheme(c) }})
 	if c.Favorite {
-		add(menuItem{key: "fav", ic: icHeart, label: "Remove from favourites", run: func() { b.SetFavorite(id, false) }})
+		add(menuItem{key: "fav", ic: icHeart, label: "Remove from Favourites", run: func() { b.SetFavorite(id, false) }})
 	} else {
-		add(menuItem{key: "fav", ic: icHeart, label: "Add to favourites", run: func() { b.SetFavorite(id, true) }})
+		add(menuItem{key: "fav", ic: icHeart, label: "Add to Favourites", run: func() { b.SetFavorite(id, true) }})
 	}
-	add(menuItem{key: "list", ic: icAddToList, label: "Add to list", run: func() { u.openListsMenu(c) }})
+	add(u.listsRow(c))
 	add(menuItem{key: "export", ic: icDownload, label: "Export chat", run: func() { u.exportChat(id) }})
 	add(menuItem{key: "close", ic: icCancel, label: "Close chat", run: u.closeChat})
 	add(menuItem{divider: true})
-	if !c.IsGroup && !c.Self {
+	if !c.IsGroup && !c.Self && !isAgentID(id) {
 		add(menuItem{key: "report", ic: icThumbDown, label: "Report", run: u.reportUnsupported})
 		add(menuItem{key: "block", ic: icBlock, label: "Block", run: func() { u.confirmBlock(id, c.Name) }})
 	}
@@ -114,7 +112,7 @@ var timerChoices = []struct {
 	{"Off", 0}, {"24 hours", 24 * time.Hour}, {"7 days", 7 * 24 * time.Hour}, {"90 days", 90 * 24 * time.Hour},
 }
 
-// openTimerMenu opens the disappearing message timers at the pointer.
+// openTimerMenu opens the info panel's page of disappearing message timers.
 func (u *UI) openTimerMenu(c *model.Chat) {
 	if c.IsGroup {
 		if info := u.backend.Info(c.ID); info != nil && info.Locked && len(info.Members) > 0 && !u.isAdminIn(info) {
@@ -122,7 +120,10 @@ func (u *UI) openTimerMenu(c *model.Chat) {
 			return
 		}
 	}
-	u.ctx = ctxMenu{kind: ctxTimer, chatID: c.ID, at: u.mouse}
+	if !u.info.open || u.info.chatID != c.ID {
+		u.openInfo(c.ID)
+	}
+	u.openInfoSub(infoTimer)
 }
 
 // isAdminIn reports whether you administer the group info describes.
@@ -133,21 +134,6 @@ func (u *UI) isAdminIn(info *model.ChatInfo) bool {
 		}
 	}
 	return false
-}
-
-// timerItems lists the timers with the chat's ticked.
-func (u *UI) timerItems(c *model.Chat) []menuItem {
-	var cur uint32
-	if info := u.timerInfo(c.ID); info != nil {
-		cur = info.Disappearing
-	}
-	items := []menuItem{{note: true, label: "New messages will disappear from this chat after the selected duration."}}
-	for _, t := range timerChoices {
-		d := t.d
-		items = append(items, menuItem{key: t.label, label: t.label, tick: uint32(d/time.Second) == cur,
-			run: func() { u.backend.SetDisappearing(c.ID, d) }})
-	}
-	return items
 }
 
 // timerInfo is the chat's info for its timer: the open panel's, or the

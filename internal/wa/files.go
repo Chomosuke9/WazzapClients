@@ -105,7 +105,7 @@ func (b *Backend) HasMediaFile(m *model.Message) bool {
 }
 
 // autoDownload starts the download of a message that just arrived when
-// Settings > Storage downloads its kind of media by itself. Pictures are
+// Settings > Chats downloads its kind of media by itself. Pictures are
 // left to MediaData, which downloads them as they show.
 func (b *Backend) autoDownload(m *model.Message) {
 	switch m.Media {

@@ -33,11 +33,16 @@ func (u *UI) openNewEvent() {
 	for _, ed := range []*widget.Editor{&ev.name, &ev.place, &ev.date, &ev.time, &ev.endDate, &ev.endTime} {
 		ed.SingleLine, ed.Submit = true, true
 	}
-	// WhatsApp suggests the next whole hour.
-	start := u.now().Local().Truncate(time.Hour).Add(time.Hour)
+	start := eventStart(u.now().Local())
 	ev.date.SetText(start.Format("2006-01-02"))
 	ev.time.SetText(start.Format("15:04"))
 	u.requestFocus(&ev.name)
+}
+
+// eventStart is the start WhatsApp Web suggests: tomorrow, at the next
+// half hour.
+func eventStart(now time.Time) time.Time {
+	return time.Date(now.Year(), now.Month(), now.Day()+1, now.Hour(), (now.Minute()/30+1)*30, 0, 0, now.Location())
 }
 
 // parseLocal reads a date and time typed in the dialog.
@@ -137,21 +142,19 @@ func (u *UI) newEventPanel(gtx C) D {
 		}
 	}
 	rows := []layout.Widget{
-		heading("Event"),
 		field(&ev.name, "Event name"),
 		field(&ev.desc, "Description (optional)"),
 		heading("Start date and time"),
 		when(&ev.date, &ev.time, !startOK),
-		func(gtx C) D { return u.pollCheck(gtx, "event:ends", "Add end time", ev.ends) },
 	}
 	if ev.ends {
-		rows = append(rows, when(&ev.endDate, &ev.endTime, !endOK))
+		rows = append(rows, heading("End date and time"), when(&ev.endDate, &ev.endTime, !endOK))
 	}
 	rows = append(rows,
-		heading("Location"),
+		func(gtx C) D { return u.eventEndRow(gtx, ev.ends) },
 		field(&ev.place, "Location (optional)"),
-		heading("Settings"),
-		func(gtx C) D { return u.pollCheck(gtx, "event:guests", "Allow guests", ev.guests) },
+		// WhatsApp Web doesn't have it; its phones do.
+		func(gtx C) D { return u.pollSwitch(gtx, "event:guests", "Allow guests", ev.guests) },
 	)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D { return u.formHeader(gtx, "event:close", "Create event") }),
@@ -160,4 +163,28 @@ func (u *UI) newEventPanel(gtx C) D {
 		}),
 		layout.Rigid(func(gtx C) D { return u.formSend(gtx, "event:send", ok) }),
 	)
+}
+
+// eventEndRow adds the event's end, or takes it out again.
+func (u *UI) eventEndRow(gtx C, ends bool) D {
+	p := u.pal
+	ic, label := icAdd, "Add end time"
+	if ends {
+		ic, label = icClose, "Remove end time"
+	}
+	c := u.btn("event:ends")
+	return clickable(gtx, c, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return background(gtx, mix(p.Dialog, p.Hover, u.hover(gtx, c)), 0, func(gtx C) D {
+			return vcenter(gtx, gtx.Dp(44), func(gtx C) D {
+				return layout.Inset{Left: 24, Right: 24}.Layout(gtx, func(gtx C) D {
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(iconW(ic, 20, p.Text)),
+						layout.Rigid(layout.Spacer{Width: 8}.Layout),
+						layout.Flexed(1, u.label(15, label, p.Text, labelOpts{maxLines: 1}).Layout),
+					)
+				})
+			})
+		})
+	})
 }

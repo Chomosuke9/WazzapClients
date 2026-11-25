@@ -931,20 +931,17 @@ func (u *UI) pollPanel(gtx C) D {
 		func(gtx C) D { return u.pollField(gtx, &pl.question, "Ask question") },
 		heading("Options"),
 	}
-	for i, ed := range pl.options {
-		hint := "Add"
-		if i < 2 {
-			hint = "Add option"
-		}
+	for _, ed := range pl.options {
 		rows = append(rows, func(gtx C) D {
-			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return u.pollField(gtx, ed, hint) })
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return u.pollField(gtx, ed, "Add text") })
 		})
 	}
 	rows = append(rows,
-		heading("Settings"),
-		func(gtx C) D { return u.pollCheck(gtx, "poll:multi", "Allow multiple answers", pl.multiple) },
-		func(gtx C) D { return u.pollCheck(gtx, "poll:hide", "Hide voter names", pl.hide) },
-		func(gtx C) D { return u.pollCheck(gtx, "poll:ends", "Set end time", pl.ends) },
+		layout.Spacer{Height: 8}.Layout,
+		func(gtx C) D { return u.pollSwitch(gtx, "poll:multi", "Allow multiple answers", pl.multiple) },
+		// WhatsApp Web has neither of these; its phones do.
+		func(gtx C) D { return u.pollSwitch(gtx, "poll:hide", "Hide voter names", pl.hide) },
+		func(gtx C) D { return u.pollSwitch(gtx, "poll:ends", "Set end time", pl.ends) },
 	)
 	if pl.ends {
 		_, valid := pl.end(now)
@@ -1003,9 +1000,23 @@ func (u *UI) formSend(gtx C, key string, ok bool) D {
 	})
 }
 
-// pollCheck is a row of the poll dialog's settings that a click turns on
-// and off.
+// pollCheck is a row of a dialog's settings that a click turns on and off.
 func (u *UI) pollCheck(gtx C, key, label string, on bool) D {
+	box, col := icCheckBoxEmpty, u.pal.TextSecondary
+	if on {
+		box, col = icCheckBox, u.pal.Green
+	}
+	return u.formRow(gtx, key, label, iconW(box, 24, col))
+}
+
+// pollSwitch is pollCheck with a switch, as the poll and event dialogs
+// have.
+func (u *UI) pollSwitch(gtx C, key, label string, on bool) D {
+	return u.formRow(gtx, key, label, func(gtx C) D { return u.themeSwitch(gtx, key, on) })
+}
+
+// formRow is a clickable row of a dialog: its label, and end on the right.
+func (u *UI) formRow(gtx C, key, label string, end layout.Widget) D {
 	p := u.pal
 	cl := u.btn(key)
 	return clickable(gtx, cl, func(gtx C) D {
@@ -1013,13 +1024,9 @@ func (u *UI) pollCheck(gtx C, key, label string, on bool) D {
 		return background(gtx, mix(p.Dialog, p.Hover, u.hover(gtx, cl)), 0, func(gtx C) D {
 			return vcenter(gtx, gtx.Dp(56), func(gtx C) D {
 				return layout.Inset{Left: 24, Right: 24}.Layout(gtx, func(gtx C) D {
-					box, col := icCheckBoxEmpty, p.TextSecondary
-					if on {
-						box, col = icCheckBox, p.Green
-					}
 					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 						layout.Flexed(1, u.label(15, label, p.Text, labelOpts{maxLines: 1}).Layout),
-						layout.Rigid(iconW(box, 24, col)),
+						layout.Rigid(end),
 					)
 				})
 			})

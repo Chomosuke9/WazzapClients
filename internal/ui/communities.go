@@ -11,9 +11,8 @@ import (
 )
 
 type communityState struct {
-	add, create widget.Clickable
-	list        widget.List
-	expanded    map[string]bool // communities showing all their groups
+	list     widget.List
+	expanded map[string]bool // communities showing all their groups
 }
 
 // communityGroupsShown is how many linked groups a collapsed community
@@ -21,23 +20,22 @@ type communityState struct {
 const communityGroupsShown = 2
 
 type communityEntry struct {
-	kind      int // entryNew, entryHeader, entryGroup, entryViewAll, entryDivider
+	kind      int // entryHeader, entryGroup, entryViewAll, entryEnd, entryDivider
 	community *model.Community
 	chat      *model.Chat
 	announce  bool
-	more      bool // a "View all" that hides joined groups
 }
 
 const (
-	entryNew = iota
-	entryHeader
+	entryHeader = iota
 	entryGroup
 	entryViewAll
+	entryEnd // the margin of a community without "View all"
 	entryDivider
 )
 
 func (u *UI) communityEntries() []communityEntry {
-	entries := []communityEntry{{kind: entryNew}}
+	var entries []communityEntry
 	for i, c := range u.communities {
 		if i > 0 {
 			entries = append(entries, communityEntry{kind: entryDivider})
@@ -52,17 +50,21 @@ func (u *UI) communityEntries() []communityEntry {
 				groups = append(groups, ch)
 			}
 		}
-		more := false
-		if !u.commun.expanded[c.ID] && len(groups) > communityGroupsShown {
+		more := len(groups) > communityGroupsShown
+		if more && !u.commun.expanded[c.ID] {
 			groups = groups[:communityGroupsShown]
-			more = true
 		}
 		for _, ch := range groups {
 			entries = append(entries, communityEntry{kind: entryGroup, community: c, chat: ch})
 		}
-		// WhatsApp always offers the full list, which includes groups you
-		// haven't joined.
-		entries = append(entries, communityEntry{kind: entryViewAll, community: c, more: more})
+		// WhatsApp always offers View all, which opens the community's home.
+		// Ours unfolds the groups you're in, so it shows only when some are
+		// folded.
+		end := entryEnd
+		if more {
+			end = entryViewAll
+		}
+		entries = append(entries, communityEntry{kind: end, community: c})
 	}
 	return entries
 }
@@ -73,9 +75,16 @@ func (u *UI) layoutCommunityList(gtx C) D {
 	entries := u.communityEntries()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			return u.pageHeader(gtx, "Communities", u.headerButton(&u.commun.add, icAddCircle, 27))
+			return u.pageHeader(gtx, "Communities")
 		}),
 		layout.Flexed(1, func(gtx C) D {
+			if len(entries) == 0 {
+				return layout.Inset{Left: 27, Right: 27, Top: 20}.Layout(gtx, func(gtx C) D {
+					l := u.label(15.2, "No communities yet. The ones you create or join on your phone show here.", u.pal.TextSecondary)
+					l.MaxLines = 0
+					return l.Layout(gtx)
+				})
+			}
 			return u.scrollList(gtx, &u.commun.list, len(entries), func(gtx C, i int) D {
 				return u.layoutCommunityEntry(gtx, entries[i])
 			})
@@ -86,15 +95,17 @@ func (u *UI) layoutCommunityList(gtx C) D {
 func (u *UI) layoutCommunityEntry(gtx C, e communityEntry) D {
 	p := u.pal
 	switch e.kind {
-	case entryNew:
-		return layout.Inset{Top: 3.5}.Layout(gtx, func(gtx C) D {
-			return u.simpleRow(gtx, &u.commun.create, func(gtx C) D {
-				return roundedSquare(gtx, 51, 10, p.Green, icGroupsFill, 30, rgb(0xffffff))
-			}, "New community", font.Normal)
-		})
 	case entryHeader:
+		// The name opens the announcements, once there are some.
 		click := u.btn("community:" + e.community.ID)
+		ch := u.chatByID(e.community.Announcements)
+		if ch != nil && click.Clicked(gtx) {
+			u.open(ch)
+		}
 		defer u.hiding(gtx, "community:"+e.community.ID, click.Hovered())()
+		if ch == nil {
+			click = nil
+		}
 		return u.simpleRow(gtx, click, func(gtx C) D {
 			return u.avatarOf(gtx, e.community.ID, avatarCommunity, 52)
 		}, e.community.Name, font.SemiBold)
@@ -125,7 +136,7 @@ func (u *UI) layoutCommunityEntry(gtx C, e communityEntry) D {
 		return u.chatRow(gtx, c, o)
 	case entryViewAll:
 		click := u.btn("viewall:" + e.community.ID)
-		if click.Clicked(gtx) && (e.more || u.commun.expanded[e.community.ID]) {
+		if click.Clicked(gtx) {
 			if u.commun.expanded == nil {
 				u.commun.expanded = map[string]bool{}
 			}
@@ -138,6 +149,8 @@ func (u *UI) layoutCommunityEntry(gtx C, e communityEntry) D {
 		return layout.Inset{Left: 91.5, Top: 17, Bottom: 29}.Layout(gtx, func(gtx C) D {
 			return clickable(gtx, click, u.label(16.7, label, p.Green).Layout)
 		})
+	case entryEnd:
+		return layout.Spacer{Height: 17}.Layout(gtx)
 	case entryDivider:
 		return layout.Inset{Left: 21, Right: 34, Bottom: 7}.Layout(gtx, func(gtx C) D {
 			h := max(1, gtx.Dp(1))
@@ -148,13 +161,17 @@ func (u *UI) layoutCommunityEntry(gtx C, e communityEntry) D {
 	return D{}
 }
 
-// simpleRow is a hoverable row with a picture and a single line of text.
+// simpleRow is a hoverable row with a picture and a single line of text. A
+// nil c makes it a plain one.
 func (u *UI) simpleRow(gtx C, c *widget.Clickable, pic layout.Widget, title string, weight font.Weight) D {
 	p := u.pal
 	return layout.Inset{Left: 13, Right: 18, Top: 2, Bottom: 2}.Layout(gtx, func(gtx C) D {
-		return clickable(gtx, c, func(gtx C) D {
+		row := func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			bg := mix(p.Panel, p.Hover, u.hover(gtx, c))
+			bg := p.Panel
+			if c != nil {
+				bg = mix(p.Panel, p.Hover, u.hover(gtx, c))
+			}
 			return background(gtx, bg, 10, func(gtx C) D {
 				return vcenter(gtx, gtx.Dp(76.3), func(gtx C) D {
 					return layout.Inset{Left: 11, Right: 14}.Layout(gtx, func(gtx C) D {
@@ -166,6 +183,10 @@ func (u *UI) simpleRow(gtx C, c *widget.Clickable, pic layout.Widget, title stri
 					})
 				})
 			})
-		})
+		}
+		if c == nil {
+			return row(gtx)
+		}
+		return clickable(gtx, c, row)
 	})
 }

@@ -37,6 +37,8 @@ var bundled = []struct {
 }{
 	{"Noto Color Emoji", "https://github.com/googlefonts/noto-emoji", "font, for tests and previews (the app downloads it)",
 		[]string{"internal/ui/testdata/LICENSE-NotoColorEmoji"}},
+	{"Roboto", "https://github.com/googlefonts/roboto-3-classic", "font, for text where Segoe UI isn't installed",
+		[]string{"internal/ui/fonts/Roboto-OFL.txt"}},
 	{"Anton", "https://github.com/googlefonts/AntonFont", "font, for sticker text",
 		[]string{"internal/sticker/fonts/Anton-OFL.txt"}},
 	{"Material Symbols", "https://github.com/marella/material-symbols", "icons and wallpaper doodles",

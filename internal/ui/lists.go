@@ -1,24 +1,28 @@
 package ui
 
 import (
+	"strings"
+
 	"gioui.org/layout"
+	"gioui.org/widget"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
 
 // Custom chat lists as filter chips: WhatsApp adds one chip per list after
-// All, Unread, Favourites and Groups, then a "+" that makes a new one.
+// All, Unread, Favourites and Groups, then ▾, whose menu makes a new one:
+// the Create new list page, in the New chat panel.
 
 // chipItem is one chip of the filter row.
 type chipItem struct {
 	name   string
 	filter int    // filterAll... or filterList
 	list   string // filterList's list ID
-	add    bool   // the "+" chip
+	add    bool   // New list
 }
 
-// chipItems lists the filter row's chips, in order. The buffer is reused
-// every frame.
+// chipItems lists the filter row's chips, in order, New list last. The
+// buffer is reused every frame.
 func (u *UI) chipItems() []chipItem {
 	out := u.sidebar.chipBuf[:0]
 	for i, name := range filterNames {
@@ -42,7 +46,7 @@ func (u *UI) activeChip(items []chipItem) int {
 	return 0
 }
 
-// pickChip turns on a chip's filter, or opens New list for the "+".
+// pickChip turns on a chip's filter, or opens Create new list.
 func (u *UI) pickChip(it chipItem) {
 	if it.add {
 		u.openNewList(nil)
@@ -102,24 +106,167 @@ func (u *UI) inOpenList(id string) bool {
 	return s.listSet[id]
 }
 
-// openNewList opens the New list dialog: a name, then the chats to put in
-// it. chats are picked already.
+// openNewList slides the Create new list page in over the chat list, with
+// chats picked already.
 func (u *UI) openNewList(chats []string) {
-	u.dialog = dialogState{kind: dialogForward, newList: true, picked: chats}
-	u.dialog.search.SingleLine = true
-	u.dialog.listName.SingleLine = true
-	u.dialog.list.Axis = layout.Vertical
-	u.requestFocus(&u.dialog.listName)
+	nc := &u.newChat
+	u.newChatPage()
+	nc.start(nil)
+	nc.step, nc.base = ncList, ncList
+	nc.listPicked = chats
+	nc.listName.SetText("")
+	nc.listSearch.SetText("")
+	nc.llist.Position, nc.lclist.Position = layout.Position{}, layout.Position{}
+	u.requestFocus(&nc.listName)
 }
 
-// createList makes the dialog's list and shows it.
-func (u *UI) createList(d *dialogState) {
-	name := trimSpace(d.listName.Text())
-	if name == "" {
+// createList makes the page's list.
+func (u *UI) createList() {
+	nc := &u.newChat
+	name := trimSpace(nc.listName.Text())
+	if name == "" || nc.step != ncList {
 		return
 	}
-	u.backend.CreateList(name, d.picked)
-	u.closeDialog()
+	u.backend.CreateList(name, nc.listPicked)
+	nc.step = ncNone
+}
+
+// updateNewList reads the Create new list pages' clicks.
+func (u *UI) updateNewList(gtx C) {
+	nc := &u.newChat
+	for {
+		ev, ok := nc.listName.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.SubmitEvent); ok {
+			u.createList()
+		}
+	}
+	if u.btn("nc:createlist").Clicked(gtx) {
+		u.createList()
+	}
+	if u.btn("nc:listadd").Clicked(gtx) && nc.step == ncList {
+		nc.step = ncListChats
+		nc.listSearch.SetText("")
+		nc.lclist.Position = layout.Position{}
+		u.requestFocus(&nc.listSearch)
+	}
+	if u.btn("nc:listdone").Clicked(gtx) && nc.step == ncListChats {
+		u.newChatBack()
+	}
+	if nc.step < ncList {
+		return
+	}
+	for _, c := range u.chats {
+		if u.btn("nc:l:" + c.ID).Clicked(gtx) {
+			if i := indexOf(nc.listPicked, c.ID); i >= 0 {
+				nc.listPicked = append(nc.listPicked[:i:i], nc.listPicked[i+1:]...)
+			} else {
+				nc.listPicked = append(nc.listPicked, c.ID)
+			}
+		}
+		if i := indexOf(nc.listPicked, c.ID); i >= 0 && u.btn("nc:lx:"+c.ID).Clicked(gtx) {
+			nc.listPicked = append(nc.listPicked[:i:i], nc.listPicked[i+1:]...)
+		}
+	}
+}
+
+// layoutNewListPage is Create new list: its name, then the chats in it.
+func (u *UI) layoutNewListPage(gtx C) D {
+	nc := &u.newChat
+	rows := []layout.Widget{
+		func(gtx C) D {
+			return u.sectionLabel(gtx, "List name", layout.Inset{Left: 24, Right: 24, Top: 6}, labelOpts{})
+		},
+		func(gtx C) D { return u.pollField(gtx, &nc.listName, "List name") },
+		func(gtx C) D {
+			return u.sectionLabel(gtx, "Included", layout.Inset{Left: 24, Right: 24, Top: 40, Bottom: 12}, labelOpts{})
+		},
+		func(gtx C) D {
+			return u.ncRow(gtx, u.btn("nc:listadd"), u.greenCircle(icAdd), "Add people or groups", "")
+		},
+	}
+	for _, id := range nc.listPicked {
+		if c := u.chatByID(id); c != nil {
+			rows = append(rows, func(gtx C) D { return u.newListRow(gtx, c) })
+		}
+	}
+	rows = append(rows, func(gtx C) D {
+		return layout.Inset{Left: 24, Top: 24, Bottom: 24}.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(132))
+			return u.wideButton(gtx, "nc:createlist", "Create list", trimSpace(nc.listName.Text()) == "")
+		})
+	})
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { return u.ncHeader(gtx, "Create new list") }),
+		layout.Flexed(1, func(gtx C) D {
+			return u.scrollList(gtx, &nc.llist, len(rows), func(gtx C, i int) D { return rows[i](gtx) })
+		}),
+	)
+}
+
+// newListRow is a chat in the new list, with a cross to take it out.
+func (u *UI) newListRow(gtx C, c *model.Chat) D {
+	p := u.pal
+	return vcenter(gtx, gtx.Dp(72), func(gtx C) D {
+		return layout.Inset{Left: 24, Right: 21}.Layout(gtx, func(gtx C) D {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(u.listChatPic(c)),
+				layout.Rigid(layout.Spacer{Width: 15}.Layout),
+				layout.Flexed(1, u.label(17, u.listName(c), p.Text, labelOpts{maxLines: 1}).Layout),
+				layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("nc:lx:"+c.ID), icClose, 40, 22, p.Icon) }),
+			)
+		})
+	})
+}
+
+// listChatPic is a chat's picture, as the chat list shows it.
+func (u *UI) listChatPic(c *model.Chat) layout.Widget {
+	if cm := u.inCommunity[c.ID]; cm != nil && cm.Announcements == c.ID {
+		return func(gtx C) D { return u.avatarOf(gtx, cm.ID, avatarCommunity, 49) }
+	}
+	return func(gtx C) D { return u.avatar(gtx, c.ID, c.Name, c.IsGroup, 49) }
+}
+
+// layoutListChatsPage is Add people or groups: the chats, those in the new
+// list ticked. Lists hold chats, so it leaves out your other contacts.
+func (u *UI) layoutListChatsPage(gtx C) D {
+	nc := &u.newChat
+	q := strings.ToLower(trimSpace(nc.listSearch.Text()))
+	rows := nc.listRows[:0] // reused every frame
+	for _, c := range u.chats {
+		if listPickable(c) && (q == "" || strings.Contains(strings.ToLower(u.listName(c)), q)) {
+			rows = append(rows, c)
+		}
+	}
+	nc.listRows = rows
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { return u.ncHeader(gtx, "Add people or groups") }),
+		layout.Rigid(func(gtx C) D { return u.ncSearch(gtx, &nc.listSearch, "Search name") }),
+		layout.Flexed(1, func(gtx C) D {
+			if len(rows) == 0 {
+				return u.ncNote(gtx, "No results found for '"+trimSpace(nc.listSearch.Text())+"'")
+			}
+			return u.scrollList(gtx, &nc.lclist, len(rows), func(gtx C, i int) D {
+				c := rows[i]
+				box, col := icCheckBoxEmpty, u.pal.TextSecondary
+				if indexOf(nc.listPicked, c.ID) >= 0 {
+					box, col = icCheckBox, u.pal.Green
+				}
+				return u.ncRow(gtx, u.btn("nc:l:"+c.ID), func(gtx C) D {
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(iconW(box, 24, col)),
+						layout.Rigid(layout.Spacer{Width: 16}.Layout),
+						layout.Rigid(u.listChatPic(c)),
+					)
+				}, u.listName(c), "")
+			})
+		}),
+		layout.Rigid(func(gtx C) D {
+			return u.ncButton(gtx, "nc:listdone", &nc.listIn, icTick, len(nc.listPicked) > 0, false, u.pal.Panel)
+		}),
+	)
 }
 
 // listPickable reports whether a chat can go in a list: channels can't.

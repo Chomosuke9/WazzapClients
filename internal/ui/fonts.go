@@ -1,6 +1,7 @@
 package ui
 
 import (
+	_ "embed"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -26,9 +27,26 @@ import (
 // on the system. Gio loads system faces first and may select them on a tie.
 const emojiTypeface font.Typeface = "WazzapClients Emoji"
 
+// Roboto (github.com/googlefonts/roboto-3-classic, the static web fonts;
+// fonts/Roboto-OFL.txt) draws the text where Segoe UI isn't installed, as
+// on Linux, where WhatsApp Web's looks like it. Other scripts, and the
+// symbols it lacks, still come from the system's fonts.
 var (
-	goFontsOnce sync.Once
-	goFonts     []font.FontFace
+	//go:embed fonts/Roboto-Regular.ttf
+	robotoRegular []byte
+	//go:embed fonts/Roboto-Medium.ttf
+	robotoMedium []byte
+	//go:embed fonts/Roboto-Bold.ttf
+	robotoBold []byte
+	//go:embed fonts/Roboto-Italic.ttf
+	robotoItalic []byte
+	//go:embed fonts/Roboto-BoldItalic.ttf
+	robotoBoldItalic []byte
+)
+
+var (
+	textFontsOnce sync.Once
+	textFonts     []font.FontFace
 
 	emojiLoad  sync.Mutex
 	emojiFonts atomic.Pointer[emojiFontSet] // nil until LoadEmojiFont
@@ -41,17 +59,21 @@ type emojiFontSet struct {
 	font  *fontapi.Font
 }
 
-// bundledFonts returns the Go fonts (the last fallback) and, once it is
-// loaded, the color emoji font. They are parsed once and shared by every
-// shaper.
+// bundledFonts returns Roboto, the Go fonts (the last fallback) and, once
+// it is loaded, the color emoji font. They are parsed once and shared by
+// every shaper.
 func bundledFonts() []font.FontFace {
-	goFontsOnce.Do(func() {
+	textFontsOnce.Do(func() {
+		for _, ttf := range [][]byte{robotoRegular, robotoMedium, robotoBold, robotoItalic, robotoBoldItalic} {
+			robotoLineHeight(ttf)
+			textFonts = append(textFonts, parseInPlace(ttf)...)
+		}
 		for _, ttf := range [][]byte{goregular.TTF, gomedium.TTF, gobold.TTF, goitalic.TTF,
 			gomediumitalic.TTF, gobolditalic.TTF, gomono.TTF, gomonobold.TTF} {
-			goFonts = append(goFonts, parseInPlace(ttf)...)
+			textFonts = append(textFonts, parseInPlace(ttf)...)
 		}
 	})
-	out := goFonts[:len(goFonts):len(goFonts)]
+	out := textFonts[:len(textFonts):len(textFonts)]
 	if e := emojiFonts.Load(); e != nil {
 		out = append(out, e.faces...)
 	}
@@ -157,6 +179,26 @@ func parseInPlace(data []byte) []font.FontFace {
 		out = append(out, font.FontFace{Font: opentype.DescriptionToFont(ft.Describe()), Face: memFace{ft}})
 	}
 	return out
+}
+
+// robotoLineHeight makes a Roboto font's lines as tall as Segoe UI's
+// (1.33 em instead of 1.17), in place, with the text in their middle as it
+// was: the UI's sizes were measured with Segoe UI, and everything that
+// stacks lines of text would be tighter with Roboto's own.
+func robotoLineHeight(data []byte) {
+	const segoe = 1.33 // ascent and descent, in em
+	head, ok1 := tableOffset(data, "head")
+	hhea, ok2 := tableOffset(data, "hhea")
+	if !ok1 || !ok2 || head+20 > len(data) || hhea+8 > len(data) {
+		return
+	}
+	em := int(binary.BigEndian.Uint16(data[head+18:]))
+	asc, desc := data[hhea+4:], data[hhea+6:]
+	up := int(int16(binary.BigEndian.Uint16(asc)))
+	down := int(int16(binary.BigEndian.Uint16(desc))) // negative
+	more := int(float64(em)*segoe) - (up - down)
+	binary.BigEndian.PutUint16(asc, uint16(int16(up+more/2)))
+	binary.BigEndian.PutUint16(desc, uint16(int16(down-(more-more/2))))
 }
 
 // narrowEmojiSpaces sets the advance of the emoji font's space glyphs to a

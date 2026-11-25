@@ -3,7 +3,6 @@ package ui
 import (
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/chomosuke9/wazzapclients/internal/mock"
 	"github.com/chomosuke9/wazzapclients/internal/model"
@@ -18,7 +17,7 @@ func TestConvMenu(t *testing.T) {
 		u.SelectID(id)
 		var out []string
 		for _, it := range u.convMenuItems(u.selected) {
-			if it.run == nil && !it.divider {
+			if it.run == nil && it.more == nil && !it.divider {
 				t.Errorf("%s: %q does nothing", id, it.label)
 			}
 			out = append(out, it.label)
@@ -43,25 +42,15 @@ func TestConvMenu(t *testing.T) {
 	}
 }
 
-// TestDisappearingAndTheme sets a chat's timer and theme.
+// TestDisappearingAndTheme opens a chat's timers and sets its theme. The
+// timers themselves are in TestTimerPage.
 func TestDisappearingAndTheme(t *testing.T) {
 	u := New(mock.New())
 	u.Start(func() {})
 	u.SelectID("family")
-	var week *menuItem
-	items := u.timerItems(u.selected)
-	for i := range items {
-		if items[i].label == "7 days" {
-			week = &items[i]
-		}
-	}
-	if week == nil {
-		t.Fatal("no 7 days timer")
-	}
-	week.run()
-	u.applyEvents()
-	if info := u.backend.Info("family"); info.Disappearing != uint32(7*24*time.Hour/time.Second) {
-		t.Errorf("timer = %d s, want 7 days", info.Disappearing)
+	u.openTimerMenu(u.selected)
+	if !u.info.open || u.info.chatID != "family" || u.info.sub != infoTimer {
+		t.Errorf("Disappearing messages: info open %v on %q, page %q", u.info.open, u.info.chatID, u.info.sub)
 	}
 	u.setChatTheme("family", 3)
 	u.themes = nil // read back from the prefs

@@ -1,4 +1,4 @@
-// Palettes (Settings > Appearance > App theme > Palette): color schemes from
+// Palettes (Settings > Appearance > Palette): color schemes from
 // elsewhere (Catppuccin, Tokyo Night, Gruvbox...) instead of WhatsApp's own
 // colors. Each has a flavor for the light and one for the dark theme, so
 // Dark mode goes on working, and the Color grid offers the flavor's own
@@ -151,7 +151,10 @@ func schemePalette(f *flavor, dark bool, accent string) *Palette {
 	if contrast(q.OnGreen, acc) < 3 {
 		q.OnGreen = mix(text, rgb(0x000000), 0.6)
 	}
-	q.RailActive, q.RailSeparator = s0, s0
+	q.RailActive, q.EmptyPane = s0, frame
+	if !dark {
+		q.EmptyPane = panel
+	}
 
 	q.Doodle, q.Plain = mix(chat, s0, 0.5), false
 	// Your bubble is tinted with the accent, as far as the text still reads

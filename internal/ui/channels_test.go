@@ -13,11 +13,11 @@ func TestFollowers(t *testing.T) {
 		0:         "Channel",
 		1:         "1 follower",
 		950:       "950 followers",
-		1500:      "1.5k followers",
-		17400:     "17k followers",
-		736100:    "736k followers",
-		1_450_000: "1.4m followers",
-		7_000_000: "7m followers",
+		1500:      "1.5K followers",
+		17400:     "17K followers",
+		736100:    "736K followers",
+		1_450_000: "1.4M followers",
+		7_000_000: "7M followers",
 	}
 	for n, want := range tests {
 		if got := followers(n); got != want {

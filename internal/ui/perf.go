@@ -206,6 +206,7 @@ func (u *UI) applyPerf() {
 	u.images.resize(perf.imageCache)
 	u.wheels = nil
 	u.doodles = prefOn(u.backend, prefDoodles)
+	u.lookPal = lookPal{}
 }
 
 // autoplays reports whether m's GIF or animated sticker plays now.
@@ -324,11 +325,16 @@ func (u *UI) perfSettingsPage() []settingsSection {
 			}
 			u.setPerfPref(prefSharpPhotos, v)
 		}}}}
+	// The Default chat theme's switch, as a chat without a theme of its own
+	// draws.
+	doodles := !u.bareWall(u.lookOf(lookAll))
 	return []settingsSection{
 		{title: "Motion", rows: []settingRow{
 			toggle(prefAnimations, "Animations", "Menus, panels and highlights slide and fade. Off, they change at once"),
 			toggle(prefSmoothScroll, "Smooth scrolling", "The mouse wheel glides lists instead of moving them a notch at a time"),
-			toggle(prefDoodles, "Wallpaper doodles", "Draw doodles on the chat background"),
+			{key: prefDoodles, kind: setToggle, title: "Wallpaper doodles", on: doodles,
+				sub: "Draw doodles on the chat background. A chat's own theme can say otherwise",
+				run: func() { u.setDoodles(!doodles) }},
 		}},
 		play,
 		sharp,
@@ -362,6 +368,7 @@ func (u *UI) advancedSettings() []settingsSection {
 					for _, k := range append(perfPrefs, stickerPrefs...) {
 						b.SetPref(k, "")
 					}
+					u.setDoodles(true)
 					u.applyPerf()
 					u.settings.stale = true
 				}})

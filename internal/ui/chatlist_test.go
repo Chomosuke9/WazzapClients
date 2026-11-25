@@ -65,15 +65,30 @@ func TestListChips(t *testing.T) {
 		t.Errorf("Family shows %v", got)
 	}
 
-	click("chip:6") // +
-	if u.dialog.kind != dialogForward || !u.dialog.newList {
-		t.Fatal("the + chip didn't open New list")
+	// ▾'s menu ends with New list, whose page takes a name and chats.
+	click("chip:more")
+	click("menu:chip:6")
+	if u.newChat.step != ncList {
+		t.Fatal("New list in ▾'s menu didn't open Create new list")
 	}
-	u.dialog.listName.SetText("Gym")
-	click("fwd:gym")
-	frame()
-	click("fwd:send")
-	for range 30 {
+	click("nc:createlist")
+	if u.newChat.step != ncList {
+		t.Fatal("a list without a name was created")
+	}
+	u.newChat.listName.SetText("Gym")
+	click("nc:listadd")
+	if u.newChat.step != ncListChats {
+		t.Fatal("Add people or groups didn't open the chats")
+	}
+	click("nc:l:gym")
+	click("nc:l:mom")
+	click("nc:listdone")
+	if u.newChat.step != ncList || !slices.Equal(u.newChat.listPicked, []string{"gym", "mom"}) {
+		t.Fatalf("back at step %v with %v", u.newChat.step, u.newChat.listPicked)
+	}
+	click("nc:lx:mom")
+	click("nc:createlist")
+	for range 60 {
 		frame()
 	}
 	ls := b.Lists()

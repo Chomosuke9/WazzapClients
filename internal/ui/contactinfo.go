@@ -63,11 +63,14 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 	if d := info.Disappearing; d > 0 {
 		disappearing = durationLabel(d)
 	}
+	chat := u.chatByID(c.ID)
+	rows = append(rows, item("starred", listItem{ic: icStar, title: "Starred messages"}))
+	if chat != nil && !chat.Self {
+		rows = append(rows, u.infoMuteRow(chat))
+	}
 	rows = append(rows,
-		item("starred", listItem{ic: icStar, title: "Starred messages"}),
-		u.infoNotifRow(c, ""),
 		item("disappearing", listItem{glyph: disappearingIcon, title: "Disappearing messages", sub: disappearing}),
-		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: onOff(info.LimitSharing)}),
+		item("privacy", listItem{ic: icShield, title: "Restricted chat", sub: onOff(info.LimitSharing)}),
 		u.infoTranscriptRow(c.ID),
 		item("theme", listItem{ic: icPalette, title: "Chat theme"}),
 		item("encryption", listItem{ic: icLockOutline, title: "Encryption", sub: "Messages are end-to-end encrypted. Click to verify."}),
@@ -95,7 +98,6 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 	action := u.infoRow
 	b := u.backend
 	id, name := c.ID, info.Name
-	chat := u.chatByID(id)
 	if len(rows) > settings {
 		rows = append(rows, u.infoDivider(12, 8))
 	} else {
@@ -109,9 +111,11 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 			action("clear", listItem{ic: icClear, title: "Clear chat", danger: true}, func() { u.confirmClearChat(id) }),
 		)
 	}
-	if info.Blocked {
+	switch {
+	case c.Self: // nobody to block or report
+	case info.Blocked:
 		rows = append(rows, action("block", listItem{ic: icBlock, title: "Unblock " + name, danger: true}, func() { b.SetBlocked(id, false) }))
-	} else {
+	default:
 		rows = append(rows, action("block", listItem{ic: icBlock, title: "Block " + name, danger: true}, func() {
 			u.confirm("Block "+name+"?", "Blocked contacts will no longer be able to call you or send you messages.",
 				dialogButton{label: "Block", primary: true, danger: true, run: func() { b.SetBlocked(id, true) }})
@@ -121,7 +125,9 @@ func (u *UI) contactRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 	if info.Business != nil {
 		report = "Report business"
 	}
-	rows = append(rows, action("report", listItem{ic: icThumbDown, title: report, danger: true}, u.reportUnsupported))
+	if !c.Self {
+		rows = append(rows, action("report", listItem{ic: icThumbDown, title: report, danger: true}, u.reportUnsupported))
+	}
 	if chat != nil {
 		rows = append(rows, action("delete", listItem{ic: icDelete, title: "Delete chat", danger: true}, func() { u.confirmDeleteChat(id) }))
 	}

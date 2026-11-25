@@ -212,7 +212,7 @@ func (u *UI) navKeys(gtx C) {
 		e, ok := keyPressed(gtx,
 			key.Filter{Focus: fi.Tag, Name: key.NameUpArrow}, key.Filter{Focus: fi.Tag, Name: key.NameDownArrow},
 			key.Filter{Focus: fi.Tag, Name: key.NameLeftArrow}, key.Filter{Focus: fi.Tag, Name: key.NameRightArrow})
-		if ok {
+		if ok && !u.submenuKey(gtx, fi.Tag, e.Name) {
 			dir := key.FocusForward
 			if e.Name == key.NameUpArrow || e.Name == key.NameLeftArrow {
 				dir = key.FocusBackward
@@ -254,7 +254,7 @@ func (u *UI) chatRowKeys(gtx C, tag event.Tag, id string) {
 	if i < 0 || i >= len(chats) {
 		return
 	}
-	scrollToRow(&u.sidebar.list.List, i)
+	scrollToRow(&u.sidebar.list.List, u.listRow(i))
 	u.focusSoon(gtx, u.rowClick(chats[i]))
 }
 
@@ -409,6 +409,8 @@ func (u *UI) runShortcut(gtx C, e key.Event) {
 			u.setPage(pageChats)
 		}
 		u.setListHidden(false)
+		u.sidebar.showArchived = false // the search isn't on that page,
+		u.endChatSelect()              // nor in select mode
 		u.requestFocus(&u.sidebar.search)
 	case e.Name == ",":
 		u.ShowPage("settings")
@@ -493,7 +495,7 @@ func (u *UI) stepChat(back bool) {
 	}
 	u.setPage(pageChats)
 	u.open(chats[i])
-	scrollToRow(&u.sidebar.list.List, i)
+	scrollToRow(&u.sidebar.list.List, u.listRow(i))
 }
 
 // cyclePane moves the focus between the window's parts with F6: the chat
@@ -501,7 +503,7 @@ func (u *UI) stepChat(back bool) {
 func (u *UI) cyclePane(gtx C, back bool) {
 	var stops []event.Tag
 	if !u.split.hidden && len(u.sidebar.visible) > 0 {
-		i := u.sidebar.list.Position.First
+		i := max(0, u.sidebar.list.Position.First-u.listRow(0))
 		for j, c := range u.sidebar.visible {
 			if u.selected != nil && c.ID == u.selected.ID {
 				i = j

@@ -97,10 +97,16 @@ func (u *UI) sectionLabel(gtx C, txt string, in layout.Inset, o labelOpts) D {
 
 // emptyPane is the right-hand placeholder of the Status, Channels,
 // Communities and Settings pages: a large gray glyph, a title and a line
-// of explanation, slightly above center, plus an optional footer.
-func (u *UI) emptyPane(gtx C, glyph func(gtx C, col color.NRGBA) D, title, sub, footer string) D {
+// of explanation, slightly above center, plus an optional footer and what
+// the page offers to do as buttons under the explanation.
+func (u *UI) emptyPane(gtx C, glyph func(gtx C, col color.NRGBA) D, title, sub, footer string, actions ...paneAction) D {
 	p := u.pal
-	dims := fill(gtx, p.Panel)
+	for _, a := range actions {
+		if u.btn("pane:" + a.key).Clicked(gtx) {
+			a.run()
+		}
+	}
+	dims := fill(gtx, u.placeholderBg())
 	gtx.Constraints.Min = gtx.Constraints.Max
 	layout.Inset{Bottom: 43}.Layout(gtx, func(gtx C) D {
 		return layout.Center.Layout(gtx, func(gtx C) D {
@@ -117,6 +123,7 @@ func (u *UI) emptyPane(gtx C, glyph func(gtx C, col color.NRGBA) D, title, sub, 
 					l.LineHeight, l.LineHeightScale = 26, 1
 					return l.Layout(gtx)
 				}),
+				layout.Rigid(func(gtx C) D { return u.paneActions(gtx, actions) }),
 			)
 		})
 	})
@@ -133,6 +140,47 @@ func (u *UI) emptyPane(gtx C, glyph func(gtx C, col color.NRGBA) D, title, sub, 
 		})
 	}
 	return dims
+}
+
+// paneAction is a button of an empty pane.
+type paneAction struct {
+	key   string
+	ic    *icon.Icon
+	label string
+	run   func()
+}
+
+// paneActions draws an empty pane's buttons side by side: a gray pill with
+// an icon, and its label under it.
+func (u *UI) paneActions(gtx C, actions []paneAction) D {
+	if len(actions) == 0 {
+		return D{}
+	}
+	p := u.pal
+	children := make([]layout.FlexChild, 0, 2*len(actions))
+	for i, a := range actions {
+		if i > 0 {
+			children = append(children, layout.Rigid(layout.Spacer{Width: 32}.Layout))
+		}
+		children = append(children, layout.Rigid(func(gtx C) D {
+			c := u.btn("pane:" + a.key)
+			return clickable(gtx, c, func(gtx C) D {
+				return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx C) D {
+						sz := image.Pt(gtx.Dp(62), gtx.Dp(50))
+						fillRRect(gtx, image.Rectangle{Max: sz}, sz.Y/2, mix(p.Hover, p.Text, 0.08*u.hover(gtx, c)))
+						gtx.Constraints = layout.Exact(sz)
+						return layout.Center.Layout(gtx, iconW(a.ic, 25, p.IconStrong))
+					}),
+					layout.Rigid(layout.Spacer{Height: 8}.Layout),
+					layout.Rigid(u.label(13.5, a.label, p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+				)
+			})
+		}))
+	}
+	return layout.Inset{Top: 26}.Layout(gtx, func(gtx C) D {
+		return layout.Flex{Alignment: layout.Start}.Layout(gtx, children...)
+	})
 }
 
 // iconGlyph adapts an icon to the glyph signature emptyPane and the rail use.
@@ -158,6 +206,7 @@ type listItem struct {
 	danger   bool          // red, for destructive actions
 	trailing layout.Widget // after the text, e.g. a count or badge
 	content  layout.Widget // replaces title and subtitle
+	wrap     bool          // the title takes as many lines as it needs
 }
 
 func (u *UI) layoutListItem(gtx C, c *widget.Clickable, it listItem, g listGeom) D {
@@ -225,11 +274,15 @@ func (u *UI) listItemText(gtx C, it listItem, fg, sub color.NRGBA) D {
 	if it.content != nil {
 		return it.content(gtx)
 	}
+	title := u.label(17, it.title, fg)
+	if it.wrap {
+		title.MaxLines = 0
+	}
 	if it.sub == "" {
-		return u.label(17, it.title, fg).Layout(gtx)
+		return title.Layout(gtx)
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(u.label(17, it.title, fg).Layout),
+		layout.Rigid(title.Layout),
 		layout.Rigid(layout.Spacer{Height: 2}.Layout),
 		layout.Rigid(func(gtx C) D {
 			l := u.label(15.2, it.sub, sub, labelOpts{})

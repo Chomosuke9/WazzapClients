@@ -40,7 +40,7 @@ func TestViewerThumbnailOrigin(t *testing.T) {
 				off := op.Offset(origin).Push(&ops)
 				tg := gtx
 				tg.Constraints = layout.Exact(size)
-				u.galleryTile(tg, m)
+				u.galleryTile(tg, &u.gallery, m)
 				off.Pop()
 				crop.Pop()
 				off = op.Offset(visible.Min).Push(&ops)

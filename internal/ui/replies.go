@@ -256,7 +256,7 @@ func (u *UI) repliesChat(gtx C) D {
 	p := u.pal
 	sz := gtx.Constraints.Max
 	// Not a photo wallpaper: it's decoded for the conversation's size.
-	s.wall.layout(gtx, p.ChatBg, p.Doodle, u.doodles && !p.Plain)
+	s.wall.layout(gtx, p.ChatBg, p.Doodle, !p.Plain)
 	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(sz)
 	u.scrollList(gtx, &s.rows, len(s.msgs), func(gtx C, i int) D {

@@ -6,9 +6,8 @@ import (
 	"gioui.org/f32"
 )
 
-// StickerSmiley is the composer's button for the expressions panel after
-// the sticker tab was used there: WhatsApp's smiley with its bottom right
-// corner peeled off, like a sticker. Material Symbols has no such glyph, so
+// StickerSmiley is the composer's button for the expressions panel:
+// WhatsApp's smiley with its bottom right corner peeled off, like a sticker. Material Symbols has no such glyph, so
 // it's drawn from strokes in the unit square.
 var StickerSmiley = stickerSmiley()
 

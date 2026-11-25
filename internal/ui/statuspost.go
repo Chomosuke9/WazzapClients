@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/text"
@@ -99,6 +100,8 @@ type statusTextState struct {
 	anim    tween
 	ed      widget.Editor
 	color   int // index in statusColors
+	// audience says who it goes to (statusAudienceLabel), "" while unknown.
+	audience string
 }
 
 func (s *statusTextState) isOpen() bool { return s.open && !s.closing }
@@ -110,12 +113,39 @@ func (u *UI) openStatusText() {
 	s.ed.Submit, s.ed.MaxLen, s.ed.Alignment = true, maxStatusText, text.Middle
 	s.ed.SetText("")
 	s.color = int(u.now().Unix()/60) % len(statusColors)
+	s.audience = statusAudienceLabel(u.backend.StatusPrivacy())
 	u.requestFocus(&s.ed)
+}
+
+// statusAudienceLabel says who your status goes to, "" if it isn't known.
+func statusAudienceLabel(p *model.StatusPrivacy) string {
+	if p == nil {
+		return ""
+	}
+	who := "Contacts"
+	switch p.Audience {
+	case model.AudienceExcept:
+		who = itoa(p.Count) + " excluded"
+	case model.AudienceOnly:
+		who = itoa(p.Count) + " included"
+	case model.AudienceClose:
+		who = "Close friends"
+	case model.AudienceList:
+		l := p.List(p.ListID)
+		if l == nil {
+			return ""
+		}
+		who = l.Name
+	}
+	return "Status (" + who + ")"
 }
 
 func (u *UI) closeStatusText() {
 	s := &u.status.text
 	if s.isOpen() {
+		if u.picker.mode == pickStatus {
+			u.closePicker()
+		}
 		s.closing = true
 		u.requestFocus(nil)
 	}
@@ -144,8 +174,8 @@ func statusTextSize(n int) unit.Sp {
 }
 
 // layoutStatusText draws the text status composer over the whole window:
-// the text in the middle of its background, close and color buttons at
-// the top and the send button in the corner.
+// the text in the middle of its background, close, emoji and color buttons
+// at the top, who it goes to and the send button in the bottom corners.
 func (u *UI) layoutStatusText(gtx C) {
 	s := &u.status.text
 	if !s.open {
@@ -159,6 +189,9 @@ func (u *UI) layoutStatusText(gtx C) {
 		if u.btn("stt:color").Clicked(gtx) {
 			s.color = (s.color + 1) % len(statusColors)
 			u.requestFocus(&s.ed)
+		}
+		if u.btn("stt:emoji").Clicked(gtx) {
+			u.openPicker(pickStatus, nil)
 		}
 		for {
 			ev, ok := s.ed.Update(gtx)
@@ -208,6 +241,9 @@ func (u *UI) layoutStatusText(gtx C) {
 	tr = op.Offset(image.Pt(sz.X-gtx.Dp(64), gtx.Dp(16))).Push(gtx.Ops)
 	u.iconButton(gtx, u.btn("stt:color"), icPalette, 48, 26, white)
 	tr.Pop()
+	tr = op.Offset(image.Pt(sz.X-gtx.Dp(116), gtx.Dp(16))).Push(gtx.Ops)
+	u.iconButton(gtx, u.btn("stt:emoji"), icEmoji, 48, 26, white)
+	tr.Pop()
 
 	// The text, centered in what's left.
 	n := len([]rune(s.ed.Text()))
@@ -240,6 +276,19 @@ func (u *UI) layoutStatusText(gtx C) {
 	if left := maxStatusText - n; left <= 100 {
 		cnt := record(gtx, u.label(14, itoa(left), argb(0xffffff, 0xc0)).Layout)
 		cnt.at(gtx, (sz.X-cnt.size.X)/2, (sz.Y+box.size.Y)/2+gtx.Dp(12))
+	}
+
+	if s.audience != "" && s.groupID == "" {
+		who := record(gtx, func(gtx C) D {
+			gtx.Constraints.Min = image.Point{}
+			gtx.Constraints.Max.X = max(0, sz.X-gtx.Dp(148))
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx C) D { return statusIcon(gtx, 20, white, false) }),
+				layout.Rigid(layout.Spacer{Width: 8}.Layout),
+				layout.Rigid(u.label(15, s.audience, white, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+			)
+		})
+		who.at(gtx, gtx.Dp(32), sz.Y-gtx.Dp(62)-who.size.Y/2)
 	}
 
 	if trimSpace(s.ed.Text()) != "" {

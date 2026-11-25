@@ -36,6 +36,7 @@ const (
 	dialogChannel    // Create channel (channelinfo.go)
 	dialogSchedule   // Schedule message (scheduled.go)
 	dialogTranscript // why a voice message has no transcript (transcripts.go)
+	dialogShortcuts  // Keyboard shortcuts (settingsdetail.go)
 )
 
 type dialogButton struct {
@@ -73,14 +74,11 @@ type dialogState struct {
 	addTo     string   // the group to add the picked people to
 	members   []string // addTo's members, left out of the list
 	fwd       []*model.Message
-	// newList makes the picker New list's (lists.go): a name for the
-	// list above the chats that go in it.
-	newList  bool
-	listName widget.Editor
 	// mentionFor makes it the editor of a custom mention of that group
 	// (custommention.go): a name, then the members it mentions, in listName
 	// and picked. mentionEdit is the one being changed, "" for a new one.
 	mentionFor, mentionEdit string
+	listName                widget.Editor
 	picked                  []string // chat IDs, in the order they were picked
 	search                  widget.Editor
 	list                    widget.List
@@ -105,7 +103,8 @@ type dialogState struct {
 	editOf   *model.Message
 	versions []model.Version
 
-	transcriptOf string // dialogTranscript's chat
+	transcriptOf string            // dialogTranscript's chat
+	shortcuts    []settingsSection // dialogShortcuts'
 }
 
 // isOpen reports whether a dialog is open and not fading out.
@@ -233,6 +232,8 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.schedulePanel)
 	case dialogTranscript:
 		panel = record(gtx, u.transcriptWhyPanel)
+	case dialogShortcuts:
+		panel = record(gtx, u.shortcutsPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
@@ -403,9 +404,7 @@ func (u *UI) forwardPanel(gtx C) D {
 		return D{} // the confirmation took the dialog's place
 	}
 	sent := u.btn("fwd:send").Clicked(gtx) && d.isOpen()
-	if sent && d.newList {
-		u.createList(d)
-	} else if sent && d.mentionFor != "" {
+	if sent && d.mentionFor != "" {
 		u.saveCustomMention(d)
 	} else if sent && len(d.picked) > 0 {
 		if d.addTo != "" {
@@ -432,15 +431,12 @@ func (u *UI) forwardPanel(gtx C) D {
 		u.closeDialog()
 	}
 	ready := len(d.picked) > 0
-	if d.newList {
-		ready = trimSpace(d.listName.Text()) != ""
-	}
 	problem := ""
 	if d.mentionFor != "" {
 		problem = u.customMentionProblem(d.mentionFor, d.listName.Text(), d.mentionEdit)
 		ready = ready && problem == "" && trimSpace(d.listName.Text()) != ""
 	}
-	named := d.newList || d.mentionFor != ""
+	named := d.mentionFor != ""
 	bar := easeOut(d.bar.step(gtx, ready, durGrow))
 	if !d.read {
 		u.readForwardPeople(d)
@@ -462,8 +458,6 @@ func (u *UI) forwardPanel(gtx C) D {
 	}
 	title := "Forward message to"
 	switch {
-	case d.newList:
-		title = "New list"
 	case d.mentionEdit != "":
 		title = "Edit custom mention"
 	case d.mentionFor != "":
@@ -503,12 +497,8 @@ func (u *UI) forwardPanel(gtx C) D {
 			if !named {
 				return D{}
 			}
-			hint := "List name"
-			if d.mentionFor != "" {
-				hint = "Name, like Tim frontend"
-			}
 			return layout.Inset{Left: 4, Right: 4, Bottom: 14}.Layout(gtx, func(gtx C) D {
-				return u.pollField(gtx, &d.listName, hint)
+				return u.pollField(gtx, &d.listName, "Name, like Tim frontend")
 			})
 		}),
 		layout.Rigid(func(gtx C) D {
@@ -522,11 +512,7 @@ func (u *UI) forwardPanel(gtx C) D {
 			if !named {
 				return D{}
 			}
-			section := "Included"
-			if d.mentionFor != "" {
-				section = "People it mentions"
-			}
-			return u.sectionLabel(gtx, section, layout.Inset{Left: 24, Right: 24, Bottom: 8}, labelOpts{})
+			return u.sectionLabel(gtx, "People it mentions", layout.Inset{Left: 24, Right: 24, Bottom: 8}, labelOpts{})
 		}),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 16, Right: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
@@ -646,8 +632,6 @@ func (u *UI) forwardRows(d *dialogState) []fwdRow {
 			return false
 		case d.addTo != "" && (group || indexOf(d.members, id) >= 0):
 			return false // already in the group
-		case d.newList && isChannelID(id): // as listPickable says
-			return false
 		}
 		return true
 	}
@@ -669,9 +653,8 @@ func (u *UI) forwardRows(d *dialogState) []fwdRow {
 		}
 	}
 	n = len(rows)
-	// Lists hold chats, so New list's picker leaves contacts out.
 	for _, ct := range d.people {
-		if d.newList || !keep(ct.ID, false) {
+		if !keep(ct.ID, false) {
 			continue
 		}
 		if q == "" || strings.Contains(strings.ToLower(ct.Name), q) ||
@@ -720,12 +703,6 @@ func (u *UI) forwardBar(gtx C, d *dialogState) D {
 	send := icSend
 	if d.mentionFor != "" {
 		send = icTick
-	}
-	if d.newList {
-		send = icTick
-		if len(names) == 0 {
-			names = append(names, "No chats yet")
-		}
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return background(gtx, p.Panel, 0, func(gtx C) D {

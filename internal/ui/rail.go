@@ -21,14 +21,10 @@ func (u *UI) layoutRail(gtx C) D {
 	p := u.pal
 	sz := gtx.Constraints.Max
 
-	unread, archivedUnread := 0, 0
+	unread := 0
 	for _, c := range u.chats {
-		switch {
-		case c.Unread == 0:
-		case !c.Archived:
+		if c.Unread != 0 && !c.Archived {
 			unread++
-		case !c.Muted:
-			archivedUnread++
 		}
 	}
 	glyph := func(ic *icon.Icon) func(gtx C, col color.NRGBA) D {
@@ -44,15 +40,10 @@ func (u *UI) layoutRail(gtx C) D {
 			})
 		})
 	}
-	onChats := u.page == pageChats && !u.sidebar.showArchived
-	onArchive := u.page == pageChats && u.sidebar.showArchived
+	onChats := u.page == pageChats
 	chats := func(gtx C, col color.NRGBA) D { return chatsOutline(gtx, 24, col) }
 	if onChats {
 		chats = func(gtx C, col color.NRGBA) D { return chatsIcon(gtx, 24, col, p.RailActive) }
-	}
-	archive := glyph(icArchive)
-	if onArchive {
-		archive = glyph(icArchiveOn)
 	}
 	status := func(gtx C, col color.NRGBA) D { return statusIcon(gtx, 24, col, u.page == pageStatus) }
 	channels := func(gtx C, col color.NRGBA) D {
@@ -81,8 +72,6 @@ func (u *UI) layoutRail(gtx C) D {
 	switch {
 	case onChats:
 		active = &u.rail.chats
-	case onArchive:
-		active = &u.rail.archived
 	case u.page == pageCalls:
 		active = &u.rail.calls
 	case u.page == pageStatus:
@@ -104,14 +93,6 @@ func (u *UI) layoutRail(gtx C) D {
 		item(&u.rail.status, u.page == pageStatus, status, 0, statusUnseen),
 		item(&u.rail.channels, u.page == pageChannels, channels, 0, channelUnread),
 		item(&u.rail.communities, u.page == pageCommunities, communities, 0, false),
-		layout.Rigid(func(gtx C) D {
-			w := gtx.Dp(42)
-			x := (gtx.Constraints.Max.X - w) / 2
-			y := gtx.Dp(8)
-			fillRect(gtx, image.Rect(x, y, x+w, y+max(1, gtx.Dp(1))), p.RailSeparator)
-			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(21))}
-		}),
-		item(&u.rail.archived, onArchive, archive, archivedUnread, false),
 		layout.Flexed(1, layout.Spacer{}.Layout),
 		item(&u.rail.media, u.gallery.open && u.gallery.chatID == "", glyph(icMedia), 0, false),
 		layout.Rigid(func(gtx C) D {

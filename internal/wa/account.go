@@ -255,14 +255,14 @@ func (b *Backend) SetProfilePhoto(path string) {
 		// Your own picture is set without a target.
 		if _, err := cli.SetGroupPhoto(ctx, types.EmptyJID, data); err != nil {
 			b.log.Warnf("set profile photo: %v", err)
-			b.emit(model.NoticeEvent{Text: "Couldn't change your profile photo."})
+			b.emit(model.NoticeEvent{Text: "Couldn't change your profile picture."})
 			return
 		}
 		b.fetchAvatar(me)
 		if path == "" {
-			b.emit(model.NoticeEvent{Text: "Profile photo removed"})
+			b.emit(model.NoticeEvent{Text: "Profile picture removed"})
 		} else {
-			b.emit(model.NoticeEvent{Text: "Profile photo updated"})
+			b.emit(model.NoticeEvent{Text: "Profile picture updated"})
 		}
 	}()
 }

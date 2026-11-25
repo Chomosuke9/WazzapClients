@@ -4,17 +4,18 @@ import (
 	"image"
 	"time"
 
-	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/widget"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
 )
 
 // Select chats (the chat list's ⋮ menu): checkboxes on the rows, and a bar
-// in place of the list's header that archives, mutes, pins, marks read or
-// unread, or deletes the chats picked, like WhatsApp's.
+// in place of the search and the chips whose ⋮ marks the chats picked read
+// or unread, mutes, archives, pins, clears or deletes them, like WhatsApp's.
+// Clicking a row still opens its chat: only its checkbox picks it.
 
 // chatPick is the chat list's select mode.
 type chatPick struct {
@@ -24,6 +25,7 @@ type chatPick struct {
 }
 
 func (u *UI) startChatSelect() {
+	u.sidebar.search.SetText("") // the bar takes its place
 	u.sidebar.pick = chatPick{on: true, picked: map[string]bool{}, anim: u.sidebar.pick.anim}
 }
 
@@ -53,35 +55,75 @@ func (u *UI) pickRow(id string) {
 	}
 }
 
-// pickActions runs the select bar's buttons.
+// pickActions runs the select bar's buttons and the rows' checkboxes.
 func (u *UI) pickActions(gtx C) {
+	if !u.sidebar.pick.on {
+		return
+	}
 	if u.btn("pick:cancel").Clicked(gtx) {
 		u.endChatSelect()
+		return
 	}
-	for _, a := range []string{"archive", "mute", "pin", "read", "delete"} {
-		if u.btn("pick:" + a).Clicked(gtx) {
-			u.pickAction(a)
+	if u.btn("pick:menu").Clicked(gtx) {
+		u.openPickMenu()
+	}
+	for _, c := range u.sidebar.visible {
+		if u.btn("pickbox:" + c.ID).Clicked(gtx) {
+			u.pickRow(c.ID)
 		}
 	}
 }
 
+// openPickMenu opens the select bar's ⋮ menu at the pointer.
+func (u *UI) openPickMenu() { u.ctx = ctxMenu{kind: ctxPick, at: u.mouse} }
+
+// pickItems are the select bar's actions on the chats picked, nil without
+// any. Pin and Delete are ours.
+func (u *UI) pickItems() []menuItem {
+	chats := u.pickedChats()
+	if len(chats) == 0 {
+		return nil
+	}
+	item := func(key string, ic *icon.Icon, label string) menuItem {
+		return menuItem{key: "pick-" + key, ic: ic, label: label, run: func() { u.pickAction(key) }}
+	}
+	read, mute := item("read", icMarkUnread, "Mark as unread"), item("mute", icMuted, "Mute notifications")
+	archive, pin := item("archive", icArchive, "Archive chat"), item("pin", icPin, "Pin chat")
+	if u.pickedUnread(chats) {
+		read.label = "Mark as read"
+	}
+	if allChats(chats, func(c *model.Chat) bool { return c.Muted }) {
+		mute.ic, mute.label = icBellLine, "Unmute notifications"
+	}
+	if allChats(chats, func(c *model.Chat) bool { return c.Archived }) {
+		archive.label = "Unarchive chat"
+	}
+	if allChats(chats, func(c *model.Chat) bool { return c.Pinned }) {
+		pin.label = "Unpin chat"
+	}
+	return []menuItem{read, mute, archive, pin, {divider: true},
+		item("clear", icClear, "Clear selected chats"), item("delete", icDelete, "Delete selected chats")}
+}
+
+// allChats reports whether f is true of every chat.
+func allChats(chats []*model.Chat, f func(c *model.Chat) bool) bool {
+	for _, c := range chats {
+		if !f(c) {
+			return false
+		}
+	}
+	return true
+}
+
 // pickAction runs a select bar action on the chats picked. Each one but
-// a mute's durations and a delete's confirmation ends select mode, as in
-// WhatsApp.
+// a mute's durations and what asks first ends select mode, as in WhatsApp.
 func (u *UI) pickAction(a string) {
 	chats := u.pickedChats()
 	if len(chats) == 0 {
 		return
 	}
 	b := u.backend
-	all := func(f func(c *model.Chat) bool) bool {
-		for _, c := range chats {
-			if !f(c) {
-				return false
-			}
-		}
-		return true
-	}
+	all := func(f func(c *model.Chat) bool) bool { return allChats(chats, f) }
 	switch a {
 	case "archive":
 		archive := !all(func(c *model.Chat) bool { return c.Archived })
@@ -122,6 +164,9 @@ func (u *UI) pickAction(a string) {
 				}
 			}
 		}
+	case "clear":
+		u.confirmClearChats(chats)
+		return
 	case "delete":
 		u.confirmDeleteChats(chats)
 		return
@@ -138,6 +183,21 @@ func (u *UI) pickedUnread(chats []*model.Chat) bool {
 		}
 	}
 	return false
+}
+
+// confirmClearChats clears the chats picked.
+func (u *UI) confirmClearChats(chats []*model.Chat) {
+	title, label := "Clear this chat?", "Clear chat"
+	if len(chats) > 1 {
+		title, label = "Clear "+itoa(len(chats))+" chats?", "Clear chats"
+	}
+	u.confirm(title, "Messages will only be removed from this device and your devices on the newer versions of WhatsApp.",
+		dialogButton{label: label, primary: true, run: func() {
+			for _, c := range chats {
+				u.backend.ClearChat(c.ID)
+			}
+			u.endChatSelect()
+		}})
 }
 
 // confirmDeleteChats deletes the chats picked. Groups you're still in are
@@ -183,48 +243,43 @@ func (u *UI) pickMuteItems() []menuItem {
 		}
 	}
 	return []menuItem{
-		{key: "8h", label: "Mute for 8 hours", run: mute(8 * time.Hour)},
-		{key: "week", label: "Mute for 1 week", run: mute(7 * 24 * time.Hour)},
-		{key: "always", label: "Mute always", run: mute(0)},
+		{key: "8h", label: "8 hours", run: mute(8 * time.Hour)},
+		{key: "week", label: "1 week", run: mute(7 * 24 * time.Hour)},
+		{key: "always", label: "Always", run: mute(0)},
 		{divider: true},
 		{note: true, label: "Muted chats still notify you when you're mentioned or replied to."},
 	}
 }
 
-// layoutPickBar replaces the chat list's header in select mode: close,
-// the count, then the actions, dimmed until a chat is picked.
+// layoutPickBar is select mode's bar, under the header: close, the count
+// and, once a chat is picked, ⋮.
 func (u *UI) layoutPickBar(gtx C) D {
 	p := u.pal
-	chats := u.pickedChats()
-	col := p.IconStrong
-	if len(chats) == 0 {
-		col = p.EmptyIcon
-	}
-	readIc := icMarkUnread
-	if len(chats) == 0 || u.pickedUnread(chats) {
-		readIc = icon.DoneAll
-	}
-	btn := func(key string, ic *icon.Icon) layout.FlexChild {
-		return layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn(key), ic, 38, 22, col) })
-	}
-	return vcenter(gtx, gtx.Dp(68), func(gtx C) D {
-		return layout.Inset{Left: 10, Right: 12}.Layout(gtx, func(gtx C) D {
+	n := len(u.pickedChats())
+	d := vcenter(gtx, gtx.Dp(58), func(gtx C) D {
+		return layout.Inset{Left: 18, Right: 21}.Layout(gtx, func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D { return u.iconButton(gtx, u.btn("pick:cancel"), icClose, 40, 24, p.IconStrong) }),
-				layout.Rigid(layout.Spacer{Width: 10}.Layout),
-				layout.Flexed(1, u.label(17, itoa(len(chats))+" selected", p.Text, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
-				btn("pick:archive", icArchive),
-				btn("pick:mute", icMuted),
-				btn("pick:pin", icPin),
-				btn("pick:read", readIc),
-				btn("pick:delete", icDelete),
+				layout.Rigid(layout.Spacer{Width: 14}.Layout),
+				layout.Flexed(1, u.label(16, itoa(n)+" selected", p.Text, labelOpts{maxLines: 1}).Layout),
+				layout.Rigid(func(gtx C) D {
+					if n == 0 {
+						return D{}
+					}
+					return u.iconButton(gtx, u.btn("pick:menu"), icMenu, 40, 24, p.IconStrong)
+				}),
 			)
 		})
 	})
+	line := max(1, gtx.Dp(1))
+	fillRect(gtx, image.Rect(0, 0, d.Size.X, line), p.Divider)
+	fillRect(gtx, image.Rect(0, d.Size.Y-line, d.Size.X, d.Size.Y), p.Divider)
+	return d
 }
 
 // pickBox draws a row's checkbox at its left, sliding in with v (0 to 1).
-func (u *UI) pickBox(gtx C, id string, h int, v float32) {
+// It's drawn over the row, whose own button opens the chat.
+func (u *UI) pickBox(gtx C, c *widget.Clickable, id string, h int, v float32) {
 	p := u.pal
 	box, col := icCheckBoxEmpty, p.TextSecondary
 	if u.sidebar.pick.picked[id] {
@@ -234,4 +289,12 @@ func (u *UI) pickBox(gtx C, id string, h int, v float32) {
 	t := op.Offset(image.Pt(gtx.Dp(13+12)-int(float32(gtx.Dp(12))*(1-v)), (h-sz)/2)).Push(gtx.Ops)
 	withOpacity(gtx, v, func() { drawIcon(gtx, box, 24, col) })
 	t.Pop()
+	if !u.sidebar.pick.on {
+		return
+	}
+	// As wide as the space before the picture.
+	defer op.Offset(image.Pt(gtx.Dp(13), 0)).Push(gtx.Ops).Pop()
+	bgtx := gtx
+	bgtx.Constraints = layout.Exact(image.Pt(gtx.Dp(48), h))
+	clickable(bgtx, c, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 }

@@ -182,7 +182,7 @@ func (h *host) updateReady() bool {
 		return h.restart()
 	}
 	if announce {
-		h.u.toast(rel.Version + " is ready. Restart from Settings > Help, or it runs next time.")
+		h.u.toast(rel.Version + " is ready. Restart from Settings > Help and feedback, or it runs next time.")
 	}
 	return false
 }

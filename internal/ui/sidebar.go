@@ -19,9 +19,11 @@ import (
 )
 
 // layoutSidebar draws the chat list column: header, search, filter chips
-// and the scrollable list of chats.
+// and the scrollable list of chats. Select chats has its bar in place of
+// the search and chips, and the Archived page a note.
 func (u *UI) layoutSidebar(gtx C) D {
 	u.sidebar.visible = u.filteredChats()
+	u.stepArchivedRow()
 	u.sidebar.order.update(gtx, u.sidebar.visible, u.rowHeight(gtx))
 	menuID := ""
 	if u.ctx.isOpen() && u.ctx.kind == ctxChat {
@@ -29,10 +31,18 @@ func (u *UI) layoutSidebar(gtx C) D {
 	}
 	u.sidebar.menuSel.step(gtx, menuID, durSwitch)
 	u.sidebar.pick.anim.step(gtx, u.sidebar.pick.on, durGrow)
+	search, chips := u.layoutSearch, u.layoutChips
+	none := func(gtx C) D { return D{} }
+	switch {
+	case u.sidebar.pick.on:
+		search, chips = u.layoutPickBar, none
+	case u.sidebar.showArchived:
+		search, chips = u.layoutArchivedNote, none
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(u.layoutSidebarHeader),
-		layout.Rigid(u.layoutSearch),
-		layout.Rigid(u.layoutChips),
+		layout.Rigid(search),
+		layout.Rigid(chips),
 		layout.Rigid(u.layoutBanner),
 		layout.Rigid(u.layoutLinkBar),
 		layout.Rigid(u.layoutAwayBar),
@@ -44,9 +54,6 @@ func (u *UI) layoutSidebar(gtx C) D {
 func (u *UI) layoutSidebarHeader(gtx C) D {
 	p := u.pal
 	h := gtx.Dp(68)
-	if u.sidebar.pick.on {
-		return u.layoutPickBar(gtx)
-	}
 	if u.sidebar.showArchived {
 		return vcenter(gtx, h, func(gtx C) D {
 			return layout.Inset{Left: 10, Right: 16}.Layout(gtx, func(gtx C) D {
@@ -132,10 +139,14 @@ func (u *UI) filteredChats() []*model.Chat {
 	out := u.sidebar.visible[:0] // reused every frame
 	for _, c := range u.chats {
 		// The search finds archived chats too, as WhatsApp's does.
-		if c.Archived != u.sidebar.showArchived && (q == "" || u.sidebar.showArchived) {
+		if c.Archived != u.sidebar.showArchived && q == "" {
 			continue
 		}
-		switch u.sidebar.filter {
+		filter := u.sidebar.filter
+		if u.sidebar.showArchived {
+			filter = filterAll // that page has no chips
+		}
+		switch filter {
 		case filterUnread:
 			if c.Unread == 0 && c != u.selected {
 				continue
@@ -169,8 +180,12 @@ func (u *UI) layoutChatList(gtx C) D {
 	}
 	chats := u.sidebar.visible
 	o := &u.sidebar.order
-	return u.scrollList(gtx, &u.sidebar.list, len(chats), func(gtx C, i int) D {
-		c := chats[i]
+	first := u.listRow(0)
+	return u.scrollList(gtx, &u.sidebar.list, first+len(chats), func(gtx C, i int) D {
+		if i < first {
+			return u.layoutArchivedRow(gtx)
+		}
+		c := chats[i-first]
 		dy, a, moving := o.at(c.ID)
 		if !moving {
 			d := u.layoutChatRow(gtx, c)
@@ -181,6 +196,96 @@ func (u *UI) layoutChatList(gtx C) D {
 		o.measured(c.ID, row.size.Y)
 		withOpacity(gtx, a, func() { row.at(gtx, 0, dy) })
 		return D{Size: row.size}
+	})
+}
+
+// listRow is the row of the list that the i-th chat shown is at.
+func (u *UI) listRow(i int) int {
+	if u.sidebar.archivedRow {
+		return i + 1
+	}
+	return i
+}
+
+// stepArchivedRow works out whether the list begins with the Archived row:
+// under All, outside select mode, while there are archived chats. What the
+// list is scrolled to stays where it is when the row comes or goes.
+func (u *UI) stepArchivedRow() {
+	s := &u.sidebar
+	if u.listQuery() != "" {
+		return // the results have rows of their own
+	}
+	any, unread := false, 0
+	for _, c := range u.chats {
+		if !c.Archived {
+			continue
+		}
+		any = true
+		if c.Unread != 0 && !c.Muted {
+			unread++
+		}
+	}
+	s.archivedNew = unread
+	on := any && !s.showArchived && !s.pick.on && s.filter == filterAll
+	if on == s.archivedRow {
+		return
+	}
+	s.archivedRow = on
+	pos := &s.list.Position
+	switch {
+	case on && (pos.First > 0 || pos.Offset > 0):
+		pos.First++
+	case !on && pos.First > 0:
+		pos.First--
+	case !on:
+		pos.Offset = 0
+	}
+}
+
+// layoutArchivedRow is the list's first row, which opens the Archived
+// page, with the number of archived chats that are unread.
+func (u *UI) layoutArchivedRow(gtx C) D {
+	p := u.pal
+	c := &u.sidebar.archived
+	return layout.Inset{Left: 13, Right: 18, Top: 2, Bottom: 2}.Layout(gtx, func(gtx C) D {
+		return clickable(gtx, c, func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			bg := mix(p.Panel, p.Hover, u.hover(gtx, c))
+			return background(gtx, u.rowBg(bg), 10, func(gtx C) D {
+				return vcenter(gtx, gtx.Dp(54), func(gtx C) D {
+					return layout.Inset{Left: 12, Right: 14}.Layout(gtx, func(gtx C) D {
+						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D { return centerIn(gtx, gtx.Dp(52), iconW(icArchive, 22, p.Icon)) }),
+							layout.Rigid(layout.Spacer{Width: 16}.Layout),
+							layout.Flexed(1, u.label(17, "Archived", p.TextSecondary, labelOpts{maxLines: 1}).Layout),
+							layout.Rigid(func(gtx C) D {
+								if u.sidebar.archivedNew == 0 {
+									return D{}
+								}
+								return u.label(13.2, itoa(u.sidebar.archivedNew), p.TextSecondary, labelOpts{maxLines: 1}).Layout(gtx)
+							}),
+						)
+					})
+				})
+			})
+		})
+	})
+}
+
+// layoutArchivedNote is the Archived page's explanation. WhatsApp's goes
+// on with where to change that on the phone, which this app doesn't follow.
+func (u *UI) layoutArchivedNote(gtx C) D {
+	return layout.Inset{Left: 23, Right: 23, Bottom: 8}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(u.label(14.5, "These chats stay archived when new messages are received.", u.pal.TextSecondary, labelOpts{maxLines: 3}).Layout),
+			layout.Rigid(layout.Spacer{Height: 16}.Layout),
+			layout.Rigid(func(gtx C) D {
+				d := D{Size: image.Pt(gtx.Constraints.Max.X, max(1, gtx.Dp(1)))}
+				fillRect(gtx, image.Rectangle{Max: d.Size}, u.pal.Divider)
+				return d
+			}),
+		)
 	})
 }
 
@@ -325,12 +430,8 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 	if selV > 0 {
 		o.avatarW = unit.Dp(12 + 36*selV)
 	}
-	if pick.on {
-		o.sel = 0
-		if pick.picked[c.ID] {
-			o.sel = 1
-		}
-	}
+	box := u.btn("pickbox:" + c.ID)
+	o.hovered = o.hovered || pick.on && box.Hovered()
 	shown := c
 	if cm := u.inCommunity[c.ID]; cm != nil {
 		if c.ID == cm.Announcements {
@@ -364,7 +465,7 @@ func (u *UI) layoutChatRow(gtx C, c *model.Chat) D {
 		t.Pop()
 	}
 	if selV > 0 {
-		u.pickBox(gtx, c.ID, dims.Size.Y, selV)
+		u.pickBox(gtx, box, c.ID, dims.Size.Y, selV)
 	}
 	if pick.on {
 		return dims

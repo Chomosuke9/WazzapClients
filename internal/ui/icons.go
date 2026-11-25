@@ -11,7 +11,6 @@ var (
 	icGroups        = icon.Groups
 	icGroupsFill    = icon.GroupsFill
 	icArchive       = icon.Archive
-	icArchiveOn     = icon.ArchiveFill
 	icMedia         = icon.PhotoLibrary
 	icNewChat       = icon.AddCommentFill
 	icMenu          = icon.MoreVert
@@ -49,6 +48,8 @@ var (
 	icPhotosFill     = icon.PhotoLibraryFill
 	icHeadphonesFill = icon.HeadphonesFill
 	icCameraFill     = icon.PhotoCameraFill
+	icCamera         = icon.PhotoCamera
+	icExplore        = icon.GridView
 	icEventFill      = icon.EventFill
 	icStickerFill    = icon.StickyNote2Fill
 	icLogout         = icon.Logout
@@ -116,7 +117,6 @@ var (
 	icStarFill      = icon.StarFill
 	icTrending      = icon.TrendingUp
 	icPinFill       = icon.KeepFill
-	icAddReaction   = icon.AddReaction
 	icReact         = icon.Mood // a hovered message's React button
 	icDownload      = icon.Download
 	icKeep          = icon.Bookmark     // Keep in chat
@@ -166,4 +166,10 @@ var (
 	icEmojiObjects = icon.Lightbulb
 	icEmojiSymbols = icon.EmojiSymbols
 	icEmojiFlags   = icon.Flag
+
+	// The info panel's pages.
+	icShare       = icon.Share
+	icRobot       = icon.SmartToy
+	icDevices     = icon.Devices
+	icGroupAdmins = icon.ManageAccounts
 )

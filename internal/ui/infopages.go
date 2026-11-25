@@ -2,22 +2,33 @@ package ui
 
 import (
 	"image"
+	"image/color"
+	"slices"
+	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/ui/icon"
+	"github.com/chomosuke9/wazzapclients/internal/ui/styledtext"
 )
 
 // Pages that open inside the info panel, with a back arrow: a chat's
-// starred messages, a group's permissions, its member changes and its custom
-// mentions (custommention.go).
+// starred messages, its media (infomedia.go), its disappearing messages timer,
+// Restricted chat, a group's permissions and admins, its member changes and
+// its custom mentions (custommention.go).
 
 const (
 	infoStarred     = "starred"
+	infoGallery     = "chatgallery" // the chat's media, links and docs
+	infoTimer       = "timer"
+	infoRestricted  = "restricted"
 	infoPerms       = "perms"
+	infoAdmins      = "admins" // Edit group admins, opened from Group permissions
 	infoChanges     = "changes"
 	infoMentions    = "mentions"
 	infoTranscripts = "transcripts" // the chat's transcript language (transcripts.go)
@@ -25,29 +36,52 @@ const (
 
 // openInfoSub shows one of the panel's pages.
 func (u *UI) openInfoSub(sub string) {
+	if u.info.sub == "" {
+		u.info.subPos = u.info.list.Position
+	}
 	u.info.sub = sub
-	u.info.subPos = u.info.list.Position
 	u.info.list.Position = layout.Position{}
 	switch sub {
 	case infoStarred:
 		u.info.starred.start(u.backend, model.GalleryQuery{Kind: model.GalleryStarred, ChatID: u.info.chatID, Limit: 50})
+	case infoGallery:
+		u.openInfoGallery()
+	case infoAdmins:
+		u.info.admins = nil
 	case infoChanges:
 		u.info.changes = u.backend.MemberChanges(u.info.chatID)
 	}
 }
 
-// closeInfoSub returns to the panel's main page.
+// closeInfoSub returns to the panel's main page, or from Edit group admins
+// to the permissions.
 func (u *UI) closeInfoSub() {
-	u.info.sub = ""
+	if u.info.sub == infoAdmins {
+		u.openInfoSub(infoPerms)
+		return
+	}
+	u.leaveInfoSub()
 	u.info.list.Position = u.info.subPos
+}
+
+// leaveInfoSub puts the panel's page away, letting go of its messages.
+func (u *UI) leaveInfoSub() {
+	u.info.sub = ""
+	u.info.starred, u.info.gallery = galleryList{}, galleryState{}
 }
 
 func infoSubTitle(sub string) string {
 	switch sub {
 	case infoStarred:
 		return "Starred messages"
+	case infoTimer:
+		return "Disappearing messages"
+	case infoRestricted:
+		return "Restricted chat"
 	case infoPerms:
 		return "Group permissions"
+	case infoAdmins:
+		return "Edit group admins"
 	case infoChanges:
 		return "Member changes"
 	case infoMentions:
@@ -63,8 +97,14 @@ func (u *UI) infoSubRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 	switch u.info.sub {
 	case infoStarred:
 		return u.starredRows(gtx)
+	case infoTimer:
+		return u.timerRows(gtx, c, info)
+	case infoRestricted:
+		return u.restrictedRows(info)
 	case infoPerms:
 		return u.permRows(gtx, c, info)
+	case infoAdmins:
+		return u.adminRows(gtx, info)
 	case infoChanges:
 		return u.changeRows()
 	case infoMentions:
@@ -114,7 +154,7 @@ func (g *galleryList) loaded(e model.GalleryEvent) bool {
 
 // galleryLoaded hands a page to the list that asked for it.
 func (u *UI) galleryLoaded(e model.GalleryEvent) {
-	if !u.gallery.list.loaded(e) {
+	if !u.gallery.list.loaded(e) && !u.info.gallery.list.loaded(e) {
 		u.info.starred.loaded(e)
 	}
 }
@@ -243,37 +283,259 @@ func (u *UI) permRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 			})
 		}
 	}
+	if u.btn("info:admins").Clicked(gtx) {
+		u.openInfoSub(infoAdmins)
+	}
 	return []layout.Widget{
 		u.infoSection("Members can:", false),
-		u.permRow("edit", icEdit, "Edit group settings",
-			"This includes the name, icon, description, disappearing message timer, and the ability to pin messages.",
+		u.permRow(id, "edit", icEdit, "Edit group settings",
+			"This includes the name, icon, description, disappearing message timer, and the ability to pin, keep or unkeep messages.",
 			!info.Locked, set(model.GroupLock, !info.Locked)),
-		u.permRow("send", icChats, "Send new messages", "", !info.Announce, set(model.GroupAnnounce, !info.Announce)),
-		u.permRow("addmembers", icPersonAdd, "Add other members", "", !info.AdminsAdd, set(model.GroupAddMode, !info.AdminsAdd)),
-		func(gtx C) D { return layout.Spacer{Height: 12}.Layout(gtx) },
-		u.infoSection("Admins can:", true),
-		u.permRow("approve", icPersonAddFill, "Approve new members",
+		u.permRow(id, "send", icChats, "Send new messages", "", !info.Announce, set(model.GroupAnnounce, !info.Announce)),
+		u.permRow(id, "addmembers", icPersonAdd, "Add other members", "", !info.AdminsAdd, set(model.GroupAddMode, !info.AdminsAdd)),
+		u.infoSection("Admins can:", false),
+		u.permRow(id, "approve", icPersonAddFill, "Approve new members",
 			"When turned on, admins must approve anyone who wants to join this group.",
 			info.Approval, set(model.GroupApproval, !info.Approval)),
+		u.infoSection("Group admins", false),
+		u.infoItem("admins", listItem{ic: icGroupAdmins, title: "Edit group admins", sub: adminNames(info)}),
 	}
 }
 
-// permRow is a permission with its checkbox.
-func (u *UI) permRow(key string, ic *icon.Icon, title, sub string, on bool, run func()) layout.Widget {
+// permRow is a permission of group id with its switch.
+func (u *UI) permRow(id, key string, ic *icon.Icon, title, sub string, on bool, run func()) layout.Widget {
 	return func(gtx C) D {
-		p := u.pal
 		b := u.btn("perm:" + key)
 		if b.Clicked(gtx) {
 			run()
 		}
-		box, col := icCheckBoxEmpty, p.TextSecondary
-		if on {
-			box, col = icCheckBox, p.Green
-		}
 		g := infoGeom
-		g.subHeight = 72
+		g.subHeight, g.padRight = 72, 0 // the switch keeps the text off the edge
 		return u.layoutListItem(gtx, b, listItem{ic: ic, title: title, sub: sub,
-			trailing: func(gtx C) D { return layout.Inset{Left: 12, Right: 8}.Layout(gtx, iconW(box, 24, col)) }}, g)
+			trailing: u.infoSwitch("perm:"+key+":"+id, on)}, g)
+	}
+}
+
+// adminNames lists a group's admins.
+func adminNames(info *model.ChatInfo) string {
+	var names []string
+	for _, m := range info.Members {
+		switch {
+		case m.Me && m.Admin:
+			names = append(names, "You")
+		case m.Admin:
+			names = append(names, plainText(memberTitle(m)))
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+// adminRows are a group's members with a box each, checked for its admins.
+// Nothing changes until it's saved (adminsFooter). You and the group's
+// creator stay admins.
+func (u *UI) adminRows(gtx C, info *model.ChatInfo) []layout.Widget {
+	var rows []layout.Widget
+	for _, m := range info.Members {
+		on, picked := u.info.admins[m.ID]
+		if !picked {
+			on = m.Admin
+		}
+		fixed := m.Me || m.SuperAdmin
+		b := u.btn("admin:" + m.ID)
+		if b.Clicked(gtx) && !fixed {
+			if u.info.admins == nil {
+				u.info.admins = map[string]bool{}
+			}
+			if on = !on; on == m.Admin {
+				delete(u.info.admins, m.ID)
+			} else {
+				u.info.admins[m.ID] = on
+			}
+		}
+		title := memberTitle(m)
+		if m.Me {
+			title = "You"
+		}
+		rows = append(rows, func(gtx C) D {
+			box, col := icCheckBoxEmpty, u.pal.TextSecondary
+			if on {
+				box, col = icCheckBox, u.pal.Green
+			}
+			if fixed {
+				col = u.pal.TextSecondary
+				gtx = gtx.Disabled()
+			}
+			g := infoGeom
+			g.iconCenter = infoPadX - g.hoverLeft + 25.5
+			g.textLeft = 75.4
+			g.height, g.subHeight = 76, 76
+			return u.layoutListItem(gtx, b, listItem{title: title, sub: memberSub(m),
+				glyph:    func(gtx C, _ color.NRGBA) D { return u.memberAvatar(gtx, m) },
+				trailing: func(gtx C) D { return layout.Inset{Left: 12, Right: 12}.Layout(gtx, iconW(box, 24, col)) }}, g)
+		})
+	}
+	return rows
+}
+
+// adminsFooter is Edit group admins' Save button, once something changed.
+func (u *UI) adminsFooter(gtx C, c *model.Chat) D {
+	if len(u.info.admins) == 0 {
+		return D{}
+	}
+	if u.btn("admins:save").Clicked(gtx) {
+		u.saveAdmins(c.ID)
+	}
+	return layout.Inset{Left: infoPadX, Right: infoPadX, Top: 12, Bottom: 16}.Layout(gtx, func(gtx C) D {
+		return u.wideButton(gtx, "admins:save", "Save", false)
+	})
+}
+
+// saveAdmins makes the members picked on Edit group admins admins, or
+// dismisses them, and returns to the permissions.
+func (u *UI) saveAdmins(id string) {
+	change := map[model.GroupAction][]string{}
+	for m, on := range u.info.admins {
+		a := model.GroupDemote
+		if on {
+			a = model.GroupPromote
+		}
+		change[a] = append(change[a], m)
+	}
+	for a, ids := range change {
+		slices.Sort(ids)
+		slashHost{u: u}.Group(model.GroupRequest{ChatID: id, Action: a, Members: ids}, func(e model.GroupEvent) {
+			if e.Err != "" {
+				u.toast(e.Err)
+				return
+			}
+			var failed []string
+			for _, r := range e.Members {
+				if r.Err != "" {
+					failed = append(failed, r.Name)
+				}
+			}
+			if len(failed) > 0 {
+				u.toast("Couldn't change " + strings.Join(failed, ", ") + ".")
+			}
+		})
+	}
+	u.openInfoSub(infoPerms)
+}
+
+// timerRows are a chat's disappearing message timers, and what they do.
+func (u *UI) timerRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widget {
+	p := u.pal
+	who := "Anyone in the chat can change this setting."
+	if info.IsGroup && info.Locked {
+		who = "Only group admins can change this setting."
+	}
+	rows := []layout.Widget{
+		u.infoSection("Make messages in this chat disappear", false),
+		u.infoText("For more privacy and storage, all new messages will disappear from this chat for everyone "+
+			"after the selected duration, except when kept. "+who, p.TextSecondary, 14, 0, 14, infoPadX),
+	}
+	id := c.ID
+	for _, t := range timerChoices {
+		on := uint32(t.d/time.Second) == info.Disappearing
+		b := u.btn("info:timer:" + t.label)
+		if b.Clicked(gtx) && !on {
+			u.backend.SetDisappearing(id, t.d)
+		}
+		rows = append(rows, func(gtx C) D {
+			return u.layoutListItem(gtx, b, listItem{title: t.label,
+				glyph: func(gtx C, _ color.NRGBA) D { return u.radio(gtx, on) }}, infoGeom)
+		})
+	}
+	if info.IsGroup {
+		return rows // the default timer is for one-to-one chats
+	}
+	link := u.btn("info:timer:default")
+	if link.Clicked(gtx) {
+		u.setPage(pageSettings)
+		u.openSettings(settingPrivacy)
+		u.openSettingsSub("timer")
+	}
+	return append(rows, func(gtx C) D {
+		return layout.Inset{Left: infoPadX, Right: 24, Top: 14, Bottom: 24}.Layout(gtx, func(gtx C) D {
+			return clickable(gtx, link, func(gtx C) D {
+				f, bold := font.Font{Typeface: u.th.Face}, font.Font{Typeface: u.th.Face, Weight: font.SemiBold}
+				return u.layoutSpansLH(gtx, []styledtext.SpanStyle{
+					{Font: f, Size: 14, Color: p.TextSecondary, Content: "Update your "},
+					{Font: bold, Size: 14, Color: p.Green, Content: "default message timer"},
+					{Font: f, Size: 14, Color: p.TextSecondary, Content: " in Settings"},
+				}, nil, 20, nil, nil)
+			})
+		})
+	})
+}
+
+// restrictedRows explain Restricted chat, whose switch only shows whether
+// it's on: hypermeow has no way to change it (WhatsApp sends it as a
+// LIMIT_SHARING protocol message, and for groups a group setting), and
+// WhatsApp's own linked devices leave it to the phone.
+func (u *UI) restrictedRows(info *model.ChatInfo) []layout.Widget {
+	p := u.pal
+	point := func(ic *icon.Icon, txt string) layout.Widget {
+		return func(gtx C) D {
+			return layout.Inset{Left: infoPadX, Right: 24, Top: 10, Bottom: 10}.Layout(gtx, func(gtx C) D {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(iconW(ic, 24, p.TextSecondary)),
+					layout.Rigid(layout.Spacer{Width: 20}.Layout),
+					layout.Flexed(1, u.infoPara(txt, p.Text, 15)),
+				)
+			})
+		}
+	}
+	para := func(txt string, col color.NRGBA, size unit.Sp, top, bottom unit.Dp) layout.Widget {
+		return func(gtx C) D {
+			return layout.Inset{Left: infoPadX, Right: 24, Top: top, Bottom: bottom}.Layout(gtx, u.infoPara(txt, col, size))
+		}
+	}
+	return []layout.Widget{
+		para("Limit what people in this chat can do with the messages", p.Text, 17, 10, 10),
+		para("For your most sensitive chats, you can turn off some standard WhatsApp features.", p.TextSecondary, 14, 0, 14),
+		u.infoDivider(0, 14),
+		func(gtx C) D {
+			return layout.Inset{Left: infoPadX, Right: 30, Bottom: 16}.Layout(gtx, func(gtx C) D {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, func(gtx C) D {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(u.label(16, "Restricted chat", p.Text, labelOpts{maxLines: 1}).Layout),
+							layout.Rigid(layout.Spacer{Height: 3}.Layout),
+							layout.Rigid(u.infoPara("Change this setting on your primary phone.", p.TextSecondary, 14)),
+						)
+					}),
+					layout.Rigid(layout.Spacer{Width: 12}.Layout),
+					layout.Rigid(func(gtx C) D {
+						// Grayed: it can't be turned here.
+						defer paint.PushOpacity(gtx.Ops, 0.3).Pop()
+						return u.themeSwitch(gtx, "info:restricted:"+info.ID, info.LimitSharing)
+					}),
+				)
+			})
+		},
+		u.infoDivider(0, 6),
+		u.infoSection("If this is on, people:", false),
+		point(icImage, "Can't save media from this chat to their device gallery automatically"),
+		point(icShare, "Can't export the chat"),
+		point(icRobot, "Can't use Meta AI features in this chat"),
+		point(icDevices, "Can't use linked devices for this chat. This helps to prevent people in the chat from using "+
+			"unofficial clients or AI agents to access it."),
+		u.infoSection("Our privacy promise", false),
+		para("Whether or not you turn on these restrictions, the messages and calls in this chat are protected with "+
+			"end-to-end encryption.", p.TextSecondary, 14, 0, 24),
+	}
+}
+
+// infoPara is a paragraph of a page, as wide as it's given.
+func (u *UI) infoPara(txt string, col color.NRGBA, size unit.Sp) layout.Widget {
+	return func(gtx C) D {
+		l := u.label(size, txt, col)
+		l.MaxLines = 0
+		l.LineHeight, l.LineHeightScale = unit.Sp(float32(size)*1.45), 1
+		d := l.Layout(gtx)
+		d.Size.X = gtx.Constraints.Max.X
+		return d
 	}
 }
 
@@ -330,23 +592,10 @@ func memberChangeText(c model.MemberChange) string {
 	return name
 }
 
-// openChatPrivacy explains Advanced chat privacy. hypermeow has no way to
-// change it (WhatsApp sends it as a LIMIT_SHARING protocol message, and
-// for groups a group setting), so it only shows whether it's on.
-func (u *UI) openChatPrivacy(info *model.ChatInfo) {
-	state := "It's off in this chat."
-	if info.LimitSharing {
-		state = "It's on in this chat: nobody can export it, and media isn't saved to phones automatically."
-	}
-	u.inform("Advanced chat privacy", "When it's on, people in this chat can't export it, "+
-		"have its media saved to their phone automatically, or use its messages for AI features. "+
-		state+" This app can't change it yet. Turn it on or off from WhatsApp on your phone.")
-}
-
-// exportChat exports a chat, unless Advanced chat privacy keeps it in.
+// exportChat exports a chat, unless Restricted chat keeps it in.
 func (u *UI) exportChat(id string) {
 	if info := u.timerInfo(id); info != nil && info.LimitSharing {
-		u.inform("Can't export chat", "Advanced chat privacy is on in this chat, so nobody can export it.")
+		u.inform("Can't export chat", "Restricted chat is on in this chat, so nobody can export it.")
 		return
 	}
 	u.backend.ExportChat(id)
@@ -397,7 +646,7 @@ func (u *UI) infoChatActions(gtx C, c *model.Chat, info *model.ChatInfo) {
 		u.openTimerMenu(chat)
 	}
 	if clicked("privacy") {
-		u.openChatPrivacy(info)
+		u.openInfoSub(infoRestricted)
 	}
 	if clicked("community") {
 		u.inform("Add group to a community", "This app can't add groups to communities yet. "+

@@ -79,26 +79,53 @@ func (u *UI) deviceChoices(sub string) []settingsSection {
 	return []settingsSection{sec}
 }
 
-// storageSettings is the Storage page: which media downloads by itself.
-func (u *UI) storageSettings() []settingsSection {
+// autoDownloadPrefs are the kinds of media of the Media auto-download page.
+var autoDownloadPrefs = []struct {
+	key, title string
+	media      model.Media
+}{
+	{model.PrefAutoPhotos, "Photos", model.MediaImage},
+	{model.PrefAutoAudio, "Audio", model.MediaAudio},
+	{model.PrefAutoVideos, "Videos", model.MediaVideo},
+	{model.PrefAutoDocuments, "Documents", model.MediaDocument},
+}
+
+// uploadQuality is the Media upload quality page: what photos are sent as,
+// the same choice as the send view's quality menu.
+func (u *UI) uploadQuality() []settingsSection {
+	sec := settingsSection{note: "Photos go out at this quality. You can change it for each send, beside the photos."}
+	add := func(q model.Quality, title, sub string) {
+		sec.rows = append(sec.rows, settingRow{key: "quality:" + qualityNames[q], kind: setRadio, title: title, sub: sub,
+			on: u.attach.quality == q, run: func() {
+				u.attach.quality = q
+				u.backend.SetPref(prefPhotoQuality, qualityPrefs[q])
+			}})
+	}
+	add(model.QualityStandard, "Standard quality", "Standard photos use less storage space and are faster to send")
+	add(model.QualityHD, "HD quality", "HD photos are clearer, and slower to send")
+	if u.rawPhotos { // an extra feature
+		add(model.QualityRaw, "Raw quality", "Raw photos are sent as they are")
+	}
+	return []settingsSection{sec}
+}
+
+// autoDownloads is the Media auto-download page: which media downloads by
+// itself.
+func (u *UI) autoDownloads() []settingsSection {
 	b := u.backend
-	toggle := func(key, title string, m model.Media) settingRow {
-		on := model.AutoDownload(b.Pref, m)
-		return settingRow{key: key, kind: setToggle, title: title, on: on, run: func() {
+	sec := settingsSection{note: "Voice messages are always automatically downloaded for the best communication experience."}
+	for _, p := range autoDownloadPrefs {
+		on := model.AutoDownload(b.Pref, p.media)
+		sec.rows = append(sec.rows, settingRow{key: p.key, kind: setToggle, left: true, title: p.title, on: on, run: func() {
 			v := "on"
 			if on {
 				v = "off"
 			}
-			b.SetPref(key, v)
-			if m == model.MediaImage {
+			b.SetPref(p.key, v)
+			if p.media == model.MediaImage {
 				u.autoPhotos = !on
 			}
-		}}
+		}})
 	}
-	return []settingsSection{{title: "Automatic downloads", rows: []settingRow{
-		toggle(model.PrefAutoPhotos, "Photos", model.MediaImage),
-		toggle(model.PrefAutoAudio, "Audio", model.MediaAudio),
-		toggle(model.PrefAutoVideos, "Videos", model.MediaVideo),
-		toggle(model.PrefAutoDocuments, "Documents", model.MediaDocument),
-	}, note: "Choose which media downloads by itself from the messages you receive. Voice messages always do."}}
+	return []settingsSection{sec}
 }

@@ -46,7 +46,9 @@ type infoState struct {
 	sub     string
 	subPos  layout.Position
 	starred galleryList
+	gallery galleryState // the Media, links and docs page (infomedia.go)
 	changes []model.MemberChange
+	admins  map[string]bool // Edit group admins: who'd be made an admin or dismissed
 	// edit is a group's name or description being edited, and its
 	// picture being picked (groupedit.go).
 	edit groupEdit
@@ -66,7 +68,7 @@ func (s *infoState) shown() bool { return s.open || s.anim.v > 0 }
 // under it.
 func (u *UI) hideInfo() {
 	u.info.open = false
-	u.info.sub = ""
+	u.leaveInfoSub()
 	u.info.back = nil
 	u.info.edit.field = 0
 	u.info.anim.snap(false)
@@ -116,7 +118,7 @@ func (u *UI) infoBack() {
 
 func (u *UI) showInfo(chatID, name string) {
 	u.swapSearchForInfo()
-	u.info.sub = ""
+	u.leaveInfoSub()
 	if u.info.chatID != chatID {
 		u.info.edit.field = 0
 		u.info.list.Position = layout.Position{}
@@ -208,7 +210,16 @@ func (u *UI) layoutInfo(gtx C) D {
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
+			if u.info.sub == infoGallery {
+				return u.layoutInfoGallery(gtx)
+			}
 			return u.scrollList(gtx, &u.info.list, len(rows), func(gtx C, i int) D { return rows[i](gtx) })
+		}),
+		layout.Rigid(func(gtx C) D {
+			if u.info.sub != infoAdmins {
+				return D{}
+			}
+			return u.adminsFooter(gtx, c)
 		}),
 	)
 	return dims
@@ -254,7 +265,7 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 		item("theme", listItem{ic: icPalette, title: "Chat theme"}),
 		item("encryption", listItem{ic: icLockOutline, title: "Encryption", sub: "Messages are end-to-end encrypted. Click to learn more."}),
 		item("disappearing", listItem{glyph: disappearingIcon, title: "Disappearing messages", sub: disappearing}),
-		item("privacy", listItem{ic: icShield, title: "Advanced chat privacy", sub: onOff(info.LimitSharing)}),
+		item("privacy", listItem{ic: icShield, title: "Restricted chat", sub: onOff(info.LimitSharing)}),
 		u.infoTranscriptRow(c.ID),
 	)
 	admin := u.isAdminIn(info)
@@ -268,7 +279,7 @@ func (u *UI) infoRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Widge
 	if u.inCommunity[c.ID] == nil {
 		rows = append(rows, func(gtx C) D {
 			return u.infoCircleRow(gtx, "community", func(gtx C) D {
-				return roundedSquare(gtx, 52, 12, p.Green, icGroupsFill, 32, rgb(0xffffff))
+				return roundedSquare(gtx, 52, 12, p.ChipActive, icGroupsFill, 32, p.Green)
 			}, listItem{title: "Add group to a community", sub: "Bring members together in topic-based groups",
 				trailing: func(gtx C) D { return layout.Inset{Right: 27}.Layout(gtx, iconW(icChevronRight, 24, p.TextSecondary)) }}, 107)
 		})
@@ -360,9 +371,9 @@ func (u *UI) infoRow(key string, it listItem, run func()) layout.Widget {
 
 // infoFavRow adds the chat to favourites or takes it out.
 func (u *UI) infoFavRow(chat *model.Chat) layout.Widget {
-	title := "Add to favourites"
+	title := "Add to Favourites"
 	if chat.Favorite {
-		title = "Remove from favourites"
+		title = "Remove from Favourites"
 	}
 	id, fav := chat.ID, chat.Favorite
 	return u.infoRow("fav", listItem{ic: icHeart, title: title}, func() { u.backend.SetFavorite(id, !fav) })
@@ -383,6 +394,33 @@ func (u *UI) infoNotifRow(c *model.Chat, unmuted string) layout.Widget {
 			}
 		}
 		return u.layoutListItem(gtx, b, listItem{ic: ic, title: "Notification settings", sub: sub}, infoGeom)
+	}
+}
+
+// infoMuteRow is a contact's mute switch: turning it on asks for how long.
+func (u *UI) infoMuteRow(c *model.Chat) layout.Widget {
+	ic := icBell
+	if c.Muted {
+		ic = icMuted
+	}
+	return func(gtx C) D {
+		b := u.btn("info:mute")
+		if b.Clicked(gtx) {
+			if c.Muted {
+				u.backend.SetMuted(c.ID, false, 0)
+			} else {
+				u.openMuteMenu(c)
+			}
+		}
+		return u.layoutListItem(gtx, b, listItem{ic: ic, title: "Mute notifications", sub: muteStatus(c),
+			trailing: u.infoSwitch("mute:"+c.ID, c.Muted)}, infoGeom)
+	}
+}
+
+// infoSwitch is the switch at a row's right edge.
+func (u *UI) infoSwitch(key string, on bool) layout.Widget {
+	return func(gtx C) D {
+		return layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D { return u.themeSwitch(gtx, "info:"+key, on) })
 	}
 }
 
@@ -452,6 +490,8 @@ func (u *UI) infoProfile(gtx C, c *model.Chat, info *model.ChatInfo) D {
 	case !info.IsGroup && (u.selected == nil || u.selected.ID != c.ID):
 		// A group member's info offers to message them instead.
 		actions = []action{{"message", icChats, "Message"}, {"share", icForward, "Share"}}
+	case c.Self:
+		actions = []action{{"search", icSearch, "Search"}} // nobody to call
 	case info.IsGroup:
 		actions = []action{{"voice", icCallLine, "Voice"}, {"status", icAddCircle, "Status"}, {"add", icPersonAdd, "Add"}, {"search", icSearch, "Search"}}
 	default:
@@ -631,7 +671,7 @@ func (u *UI) infoMedia(gtx C, info *model.ChatInfo) D {
 	p := u.pal
 	media := &u.info.media
 	if u.btn("info:media").Clicked(gtx) {
-		u.openGallery(info.ID, info.Name)
+		u.openInfoSub(infoGallery)
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {

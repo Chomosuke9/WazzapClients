@@ -60,12 +60,15 @@ func (u *UI) channelMenuItems(ch *model.Channel, open bool) []menuItem {
 func (u *UI) channelAddItems() []menuItem {
 	return []menuItem{
 		{key: "create", ic: icAddCircle, label: "Create channel", run: u.openCreateChannel},
-		{key: "find", ic: icSearch, label: "Find channels", run: func() {
-			u.channel.discovering = true
-			u.backend.DiscoverChannels()
-			u.channel.list.Position = layout.Position{First: len(u.channels)}
-		}},
+		{key: "find", ic: icSearch, label: "Find channels", run: u.findChannels},
 	}
+}
+
+// findChannels asks for more suggestions and shows them.
+func (u *UI) findChannels() {
+	u.channel.discovering = true
+	u.backend.DiscoverChannels()
+	u.channel.list.Position = layout.Position{First: len(u.channels)}
 }
 
 func (u *UI) confirmUnfollow(ch *model.Channel) {

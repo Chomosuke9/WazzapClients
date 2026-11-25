@@ -257,7 +257,7 @@ them all at once, and `@` in a private chat, to mention the person you're talkin
 - 🕘 Scheduled messages, WhatsApp's own, text or files: right-click or hold the send button, or Ctrl+Shift+Enter
 - 🔍 Font size from 80% to 200% (*Settings > General*, or Ctrl with +, - and 0)
 - 🅰️ Initials on a color for people without a profile picture, and clickable @mentions
-- ⬆️ Automatic updates from signed GitHub releases, downloading only what changed (*Settings > Help*)
+- ⬆️ Automatic updates from signed GitHub releases, downloading only what changed (*Settings > Help and feedback*)
 
 ## Download
 
@@ -276,7 +276,7 @@ Prebuilt packages for **Windows** (amd64) and **Linux** (amd64) are on the
   `~/.local/share/WazzapClients/uninstall.sh` removes it again.
 - `WazzapClients-linux-amd64` is the Linux app on its own.
 
-The app updates itself in the background and installs the new release when it restarts. To turn that off or update now, use **Settings > Help**.
+The app updates itself in the background and installs the new release when it restarts. To turn that off or update now, use **Settings > Help and feedback**.
 See [docs/releasing.md](docs/releasing.md) for how releases are made and signed.
 
 ## Try it without an account

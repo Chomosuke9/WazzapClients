@@ -49,7 +49,7 @@ type UI struct {
 	dark bool
 	// doodles draws the wallpaper's doodles behind conversations.
 	doodles bool
-	// autoPhotos downloads pictures as they show (Settings > Storage);
+	// autoPhotos downloads pictures as they show (Settings > Chats);
 	// otherwise their thumbnails show until they're opened.
 	autoPhotos bool
 	// zoom scales the whole window (scale.go).
@@ -130,7 +130,6 @@ type UI struct {
 	channel  channelState
 	commun   communityState
 	settings settingsState
-	calls    callsState
 
 	login struct {
 		retry      widget.Clickable
@@ -148,7 +147,7 @@ type UI struct {
 	acctMenu acctMenuState
 
 	rail struct {
-		chats, calls, status, channels, communities, archived, media, profile widget.Clickable
+		chats, calls, status, channels, communities, media, profile widget.Clickable
 	}
 
 	// cardPhone is the number of a shared contact whose chat opens once
@@ -250,6 +249,7 @@ type UI struct {
 
 	sidebar struct {
 		newChat, menu, back widget.Clickable
+		archived            widget.Clickable // the Archived row
 		search              widget.Editor
 		chipBuf             []chipItem // chipItems' buffer
 		filter              int
@@ -262,6 +262,8 @@ type UI struct {
 		chipHidden   int             // the first chip that didn't fit, under ▾ (chips.go)
 		chipMoreH    int             // ▾'s height, where its menu opens
 		showArchived bool
+		archivedRow  bool // the list begins with the Archived row
+		archivedNew  int  // the unread chats it counts
 		list         widget.List
 		rows         map[string]*widget.Clickable
 		visible      []*model.Chat
@@ -278,7 +280,6 @@ type UI struct {
 		video, search, menu widget.Clickable
 		community           widget.Clickable // the announcements' group picker
 		attach, emoji, send widget.Clickable
-		attachTurn          tween // the attach "+" turning into an "x" while its menu is open
 		// editorElsewhere is set while the send view shows: the
 		// composer's editor is its caption field.
 		editorElsewhere bool
@@ -838,7 +839,7 @@ func (u *UI) layoutWindow(gtx C) D {
 	u.layoutGallery(gtx)
 	u.layoutViewer(gtx)
 	u.layoutPicView(gtx)
-	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia || u.picker.mode == pickAudience) {
+	if u.picker.shown() && (u.picker.mode == pickReaction || u.picker.mode == pickMedia || u.picker.mode == pickAudience || u.picker.mode == pickStatus) {
 		u.layoutPicker(gtx, image.Point{}, gtx.Constraints.Max.X)
 	}
 	u.layoutReplies(gtx)
@@ -926,7 +927,13 @@ func (u *UI) layoutPageSidebar(gtx C) D {
 	case pageCommunities:
 		return u.layoutCommunityList(gtx)
 	case pageSettings:
-		return u.layoutSettingsList(gtx)
+		if u.statusPrivacyCovers() { // opened from Privacy
+			u.layoutStatusPrivacy(gtx)
+			return D{Size: gtx.Constraints.Max}
+		}
+		d := u.layoutSettingsList(gtx)
+		u.layoutStatusPrivacy(gtx)
+		return d
 	case pageCalls:
 		return u.layoutCallsList(gtx)
 	}
@@ -960,8 +967,17 @@ func (u *UI) layoutRightPane(gtx C) D {
 		}
 	}
 	d := u.layoutPlaceholder(gtx)
-	u.veil(gtx, image.Rectangle{Max: d.Size}, u.pal.Panel, easeOut(u.pageIn.v)) // fades in with the page
+	u.veil(gtx, image.Rectangle{Max: d.Size}, u.placeholderBg(), easeOut(u.pageIn.v)) // fades in with the page
 	return d
+}
+
+// placeholderBg is the background of layoutPlaceholder: Chats' and Calls'
+// is the frame's color, as on WhatsApp Web, and the other pages' the panel's.
+func (u *UI) placeholderBg() color.NRGBA {
+	if u.page == pageChats || u.page == pageCalls {
+		return u.pal.EmptyPane
+	}
+	return u.pal.Panel
 }
 
 // layoutPlaceholder draws the right pane of a page without an open chat.
@@ -969,11 +985,14 @@ func (u *UI) layoutPlaceholder(gtx C) D {
 	switch u.page {
 	case pageStatus:
 		return u.emptyPane(gtx, func(gtx C, col color.NRGBA) D { return statusIcon(gtx, 56, col, true) },
-			"Share status updates", "Share photos, videos and text that disappear after 24 hours.",
-			"Your status updates are end-to-end encrypted")
+			"Share statuses", "Share photos, videos and text that disappear after 24 hours.", "",
+			paneAction{"st-text", icEdit, "Text status", u.openStatusText},
+			paneAction{"st-photos", icCamera, "Photo and video", u.pickStatusMedia})
 	case pageChannels:
 		return u.emptyPane(gtx, func(gtx C, col color.NRGBA) D { return channelsIcon(gtx, 58, col, u.pal.Panel, true) },
-			"Discover channels", "Entertainment, sports, news, lifestyle, people and more. Follow the channels that interest you", "")
+			"Discover channels", "Entertainment, sports, news, lifestyle, people and more. Follow the channels that interest you", "",
+			paneAction{"ch-create", icAdd, "Create channel", u.openCreateChannel},
+			paneAction{"ch-find", icExplore, "Explore channels", u.findChannels})
 	case pageCommunities:
 		return u.emptyPane(gtx, iconGlyph(icGroupsFill, 72),
 			"Create communities", "Bring members together in topic-based groups and easily send them admin announcements.",
@@ -1054,10 +1073,8 @@ func (u *UI) update(gtx C) {
 		u.menu.open = !u.menu.open
 	}
 	u.updateChips(gtx)
-	if u.rail.archived.Clicked(gtx) {
-		u.sidebar.showArchived = u.page != pageChats || !u.sidebar.showArchived
-		u.setPage(pageChats)
-		u.setListHidden(false)
+	if u.sidebar.archived.Clicked(gtx) {
+		u.sidebar.showArchived = true
 		u.sidebar.list.Position = layout.Position{}
 	}
 	u.updateNewChat(gtx)
@@ -1120,9 +1137,7 @@ func (u *UI) update(gtx C) {
 	}
 	for id, click := range u.sidebar.rows {
 		if click.Clicked(gtx) {
-			if u.sidebar.pick.on {
-				u.pickRow(id)
-			} else if c := u.chatByID(id); c != nil {
+			if c := u.chatByID(id); c != nil {
 				u.open(c)
 			}
 		}
@@ -1207,7 +1222,9 @@ func (u *UI) escape() {
 	case u.menu.open:
 		u.menu.open = false
 	case u.ctx.isOpen():
-		u.closeMenu()
+		if !u.leaveSubmenu() {
+			u.closeMenu()
+		}
 	case u.reacts.isOpen():
 		u.closeReactions()
 	case u.dialog.isOpen():
@@ -1216,6 +1233,8 @@ func (u *UI) escape() {
 		u.closeReplies()
 	case u.picView.isOpen():
 		u.closePicView()
+	case u.picker.open && u.picker.mode == pickStatus:
+		u.closePicker() // over the composer
 	case u.status.text.isOpen():
 		u.closeStatusText()
 	case u.picker.open:
@@ -1281,7 +1300,7 @@ func (u *UI) escape() {
 		u.statusPrivacyBack()
 	case u.page == pageSettings && u.settings.detail != 0:
 		u.settingsBack()
-	case u.page == pageChats && u.sidebar.search.Text() != "":
+	case u.page == pageChats && u.listQuery() != "":
 		u.clearListSearch() // before the chat: Esc closes the search alone
 	case u.selected != nil && u.selPage == u.page:
 		u.closeChat() // like WhatsApp Web's Esc
@@ -1717,12 +1736,16 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		if name == "acctmode" {
 			u.ctx = ctxMenu{kind: ctxAcctMode, chatID: u.accounts[1].Dir, at: image.Pt(x, y)}
 		}
-	case "selectchats":
-		// Select chats, with the second and third chats picked.
+	case "selectchats", "selectmenu":
+		// Select chats, with the second and third chats picked, and its
+		// menu (at -at).
 		u.startChatSelect()
 		u.sidebar.pick.anim.snap(true)
 		for _, c := range u.chats[1:min(3, len(u.chats))] {
 			u.pickRow(c.ID)
+		}
+		if name == "selectmenu" {
+			u.openPickMenu()
 		}
 	case "linkbar":
 		u.linkBar.demo = true
@@ -1748,11 +1771,12 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.openChatMenu(u.chats[1])
 		}
 	case "mute", "lists":
-		// The chat menu's mute choices and the info panel's lists, for the
-		// second chat like chatmenu.
-		if len(u.chats) > 1 {
+		// The chat menu's mute choices, for the third chat (the second is
+		// muted), and the info panel's lists, for the second like chatmenu.
+		if len(u.chats) > 2 {
 			if name == "mute" {
-				u.openMuteMenu(u.chats[1])
+				u.openChatMenu(u.chats[2])
+				u.ctx.sub.key = "mute"
 			} else {
 				u.openListsMenu(u.chats[1])
 			}
@@ -2010,9 +2034,12 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.pickChip(u.chipItems()[len(filterNames)]) // the first custom list
 	case "newlist":
 		u.openNewList([]string{"gym"})
-		u.dialog.listName.SetText("Friends")
-		u.dialog.anim.snap(true)
-		u.dialog.bar.snap(true)
+		u.newChat.listName.SetText("Friends")
+		u.newChat.snap()
+	case "newlistchats":
+		u.openNewList([]string{"gym"})
+		u.newChat.step = ncListChats
+		u.newChat.snap()
 	case "membersearch":
 		u.openInfo(u.selected.ID)
 		u.info.anim.snap(true)
@@ -2272,14 +2299,9 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.split.hidden = true
 			u.split.anim.snap(false)
 		}
-	case "gallery", "gallerydocs", "gallerylinks", "galleryselect", "chatgallery":
-		// The Media panel: every chat's media, docs or links, or the open
-		// chat's ("Media, links and docs").
-		if name == "chatgallery" {
-			u.openGallery(u.selected.ID, u.selected.Name)
-		} else {
-			u.openGallery("", "")
-		}
+	case "gallery", "gallerydocs", "gallerylinks", "galleryselect":
+		// The Media panel: every chat's media, docs or links.
+		u.openGallery("", "")
 		switch name {
 		case "gallerydocs":
 			u.gallery.tab = model.GalleryDocs
@@ -2305,13 +2327,8 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		u.openStarred()
 		u.applyEvents()
 		u.gallery.anim.snap(true)
-	case "convmenu", "timer":
-		// The open chat's ⋮ menu, or its disappearing message timers.
-		if name == "convmenu" {
-			u.openConvMenu()
-		} else {
-			u.openTimerMenu(u.selected)
-		}
+	case "convmenu":
+		u.openConvMenu() // the open chat's ⋮ menu
 	case "left":
 		// A group you're no longer a member of, with its ⋮ menu.
 		u.backend.LeaveGroup(u.selected.ID)
@@ -2371,7 +2388,7 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		} else {
 			u.ctx = ctxMenu{kind: ctxChannelAdd, at: u.mouse}
 		}
-	case "perms", "starred", "changes":
+	case "perms", "starred", "changes", "chatgallery", "timer", "restricted", "admins":
 		// The info panel's pages.
 		u.openInfo(u.selected.ID)
 		u.info.anim.snap(true)
