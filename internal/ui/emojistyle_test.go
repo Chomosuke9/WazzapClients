@@ -37,6 +37,19 @@ func TestEmojiGlyphNames(t *testing.T) {
 		"🇺🇸":    "1f1fa_1f1f8",
 		"🏳️‍🌈":  "1f3f3_200d_1f308",
 		"👨‍👩‍👧": "1f468_200d_1f469_200d_1f467",
+		// The font also has these in reverse, and flags shared.
+		"👨‍💻":      "1f468_200d_1f4bb",
+		"👩🏽‍🚀":     "1f469_1f3fd_200d_1f680",
+		"❤️‍🔥":     "2764_200d_1f525",
+		"🐈‍⬛":      "1f408_200d_2b1b",
+		"🏃🏻‍♂️":    "1f3c3_1f3fb_200d_2642",
+		"🫱🏻‍🫲🏽":    "1faf1_1f3fb_200d_1faf2_1f3fd",
+		"👨‍❤️‍💋‍👨": "1f468_200d_2764_200d_1f48b_200d_1f468",
+		"🍋‍🟩":      "1f34b_200d_1f7e9",
+		"🙂‍↔️":     "1f642_200d_2194",
+		"🇫🇷":       "1f1eb_1f1f7",
+		"🇳🇴":       "1f1f3_1f1f4",
+		"🇪🇸":       "1f1ea_1f1f8",
 	} {
 		_, gs := shapeEmoji([]rune(in))
 		if len(gs) != 1 {
@@ -429,7 +442,7 @@ func TestEmojiStyleSettings(t *testing.T) {
 	for _, r := range page[0].rows {
 		titles = append(titles, r.title)
 	}
-	if want := []string{"2D", "2D animated", "3D"}; !slices.Equal(titles, want) {
+	if want := []string{"2D", "2D animated", "3D", "Custom"}; !slices.Equal(titles, want) {
 		t.Fatalf("styles %q, want %q", titles, want)
 	}
 	if !page[0].rows[0].on {
@@ -650,5 +663,86 @@ func TestEmojiAnimRescale(t *testing.T) {
 	}
 	if as.m[emojiAnimKey{"b", 30}] == nil {
 		t.Error("let go of one still decoding")
+	}
+}
+
+// TestEmojiCustom: the Custom style draws the pack's pictures, in 2D those
+// it lacks, downloads nothing, and follows the pack as it comes and goes.
+func TestEmojiCustom(t *testing.T) {
+	_, asked := useEmojiStore(t, emojiCustom, nil)
+	plain := emojiPNG("😀")
+	if len(plain) == 0 {
+		t.Fatal("no 2D emoji without a pack")
+	}
+	u := New(mock.New())
+	u.setEmojiStyle(emojiCustom)
+	gtx := layout.Context{Ops: new(op.Ops), Now: testNow()}
+	u.refreshEmoji(gtx)
+	sh := u.th.Shaper
+
+	pack := t.TempDir()
+	for _, n := range []string{"01f600.png", "1F44D-1F3FD.png", "002764_00fe0f.png", "000023_00fe0f_0020e3.png", "readme.png"} {
+		if err := os.WriteFile(filepath.Join(pack, n), solidPNG(160, 160, color.NRGBA{R: 255, A: 255}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := emojiStore.Import(filepath.Join(pack, "01f600.png"), allEmojiNames())
+	if err != nil || n != 4 {
+		t.Fatalf("imported %d, %v, want 4", n, err)
+	}
+	for _, e := range []string{"😀", "👍🏽", "❤️", "#️⃣"} {
+		img, err := png.Decode(bytes.NewReader(emojiPNG(e)))
+		if err != nil || img.Bounds().Dx() != 136 || img.Bounds().Dy() != 128 {
+			t.Fatalf("%s: %v", e, err)
+		}
+		if r, g, _, _ := img.At(68, 64).RGBA(); r != 0xffff || g != 0 {
+			t.Errorf("%s isn't the pack's", e)
+		}
+	}
+	if len(emojiPNG("😃")) == 0 {
+		t.Error("an emoji the pack lacks has no picture")
+	}
+	gtx.Now = gtx.Now.Add(2 * time.Second)
+	u.refreshEmoji(gtx)
+	if u.th.Shaper == sh {
+		t.Error("the shaper still draws the emojis of before the pack")
+	}
+
+	if err := emojiStore.Clear(); err != nil || emojiStore.PackCount() != 4 {
+		t.Errorf("deleting downloads left %d of the pack (%v)", emojiStore.PackCount(), err)
+	}
+	if err := emojiStore.RemovePack(); err != nil || emojiStore.PackCount() != 0 || !bytes.Equal(emojiPNG("😀"), plain) {
+		t.Errorf("the pack stayed: %d, %v", emojiStore.PackCount(), err)
+	}
+	for len(asked) > 0 {
+		if url := <-asked; !strings.HasSuffix(url, ".ttf") {
+			t.Errorf("asked for %s", url)
+		}
+	}
+}
+
+// TestEmojiPackRows: the Emoji pack rows show only for the Custom style.
+func TestEmojiPackRows(t *testing.T) {
+	useEmojiStore(t, emoji2D, map[string][]byte{"custom/1f600.png": solidPNG(136, 128, color.NRGBA{A: 255})})
+	u := New(mock.New())
+	rows := func() (keys []string) {
+		for _, sec := range u.emojiStyleSettings() {
+			for _, r := range sec.rows {
+				keys = append(keys, r.key)
+			}
+		}
+		return keys
+	}
+	if slices.Contains(rows(), "emoji:pack") {
+		t.Error("2D offers a pack")
+	}
+	u.setEmojiStyle(emojiCustom)
+	got := rows()
+	if !slices.Contains(got, "emoji:pack") || !slices.Contains(got, "emoji:unpack") || slices.Contains(got, "emoji:all") {
+		t.Errorf("Custom's rows: %q", got)
+	}
+	u.emojiPackSection().rows[1].run()
+	if emojiStore.PackCount() != 0 || slices.Contains(rows(), "emoji:unpack") {
+		t.Error("Remove emoji pack didn't")
 	}
 }

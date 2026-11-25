@@ -105,6 +105,8 @@ type UI struct {
 	emojiView  emojiView               // what emojis were drawn with (emojistyle.go)
 	emojiAnims emojiAnims              // animated emojis on screen
 	emojiKeys  map[emojiAnimKey]string // see textEmojiKey
+	// A custom emoji pack is being chosen or copied.
+	emojiImporting bool
 	// u.textEmoji and u.labelEmoji, bound once: a method value made for
 	// every label would be garbage every frame.
 	textHook, labelHook bitmapHook

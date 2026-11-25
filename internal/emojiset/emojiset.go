@@ -2,7 +2,8 @@
 // app: Noto Color Emoji, the 2D font (10.7 MB), once, and Noto's 3D and
 // animated emojis one picture at a time, the first time each shows (the
 // 3D font alone is 148 MB). They are kept in a folder of the app's data,
-// with the animations' frames as the UI shows them (sheets.go). No Gio here.
+// with the animations' frames as the UI shows them (sheets.go), and a pack of
+// the user's own (custom.go). No Gio here.
 package emojiset
 
 import (
@@ -36,6 +37,8 @@ const (
 	Animated
 	// Font is Noto Color Emoji, the 2D emoji font (see FontPath).
 	Font
+	// CustomPack is the user's own emoji pack (Import). It never downloads.
+	CustomPack
 )
 
 const (
@@ -50,7 +53,7 @@ const (
 	maxFile  = 16 << 20 // bigger isn't an emoji (nor the font)
 	workers  = 4
 	retryIn  = time.Minute // after a network error
-	memLimit = 2 << 20     // bytes of 3D pictures kept in memory
+	memLimit = 2 << 20     // bytes of 3D and custom pictures kept in memory
 )
 
 // dir names each kind's folder (and what Kind.String says).
@@ -60,6 +63,8 @@ func (k Kind) dir() string {
 		return "animated"
 	case Font:
 		return "font"
+	case CustomPack:
+		return "custom"
 	}
 	return "3d"
 }
@@ -139,8 +144,11 @@ type Store struct {
 	queue   []key // newest last: the newest asked are fetched first
 	running int
 	notify  func()
-	mem     map[key][]byte // recently read 3D pictures
+	mem     map[key][]byte // recently read 3D and custom pictures
 	memSize int
+
+	importMu  sync.Mutex // held while a custom pack comes or goes
+	packCount int        // see PackCount; -1 until counted
 
 	sheets     map[string]sheetFile // by file name; nil until loadSheets
 	sheetsSize int64
@@ -153,7 +161,7 @@ type Store struct {
 func New(dir string) *Store {
 	// Long enough for the font on a slow line.
 	client := &http.Client{Timeout: 10 * time.Minute}
-	return &Store{dir: dir, known: map[key]*entry{}, mem: map[key][]byte{}, Fetch: func(url string) ([]byte, int, error) {
+	return &Store{dir: dir, packCount: -1, known: map[key]*entry{}, mem: map[key][]byte{}, Fetch: func(url string) ([]byte, int, error) {
 		resp, err := client.Get(url)
 		if err != nil {
 			return nil, 0, err
@@ -226,6 +234,8 @@ func (s *Store) Ready(kind Kind, name string) bool {
 			e.state = onDisk
 		} else if _, err := os.Stat(s.nonePath(k)); err == nil {
 			e.state = missing
+		} else if kind == CustomPack {
+			e.state = missing
 		}
 	}
 	switch e.state {
@@ -242,14 +252,14 @@ func (s *Store) Ready(kind Kind, name string) bool {
 }
 
 // Read returns the picture of name when it is on disk (see Ready), or nil.
-// 3D pictures that were read lately come from memory.
+// 3D and custom pictures that were read lately come from memory.
 func (s *Store) Read(kind Kind, name string) []byte {
 	if !s.Ready(kind, name) {
 		return nil
 	}
 	k := key{kind, name}
 	s.mu.Lock()
-	b := s.mem[k]
+	b, gen := s.mem[k], s.gen.Load()
 	s.mu.Unlock()
 	if b != nil {
 		return b
@@ -258,15 +268,18 @@ func (s *Store) Read(kind Kind, name string) []byte {
 	if err != nil || !kind.valid(b) {
 		return nil
 	}
-	if kind == ThreeD {
+	if kind == ThreeD || kind == CustomPack {
 		s.mu.Lock()
+		defer s.mu.Unlock()
+		if kind == CustomPack && s.gen.Load() != gen {
+			return b // perhaps of the pack before this one
+		}
 		if s.memSize+len(b) > memLimit {
 			clear(s.mem)
 			s.memSize = 0
 		}
+		s.memSize += len(b) - len(s.mem[k])
 		s.mem[k] = b
-		s.memSize += len(b)
-		s.mu.Unlock()
 	}
 	return b
 }
@@ -274,7 +287,7 @@ func (s *Store) Read(kind Kind, name string) []byte {
 // Prefetch queues the download of every picture of names that isn't on disk
 // (retrying failed ones now). It returns how many it queued.
 func (s *Store) Prefetch(kind Kind, names []string) int {
-	if s == nil {
+	if s == nil || kind == CustomPack {
 		return 0
 	}
 	n := 0
@@ -402,7 +415,8 @@ func (s *Store) Size() int64 {
 }
 
 // Clear deletes every downloaded 3D and animated picture, and the
-// animations' sheets (not the font). Those still shown download again.
+// animations' sheets (not the font or the custom pack). Those still shown
+// download again.
 func (s *Store) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -413,7 +427,7 @@ func (s *Store) Clear() error {
 		}
 	}
 	for k, e := range s.known {
-		if e.state != queued && k.kind != Font {
+		if e.state != queued && k.kind != Font && k.kind != CustomPack {
 			delete(s.known, k)
 		}
 	}

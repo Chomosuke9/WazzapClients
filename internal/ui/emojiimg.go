@@ -28,7 +28,7 @@ const (
 )
 
 // emojiPNG returns the PNG of ch's glyph in the emoji font, read in place
-// from the mapped font (or the 3D one, see emojiBitmap), or nil when ch
+// from the mapped font (or the emoji style's, see emojiBitmap), or nil when ch
 // isn't a single color glyph or the font isn't loaded.
 // It is safe to call from any goroutine.
 func emojiPNG(ch string) []byte {

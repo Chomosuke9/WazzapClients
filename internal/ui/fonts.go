@@ -107,7 +107,7 @@ func LoadEmojiFont(path string) error {
 	for i := range set.faces {
 		set.faces[i].Font.Typeface = emojiTypeface
 		f := set.faces[i].Face.(memFace).font
-		f.BitmapHook = emojiBitmap // the 3D emoji style
+		f.BitmapHook = emojiBitmap // the 3D and custom emoji styles
 		f.Cmap = noKeycapCmap{f.Cmap}
 	}
 	set.font.BitmapHook = emojiBitmap

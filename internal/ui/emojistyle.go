@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	"github.com/chomosuke9/wazzapclients/internal/emojiset"
+	"github.com/chomosuke9/wazzapclients/internal/filepick"
 	"github.com/chomosuke9/wazzapclients/internal/memtrim"
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/offheap"
@@ -39,6 +41,8 @@ import (
 //     go-text asks emojiBitmap (Font.BitmapHook) for each bitmap glyph.
 //     Gio caches glyph pictures and the drawing of whole lines, so the UI
 //     gets a new shaper when pictures arrive (refreshEmoji).
+//   - Custom replaces them the same way, with the pictures of a pack the
+//     user chose (emojiset's custom.go). Emojis it lacks show in 2D.
 //   - 2D animated plays emojis' animations in the places the Animated
 //     emojis page leaves on (emojiPlaces, prefEmojiStill). Labels draw
 //     their emojis through one hook (hookLabel's, labelEmoji), so the
@@ -58,6 +62,7 @@ const (
 	emoji2D       emojiStyleKind = iota
 	emojiAnimated                // 2D, animated where emojiStill allows
 	emoji3D
+	emojiCustom // a pack of the user's own
 )
 
 var emojiStyles = []struct {
@@ -66,6 +71,7 @@ var emojiStyles = []struct {
 	emoji2D:       {"", "2D", "Noto Color Emoji"},
 	emojiAnimated: {"2d_anim", "2D animated", "Emojis play their animations, where you choose"},
 	emoji3D:       {"3d", "3D", "Noto's 3D emojis"},
+	emojiCustom:   {"custom", "Custom", "Your own emoji pack"},
 }
 
 // prefOutsideMessages was the style "2D, animated outside messages":
@@ -132,11 +138,22 @@ func formatEmojiStill(m uint16) string {
 	return strings.Join(fs, ",")
 }
 
-// emojiStyleNow is the chosen style. The 3D hook reads it from any
+// emojiStyleNow is the chosen style. The bitmap hook reads it from any
 // goroutine; only the UI goroutine sets it.
 var emojiStyleNow atomic.Int32
 
 func emojiStyle() emojiStyleKind { return emojiStyleKind(emojiStyleNow.Load()) }
+
+// pictures is the set whose pictures stand for the font's in style k, or 0.
+func (k emojiStyleKind) pictures() emojiset.Kind {
+	switch k {
+	case emoji3D:
+		return emojiset.ThreeD
+	case emojiCustom:
+		return emojiset.CustomPack
+	}
+	return 0
+}
 
 // emojiStore keeps the downloaded pictures. Run sets it (Options.EmojiDir);
 // it is nil in tests and screenshots, where nothing downloads and every
@@ -183,7 +200,7 @@ func (u *UI) loadEmojiStyle() {
 var emojiPreview emojiStyleKind = -1
 
 // PreviewEmojis makes every UI draw emojis in style (a value of the Emoji
-// style preference: "2d_anim" or "3d", or "2d_anim_alone" for 2D animated
+// style preference: "2d_anim", "3d" or "custom", or "2d_anim_alone" for 2D animated
 // outside message text, quotes and the picker) from the pictures already
 // in dir, which is laid out as the app keeps them (<data>/emoji),
 // downloading none. For cmd/screenshot.
@@ -298,6 +315,7 @@ func buildEmojiNames(f *fontapi.Font) map[fontapi.GID]string {
 		}
 	}
 	seqs := map[fontapi.GID][]rune{}
+	known := emojiTableNames()
 	for _, lk := range f.GSUB.Lookups {
 		for _, st := range lk.Subtables {
 			lig, ok := st.(tables.LigatureSubs)
@@ -324,7 +342,10 @@ func buildEmojiNames(f *fontapi.Font) map[fontapi.GID]string {
 					for _, c := range l.ComponentGlyphIDs {
 						seq = append(seq, seqOf(single, seqs, fontapi.GID(c))...)
 					}
-					seqs[fontapi.GID(l.LigatureGlyph)] = seq
+					g := fontapi.GID(l.LigatureGlyph)
+					if old, ok := seqs[g]; !ok || betterSeq(seq, old, known) {
+						seqs[g] = seq
+					}
 				}
 			}
 		}
@@ -341,6 +362,60 @@ func buildEmojiNames(f *fontapi.Font) map[fontapi.GID]string {
 	return names
 }
 
+// emojiTableNames has the names of the picker's emojis (no skin tones).
+func emojiTableNames() map[string]bool {
+	m := map[string]bool{}
+	for line := range strings.Lines(emojiTable) {
+		ch, _, _ := strings.Cut(line, "\t")
+		m[emojiset.Name([]rune(ch))] = true
+	}
+	return m
+}
+
+// betterSeq reports whether a is rather the emoji of a glyph than b, both
+// sequences the font draws with it. Most joined emojis also have one in
+// reverse ("💻 man" for 👨‍💻), and places without a flag of their own share
+// their country's.
+func betterSeq(a, b []rune, known map[string]bool) bool {
+	ra, rb := seqRank(a, known), seqRank(b, known)
+	if ra != rb {
+		return ra < rb
+	}
+	return slices.Compare(a, b) < 0
+}
+
+// seqRank is lower the likelier seq is an emoji's own sequence.
+func seqRank(seq []rune, known map[string]bool) int {
+	rank := 0
+	var plain []rune
+	for i, r := range seq {
+		switch {
+		case r < 0x1f3fb || r > 0x1f3ff:
+			plain = append(plain, r)
+		case i > 0 && seq[i-1] == 0x200d:
+			rank |= 8 // a skin tone belongs to what's before it
+		}
+	}
+	if !known[emojiset.Name(plain)] {
+		rank |= 4
+	}
+	if len(seq) > 1 && slices.Contains([]rune{0x2194, 0x2195, 0x27a1, 0x2640, 0x2642}, seq[0]) {
+		rank |= 2 // which way, or whose: never first
+	}
+	if len(seq) == 2 && sharedFlags[emojiset.Name(seq)] {
+		rank |= 1
+	}
+	return rank
+}
+
+// sharedFlags are the places that fly another country's flag: Bouvet
+// Island, Svalbard, Clipperton Island, Saint Martin, Diego Garcia, Ceuta
+// and Melilla, Heard Island and the US Outlying Islands.
+var sharedFlags = map[string]bool{
+	"1f1e7_1f1fb": true, "1f1f8_1f1ef": true, "1f1e8_1f1f5": true, "1f1f2_1f1eb": true,
+	"1f1e9_1f1ec": true, "1f1ea_1f1e6": true, "1f1ed_1f1f2": true, "1f1fa_1f1f2": true,
+}
+
 func seqOf(single map[fontapi.GID]rune, seqs map[fontapi.GID][]rune, g fontapi.GID) []rune {
 	if s, ok := seqs[g]; ok {
 		return append([]rune(nil), s...)
@@ -352,12 +427,14 @@ func seqOf(single map[fontapi.GID]rune, seqs map[fontapi.GID][]rune, g fontapi.G
 }
 
 // emojiBitmap is the emoji font's BitmapHook: in the 3D style, the
-// downloaded picture of a glyph, which it downloads when it hasn't yet.
+// downloaded picture of a glyph, which it downloads when it hasn't yet, and
+// in the custom one the pack's.
 func emojiBitmap(gid fontapi.GID) ([]byte, bool) {
-	if emojiStyle() != emoji3D || emojiStore == nil {
+	kind := emojiStyle().pictures()
+	if kind == 0 || emojiStore == nil {
 		return nil, false
 	}
-	b := emojiStore.Read(emojiset.ThreeD, emojiGlyphName(gid))
+	b := emojiStore.Read(kind, emojiGlyphName(gid))
 	return b, b != nil
 }
 
@@ -372,9 +449,8 @@ type emojiView struct {
 }
 
 // refreshEmoji gives the UI a new shaper when the emojis it draws have
-// changed: the 2D font loaded, the style, or (in 3D) the pictures
-// downloaded. Gio's shaper
-// caches glyph pictures, and whole lines of them, for good. Pictures
+// changed: the 2D font loaded, the style, or (in 3D and custom) the
+// pictures that came or went. Gio's shaper caches glyph pictures, and whole lines of them, for good. Pictures
 // arriving one by one swap the shaper at most once a second.
 func (u *UI) refreshEmoji(gtx C) {
 	v := &u.emojiView
@@ -395,9 +471,9 @@ func (u *UI) refreshEmoji(gtx C) {
 	case v.shaper == nil:
 		v.style, v.gen, v.at = style, gen, gtx.Now
 	case style != v.style:
-		redraw = style == emoji3D || v.style == emoji3D
+		redraw = style.pictures() != 0 || v.style.pictures() != 0
 		v.style, v.gen = style, gen
-	case style == emoji3D && gen != v.gen:
+	case style.pictures() != 0 && gen != v.gen:
 		if wait := v.at.Add(time.Second); gtx.Now.Before(wait) {
 			gtx.Execute(op.InvalidateCmd{At: wait})
 			break
@@ -819,7 +895,7 @@ func (u *UI) emojiStyleSettings() []settingsSection {
 	sec := settingsSection{title: "Emoji style",
 		note: "Emojis come from Google's Noto Emoji and are kept on this computer. The 2D ones download once, " +
 			"when the app first runs. Animated and 3D emojis download the first time each one shows; the 2D one " +
-			"shows until then, and where there is no animation."}
+			"shows until then, and where there is no animation. Custom shows a pack of your own."}
 	for i, s := range emojiStyles {
 		k := emojiStyleKind(i)
 		sec.rows = append(sec.rows, settingRow{key: "emoji:" + s.pref, kind: setRadio, title: s.title, sub: s.sub,
@@ -830,7 +906,10 @@ func (u *UI) emojiStyleSettings() []settingsSection {
 			sub: emojiPlacesSummary(), trailing: icChevronRight, run: func() { u.openSettingsSub("emojianim") }})
 	}
 	out := []settingsSection{sec}
-	if emojiStore != nil && cur != emoji2D {
+	if emojiStore != nil && cur == emojiCustom {
+		out = append(out, u.emojiPackSection())
+	}
+	if emojiStore != nil && (cur == emojiAnimated || cur == emoji3D) {
 		row := settingRow{key: "emoji:all", title: "Download all emojis", sub: "Get every emoji of this style now, instead of as each shows"}
 		if n := emojiStore.Pending(); n > 0 {
 			row.sub = fmt.Sprintf("Downloading… %d left", n)
@@ -863,6 +942,68 @@ func (u *UI) emojiStyleSettings() []settingsSection {
 		out = append(out, settingsSection{title: "Storage", rows: []settingRow{row}})
 	}
 	return out
+}
+
+// emojiPackSection is the Custom style's pack, on the Emoji style page.
+func (u *UI) emojiPackSection() settingsSection {
+	sec := settingsSection{title: "Emoji pack",
+		note: "Choose a zip of PNG pictures, or any one picture to use all in its folder. Each is named by its emoji's " +
+			"code points, such as 1f600.png or 1f44d-1f3fd.png. Emojis the pack doesn't have show in 2D. " +
+			"Use pictures you have the right to use."}
+	n := emojiStore.PackCount()
+	row := settingRow{key: "emoji:pack", title: "Choose emoji pack", sub: "No pack chosen"}
+	if n > 0 {
+		row.title, row.sub = "Change emoji pack", fmt.Sprintf("%d emojis", n)
+	}
+	if u.emojiImporting {
+		row.sub = "Adding the pack…"
+	} else {
+		row.run = u.pickEmojiPack
+	}
+	sec.rows = append(sec.rows, row)
+	if n > 0 && !u.emojiImporting {
+		sec.rows = append(sec.rows, settingRow{key: "emoji:unpack", title: "Remove emoji pack", danger: true,
+			sub: "Deletes the app's copy of it", run: func() {
+				if emojiStore.RemovePack() != nil {
+					u.toast("Couldn't remove the emoji pack")
+				}
+				u.settings.stale = true
+			}})
+	}
+	return sec
+}
+
+// pickEmojiPack asks for an emoji pack and copies its pictures.
+func (u *UI) pickEmojiPack() {
+	names := allEmojiNames()
+	if len(names) == 0 {
+		u.toast("The 2D emojis haven't downloaded yet")
+		return
+	}
+	u.emojiImporting = true
+	u.settings.stale = true
+	st := emojiStore
+	u.slashDo(func() func() {
+		paths, err := filepick.Open("Choose an emoji pack", false, filepick.Filter{Name: "Emoji packs", Exts: []string{"zip", "png"}})
+		n := 0
+		if err == nil && len(paths) > 0 {
+			n, err = st.Import(paths[0], names)
+		}
+		return func() {
+			u.emojiImporting = false
+			u.settings.stale = true
+			switch {
+			case errors.Is(err, filepick.ErrUnsupported):
+				u.toast("No file dialog found. Install xdg-desktop-portal (or zenity) to choose a pack.")
+			case errors.Is(err, emojiset.ErrNoEmojis):
+				u.toast("No emojis found in that pack")
+			case err != nil:
+				u.toast("Couldn't use that emoji pack")
+			case n > 0:
+				u.toast(fmt.Sprintf("Added %d emojis", n))
+			}
+		}
+	})
 }
 
 // emojiPlacesSummary words where emojis play, for the Emoji style page.

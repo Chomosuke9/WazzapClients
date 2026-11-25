@@ -825,7 +825,8 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    switches for where they play: message text, big emojis, quotes, reactions, the
                    chat list, the picker and everywhere else, the parts that draw them marking
                    themselves with `u.emojiIn`; 3D: the others downloaded one emoji at a time as
-                   they show) in emojistyle.go; the New chat panel and the
+                   they show; Custom: a pack of the user's own. Never add an address, script or preset
+                   for getting a pack whose art isn't openly licensed, WhatsApp's above all) in emojistyle.go; the New chat panel and the
                    New group flow (also "Create a similar group") in newchat.go; the settings
                    pages (profile, account, privacy, chats, shortcuts, help) in
                    settingsdetail.go (the home's search finds settings on every page, in
@@ -919,7 +920,8 @@ internal/lottie/   Lottie animations (WhatsApp's Lottie stickers, .was): parsed 
 internal/emojiset/ downloads the emojis into <data>/emoji: Noto Color Emoji, the 2D font, once;
                    Noto's 3D emojis (googlefonts/noto-emoji, 3dpng branch) and animated ones
                    (Google Fonts) one at a time, the first time each shows. A 404 is remembered
-                   (an empty .none file). Also keeps the animations' decoded sheets (sheets.go)
+                   (an empty .none file). Also keeps the animations' decoded sheets (sheets.go), and the Custom style's
+                   pack (custom.go: a zip or folder of PNGs the user chose, copied into "custom", never downloaded)
 internal/mapfile/  maps a file into memory copy-on-write (the downloaded emoji font)
 internal/offheap/  pictures whose pixels live outside the Go heap (animated emoji sheets)
 internal/video/    plays videos with the OS's own player (Media Foundation on Windows,
@@ -1199,7 +1201,7 @@ go run ./cmd/screenshot -overlay msgmenu -at 700,300 -out /tmp/shots
 # moving the vote below), scroll (the wheel turned up at -at, then a message comes),
 # and hover (the pointer at -at):
 go run ./cmd/screenshot -film msgmenu -at 700,300 -scale 1 -w 1100 -h 700 -step 40ms -out /tmp/shots
-# Draw emojis in another Emoji style (2d_anim_alone, 2d_anim or 3d) from the pictures the
+# Draw emojis in another Emoji style (2d_anim_alone, 2d_anim, 3d or custom) from the pictures the
 # app downloaded (none are downloaded here; the missing ones draw 2D):
 go run ./cmd/screenshot -emoji 3d -emojidir "$APPDATA/WazzapClients/emoji"
 # Draw with a palette (catppuccin, catppuccin-macchiato, catppuccin-frappe, tokyonight,

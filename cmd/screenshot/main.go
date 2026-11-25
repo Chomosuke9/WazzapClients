@@ -53,7 +53,7 @@ func main() {
 	filmName := flag.String("film", "", "render an animation's frames to <out>/film-<name>.png: an -overlay name, viewer-click (thumbnail at -at), info, message, reorder, hover, scroll (-at over the chat), typing, typists (-ochat work), ghost, privacy, privacyhover or vote (-ochat design)")
 	step := flag.Duration("step", 30*time.Millisecond, "with -film, time between frames")
 	readme := flag.Bool("readme", false, "render every screenshot in README.md into <out> (use -out docs/screenshots -w 1280 -h 800 -scale 1.25)")
-	emojiStyle := flag.String("emoji", "", "draw emojis in this Emoji style (2d_anim_alone, 2d_anim or 3d) from the pictures in -emojidir")
+	emojiStyle := flag.String("emoji", "", "draw emojis in this Emoji style (2d_anim_alone, 2d_anim, 3d or custom) from the pictures in -emojidir")
 	emojiDir := flag.String("emojidir", "", "with -emoji, a folder of downloaded emojis (the app's <data>/emoji)")
 	emojiFont := flag.String("emojifont", "internal/ui/testdata/NotoColorEmoji.ttf", "the emoji font (the app downloads it; run from the repository's root)")
 	flag.StringVar(&scheme, "scheme", "", "draw with this palette (catppuccin, catppuccin-macchiato, catppuccin-frappe, tokyonight, tokyonight-storm, tokyonight-moon, gruvbox, everforest, solarized, ayu), or palette:hue for another of its accents")
