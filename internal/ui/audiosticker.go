@@ -97,10 +97,10 @@ func (u *UI) stickerSound(gtx C, m *model.Message, sz int, animated bool) {
 			t.Pop()
 			return D{Size: image.Pt(side, side)}
 		}
-		// What a click does: the sound, or no more of it.
-		ic := icVolume
+		// Whether it's playing, as WhatsApp shows it: silent until clicked.
+		ic := icVolumeOff
 		if on {
-			ic = icVolumeOff
+			ic = icVolume
 		}
 		centerIn(gtx, side, iconW(ic, dp(gtx, side*int(soundIcon)/int(soundBadge)), white))
 		return D{Size: image.Pt(side, side)}
