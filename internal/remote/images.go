@@ -160,12 +160,12 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, map[string]any{"chats": chats, "messages": msgs, "complete": e.Query == q})
 }
 
-// foundChats are the chats whose name has key, archived ones too, the
-// latest first.
+// foundChats are the chats whose name has key, archived ones too (but not
+// locked ones), the latest first.
 func foundChats(chats []*model.Chat, key string, limit int) []Chat {
 	var hits []*model.Chat
 	for _, c := range chats {
-		if strings.Contains(model.SearchKey(c.Name), key) {
+		if !c.Locked && strings.Contains(model.SearchKey(c.Name), key) {
 			hits = append(hits, c)
 		}
 	}

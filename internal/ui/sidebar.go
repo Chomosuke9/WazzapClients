@@ -24,6 +24,7 @@ import (
 func (u *UI) layoutSidebar(gtx C) D {
 	u.sidebar.visible = u.filteredChats()
 	u.stepArchivedRow()
+	u.stepLockedRow()
 	u.sidebar.order.update(gtx, u.sidebar.visible, u.rowHeight(gtx))
 	menuID := ""
 	if u.ctx.isOpen() && u.ctx.kind == ctxChat {
@@ -38,6 +39,8 @@ func (u *UI) layoutSidebar(gtx C) D {
 		search, chips = u.layoutPickBar, none
 	case u.sidebar.showArchived:
 		search, chips = u.layoutArchivedNote, none
+	case u.sidebar.showLocked:
+		search, chips = u.layoutLockedNote, none
 	}
 	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(u.layoutSidebarHeader),
@@ -56,13 +59,17 @@ func (u *UI) layoutSidebar(gtx C) D {
 func (u *UI) layoutSidebarHeader(gtx C) D {
 	p := u.pal
 	h := gtx.Dp(68)
-	if u.sidebar.showArchived {
+	if u.sidebar.showArchived || u.sidebar.showLocked {
+		title := "Archived"
+		if u.sidebar.showLocked {
+			title = "Locked chats"
+		}
 		return vcenter(gtx, h, func(gtx C) D {
 			return layout.Inset{Left: 10, Right: 16}.Layout(gtx, func(gtx C) D {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx C) D { return u.iconButton(gtx, &u.sidebar.back, icBack, 40, 24, p.Icon) }),
 					layout.Rigid(layout.Spacer{Width: 10}.Layout),
-					layout.Flexed(1, u.label(19, "Archived", p.Text, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
+					layout.Flexed(1, u.label(19, title, p.Text, labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
 				)
 			})
 		})
@@ -140,13 +147,17 @@ func (u *UI) filteredChats() []*model.Chat {
 	q := strings.ToLower(u.listQuery())
 	out := u.sidebar.visible[:0] // reused every frame
 	for _, c := range u.chats {
+		// Locked chats show only on their page, never in the search.
+		if c.Locked != u.sidebar.showLocked {
+			continue
+		}
 		// The search finds archived chats too, as WhatsApp's does.
-		if c.Archived != u.sidebar.showArchived && q == "" {
+		if c.Archived != u.sidebar.showArchived && q == "" && !u.sidebar.showLocked {
 			continue
 		}
 		filter := u.sidebar.filter
-		if u.sidebar.showArchived {
-			filter = filterAll // that page has no chips
+		if u.sidebar.showArchived || u.sidebar.showLocked {
+			filter = filterAll // those pages have no chips
 		}
 		switch filter {
 		case filterUnread:
@@ -185,7 +196,10 @@ func (u *UI) layoutChatList(gtx C) D {
 	first := u.listRow(0)
 	return u.scrollList(gtx, &u.sidebar.list, first+len(chats), func(gtx C, i int) D {
 		if i < first {
-			return u.layoutArchivedRow(gtx)
+			if i == 0 && u.sidebar.archivedRow {
+				return u.layoutArchivedRow(gtx)
+			}
+			return u.layoutLockedRow(gtx)
 		}
 		c := chats[i-first]
 		dy, a, moving := o.at(c.ID)
@@ -204,7 +218,10 @@ func (u *UI) layoutChatList(gtx C) D {
 // listRow is the row of the list that the i-th chat shown is at.
 func (u *UI) listRow(i int) int {
 	if u.sidebar.archivedRow {
-		return i + 1
+		i++
+	}
+	if u.chatLock.row {
+		i++
 	}
 	return i
 }
@@ -830,10 +847,13 @@ func (u *UI) previewParts(c *model.Chat, last *model.Message) []layout.FlexChild
 		case last.Kind == model.KindWaiting:
 			children = append(children, small(icClock, p.TextSecondary, 17, 4))
 			txt, italic = "Waiting for this message. This may take a while.", true
+		case last.LocationRequest:
+			children = append(children, small(mediaIcon(model.MediaLocation), p.TextSecondary, 17, 4))
+			txt = "Location request"
 		case last.Kind == model.KindSystem && last.Notice == model.NoticeMissedCall:
 			children = append(children, small(icCall, p.Danger, 18, 4))
 		case last.Kind == model.KindViewOnce:
-			children = append(children, layout.Rigid(func(gtx C) D { return u.viewOnceMark(gtx, 18, p.TextSecondary) }),
+			children = append(children, layout.Rigid(func(gtx C) D { return u.viewOnceBadge(gtx, last, 18, p.TextSecondary) }),
 				layout.Rigid(layout.Spacer{Width: 4}.Layout))
 			txt = mediaLabel(last)
 		case last.StatusMention != nil:

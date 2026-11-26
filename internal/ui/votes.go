@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"slices"
+
 	"gioui.org/font"
 	"gioui.org/layout"
 
@@ -56,7 +58,12 @@ func (u *UI) voteRows() []layout.Widget {
 			if o.Votes != 1 {
 				count = itoa(o.Votes) + " votes"
 			}
-			section(o.Name, count, o.Mine, pollVoters(s.voteList, i))
+			votes := pollVoters(s.voteList, i)
+			if p.HideVoters {
+				// Only the counts show, and your own pick.
+				votes = slices.DeleteFunc(slices.Clone(votes), func(v model.Vote) bool { return !v.Me })
+			}
+			section(o.Name, count, o.Mine, votes)
 		}
 		return rows
 	}

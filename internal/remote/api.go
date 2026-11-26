@@ -233,12 +233,12 @@ func stateName(s model.ConnState) string {
 
 // listed returns the chats the watch lists, in the chat list's order:
 // pinned ones first, the latest pinned first, then the latest activity.
-// Archived chats and ones without messages are left out, like channels,
-// which backends don't list as chats.
+// Archived and locked chats and ones without messages are left out, like
+// channels, which backends don't list as chats.
 func listed(chats []*model.Chat) []*model.Chat {
 	out := make([]*model.Chat, 0, len(chats))
 	for _, c := range chats {
-		if !c.Archived && (c.Last != nil || c.Unread != 0) {
+		if !c.Archived && !c.Locked && (c.Last != nil || c.Unread != 0) {
 			out = append(out, c)
 		}
 	}

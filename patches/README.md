@@ -5,7 +5,8 @@ text library) to use far less memory for fonts, and lets the app swap emoji
 pictures. `gio.patch` patches Gio (`gioui.org`) so it lets go of pictures it
 drew. `hypermeow.patch` patches hypermeow (`github.com/polymorfa/hypermeow`)
 so it decrypts status updates, can send to some of status@broadcast, can take scheduled messages back,
-sends stickers with a sound as stickers and chat themes as chat themes, and asks for missed messages in batches. `go.mod` replaces the modules with
+sends stickers with a sound as stickers, chat themes as chat themes and Zaps as Zaps, adds options to polls,
+can send a group message to some of its members (a group history bundle), and asks for missed messages in batches. `go.mod` replaces the modules with
 `third_party/typesetting`, `third_party/gio` and `third_party/hypermeow`,
 which `apply.sh` builds from the Go module cache and are not checked in:
 
@@ -93,6 +94,23 @@ What `hypermeow.patch` does (marked `WazzapClients patch`):
   goes as `type="media"` with `mediatype="chat_theme"`, without which phones
   drop it, and `MediaChatWallpaper` uploads and downloads its photo.
   `chattheme_patch_test.go` checks it.
+- `send.go`, `instant_patch.go`: a Zap (WhatsApp's Instants) goes as
+  `type="media"` with `mediatype="instant_image"` or `"instant_video"`
+  (WhatsApp Web's `WAWebBackendJobsCommon`); receivers drop one whose
+  mediatype doesn't match. An `instantVideoMessage` (field 140) isn't in
+  these protobufs, so `hasInstantVideo` looks for it in the unknown fields.
+  `instant_patch_test.go` checks it.
+- `msgsecret.go`: an option added to a poll (`secretEncryptedMessage`,
+  `POLL_ADD_OPTION`) is decrypted under the "Poll Add Option" use case, as
+  WhatsApp Web's `WAUseCaseSecret` does (upstream used "Poll Edit", which
+  fails), and `EncryptPollAddOption` makes one.
+- `send.go`: a poll of any version (V2 to V6) and an added option go as
+  `type="poll"`; an added option has no `polltype` (`WAWebSendMsgMetaNode`).
+- `send.go`, `upload.go`: `SendRequestExtra.GroupRecipients` sends a group
+  message to those members alone (and your own devices), encrypted to each
+  device without the sender key, as WhatsApp Web sends a group history
+  bundle (`GROUP_MSG_TYPE.DIRECT`); `UploadGroupHistory` uploads the bundle
+  under document keys to the `group-history` MMS path.
 - `offline_patch.go`, `client.go`: missed stanzas are asked for in batches
   (`<ib><offline_batch count="200"/></ib>`). The login says pull mode, but
   nothing asked, and the server sent about 20 messages a second (10,000 of them

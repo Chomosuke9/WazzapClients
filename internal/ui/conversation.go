@@ -1139,6 +1139,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 	case m.Kind == model.KindWaiting:
 		text, textCol, italic = "Waiting for this message. This may take a while.", secondary, true
 		lead = iconW(icClock, 19, secondary)
+	case m.LocationRequest:
+		text, textCol, italic = locationRequestText(m), secondary, true
+		lead = iconW(mediaIcon(model.MediaLocation), 20, secondary)
 	case voCard:
 		text, textInset = "", gtx.Dp(6)
 		voc = record(cgtx, func(gtx C) D { return u.layoutViewOnceCard(gtx, m, 0, meta.size, bg, secondary) })
@@ -1147,6 +1150,9 @@ func (u *UI) layoutBubble(gtx C, c *model.Chat, m *model.Message, tail bool, max
 		text, textCol, italic = u.viewOnceText(gtx, m), secondary, true
 		lead = func(gtx C) D {
 			defer op.Offset(image.Pt(0, gtx.Dp(2))).Push(gtx.Ops).Pop() // level with the text
+			if m.Zap {
+				return u.viewOnceBadge(gtx, m, 20, secondary)
+			}
 			return u.viewOnceRingIcon(gtx, 20, secondary, false)
 		}
 	case hasAttachment(m):

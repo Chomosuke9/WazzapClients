@@ -787,6 +787,7 @@ func (b *Backend) Star(m *model.Message, starred bool) {
 func (b *Backend) OpenedViewOnce(m *model.Message) {
 	_ = b.store.setMessageFlag(b.ctx, m.ChatID, m.ID, "opened", true)
 	b.emitMessage(m.ChatID, m.ID)
+	b.zapPlayed(m)
 }
 
 // PinMessage implements model.Backend.

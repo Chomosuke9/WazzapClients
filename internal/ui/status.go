@@ -854,9 +854,16 @@ func (u *UI) layoutStatusViewer(gtx C) {
 	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, bx-gtx.Dp(4)-x0), gtx.Dp(60))}
 	nm := record(tg, u.label(16, name, white, labelOpts{maxLines: 1}).Layout)
 	sub := record(tg, func(gtx C) D { return u.statusSubtitle(gtx, up) })
-	top := cy - (nm.size.Y+sub.size.Y)/2
+	var song part
+	if up.Song != nil {
+		song = record(tg, func(gtx C) D { return u.statusSong(gtx, up.Song) })
+	}
+	top := cy - (nm.size.Y+sub.size.Y+song.size.Y)/2
 	nm.at(gtx, x0, top)
 	sub.at(gtx, x0, top+nm.size.Y)
+	if up.Song != nil {
+		song.at(gtx, x0, top+nm.size.Y+sub.size.Y)
+	}
 
 	if up.Audience != "" && !zoomed {
 		// The audience its poster shared it with, under the header.
@@ -994,6 +1001,30 @@ func (u *UI) statusSubtitle(gtx C, up *model.StatusUpdate) D {
 			})
 		}))
 	}
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx, line...)
+}
+
+// statusSong is the line under a status's time that names its song, as
+// WhatsApp's MusicAttribution: a note, the artist in bold, the title, and
+// an E when it's explicit. The song itself plays from Meta's music
+// service, which linked devices don't reach.
+func (u *UI) statusSong(gtx C, s *model.Song) D {
+	dim := argb(0xffffff, 0xd8)
+	const size = 13.5
+	line := []layout.FlexChild{
+		layout.Rigid(iconW(icMusic, 15, dim)),
+		layout.Rigid(layout.Spacer{Width: 4}.Layout),
+	}
+	if s.Explicit {
+		line = append(line, layout.Rigid(func(gtx C) D {
+			return background(gtx, argb(0xffffff, 0x50), 3, func(gtx C) D {
+				return layout.Inset{Left: 3, Right: 3}.Layout(gtx, u.label(10.5, "E", rgb(0xffffff), labelOpts{weight: font.Bold, maxLines: 1}).Layout)
+			})
+		}), layout.Rigid(layout.Spacer{Width: 4}.Layout))
+	}
+	line = append(line,
+		layout.Rigid(u.label(size, s.Artist, rgb(0xffffff), labelOpts{weight: font.SemiBold, maxLines: 1}).Layout),
+		layout.Flexed(1, u.label(size, " · "+s.Title, dim, labelOpts{maxLines: 1}).Layout))
 	return layout.Flex{Alignment: layout.Middle}.Layout(gtx, line...)
 }
 

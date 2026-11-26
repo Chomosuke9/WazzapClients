@@ -26,12 +26,14 @@ type parsed struct {
 	// revokedBy is the group admin who deleted someone else's message
 	// (revoke), or "" when its sender did.
 	revokedBy string
-	pin       int       // 1 pinned, -1 unpinned
-	pinAt     int64     // when, in unix milliseconds
-	pinUntil  int64     // when the pin ends, in unix seconds, 0 for never
-	keep      int       // 1 kept in the chat, -1 unkept
-	vote      *vote     // a vote in a poll or an answer to an event
-	event     *eventDef // an edit of an event
+	pin       int          // 1 pinned, -1 unpinned
+	pinAt     int64        // when, in unix milliseconds
+	pinUntil  int64        // when the pin ends, in unix seconds, 0 for never
+	keep      int          // 1 kept in the chat, -1 unkept
+	vote      *vote        // a vote in a poll or an answer to an event
+	added     *addedOption // an option added to a poll (polladd.go)
+	cancelReq bool         // a location request taken back (locrequest.go)
+	event     *eventDef    // an edit of an event
 
 	// An edit's new text, and when it was made; its content is msg's
 	// payload.
@@ -50,6 +52,7 @@ type content struct {
 	round    bool          // a video note (ptvMessage)
 	lottie   bool          // a Lottie sticker (application/was)
 	sound    bool          // a sticker with a sound (audiosticker.go)
+	zap      bool          // a Zap, WhatsApp's Instants (zaps.go)
 	inner    proto.Message // the media message, which downloading the media takes
 	bg       uint32        // ARGB background of a text status
 	ctx      *waE2E.ContextInfo
@@ -60,6 +63,7 @@ type content struct {
 	extra    extraInfo
 	mention  *model.StatusMention // a status mention message (statusmention.go)
 	rich     *model.RichResponse  // an AI's answer (richresponse.go)
+	locReq   bool                 // a request for your location (locrequest.go)
 }
 
 // keptThumb is the thumbnail a message with content c shows: a link
@@ -223,6 +227,8 @@ func describe(m *waE2E.Message) content {
 			}
 		}
 		return c
+	case m.GetInstantImageMessage() != nil, instantVideo(m) != nil:
+		return zapContent(m)
 	case m.GetImageMessage() != nil:
 		e := m.GetImageMessage()
 		return content{text: e.GetCaption(), kind: model.KindImage, media: model.MediaImage,
@@ -272,6 +278,8 @@ func describe(m *waE2E.Message) content {
 			c.extra.Contacts = append(c.extra.Contacts, parseVCard(cm.GetVcard(), cm.GetDisplayName()))
 		}
 		return c
+	case m.GetRequestLocationMessage() != nil:
+		return content{locReq: true, ctx: m.GetRequestLocationMessage().GetContextInfo()}
 	case m.GetLocationMessage() != nil:
 		e := m.GetLocationMessage()
 		return content{text: e.GetName(), media: model.MediaLocation, thumb: e.GetJPEGThumbnail(), ctx: e.GetContextInfo(),
@@ -452,11 +460,24 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		// A scheduled message: shown once its key comes (schedule.go).
 		return b.parseScheduled(ctx, evt, chat, cr)
 	}
+	if lu := m.GetRequestLocationUpdateMessage(); lu != nil {
+		// A location request taken back (locrequest.go).
+		p.target, p.cancelReq = lu.GetKey().GetID(), true
+		return p, p.target != "" && lu.GetUpdateType() == waE2E.RequestLocationUpdateMessage_CANCEL
+	}
+	if ao := m.GetPollAddOptionMessage(); ao != nil {
+		// An option added to a poll, as history sync has it (polladd.go).
+		p.target = ao.GetPollCreationMessageKey().GetID()
+		p.added = &addedOption{name: trimOption(ao.GetAddOption().GetOptionName()),
+			who: b.voterOf(ctx, evt.Info.Sender), ts: evt.Info.Timestamp.UnixMilli()}
+		return p, p.target != "" && p.added.name != ""
+	}
 	if sm := m.GetSecretEncryptedMessage(); sm != nil {
 		// Newer WhatsApp versions send edits encrypted with the edited
-		// message's secret.
+		// message's secret, and options added to polls.
 		typ := sm.GetSecretEncType()
-		if typ != waE2E.SecretEncryptedMessage_MESSAGE_EDIT && typ != waE2E.SecretEncryptedMessage_EVENT_EDIT {
+		if typ != waE2E.SecretEncryptedMessage_MESSAGE_EDIT && typ != waE2E.SecretEncryptedMessage_EVENT_EDIT &&
+			typ != waE2E.SecretEncryptedMessage_POLL_ADD_OPTION {
 			return p, false
 		}
 		cli := b.client()
@@ -469,6 +490,12 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 			return p, false
 		}
 		dec = unwrap(dec)
+		if typ == waE2E.SecretEncryptedMessage_POLL_ADD_OPTION {
+			p.target = sm.GetTargetMessageKey().GetID()
+			p.added = &addedOption{name: trimOption(dec.GetPollAddOptionMessage().GetAddOption().GetOptionName()),
+				who: b.voterOf(ctx, evt.Info.Sender), ts: evt.Info.Timestamp.UnixMilli()}
+			return p, p.target != "" && p.added.name != ""
+		}
 		if typ == waE2E.SecretEncryptedMessage_EVENT_EDIT {
 			p.target = sm.GetTargetMessageKey().GetID()
 			if e := dec.GetEventMessage(); e != nil {
@@ -500,7 +527,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 			ts: evt.Info.Timestamp.UnixMilli(), lottie: c.lottie, payload: marshal(raw)}
 		return p, true
 	}
-	viewOnce := isViewOnce(m)
+	viewOnce := isViewOnce(m) || c.zap
 	if viewOnce {
 		// The pill that opens it, whatever came inside; the media only
 		// when it can be downloaded (see Message.OnPhone).
@@ -508,7 +535,7 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		if c.media != model.MediaImage && c.media != model.MediaVideo && c.media != model.MediaVoice {
 			c.media = model.MediaNone
 		}
-	} else if c.text == "" && c.media == model.MediaNone && c.buttons.empty() && c.mention == nil {
+	} else if c.text == "" && c.media == model.MediaNone && c.buttons.empty() && c.mention == nil && !c.locReq {
 		if !hasContent(m) {
 			return p, false
 		}
@@ -522,6 +549,8 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 	msg.Media = c.media
 	msg.Round = c.round
 	msg.Sound = c.sound
+	msg.Zap = c.zap
+	msg.LocationRequest = c.locReq
 	msg.Duration = c.duration
 	msg.FromMe = evt.Info.IsFromMe
 	msg.Text = c.text

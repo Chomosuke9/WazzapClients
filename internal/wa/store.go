@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS wz_messages (
 	-- The group admin who deleted it for everyone, when that wasn't its
 	-- sender (kept or not); '' otherwise.
 	revoked_by   TEXT NOT NULL DEFAULT '',
-	opened       INTEGER NOT NULL DEFAULT 0, -- 1 once a view once message was opened here
+	opened       INTEGER NOT NULL DEFAULT 0, -- 1 once a view once message was opened here, or a location request taken back
 	-- The JIDs a /whisper went to, newline-joined; '' on every other
 	-- message. It marks the local-only record a whisper leaves behind.
 	whisper      TEXT NOT NULL DEFAULT '',
@@ -216,6 +216,8 @@ var migrations = []string{
 	`ALTER TABLE wz_reveal_keys ADD COLUMN chat TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_reveal_keys ADD COLUMN id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE wz_messages ADD COLUMN pin_until INTEGER NOT NULL DEFAULT 0`, // setPin
+	`ALTER TABLE wz_chats ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`,       // chatlock.go
+	`ALTER TABLE wz_status ADD COLUMN music TEXT NOT NULL DEFAULT ''`,         // statusmusic.go
 }
 
 func (s *msgStore) init(ctx context.Context) error {
@@ -376,6 +378,7 @@ func (s *msgStore) rename(ctx context.Context, jid, name string) bool {
 type chatMeta struct {
 	pinned, mutedUntil, lastTS int64
 	archived, mentioned        bool
+	locked                     bool // in Locked chats (chatlock.go)
 	unread                     int
 	ephemeral                  uint32 // disappearing-messages timer, seconds
 }
@@ -389,18 +392,19 @@ func (s *msgStore) setMeta(ctx context.Context, x execer, jid string, m chatMeta
 			mentioned = CASE WHEN settled & ?7 THEN mentioned ELSE ?8 END,
 			unread = CASE WHEN settled & ?7 THEN unread ELSE ?9 END,
 			last_ts = MAX(last_ts, ?10),
-			ephemeral = CASE WHEN settled & ?12 THEN ephemeral ELSE ?13 END
+			ephemeral = CASE WHEN settled & ?12 THEN ephemeral ELSE ?13 END,
+			locked = CASE WHEN settled & ?14 THEN locked ELSE ?15 END
 		WHERE jid = ?11`,
 		settledBits["pinned"], m.pinned, settledBits["muted_until"], m.mutedUntil,
 		settledBits["archived"], boolInt(m.archived), settledBits["unread"], boolInt(m.mentioned),
-		m.unread, m.lastTS, jid, settledBits["ephemeral"], int64(m.ephemeral))
+		m.unread, m.lastTS, jid, settledBits["ephemeral"], int64(m.ephemeral), settledBits["locked"], boolInt(m.locked))
 	return err
 }
 
 // settledBits are the chat settings app state syncs, each with its bit in
 // wz_chats.settled. Their latest value comes from app state, a read
 // receipt or this device; a history sync's copy is older.
-var settledBits = map[string]int{"pinned": 1, "muted_until": 2, "archived": 4, "unread": 8, "ephemeral": 16}
+var settledBits = map[string]int{"pinned": 1, "muted_until": 2, "archived": 4, "unread": 8, "ephemeral": 16, "locked": 32}
 
 func (s *msgStore) setField(ctx context.Context, jid, field string, v any) error {
 	// field is always a constant from this package.
@@ -862,6 +866,8 @@ func scanMessage(sc scanner) (rawMsg, error) {
 		here := r.hasBlob || m.Media == model.MediaNone && m.Text != ""
 		m.Opened, m.OnPhone = opened, !here && !(m.FromMe && m.Receipt <= model.Pending)
 	}
+	// A location request's opened column says it was taken back (locrequest.go).
+	m.RequestCanceled = m.LocationRequest && opened
 	return r, nil
 }
 
@@ -971,13 +977,14 @@ func (s *msgStore) searchMessages(ctx context.Context, chat, key string, limit i
 	) ORDER BY ts DESC, rid DESC`)
 }
 
-// searchAllMessages is searchMessages over every chat but channels, for
-// the chat list's search. Sorting every message by time would read all
+// searchAllMessages is searchMessages over every chat but channels and
+// locked chats, for the chat list's search. Sorting every message by time would read all
 // their texts into the sort, so it reads them in storage order and keeps
 // the newest matches as it goes.
 func (s *msgStore) searchAllMessages(ctx context.Context, key string, limit int) ([]rawMsg, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT rowid, ts, text FROM wz_messages
-		WHERE kind NOT IN (?, ?) AND text != '' AND chat NOT LIKE '%@newsletter'`,
+		WHERE kind NOT IN (?, ?) AND text != '' AND chat NOT LIKE '%@newsletter'
+			AND chat NOT IN (SELECT jid FROM wz_chats WHERE locked != 0)`,
 		int(model.KindDeleted), int(model.KindUnsupported))
 	if err != nil {
 		return nil, err
@@ -1048,7 +1055,7 @@ type rawChat struct {
 // lasts, and whom a text mentions.
 var chatQuery = fmt.Sprintf(`
 	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts, c.favorite,
-		c.mentioned, c.general, c.ephemeral, c.not_member, m.id, m.sender_jid, m.sender_push, m.from_me, m.ts, m.kind, m.media, m.text, m.receipt,
+		c.mentioned, c.general, c.ephemeral, c.not_member, c.locked, m.id, m.sender_jid, m.sender_push, m.from_me, m.ts, m.kind, m.media, m.text, m.receipt,
 		CASE WHEN m.media IN (%d, %d, %d, %d) OR instr(m.text, '@') > 0 OR m.kind = %d THEN m.raw_payload END,
 		CASE WHEN instr(m.text, '@') > 0 THEN m.edit_payload END
 	FROM wz_chats c
@@ -1061,6 +1068,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		c                              model.Chat
 		isGroup, archived, unread, fav int
 		mentioned, general, notMember  int
+		locked                         int
 		ephemeral                      int64
 		pinned, mutedUntil, lastTS     int64
 		mID, mSender, mPush, mText     sql.NullString
@@ -1069,7 +1077,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		mRaw, mEdit                    []byte
 	)
 	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS, &fav,
-		&mentioned, &general, &ephemeral, &notMember, &mID, &mSender, &mPush, &mFromMe, &mTS, &mKind, &mMedia, &mText, &mReceipt, &mRaw, &mEdit)
+		&mentioned, &general, &ephemeral, &notMember, &locked, &mID, &mSender, &mPush, &mFromMe, &mTS, &mKind, &mMedia, &mText, &mReceipt, &mRaw, &mEdit)
 	if err != nil {
 		return rawChat{}, err
 	}
@@ -1087,6 +1095,7 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 	c.Left = notMember != 0 && c.IsGroup
 	c.Disappearing = uint32(ephemeral)
 	c.Archived = archived != 0
+	c.Locked = locked != 0
 	c.Unread = unread
 	c.Mentioned = mentioned != 0 && unread > 0
 	c.Time = time.Unix(lastTS, 0)

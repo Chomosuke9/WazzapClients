@@ -34,10 +34,10 @@ type findRow struct {
 	msg     *model.Message
 }
 
-// listQuery is the chat list's search query, trimmed. The Archived page
-// has no search.
+// listQuery is the chat list's search query, trimmed. The Archived and
+// Locked chats pages have no search.
 func (u *UI) listQuery() string {
-	if u.sidebar.showArchived {
+	if u.sidebar.showArchived || u.sidebar.showLocked {
 		return ""
 	}
 	return trimSpace(u.sidebar.search.Text())

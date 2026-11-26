@@ -359,6 +359,12 @@ func textStatus(id string, t time.Time, viewed bool, text string, bg uint32) *mo
 	return &model.StatusUpdate{ID: id, Text: text, Time: t, Viewed: viewed, Background: bg}
 }
 
+// withSong gives a demo status a song.
+func withSong(up *model.StatusUpdate) *model.StatusUpdate {
+	up.Song = &model.Song{Artist: "Nadin Amizah", Title: "Bertaut"}
+	return up
+}
+
 // viewedBy marks one of your own updates seen by n people (StatusViews).
 func viewedBy(n int, u *model.StatusUpdate) *model.StatusUpdate {
 	u.Views = n
@@ -381,7 +387,7 @@ func demoExtras(at func(daysAgo, h, m int) time.Time) extras {
 		statuses: []*model.StatusThread{
 			{ID: "me", Mine: true, Updates: []*model.StatusUpdate{viewedBy(4, status("s-me", at(0, 7, 12), false, 0x2c3e50, 0x4ca1af))}},
 			{ID: "rina", Name: "Rina Kartika", Updates: []*model.StatusUpdate{
-				status("s-r1", at(0, 9, 2), false, 0xee9ca7, 0xffdde1), closeFriends(status("s-r2", at(0, 9, 5), false, 0x3a7bd5, 0x00d2ff))}},
+				withSong(status("s-r1", at(0, 9, 2), false, 0xee9ca7, 0xffdde1)), closeFriends(status("s-r2", at(0, 9, 5), false, 0x3a7bd5, 0x00d2ff))}},
 			{ID: "budi", Name: "Budi Santoso", Updates: []*model.StatusUpdate{
 				textStatus("s-b1", at(0, 6, 40), false, "Futsal tonight? ⚽", 0xff8a8c54)}},
 			{ID: "dewi", Name: "Dewi Lestari", Updates: []*model.StatusUpdate{
@@ -478,7 +484,7 @@ func referenceExtras(at func(daysAgo, h, m int) time.Time) extras {
 		statuses: []*model.StatusThread{
 			{ID: "me", Mine: true, Updates: []*model.StatusUpdate{status("me-1", at(1, 16, 55), false, 0x1f2a30, 0x8a8f7a)}},
 			{ID: "maya@lid", Name: "Maya Putri", Updates: []*model.StatusUpdate{
-				status("z1", at(0, 6, 30), false, 0xf5f0d8, 0x2f8a6b), status("z2", at(0, 6, 40), false, 0xf0e6c0, 0x3f9a7b),
+				withSong(status("z1", at(0, 6, 30), false, 0xf5f0d8, 0x2f8a6b)), status("z2", at(0, 6, 40), false, 0xf0e6c0, 0x3f9a7b),
 				status("z3", at(0, 6, 45), false, 0xf8f3e0, 0x2c7d5f)}},
 			{ID: "luna@lid", Name: "luna°~~", Updates: []*model.StatusUpdate{status("i1", at(0, 6, 11), false, 0x5a5048, 0xcfc6bd)}},
 			{ID: "greenleaf@lid", Name: "Greenleaf Invest", Updates: []*model.StatusUpdate{

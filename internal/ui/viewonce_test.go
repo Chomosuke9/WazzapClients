@@ -139,3 +139,54 @@ func TestViewOnceOnPhone(t *testing.T) {
 		t.Error("a view once message on the phone opened")
 	}
 }
+
+// TestZapRules checks when a Zap opens: its sender's always, others' once
+// and only for a day after it was sent.
+func TestZapRules(t *testing.T) {
+	st := newSlashTest(t, "rina")
+	u := st.u
+	now := u.now()
+	zap := func(fromMe, opened bool, age time.Duration) *model.Message {
+		return &model.Message{ID: "z", ChatID: "rina", Kind: model.KindViewOnce, Media: model.MediaImage, Zap: true,
+			FromMe: fromMe, Opened: opened, Time: now.Add(-age)}
+	}
+	for _, c := range []struct {
+		m    *model.Message
+		want bool
+	}{
+		{zap(false, false, time.Hour), true},
+		{zap(false, true, time.Hour), false},
+		{zap(false, false, model.ZapLifetime+time.Minute), false},
+		{zap(true, false, 48*time.Hour), true},
+	} {
+		if got := u.canOpenViewOnce(c.m); got != c.want {
+			t.Errorf("from me %v, opened %v, sent %v ago: opens %v, want %v",
+				c.m.FromMe, c.m.Opened, now.Sub(c.m.Time), got, c.want)
+		}
+	}
+	if l := viewOnceLabel(zap(false, false, time.Hour)); l != "Zap" {
+		t.Errorf("label %q", l)
+	}
+	u.openViewOnce(zap(false, false, model.ZapLifetime+time.Minute))
+	if u.viewer.open {
+		t.Error("an expired Zap opened")
+	}
+}
+
+// A photo sent as a Zap goes alone, never in an album, and comes back as one.
+func TestZapSendFile(t *testing.T) {
+	f := &attachFile{Attachment: model.Attachment{Media: model.MediaImage, Zap: true}}
+	if albumFile(f) {
+		t.Error("a Zap goes in an album")
+	}
+	st := newSlashTest(t, "rina")
+	m := st.u.backend.SendFile("rina", model.Attachment{Path: "beach.jpg", Media: model.MediaImage, Zap: true}, model.Draft{})
+	if m == nil {
+		t.Fatal("not sent")
+	}
+	for _, x := range st.u.backend.Messages("rina", 100) {
+		if x.ID == m.ID && (!x.Zap || x.Kind != model.KindViewOnce) {
+			t.Errorf("sent as kind %d, zap %v", x.Kind, x.Zap)
+		}
+	}
+}

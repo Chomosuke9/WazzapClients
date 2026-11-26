@@ -138,6 +138,84 @@ index 3a78292..487ad0c 100644
  }
  
  // DownloadAny loops through the downloadable parts of the given message and downloads the first non-nil item.
+diff --git a/instant_patch.go b/instant_patch.go
+new file mode 100644
+index 0000000..25e34f9
+--- /dev/null
++++ b/instant_patch.go
+@@ -0,0 +1,33 @@
++// WazzapClients patch: Zaps (WhatsApp's Instants).
++
++package whatsmeow
++
++import (
++	"google.golang.org/protobuf/encoding/protowire"
++
++	"github.com/polymorfa/hypermeow/proto/waE2E"
++)
++
++// instantVideoField is Message.instantVideoMessage, which these
++// protobufs don't have yet: it travels in the unknown fields.
++const instantVideoField protowire.Number = 140
++
++// hasInstantVideo reports whether msg holds an instantVideoMessage.
++func hasInstantVideo(msg *waE2E.Message) bool {
++	b := msg.ProtoReflect().GetUnknown()
++	for len(b) > 0 {
++		num, typ, n := protowire.ConsumeTag(b)
++		if n < 0 {
++			return false
++		}
++		if num == instantVideoField && typ == protowire.BytesType {
++			return true
++		}
++		b = b[n:]
++		if n = protowire.ConsumeFieldValue(num, typ, b); n < 0 {
++			return false
++		}
++		b = b[n:]
++	}
++	return false
++}
+diff --git a/instant_patch_test.go b/instant_patch_test.go
+new file mode 100644
+index 0000000..38dc0ef
+--- /dev/null
++++ b/instant_patch_test.go
+@@ -0,0 +1,33 @@
++// WazzapClients patch: Zaps (WhatsApp's Instants).
++
++package whatsmeow
++
++import (
++	"testing"
++
++	"google.golang.org/protobuf/encoding/protowire"
++	"google.golang.org/protobuf/proto"
++
++	"github.com/polymorfa/hypermeow/proto/waE2E"
++)
++
++// A Zap goes as type="media" with mediatype="instant_image" or
++// "instant_video", as WhatsApp's clients send and expect it.
++func TestInstantMediaType(t *testing.T) {
++	photo := &waE2E.Message{InstantImageMessage: &waE2E.ImageMessage{Mimetype: proto.String("image/jpeg")}}
++	vb, _ := proto.Marshal(&waE2E.VideoMessage{Seconds: proto.Uint32(3)})
++	video := &waE2E.Message{}
++	video.ProtoReflect().SetUnknown(protowire.AppendBytes(protowire.AppendTag(nil, instantVideoField, protowire.BytesType), vb))
++	for _, c := range []struct {
++		msg  *waE2E.Message
++		want string
++	}{{photo, "instant_image"}, {video, "instant_video"},
++		{&waE2E.Message{EphemeralMessage: &waE2E.FutureProofMessage{Message: photo}}, "instant_image"}} {
++		if typ, media := getTypeFromMessage(c.msg), getMediaTypeFromMessage(c.msg); typ != "media" || media != c.want {
++			t.Errorf("sent as type %q, mediatype %q, want media, %q", typ, media, c.want)
++		}
++	}
++	if hasInstantVideo(&waE2E.Message{Conversation: proto.String("hi")}) {
++		t.Error("a text holds a Zap")
++	}
++}
 diff --git a/message.go b/message.go
 index 971974d..d17fef8 100644
 --- a/message.go
@@ -158,6 +236,56 @@ index 971974d..d17fef8 100644
  	info, err := cli.parseMessageInfo(node)
  	if err != nil {
  		cli.Log.Warnf("Failed to parse message: %v", err)
+diff --git a/msgsecret.go b/msgsecret.go
+index 131e7f3..eece45a 100644
+--- a/msgsecret.go
++++ b/msgsecret.go
+@@ -331,7 +331,9 @@ func (cli *Client) DecryptSecretEncryptedMessage(ctx context.Context, evt *event
+ 	case waE2E.SecretEncryptedMessage_POLL_EDIT:
+ 		secretType = EncSecretPollEdit
+ 	case waE2E.SecretEncryptedMessage_POLL_ADD_OPTION:
+-		secretType = EncSecretPollEdit
++		// WazzapClients patch: WhatsApp Web encrypts an added option
++		// under its own use case (WAUseCaseSecret POLL_ADD_OPTION).
++		secretType = EncSecretPollAddOption
+ 	case waE2E.SecretEncryptedMessage_MESSAGE_EDIT:
+ 		secretType = EncSecretMessageEdit
+ 	default:
+@@ -444,6 +446,34 @@ func (cli *Client) EncryptPollVote(ctx context.Context, pollInfo *types.MessageI
+ 	}, nil
+ }
+ 
++// EncryptPollAddOption encrypts an option added to a poll, as WhatsApp
++// Web sends one: a secretEncryptedMessage (POLL_ADD_OPTION) holding a
++// pollAddOptionMessage. WazzapClients patch.
++func (cli *Client) EncryptPollAddOption(ctx context.Context, pollInfo *types.MessageInfo, option string) (*waE2E.Message, error) {
++	key := getKeyFromInfo(pollInfo)
++	plaintext, err := proto.Marshal(&waE2E.Message{PollAddOptionMessage: &waE2E.PollAddOptionMessage{
++		PollCreationMessageKey: key,
++		AddOption:              &waE2E.PollCreationMessage_Option{OptionName: new(option)},
++	}})
++	if err != nil {
++		return nil, fmt.Errorf("failed to marshal poll option protobuf: %w", err)
++	}
++	ownID := cli.getOwnLID()
++	if pollInfo.Sender.Server == types.DefaultUserServer {
++		ownID = cli.getOwnID()
++	}
++	ciphertext, iv, err := cli.encryptMsgSecret(ctx, ownID, pollInfo.Chat, pollInfo.Sender, pollInfo.ID, EncSecretPollAddOption, plaintext)
++	if err != nil {
++		return nil, fmt.Errorf("failed to encrypt poll option: %w", err)
++	}
++	return &waE2E.Message{SecretEncryptedMessage: &waE2E.SecretEncryptedMessage{
++		TargetMessageKey: key,
++		EncPayload:       ciphertext,
++		EncIV:            iv,
++		SecretEncType:    waE2E.SecretEncryptedMessage_POLL_ADD_OPTION.Enum(),
++	}}, nil
++}
++
+ func (cli *Client) EncryptComment(ctx context.Context, rootMsgInfo *types.MessageInfo, comment *waE2E.Message) (*waE2E.Message, error) {
+ 	plaintext, err := proto.Marshal(comment)
+ 	if err != nil {
 diff --git a/offline_patch.go b/offline_patch.go
 new file mode 100644
 index 0000000..708ddf9
@@ -475,10 +603,10 @@ index 0000000..2081444
 +	}
 +}
 diff --git a/send.go b/send.go
-index 5fb006b..10e278a 100644
+index 5fb006b..99febc7 100644
 --- a/send.go
 +++ b/send.go
-@@ -174,6 +174,14 @@ type SendRequestExtra struct {
+@@ -174,6 +174,21 @@ type SendRequestExtra struct {
  	AdditionalNodes *[]waBinary.Node
  
  	CheckPermissions bool
@@ -490,10 +618,28 @@ index 5fb006b..10e278a 100644
 +	// own: a status goes to the audience chosen on the phone, and a
 +	// reaction to someone's status to its poster alone.
 +	StatusRecipients []types.JID
++
++	// WazzapClients patch: GroupRecipients, when sending to a group, are
++	// the only members it goes to (with your own devices), encrypted to
++	// each of their devices instead of with the group's sender key, as
++	// WhatsApp Web sends a group history bundle to the people just added
++	// (GROUP_MSG_TYPE.DIRECT).
++	GroupRecipients []types.JID
  }
  
  // SendMessage sends the given message.
-@@ -354,6 +362,9 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
+@@ -345,6 +360,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
+ 				return
+ 			}
+ 			groupParticipants = cachedData.Members
++			if len(req.GroupRecipients) > 0 {
++				// WazzapClients patch: see SendRequestExtra.GroupRecipients.
++				groupParticipants = req.GroupRecipients
++			}
+ 			// TODO this is fairly hacky, is there a proper way to determine which identity the message is sent with?
+ 			if cachedData.AddressingMode == types.AddressingModeLID {
+ 				ownID = cli.getOwnLID()
+@@ -354,6 +373,9 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
  				// Why is this set to PN?
  				extraParams.addressingMode = types.AddressingModePN
  			}
@@ -503,7 +649,7 @@ index 5fb006b..10e278a 100644
  		} else {
  			groupParticipants, err = cli.getBroadcastListParticipants(ctx, to)
  			if err != nil {
-@@ -361,6 +372,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
+@@ -361,6 +383,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
  				return
  			}
  		}
@@ -514,7 +660,63 @@ index 5fb006b..10e278a 100644
  		resp.DebugTimings.GetParticipants = time.Since(start)
  	} else if to.Server == types.HiddenUserServer {
  		ownID = cli.getOwnLID()
-@@ -977,6 +992,10 @@ func getTypeFromMessage(msg *waE2E.Message) string {
+@@ -449,6 +475,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
+ 	var data []byte
+ 	switch to.Server {
+ 	case types.GroupServer, types.BroadcastServer:
++		if to.Server == types.GroupServer && len(req.GroupRecipients) > 0 {
++			phash, data, err = cli.sendGroupDirect(ctx, ownID, to, groupParticipants, req.ID, message, &resp.DebugTimings, extraParams)
++			break
++		}
+ 		phash, data, err = cli.sendGroup(ctx, ownID, to, groupParticipants, req.ID, message, &resp.DebugTimings, extraParams)
+ 	case types.DefaultUserServer, types.BotServer, types.HiddenUserServer:
+ 		if req.Peer {
+@@ -880,6 +910,44 @@ func (cli *Client) sendGroup(
+ 	return phash, data, nil
+ }
+ 
++// sendGroupDirect sends a group message to some of its members (and your
++// own devices), encrypted to each device without the sender key.
++// WazzapClients patch: see SendRequestExtra.GroupRecipients.
++func (cli *Client) sendGroupDirect(
++	ctx context.Context,
++	ownID,
++	to types.JID,
++	participants []types.JID,
++	id types.MessageID,
++	message *waE2E.Message,
++	timings *MessageDebugTimings,
++	extraParams nodeExtraParams,
++) (string, []byte, error) {
++	start := time.Now()
++	plaintext, _, err := marshalMessage(to, message)
++	timings.Marshal = time.Since(start)
++	if err != nil {
++		return "", nil, err
++	}
++	own := ownID.ToNonAD()
++	if !slices.ContainsFunc(participants, func(j types.JID) bool { return j.ToNonAD() == own }) {
++		participants = append(slices.Clone(participants), own)
++	}
++	node, allDevices, err := cli.prepareMessageNode(ctx, to, id, message, participants, plaintext, nil, timings, extraParams)
++	if err != nil {
++		return "", nil, err
++	}
++	phash := participantListHashV2(allDevices)
++	node.Attrs["phash"] = phash
++	start = time.Now()
++	data, err := cli.sendNodeAndGetData(ctx, *node)
++	timings.Send = time.Since(start)
++	if err != nil {
++		return "", nil, fmt.Errorf("failed to send message node: %w", err)
++	}
++	return phash, data, nil
++}
++
+ func (cli *Client) sendPeerMessage(
+ 	ctx context.Context,
+ 	to types.JID,
+@@ -977,6 +1045,10 @@ func getTypeFromMessage(msg *waE2E.Message) string {
  		return getTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
  	case msg.LottieStickerMessage != nil:
  		return getTypeFromMessage(msg.LottieStickerMessage.Message)
@@ -525,7 +727,21 @@ index 5fb006b..10e278a 100644
  	case msg.EphemeralMessage != nil:
  		return getTypeFromMessage(msg.EphemeralMessage.Message)
  	case msg.DocumentWithCaptionMessage != nil:
-@@ -1009,6 +1028,9 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
+@@ -988,7 +1060,12 @@ func getTypeFromMessage(msg *waE2E.Message) string {
+ 		return getTypeFromMessage(msg.AssociatedChildMessage.Message)
+ 	case msg.ReactionMessage != nil, msg.EncReactionMessage != nil:
+ 		return "reaction"
+-	case msg.PollCreationMessage != nil, msg.PollUpdateMessage != nil:
++	case msg.PollCreationMessage != nil, msg.PollUpdateMessage != nil,
++		// WazzapClients patch: the later versions of a poll, and an option
++		// added to one, go as polls too (WAWebE2EProtoUtils).
++		msg.PollCreationMessageV2 != nil, msg.PollCreationMessageV3 != nil,
++		msg.PollCreationMessageV5 != nil, msg.PollCreationMessageV6 != nil,
++		msg.GetSecretEncryptedMessage().GetSecretEncType() == waE2E.SecretEncryptedMessage_POLL_ADD_OPTION:
+ 		return "poll"
+ 	case getMediaTypeFromMessage(msg) != "":
+ 		return "media"
+@@ -1009,6 +1086,9 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
  		return getMediaTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
  	case msg.LottieStickerMessage != nil:
  		return getMediaTypeFromMessage(msg.LottieStickerMessage.Message)
@@ -535,7 +751,21 @@ index 5fb006b..10e278a 100644
  	case msg.EphemeralMessage != nil:
  		return getMediaTypeFromMessage(msg.EphemeralMessage.Message)
  	case msg.DocumentWithCaptionMessage != nil:
-@@ -1055,6 +1077,10 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
+@@ -1019,6 +1099,13 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
+ 		return getMediaTypeFromMessage(msg.AssociatedChildMessage.Message)
+ 	case msg.ExtendedTextMessage != nil && msg.ExtendedTextMessage.Title != nil:
+ 		return "url"
++	// WazzapClients patch: a Zap (WhatsApp's Instants) goes as
++	// mediatype="instant_image" or "instant_video" (WAWebBackendJobsCommon);
++	// receivers drop one whose mediatype doesn't match.
++	case msg.InstantImageMessage != nil:
++		return "instant_image"
++	case hasInstantVideo(msg):
++		return "instant_video"
+ 	case msg.ImageMessage != nil:
+ 		return "image"
+ 	case msg.StickerMessage != nil:
+@@ -1055,6 +1142,10 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
  		return "product"
  	case msg.InteractiveResponseMessage != nil:
  		return "native_flow_response"
@@ -546,7 +776,7 @@ index 5fb006b..10e278a 100644
  	default:
  		return ""
  	}
-@@ -1156,6 +1182,12 @@ const RemoveReactionText = ""
+@@ -1156,6 +1247,12 @@ const RemoveReactionText = ""
  
  func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  	switch {
@@ -559,7 +789,7 @@ index 5fb006b..10e278a 100644
  	case msg.EditedMessage != nil && msg.EditedMessage.Message != nil:
  		return getEditAttribute(msg.EditedMessage.Message)
  	case msg.ProtocolMessage != nil && msg.ProtocolMessage.GetKey() != nil:
-@@ -1170,6 +1202,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
+@@ -1170,6 +1267,10 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
  			if msg.ProtocolMessage.EditedMessage != nil {
  				return types.EditAttributeMessageEdit
  			}
@@ -570,6 +800,29 @@ index 5fb006b..10e278a 100644
  		}
  	case msg.ReactionMessage != nil && msg.ReactionMessage.GetText() == RemoveReactionText:
  		return types.EditAttributeSenderRevoke
+@@ -1254,12 +1355,16 @@ func (cli *Client) getMessageContent(
+ 		if message.PollUpdateMessage != nil {
+ 			pollType = "vote"
+ 		}
+-		content = append(content, waBinary.Node{
+-			Tag: "meta",
+-			Attrs: waBinary.Attrs{
+-				"polltype": pollType,
+-			},
+-		})
++		// WazzapClients patch: an added option's stanza has no polltype
++		// (WAWebSendMsgMetaNode).
++		if message.GetSecretEncryptedMessage() == nil {
++			content = append(content, waBinary.Node{
++				Tag: "meta",
++				Attrs: waBinary.Attrs{
++					"polltype": pollType,
++				},
++			})
++		}
+ 	}
+ 
+ 	if extraParams.botNode != nil {
 diff --git a/status_patch.go b/status_patch.go
 new file mode 100644
 index 0000000..025ea64
@@ -737,3 +990,21 @@ index 0000000..4c9c1fa
 +		t.Errorf("admin revoke = %q, want 8", got)
 +	}
 +}
+diff --git a/upload.go b/upload.go
+index adf3aa9..9bbf3df 100644
+--- a/upload.go
++++ b/upload.go
+@@ -77,6 +77,13 @@ func (cli *Client) Upload(ctx context.Context, plaintext []byte, appInfo MediaTy
+ // UploadSticker uploads a sticker using image encryption keys and the sticker MMS path.
+ // Evidence: WAWebCryptoMediaTypeInfo.js:11 and WAWebMmsMediaTypes.js:17,
+ // whatsapp-1053201649. The caller validates/converts the sticker before uploading.
++// UploadGroupHistory uploads a group history bundle: document keys and
++// the group-history MMS path (WAWebMmsMediaTypes GROUP_HISTORY).
++// WazzapClients patch.
++func (cli *Client) UploadGroupHistory(ctx context.Context, plaintext []byte) (UploadResponse, error) {
++	return cli.upload(ctx, plaintext, MediaDocument, "group-history", nil)
++}
++
+ func (cli *Client) UploadSticker(ctx context.Context, plaintext []byte) (UploadResponse, error) {
+ 	return cli.upload(ctx, plaintext, MediaImage, "sticker", nil)
+ }

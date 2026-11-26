@@ -38,6 +38,7 @@ type storedStatus struct {
 	viewed           bool
 	revoke           string // ID of a status that was deleted (ts and fromMe are the delete's)
 	audience, emoji  string // the poster's audience it was shared with (audienceLabel)
+	music            string // its song (musicColumn)
 }
 
 // parseStatus interprets a message posted to status@broadcast.
@@ -63,6 +64,7 @@ func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedS
 		fromMe: evt.Info.IsFromMe,
 		ts:     evt.Info.Timestamp,
 		c:      c,
+		music:  musicColumn(statusMusic(m)),
 	}
 	if !evt.Info.Sender.IsEmpty() {
 		s.participant = evt.Info.Sender.ToNonAD().String()
@@ -104,13 +106,13 @@ func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) err
 	}
 	_, err := x.ExecContext(ctx, `
 		INSERT INTO wz_status (id, sender, push, from_me, ts, media, text, bg, thumb, media_blob, viewed, group_jid, duration, file_type, participant,
-			audience, audience_emoji)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			audience, audience_emoji, music)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET viewed = MAX(wz_status.viewed, excluded.viewed),
 			thumb = COALESCE(excluded.thumb, wz_status.thumb),
 			participant = COALESCE(NULLIF(wz_status.participant, ''), excluded.participant)`,
 		st.id, st.sender, st.push, boolInt(st.fromMe), st.ts.Unix(), int(st.c.media), st.c.text, int64(st.c.bg),
-		st.c.thumb, blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type, st.participant, st.audience, st.emoji)
+		st.c.thumb, blob, boolInt(st.viewed), st.group, st.c.duration, st.c.file.Type, st.participant, st.audience, st.emoji, st.music)
 	return err
 }
 
@@ -230,7 +232,7 @@ func (s *msgStore) dropStatuses(ctx context.Context, before time.Time) []string 
 // recentStatuses returns updates newer than since, oldest first.
 func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statusRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, sender, push, from_me, ts, media, text, bg, thumb, viewed, revoked, group_jid, duration, file_type,
-			audience, audience_emoji
+			audience, audience_emoji, music
 		FROM wz_status WHERE ts >= ? ORDER BY ts`, since.Unix())
 	if err != nil {
 		return nil, err
@@ -243,11 +245,13 @@ func (s *msgStore) recentStatuses(ctx context.Context, since time.Time) ([]statu
 			u                     model.StatusUpdate
 			fromMe, media, viewed int
 			ts, bg, revoked       int64
+			music                 string
 		)
 		if err := rows.Scan(&u.ID, &r.sender, &r.push, &fromMe, &ts, &media, &u.Text, &bg, &u.Thumb, &viewed, &revoked, &r.group, &u.Duration, &u.FileType,
-			&u.Audience, &u.AudienceEmoji); err != nil {
+			&u.Audience, &u.AudienceEmoji, &music); err != nil {
 			return nil, err
 		}
+		readMusic(&u, music)
 		u.Time = time.Unix(ts, 0)
 		u.Media = model.Media(media)
 		u.Background = uint32(bg)

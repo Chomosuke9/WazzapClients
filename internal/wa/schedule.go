@@ -141,7 +141,8 @@ func (b *Backend) ScheduleFile(chatID string, a model.Attachment, d model.Draft,
 	if err != nil {
 		return err
 	}
-	a.Album = "" // each goes alone: an album's pictures point at its message
+	a.Zap = false // a Zap is of the moment: it goes as a photo or video
+	a.Album = ""  // each goes alone: an album's pictures point at its message
 	m, up, err := readFile(a, d.Text)
 	if err != nil {
 		return err

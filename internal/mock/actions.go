@@ -280,8 +280,8 @@ func (b *Backend) SendFile(chatID string, a model.Attachment, d model.Draft) *mo
 		switch a.Media {
 		case model.MediaImage, model.MediaVideo:
 			x.Kind, x.ImageA, x.ImageB, x.Album = model.KindImage, 0x5f6f7f, 0x9fafbf, a.Album
-			if a.ViewOnce {
-				x.Kind, x.Album = model.KindViewOnce, ""
+			if a.ViewOnce || a.Zap {
+				x.Kind, x.Album, x.Zap = model.KindViewOnce, "", a.Zap
 			}
 		case model.MediaGIF:
 			x.Kind, x.Thumb = model.KindImage, a.Thumb
@@ -358,6 +358,17 @@ func (b *Backend) setChat(id string, f func(*model.Chat)) {
 func (b *Backend) SetArchived(id string, v bool) {
 	b.setChat(id, func(c *model.Chat) { c.Archived = v; c.Pinned = c.Pinned && !v })
 }
+func (b *Backend) SetLocked(id string, v bool) {
+	b.setChat(id, func(c *model.Chat) { c.Locked = v; c.Archived = c.Archived && !v })
+}
+
+// DemoLockCode is the demo's Chat lock secret code.
+const DemoLockCode = "1234"
+
+func (b *Backend) ChatLock() model.ChatLock { return model.ChatLock{Code: true, Hide: b.HideLocked} }
+
+func (b *Backend) CheckLockCode(code string) bool { return code == DemoLockCode }
+
 func (b *Backend) SetMuted(id string, v bool, d time.Duration) {
 	b.setChat(id, func(c *model.Chat) {
 		c.Muted, c.MuteUntil = v, time.Time{}

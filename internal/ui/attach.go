@@ -815,7 +815,7 @@ type pollState struct {
 }
 
 // maxPollOptions is WhatsApp's limit.
-const maxPollOptions = 12
+const maxPollOptions = model.PollMaxOptions
 
 func (u *UI) openPoll() {
 	u.dialog = dialogState{kind: dialogPoll}

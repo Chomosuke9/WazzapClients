@@ -45,7 +45,7 @@ func TestChatRowMenu(t *testing.T) {
 		labels = append(labels, it.label)
 	}
 	want := []string{"Archive chat", "Unmute notifications", "Unpin chat", "Mark as unread", "Add to Favourites",
-		"Add to list", "", "Block", "Clear chat", "Delete chat"}
+		"Add to list", "Lock chat", "", "Block", "Clear chat", "Delete chat"}
 	// The demo's Rina may be muted or not, favourite or not, unread or not:
 	// compare the order of what's there.
 	var got []string

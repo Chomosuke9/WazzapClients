@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS wz_votes (
 	choice TEXT NOT NULL DEFAULT '', -- a poll's option hashes (hex, comma separated), or an event's model.RSVP
 	PRIMARY KEY (chat, id, who)
 );
+CREATE TABLE IF NOT EXISTS wz_poll_options (
+	chat TEXT NOT NULL,
+	id   TEXT NOT NULL,     -- the poll
+	name TEXT NOT NULL,     -- the option added
+	who  TEXT NOT NULL,     -- who added it, as voters are stored
+	ts   INTEGER NOT NULL,  -- unix milliseconds
+	PRIMARY KEY (chat, id, name)
+);
 `
 
 // meVoter is who your own votes are stored under: they come from your
@@ -53,10 +61,16 @@ type extraInfo struct {
 }
 
 // pollDef is a poll's options. Max is how many a voter may pick, 0 for
-// any number.
+// any number. End is when it closes (unix ms, 0 for never); Correct is a
+// quiz's right answer.
 type pollDef struct {
-	Options []string
-	Max     int
+	Options  []string
+	Max      int
+	End      int64
+	Hide     bool
+	Quiz     bool
+	Correct  string
+	AllowAdd bool
 }
 
 // eventDef is an event as created (or last edited); Start and End are
@@ -76,9 +90,15 @@ type eventDef struct {
 func (x extraInfo) apply(m *model.Message) {
 	m.Location, m.Contacts, m.Pack = x.Loc, x.Contacts, x.Pack
 	if p := x.Poll; p != nil {
-		m.Poll = &model.PollState{Max: p.Max}
-		for _, o := range p.Options {
+		m.Poll = &model.PollState{Max: p.Max, HideVoters: p.Hide, Quiz: p.Quiz, Correct: -1, AllowAdd: p.AllowAdd}
+		if p.End > 0 {
+			m.Poll.End = time.UnixMilli(p.End)
+		}
+		for i, o := range p.Options {
 			m.Poll.Options = append(m.Poll.Options, model.PollOption{Name: o})
+			if p.Quiz && o == p.Correct {
+				m.Poll.Correct = i
+			}
 		}
 	}
 	if e := x.Event; e != nil {
@@ -102,6 +122,11 @@ func pollContent(e *waE2E.PollCreationMessage) content {
 	}
 	if d.Max >= len(d.Options) && len(d.Options) > 1 {
 		d.Max = 0 // as many as there are: any number
+	}
+	d.End, d.Hide, d.AllowAdd = e.GetEndTime(), e.GetHideParticipantName(), e.GetAllowAddOption()
+	if e.GetPollType() == waE2E.PollType_QUIZ {
+		d.Quiz, d.Max = true, 1 // a quiz has one answer
+		d.Correct = e.GetCorrectAnswer().GetOptionName()
 	}
 	return content{text: e.GetName(), media: model.MediaPoll, ctx: e.GetContextInfo(), extra: extraInfo{Poll: d}}
 }
@@ -394,6 +419,7 @@ func (b *Backend) fillVotes(ctx context.Context, m *model.Message) {
 	if m.Poll == nil && m.Event == nil {
 		return
 	}
+	b.addedOptions(ctx, m)
 	for _, v := range b.store.votes(ctx, m.ChatID, m.ID) {
 		mine := v.who == meVoter
 		if p := m.Poll; p != nil {
@@ -445,6 +471,7 @@ func (b *Backend) Votes(m *model.Message) []model.Vote {
 	if !ok {
 		return nil
 	}
+	b.addedOptions(ctx, raw.Message)
 	var out []model.Vote
 	for _, v := range b.store.votes(ctx, m.ChatID, m.ID) {
 		mv := model.Vote{ID: v.who, Me: v.who == meVoter, Time: time.UnixMilli(v.ts)}
@@ -481,6 +508,7 @@ func (b *Backend) VotePoll(m *model.Message, options []int) {
 	if !ok || raw.Poll == nil {
 		return
 	}
+	b.addedOptions(ctx, raw.Message)
 	var names []string
 	for _, i := range options {
 		if i >= 0 && i < len(raw.Poll.Options) {

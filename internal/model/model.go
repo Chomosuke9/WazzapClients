@@ -280,6 +280,15 @@ type Message struct {
 	// it: WhatsApp sends view once media only to the phone, so it shows
 	// once someone replies to it, which carries it along.
 	Opened, OnPhone bool
+	// Zap is set on a Zap (WhatsApp's Instants): a photo or video from the
+	// camera that opens once, like a view once message (KindViewOnce), but
+	// comes to linked devices too and can't be opened after ZapLifetime.
+	// Its sender can open their own as often as they like.
+	Zap bool
+	// LocationRequest is a request for the recipient's location
+	// (requestLocationMessage), which only the phone can answer, and
+	// RequestCanceled is set once its sender took it back.
+	LocationRequest, RequestCanceled bool
 	// Whisper is the display names of the members a /whisper went to. It is
 	// set only on the local-only record a whisper leaves in the chat (see
 	// Backend.SendWhisper): the message is drawn as yours but marked as seen
@@ -377,6 +386,33 @@ type PollState struct {
 	Max int
 	// Voters counts the people who voted for at least one option.
 	Voters int
+	// End is when voting closes; zero means never.
+	End time.Time
+	// HideVoters hides who voted for what: everyone sees only the counts.
+	HideVoters bool
+	// Quiz is a quiz: one answer is right (Correct, an index into
+	// Options, or -1 when it's unknown), shown once you answered, and an
+	// answer is final.
+	Quiz    bool
+	Correct int
+	// AllowAdd lets anyone add options, not only its sender.
+	AllowAdd bool
+}
+
+// PollMaxOptions is how many options WhatsApp lets a poll have.
+const PollMaxOptions = 12
+
+// Ended reports whether voting has closed at now.
+func (p *PollState) Ended(now time.Time) bool { return !p.End.IsZero() && !now.Before(p.End) }
+
+// Answered reports whether you voted.
+func (p *PollState) Answered() bool {
+	for _, o := range p.Options {
+		if o.Mine {
+			return true
+		}
+	}
+	return false
 }
 
 // Multiple reports whether a voter may pick more than one option.
@@ -390,6 +426,8 @@ type PollOption struct {
 	// Faces are the IDs of up to three people who voted for it, newest
 	// first, for their pictures.
 	Faces []string
+	// AddedBy is who added it after the poll was sent, or "".
+	AddedBy string
 }
 
 // EventInfo is an event: a gathering or call, with whether people will
@@ -573,8 +611,12 @@ type Chat struct {
 	// MuteUntil is when a timed mute ends; zero while muted means always.
 	MuteUntil time.Time
 	Archived  bool
-	Favorite  bool
-	Self      bool // the "message yourself" chat
+	// Locked is a chat locked on the phone (Chat lock): it shows only in
+	// Locked chats, which open with the secret code, and is left out of
+	// the list, its search and the notifications' text.
+	Locked   bool
+	Favorite bool
+	Self     bool // the "message yourself" chat
 	// General is a community's General chat, which shows a speech bubble
 	// while it has no picture.
 	General bool
@@ -777,6 +819,9 @@ type Attachment struct {
 	Quality Quality
 	// ViewOnce sends a photo or video that can be opened only once.
 	ViewOnce bool
+	// Zap sends a photo or video as a Zap (Message.Zap): it opens once,
+	// for a day.
+	Zap bool
 	// Album puts a photo or video in the album NewAlbum opened.
 	Album string
 	// Thumb is a GIF's still picture, a small JPEG, and W and H its size.
@@ -993,6 +1038,14 @@ type StatusUpdate struct {
 	MentionChat, MentionMsg string
 	// Liked is set on someone else's update once you liked it.
 	Liked bool
+	// Song is the song its poster added, or nil.
+	Song *Song
+}
+
+// Song is a song added to a status update.
+type Song struct {
+	Artist, Title string
+	Explicit      bool
 }
 
 // StatusViewer is someone who saw one of your status updates.
@@ -1327,6 +1380,20 @@ type InfoEvent struct{ ChatID string }
 // StatusEvent reports that the status list changed.
 type StatusEvent struct{}
 
+// ChatLockEvent reports that the Chat lock's settings changed.
+type ChatLockEvent struct{}
+
+// ChatLock is the phone's Chat lock settings. Linked devices open Locked
+// chats only with the secret code.
+type ChatLock struct {
+	// Code says a secret code is set; without one Locked chats don't
+	// open here.
+	Code bool
+	// Hide hides the Locked chats row: typing the secret code in the
+	// chat list's search opens them.
+	Hide bool
+}
+
 // ChannelsEvent reports that the followed or suggested channels changed.
 type ChannelsEvent struct{}
 
@@ -1528,6 +1595,9 @@ type GroupRequest struct {
 	Invite  *GroupInvite
 	// Photo is a square JPEG, for GroupPhoto.
 	Photo []byte
+	// ShareHistory, for GroupAdd, shares the group's recent messages with
+	// the people added (up to 100 from the last 14 days).
+	ShareHistory bool
 }
 
 // GroupInvite is an invitation to join a group, which WhatsApp hands out
@@ -1623,6 +1693,7 @@ func (TransferEvent) isEvent()       {}
 func (InfoEvent) isEvent()           {}
 func (LabelEvent) isEvent()          {}
 func (StatusEvent) isEvent()         {}
+func (ChatLockEvent) isEvent()       {}
 func (ChannelsEvent) isEvent()       {}
 func (ChannelCreatedEvent) isEvent() {}
 func (OlderEvent) isEvent()          {}
@@ -1682,6 +1753,15 @@ const PrefKeepDeleted = "keep_deleted"
 // feature, on when "on": a view once message opens as often as you like,
 // and screenshots of it aren't blocked.
 const PrefViewOnceReplay = "view_once_replay"
+
+// ZapLifetime is how long after it was sent a Zap (Message.Zap) opens:
+// WhatsApp Web's WAWebInstantsExpiry.
+const ZapLifetime = 24 * time.Hour
+
+// ZapExpired reports whether m is a Zap too old to open at now.
+func (m *Message) ZapExpired(now time.Time) bool {
+	return m.Zap && !m.Time.IsZero() && !now.Before(m.Time.Add(ZapLifetime))
+}
 
 // Pref keys of Settings > Chats > Media auto-download: whether media of
 // a kind downloads by itself.
@@ -1911,6 +1991,9 @@ type Backend interface {
 	// in place of your earlier vote; none takes it back. A MessageEvent
 	// with the new count follows.
 	VotePoll(m *Message, options []int)
+	// AddPollOption adds an option to a poll (yours, or one that lets
+	// anyone add them). A MessageEvent follows.
+	AddPollOption(m *Message, option string)
 	// Votes lists who voted in a poll, or answered an event, newest
 	// first.
 	Votes(m *Message) []Vote
@@ -1922,6 +2005,13 @@ type Backend interface {
 
 	// Chat list actions. Each is followed by a ChatEvent (or ChatsEvent).
 	SetArchived(chatID string, archived bool)
+	// SetLocked moves a chat into Locked chats, or out of it.
+	SetLocked(chatID string, locked bool)
+	// ChatLock is the Chat lock's settings, synced from the phone.
+	ChatLock() ChatLock
+	// CheckLockCode reports whether code is the secret code that opens
+	// Locked chats. It's slow (a key derivation): call it once per try.
+	CheckLockCode(code string) bool
 	// SetMuted mutes a chat for d, or for good when d is 0, or unmutes it.
 	SetMuted(chatID string, muted bool, d time.Duration)
 	SetPinned(chatID string, pinned bool)

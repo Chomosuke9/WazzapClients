@@ -131,6 +131,7 @@ type notifier struct {
 type chatInfo struct {
 	name            string
 	group, archived bool
+	locked          bool // in Locked chats: the notification says nothing
 	muted           bool
 	muteUntil       time.Time
 	unread          int
@@ -158,7 +159,7 @@ func newNotifier(b model.Backend, h *host) *notifier {
 }
 
 func infoOf(c *model.Chat) chatInfo {
-	return chatInfo{name: c.Name, group: c.IsGroup, archived: c.Archived, muted: c.Muted,
+	return chatInfo{name: c.Name, group: c.IsGroup, archived: c.Archived, locked: c.Locked, muted: c.Muted,
 		muteUntil: c.MuteUntil, unread: c.Unread}
 }
 
@@ -354,8 +355,9 @@ func (n *notifier) notification(id string, c chatInfo, m *model.Message, count i
 	if img == nil {
 		img = defaultPicture(c.group)
 	}
-	if privacyNotice(n.prefs()) {
-		// Privacy mode: not who, not what.
+	if privacyNotice(n.prefs()) || c.locked {
+		// Privacy mode, or a locked chat (as phones show one): not who,
+		// not what.
 		title, body, footer, img = appName, "New message", "", defaultPicture(false)
 		if count > 1 {
 			body = fmt.Sprintf("%d new messages", count)
@@ -369,7 +371,7 @@ func (n *notifier) notification(id string, c chatInfo, m *model.Message, count i
 		Image:  img,
 		Time:   m.Time,
 		Silent: !sound,
-		Reply:  !channel, // only a channel's admins post
+		Reply:  !channel && !c.locked, // only a channel's admins post
 	}
 }
 
@@ -380,6 +382,8 @@ func notificationText(m *model.Message) string {
 	switch {
 	case m.Kind == model.KindViewOnce:
 		s = viewOnceLabel(m)
+	case m.LocationRequest:
+		s = "📍 Location request"
 	case m.Media == model.MediaNone:
 		s = m.Text
 		if s == "" {
@@ -420,7 +424,7 @@ var mediaEmoji = map[model.Media]string{
 func (n *notifier) updateTooltip() {
 	count := 0
 	for id, c := range n.chats {
-		if c.unread != 0 && !c.archived && !isChannelID(id) {
+		if c.unread != 0 && !c.archived && !c.locked && !isChannelID(id) {
 			count++
 		}
 	}

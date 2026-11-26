@@ -87,7 +87,7 @@ func (u *UI) chipCounts(items []chipItem) []int {
 	counts := make([]int, len(items))
 	var unread map[string]bool
 	for _, c := range u.chats {
-		if c.Unread == 0 || c.Archived {
+		if c.Unread == 0 || c.Archived || c.Locked {
 			continue
 		}
 		if unread == nil {

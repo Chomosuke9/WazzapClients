@@ -270,4 +270,4 @@ func (u *UI) layoutListChatsPage(gtx C) D {
 }
 
 // listPickable reports whether a chat can go in a list: channels can't.
-func listPickable(c *model.Chat) bool { return !isChannelID(c.ID) }
+func listPickable(c *model.Chat) bool { return !isChannelID(c.ID) && !c.Locked }

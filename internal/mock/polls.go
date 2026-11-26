@@ -109,6 +109,15 @@ func (b *Backend) VotePoll(m *model.Message, options []int) {
 	b.update(x, b.recount)
 }
 
+func (b *Backend) AddPollOption(m *model.Message, option string) {
+	b.update(m, func(x *model.Message) {
+		if p := x.Poll; p != nil && len(p.Options) < model.PollMaxOptions &&
+			!slices.ContainsFunc(p.Options, func(o model.PollOption) bool { return o.Name == option }) {
+			p.Options = append(p.Options, model.PollOption{Name: option, AddedBy: "You"})
+		}
+	})
+}
+
 func (b *Backend) Votes(m *model.Message) []model.Vote {
 	return slices.Clone(b.votes[key(m)])
 }

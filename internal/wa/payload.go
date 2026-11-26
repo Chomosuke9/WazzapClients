@@ -39,6 +39,8 @@ func (r *rawMsg) fill(raw, edit []byte) {
 	m.Round = c.round
 	m.Lottie = c.lottie
 	m.Sound = c.sound
+	m.Zap = c.zap
+	m.LocationRequest = c.locReq
 	m.Duration = c.duration
 	m.Link = c.link
 	m.StatusMention = c.mention

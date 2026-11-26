@@ -968,6 +968,7 @@ func (b *Backend) handle(evt any) {
 			b.onStatusPrivacy(e.GetStatusPrivacy())
 		}
 		b.onStickerAppState(e)
+		b.onChatLockAppState(e)
 	case *events.UserStatusMute:
 		b.onStatusMute(e)
 
@@ -1104,14 +1105,15 @@ func clearedUpTo(r *waSyncAction.SyncActionMessageRange, at time.Time) (int64, b
 // picks up lists and favourites, which older versions ignored; v3 favourite
 // stickers; v4 again, for the ones v3 dropped; v5 the pins, mutes and
 // archives of chats whose history came after them, which were dropped; v6
-// status privacy and hidden statuses (regular_high alone, after v5).
-const appStateResyncKey = "appstate_resynced_v6"
+// status privacy and hidden statuses (regular_high alone, after v5); v7
+// locked chats and the chat lock's secret code (regular_low alone).
+const appStateResyncKey = "appstate_resynced_v7"
 
 // prevResyncKey is the resync before appStateResyncKey. Once it was done,
 // only the collections in resyncAgain are fetched again.
-const prevResyncKey = "appstate_resynced_v5"
+const prevResyncKey = "appstate_resynced_v6"
 
-var resyncAgain = []appstate.WAPatchName{appstate.WAPatchRegularHigh}
+var resyncAgain = []appstate.WAPatchName{appstate.WAPatchRegularLow}
 
 // recoveryGap is how long to wait before asking the phone again to repair
 // the same app state collection.
@@ -1306,6 +1308,12 @@ func (b *Backend) apply(info *types.MessageInfo, p parsed) {
 		if err := b.store.putVote(ctx, b.db, chat, p.target, *p.vote); err != nil {
 			b.log.Warnf("vote on %s in %s: %v", p.target, chat, err)
 		}
+	case p.cancelReq:
+		_ = b.store.setMessageFlag(ctx, chat, p.target, "opened", true)
+	case p.added != nil:
+		if err := b.store.putPollOption(ctx, b.db, chat, p.target, *p.added); err != nil {
+			b.log.Warnf("option added to %s in %s: %v", p.target, chat, err)
+		}
 	case p.event != nil:
 		if err := b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload); err != nil {
 			b.log.Warnf("edit event %s in %s: %v", p.target, chat, err)
@@ -1443,6 +1451,9 @@ func (b *Backend) onReceipt(e *events.Receipt) {
 		b.onStatusView(e) // someone viewed one of yours
 		return
 	}
+	if e.Type == types.ReceiptTypePlayedSelf || e.IsFromMe && e.Type == types.ReceiptTypePlayed {
+		b.openedElsewhere(chat, e.MessageIDs)
+	}
 	switch e.Type {
 	case types.ReceiptTypeReadSelf:
 		b.readElsewhere(chat, e.MessageIDs)
@@ -1575,6 +1586,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			pinned:     int64(conv.GetPinned()),
 			mutedUntil: mute,
 			archived:   conv.GetArchived(),
+			locked:     conv.GetLocked(),
 			unread:     unread,
 			mentioned:  conv.GetUnreadMentionCount() > 0,
 			lastTS:     int64(max(conv.GetConversationTimestamp(), conv.GetLastMsgTimestamp())),

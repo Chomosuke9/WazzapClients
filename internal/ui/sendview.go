@@ -244,7 +244,15 @@ func (u *UI) sendViewInput(gtx C, f *attachFile) {
 	if u.btn("sv:once").Clicked(gtx) {
 		f.ViewOnce = !f.ViewOnce
 		if f.ViewOnce {
+			f.Zap = false
 			u.toast("Set to view once")
+		}
+	}
+	if u.btn("sv:zap").Clicked(gtx) {
+		f.Zap = !f.Zap
+		if f.Zap {
+			f.ViewOnce = false
+			u.toast("Set to send as a Zap: it opens once, for 24 hours")
 		}
 	}
 	if u.btn("sv:add").Clicked(gtx) {
@@ -530,9 +538,14 @@ func (u *UI) layoutCaption(gtx C, f *attachFile, bottom int, open bool) int {
 	sz := gtx.Constraints.Max
 	// Statuses can't be view once.
 	once := (f.Media == model.MediaImage || f.Media == model.MediaVideo) && !isStatusDestination(u.attach.chatID)
+	// Nor Zaps, which channels don't take either.
+	zap := zapSending && once && !isChannelID(u.attach.chatID)
 	onceW := 0
 	if once {
 		onceW = gtx.Dp(40 + 14)
+	}
+	if zap {
+		onceW += gtx.Dp(40 + 4)
 	}
 	w := min(gtx.Dp(640), sz.X-gtx.Dp(48)-onceW)
 	x := (sz.X - w - onceW) / 2
@@ -597,7 +610,42 @@ func (u *UI) layoutCaption(gtx C, f *attachFile, bottom int, open bool) int {
 		})
 		t.Pop()
 	}
+	if zap {
+		s := gtx.Dp(40)
+		t := op.Offset(image.Pt(x+w+gtx.Dp(14)+s+gtx.Dp(4), bottom-gtx.Dp(47)+(gtx.Dp(47)-s)/2)).Push(gtx.Ops)
+		cl := u.btn("sv:zap")
+		clickable(gtx, cl, func(gtx C) D {
+			mid := image.Pt(s/2, s/2)
+			if hv := u.hover(gtx, cl); hv > 0 && !f.Zap {
+				fillCircle(gtx, mid, s/2, faded(p.Hover, hv))
+			}
+			drawZapToggle(gtx, u, mid, gtx.Dp(12), f.Zap)
+			return D{Size: image.Pt(s, s)}
+		})
+		t.Pop()
+	}
 	return top
+}
+
+// zapSending shows the send view's Zap button. It's off until WhatsApp
+// shows Zaps to everyone: in November 2026 phones without them dropped one
+// without a word (no delivery receipt, no "not supported" placeholder).
+// The backend still sends one when Attachment.Zap is set.
+const zapSending = false
+
+// drawZapToggle draws the send view's Zap button, a bolt around mid, r
+// its radius when on: white on a green circle.
+func drawZapToggle(gtx C, u *UI, mid image.Point, r int, on bool) {
+	p := u.pal
+	col := p.IconStrong
+	if on {
+		fillCircle(gtx, mid, r+gtx.Dp(2), p.Green)
+		col = p.OnGreen
+	}
+	s := 2 * r
+	t := op.Offset(image.Pt(mid.X-r, mid.Y-r)).Push(gtx.Ops)
+	centerIn(gtx, s, iconW(icZap, unit.Dp(float32(s)*0.75/gtx.Metric.PxPerDp), col))
+	t.Pop()
 }
 
 // drawViewOnce draws WhatsApp's view once badge, a dashed circle around a

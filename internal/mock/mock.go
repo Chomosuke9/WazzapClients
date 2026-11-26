@@ -14,6 +14,8 @@ import (
 
 // Backend serves demo data. It never touches the network.
 type Backend struct {
+	// HideLocked is the Chat lock setting that hides the Locked chats row.
+	HideLocked bool
 	snippets   map[int64]model.Snippet
 	snippetSeq int64
 	snippetSrc map[int64]*model.Message // see snippets.go
@@ -610,7 +612,7 @@ func demo(now time.Time) []*demoChat {
 			grp("Dewi", day(0, 9, 40), "Comparison is in the Figma file 🎨"),
 			// Votes in demoVotes.
 			{Sender: "Dewi", Media: model.MediaPoll, Text: "Which header should we ship?", Time: day(0, 9, 41),
-				Poll: &model.PollState{Max: 1, Options: []model.PollOption{{Name: "Light header"}, {Name: "Dark header"},
+				Poll: &model.PollState{Max: 1, AllowAdd: true, End: day(-2, 18, 0), Options: []model.PollOption{{Name: "Light header"}, {Name: "Dark header"},
 					{Name: "Both, as a setting"}}}},
 		}},
 		{ID: "old-project", Name: "Old Project Group", IsGroup: true, Archived: true, Presence: "Andre, Bima, You", Messages: []*model.Message{

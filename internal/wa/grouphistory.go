@@ -196,6 +196,10 @@ func (b *Backend) storeHistory(ctx context.Context, convs []historyConv, statuse
 				_ = b.store.setMessageFlag(ctx, chat, p.target, "kept", p.keep > 0)
 			case p.vote != nil:
 				_ = b.store.putVote(ctx, b.db, chat, p.target, *p.vote)
+			case p.cancelReq:
+				_ = b.store.setMessageFlag(ctx, chat, p.target, "opened", true)
+			case p.added != nil:
+				_ = b.store.putPollOption(ctx, b.db, chat, p.target, *p.added)
 			case p.event != nil:
 				_ = b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload)
 			case p.reaction != nil:

@@ -178,6 +178,10 @@ type UI struct {
 	// and lockDlg its dialog.
 	lock    *appLock
 	lockDlg lockDialog
+	// chatLock is Chat lock: Locked chats and their secret code (chatlock.go).
+	chatLock chatLockState
+	// pollAdd is the dialog that adds an option to a poll (polladd.go).
+	pollAdd pollAddState
 
 	// Overlays: context menu, modal dialog, emoji picker, media viewer, toast.
 	ctx                     ctxMenu
@@ -268,6 +272,7 @@ type UI struct {
 		chipHidden   int             // the first chip that didn't fit, under ▾ (chips.go)
 		chipMoreH    int             // ▾'s height, where its menu opens
 		showArchived bool
+		showLocked   bool // Locked chats (chatlock.go)
 		archivedRow  bool // the list begins with the Archived row
 		archivedNew  int  // the unread chats it counts
 		list         widget.List
@@ -553,7 +558,7 @@ func (u *UI) SetMe(name, id string) { u.me, u.meID = name, id }
 // "calls", "status", "channels", "communities" or "settings", or opens
 // one of the settingsViews.
 func (u *UI) ShowPage(name string) {
-	pages := map[string]page{"chats": pageChats, "archived": pageChats, "calls": pageCalls, "status": pageStatus,
+	pages := map[string]page{"chats": pageChats, "archived": pageChats, "locked": pageChats, "calls": pageCalls, "status": pageStatus,
 		"channels": pageChannels, "communities": pageCommunities, "settings": pageSettings}
 	v, isSetting := settingsViews[name]
 	if isSetting {
@@ -561,6 +566,7 @@ func (u *UI) ShowPage(name string) {
 	}
 	u.setPage(pages[name])
 	u.sidebar.showArchived = name == "archived"
+	u.sidebar.showLocked, u.chatLock.open = name == "locked", name == "locked"
 	if isSetting {
 		if u.accounts == nil && (name == "accounts" || strings.HasPrefix(v.sub, "acct:")) {
 			u.accounts = u.demoAccounts()
@@ -690,6 +696,10 @@ func (u *UI) open(c *model.Chat) {
 	// you don't run) lets the focus go.
 	u.requestFocus(&u.conv.composer)
 	if u.selected != nil && u.selected.ID == c.ID && u.selPage == u.page {
+		return
+	}
+	if c.Locked && !u.chatLock.open {
+		u.askLockCode(func() { u.open(c) })
 		return
 	}
 	u.stashDraft()
@@ -1088,11 +1098,12 @@ func (u *UI) update(gtx C) {
 	u.updateNewChat(gtx)
 	u.updateStatusPrivacy(gtx)
 	// The open page's rail button hides its list, or shows it again.
-	if chats := u.rail.chats.Clicked(gtx); chats && u.page == pageChats && !u.sidebar.showArchived && u.newChat.step == ncNone {
+	if chats := u.rail.chats.Clicked(gtx); chats && u.page == pageChats && !u.sidebar.showArchived && !u.sidebar.showLocked && u.newChat.step == ncNone {
 		u.setListHidden(!u.split.hidden)
 	} else if chats || u.sidebar.back.Clicked(gtx) {
 		u.newChat.step = ncNone
 		u.sidebar.showArchived = false
+		u.leaveLocked()
 		u.setPage(pageChats)
 		u.setListHidden(false)
 		u.sidebar.list.Position = layout.Position{}
@@ -1168,6 +1179,7 @@ func (u *UI) update(gtx C) {
 	u.updateAttach()
 	u.updateWallPick()
 	u.updatePaste(gtx)
+	u.updateChatLock(gtx)
 	u.updateComposerLink(gtx)
 	u.scheduleKeys(gtx)
 	u.ctrlEnterKeys(gtx)
@@ -1439,6 +1451,8 @@ func (u *UI) applyEvents() {
 			if u.info.open && u.info.chatID == e.ChatID {
 				u.info.data = u.backend.Info(e.ChatID)
 			}
+		case model.ChatLockEvent:
+			u.chatLock.read = false
 		case model.StatusEvent:
 			u.statuses = u.backend.Statuses()
 			u.statusPrivacyEvent()

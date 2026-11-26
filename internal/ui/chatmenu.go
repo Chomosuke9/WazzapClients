@@ -233,8 +233,8 @@ func (u *UI) openAddMembers(c *model.Chat) {
 }
 
 // addMembers adds the picked people and says how it went.
-func (u *UI) addMembers(chat string, ids []string) {
-	slashHost{u: u}.Group(model.GroupRequest{ChatID: chat, Action: model.GroupAdd, Members: ids}, func(e model.GroupEvent) {
+func (u *UI) addMembers(chat string, ids []string, share bool) {
+	slashHost{u: u}.Group(model.GroupRequest{ChatID: chat, Action: model.GroupAdd, Members: ids, ShareHistory: share}, func(e model.GroupEvent) {
 		if e.Err != "" {
 			u.toast(e.Err)
 			return

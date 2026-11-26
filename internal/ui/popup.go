@@ -203,15 +203,18 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 	id := c.ID
 	var items []menuItem
 	add := func(it menuItem) { items = append(items, it) }
-	if c.Archived {
+	switch {
+	case c.Locked:
+		add(menuItem{key: "lock", ic: icLockOpen, label: "Unlock chat", run: func() { u.lockChat(c, false) }})
+	case c.Archived:
 		add(menuItem{key: "archive", ic: icArchive, label: "Unarchive chat", run: func() { b.SetArchived(id, false) }})
-	} else {
+	default:
 		add(menuItem{key: "archive", ic: icArchive, label: "Archive chat", run: func() { b.SetArchived(id, true) }})
 	}
 	if !c.Self || c.Muted {
 		add(u.muteRow(c))
 	}
-	if !c.Archived {
+	if !c.Archived && !c.Locked {
 		if c.Pinned {
 			add(menuItem{key: "pin", ic: icPin, label: "Unpin chat", run: func() { b.SetPinned(id, false) }})
 		} else {
@@ -236,7 +239,12 @@ func (u *UI) chatMenuItems(c *model.Chat) []menuItem {
 	} else {
 		add(menuItem{key: "fav", ic: icHeart, label: "Add to Favourites", run: func() { b.SetFavorite(id, true) }})
 	}
-	add(u.listsRow(c))
+	if !c.Locked {
+		add(u.listsRow(c))
+	}
+	if !c.Locked && !isChannelID(id) {
+		add(menuItem{key: "lock", ic: icLockOutline, label: "Lock chat", run: func() { u.lockChat(c, true) }})
+	}
 	add(menuItem{divider: true})
 	if !c.IsGroup && !c.Self && !isChannelID(id) && !isAgentID(id) {
 		name := c.Name

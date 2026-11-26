@@ -23,7 +23,7 @@ func (u *UI) layoutRail(gtx C) D {
 
 	unread := 0
 	for _, c := range u.chats {
-		if c.Unread != 0 && !c.Archived {
+		if c.Unread != 0 && !c.Archived && !c.Locked {
 			unread++
 		}
 	}

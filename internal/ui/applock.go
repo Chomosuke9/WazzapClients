@@ -123,6 +123,7 @@ func (u *UI) lockNow() {
 	u.menu.open, u.acctMenu.open = false, false
 	u.ctx = ctxMenu{}
 	u.dialog = dialogState{}
+	u.leaveLocked()
 	u.requestFocus(&l.pw)
 }
 

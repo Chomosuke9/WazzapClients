@@ -38,6 +38,8 @@ const (
 	dialogTranscript // why a voice message has no transcript (transcripts.go)
 	dialogShortcuts  // Keyboard shortcuts (settingsdetail.go)
 	dialogSync       // the history sync's progress (syncprogress.go)
+	dialogLockCode   // Chat lock's secret code (chatlock.go)
+	dialogPollOption // adding an option to a poll (polladd.go)
 )
 
 type dialogButton struct {
@@ -72,9 +74,12 @@ type dialogState struct {
 	// shareText makes it the picker of a share link with no number
 	// (applink.go): the chat picked opens with the text in its composer.
 	shareText string
-	addTo     string   // the group to add the picked people to
-	members   []string // addTo's members, left out of the list
-	fwd       []*model.Message
+	addTo     string // the group to add the picked people to
+	// shareHistory shares the group's recent messages with them
+	// (grouphistory.go's Share recent messages).
+	shareHistory bool
+	members      []string // addTo's members, left out of the list
+	fwd          []*model.Message
 	// mentionFor makes it the editor of a custom mention of that group
 	// (custommention.go): a name, then the members it mentions, in listName
 	// and picked. mentionEdit is the one being changed, "" for a new one.
@@ -237,6 +242,10 @@ func (u *UI) layoutDialog(gtx C) {
 		panel = record(gtx, u.shortcutsPanel)
 	case dialogSync:
 		panel = record(gtx, u.syncPanel)
+	case dialogLockCode:
+		panel = record(gtx, u.lockCodePanel)
+	case dialogPollOption:
+		panel = record(gtx, u.pollOptionPanel)
 	}
 	x, y := (sz.X-panel.size.X)/2, (sz.Y-panel.size.Y)/2
 	r := gtx.Dp(16)
@@ -406,12 +415,15 @@ func (u *UI) forwardPanel(gtx C) D {
 		u.confirmDeleteCustomMention(d.mentionFor, d.mentionEdit)
 		return D{} // the confirmation took the dialog's place
 	}
+	if d.addTo != "" && u.btn("fwd:sharehist").Clicked(gtx) {
+		d.shareHistory = !d.shareHistory
+	}
 	sent := u.btn("fwd:send").Clicked(gtx) && d.isOpen()
 	if sent && d.mentionFor != "" {
 		u.saveCustomMention(d)
 	} else if sent && len(d.picked) > 0 {
 		if d.addTo != "" {
-			u.addMembers(d.addTo, d.picked)
+			u.addMembers(d.addTo, d.picked, d.shareHistory)
 		} else if d.share != "" {
 			for _, id := range d.picked {
 				m := u.backend.SendContacts(id, []string{d.share})
@@ -520,6 +532,22 @@ func (u *UI) forwardPanel(gtx C) D {
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 16, Right: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
 				return u.searchField(gtx, &d.search, "Search name or number")
+			})
+		}),
+		layout.Rigid(func(gtx C) D {
+			if d.addTo == "" {
+				return D{}
+			}
+			// Adding people can share the group's recent messages with
+			// them, as WhatsApp's phones offer (grouphistorysend.go).
+			return layout.Inset{Left: 8, Right: 8, Bottom: 4}.Layout(gtx, func(gtx C) D {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx C) D { return u.pollCheck(gtx, "fwd:sharehist", "Share recent messages", d.shareHistory) }),
+					layout.Rigid(func(gtx C) D {
+						return layout.Inset{Left: 16, Right: 16, Bottom: 4}.Layout(gtx,
+							u.label(13, "Up to 100 messages from the last 14 days. People whose WhatsApp can't show them yet won't see them.", p.TextSecondary, labelOpts{maxLines: 3}).Layout)
+					}),
+				)
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
@@ -641,7 +669,7 @@ func (u *UI) forwardRows(d *dialogState) []fwdRow {
 	rows := d.rows[:0] // reused every frame
 	n := len(rows)
 	for _, c := range u.chats {
-		if !keep(c.ID, c.IsGroup) || (d.contacts && c.Self) {
+		if !keep(c.ID, c.IsGroup) || (d.contacts && c.Self) || c.Locked {
 			continue
 		}
 		if q == "" || strings.Contains(strings.ToLower(c.Name), q) {

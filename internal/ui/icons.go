@@ -132,6 +132,8 @@ var (
 	icVolume        = icon.VolumeUp
 	icSoundBars     = icon.SoundBars
 	icVolumeOff     = icon.VolumeOff
+	icZap           = icon.BoltFill  // a Zap's badge (viewonce.go)
+	icMusic         = icon.MusicNote // a status's song (status.go)
 	icStorage       = icon.DataUsage
 
 	// Settings > Performance.

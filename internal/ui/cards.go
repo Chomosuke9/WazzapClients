@@ -199,21 +199,62 @@ const (
 	pollBarDur  = 450 * time.Millisecond
 )
 
-// pollHint is the line under a poll's question.
-func pollHint(p *model.PollState) string {
-	switch {
-	case p.Max == 1:
-		return "Select one"
-	case p.Max > 1:
-		return fmt.Sprintf("Select up to %d", p.Max)
+// pollHint is the line under a poll's question: how many to pick, or
+// that it ended, and when it ends.
+func pollHint(p *model.PollState, now time.Time) string {
+	if p.Ended(now) {
+		if p.Quiz {
+			return "Quiz ended"
+		}
+		return "Poll ended"
 	}
-	return "Select one or more"
+	var s string
+	switch {
+	case p.Quiz:
+		s = "Quiz · Select one"
+	case p.Max == 1:
+		s = "Select one"
+	case p.Max > 1:
+		s = fmt.Sprintf("Select up to %d", p.Max)
+	default:
+		s = "Select one or more"
+	}
+	if !p.End.IsZero() {
+		s += " · " + pollEnds(p.End, now)
+	}
+	return s
+}
+
+// pollEnds says when a poll that's still open ends.
+func pollEnds(end, now time.Time) string {
+	switch d := end.Sub(now); {
+	case d < time.Hour:
+		return fmt.Sprintf("Ends in %d min", max(1, int(d/time.Minute)))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("Ends in %d h", int(d/time.Hour))
+	}
+	return "Ends " + end.Local().Format("2 Jan, 15:04")
+}
+
+// pollShows reports whether a poll's counts show: a quiz's once you've
+// answered it, to its sender, or once it ended.
+func pollShows(m *model.Message, now time.Time) bool {
+	p := m.Poll
+	return !p.Quiz || m.FromMe || p.Answered() || p.Ended(now)
 }
 
 // votePoll answers a click on option i: it becomes your vote, or comes off
 // it. Picking your only pick again takes your vote back, as in WhatsApp.
 func (u *UI) votePoll(m *model.Message, i int) {
 	p := m.Poll
+	switch {
+	case p.Ended(u.now()):
+		u.toast("Voting in this poll has ended.")
+		return
+	case p.Quiz && p.Answered():
+		u.toast("You've already answered this quiz.")
+		return
+	}
 	var picks []int
 	if p.Max == 1 {
 		if !p.Options[i].Mine {
@@ -236,10 +277,18 @@ func (u *UI) votePoll(m *model.Message, i int) {
 func (u *UI) layoutPollCard(gtx C, m *model.Message, maxW, metaH int, cols bubbleColors) D {
 	p := u.pal
 	poll := m.Poll
+	now := u.now()
 	for i := range poll.Options {
 		if u.btn("poll:" + m.ID + ":" + itoa(i)).Clicked(gtx) {
 			u.votePoll(m, i)
 		}
+	}
+	shows := pollShows(m, now)
+	canAdd := (m.FromMe || poll.AllowAdd) && !poll.Quiz && !poll.Ended(now) &&
+		len(poll.Options) < model.PollMaxOptions && !isChannelID(m.ChatID)
+	addBtn := u.btn("polladd:" + m.ID)
+	if canAdd && addBtn.Clicked(gtx) {
+		u.askPollOption(m)
 	}
 	w := min(maxW, gtx.Dp(330))
 	lg := gtx
@@ -254,11 +303,19 @@ func (u *UI) layoutPollCard(gtx C, m *model.Message, maxW, metaH int, cols bubbl
 		ic = icTicks
 	}
 	hint := record(lg, func(gtx C) D {
-		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+		line := []layout.FlexChild{
 			layout.Rigid(iconW(ic, 16, cols.secondary)),
 			layout.Rigid(layout.Spacer{Width: 4}.Layout),
-			layout.Rigid(u.label(13, pollHint(poll), cols.secondary).Layout),
-		)
+			layout.Rigid(u.label(13, pollHint(poll, now), cols.secondary).Layout),
+		}
+		if poll.HideVoters {
+			// Nobody sees who voted for what.
+			line = append(line, layout.Rigid(layout.Spacer{Width: 8}.Layout),
+				layout.Rigid(iconW(icVisibilityOff, 15, cols.secondary)),
+				layout.Rigid(layout.Spacer{Width: 3}.Layout),
+				layout.Rigid(u.label(13, "Voters hidden", cols.secondary).Layout))
+		}
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, line...)
 	})
 	hint.at(gtx, 0, y)
 	y += hint.size.Y + gtx.Dp(14)
@@ -268,16 +325,34 @@ func (u *UI) layoutPollCard(gtx C, m *model.Message, maxW, metaH int, cols bubbl
 	barH := max(1, gtx.Dp(6))
 	track := mix(cols.bg, cols.secondary, 0.3)
 	for i, o := range poll.Options {
-		// The count and the faces of the first few who picked it.
-		count := record(lg, u.label(15, itoa(o.Votes), cols.text).Layout)
+		// The count and the faces of the first few who picked it (no faces
+		// when voters are hidden; a quiz's counts once you answered).
+		var count part
+		faces := o.Faces
+		if poll.HideVoters || !shows {
+			faces = nil
+		}
+		if shows {
+			count = record(lg, u.label(15, itoa(o.Votes), cols.text).Layout)
+		}
 		face := gtx.Dp(20)
 		facesW := 0
-		if n := len(o.Faces); n > 0 {
+		if n := len(faces); n > 0 {
 			facesW = face + (n-1)*face*2/3 + gtx.Dp(6)
 		}
 		ng := gtx
 		ng.Constraints = layout.Constraints{Max: image.Pt(max(0, w-textX-count.size.X-facesW-gtx.Dp(8)), 1<<20)}
-		name := record(ng, u.label(15, o.Name, cols.text, labelOpts{maxLines: 4}).Layout)
+		name := record(ng, func(gtx C) D {
+			// An option added later says who added it.
+			ch := []layout.FlexChild{layout.Rigid(u.label(15, o.Name, cols.text, labelOpts{maxLines: 4}).Layout)}
+			if o.AddedBy != "" {
+				ch = append(ch, layout.Rigid(u.label(12.5, "Added by "+o.AddedBy, cols.secondary, labelOpts{maxLines: 1}).Layout))
+			}
+			if poll.Quiz && i == poll.Correct && shows {
+				ch = append(ch, layout.Rigid(u.label(12.5, "Correct answer", p.Green, labelOpts{weight: font.Medium, maxLines: 1}).Layout))
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, ch...)
+		})
 		rowH := max(box, name.size.Y)
 
 		// The row votes; its whole width is the button.
@@ -299,22 +374,27 @@ func (u *UI) layoutPollCard(gtx C, m *model.Message, maxW, metaH int, cols bubbl
 			fillCircle(gtx, mid, box/2-max(1, gtx.Dp(1.5)), cols.bg)
 		}
 		if pv > 0 {
+			// A quiz's wrong answer is red, with a cross.
+			bg, mark := p.Green, icTick
+			if poll.Quiz && poll.Correct >= 0 && i != poll.Correct {
+				bg, mark = p.Danger, icClose
+			}
 			fx := pushFx(gtx, min(1, pv*2), scaleAt(mid, max(0.01, easeOutBack(pv))))
-			fillCircle(gtx, mid, box/2, p.Green)
+			fillCircle(gtx, mid, box/2, bg)
 			t := op.Offset(mid.Sub(image.Pt(gtx.Dp(8), gtx.Dp(8)))).Push(gtx.Ops)
-			drawIcon(gtx, icTick, 16, p.OnGreen)
+			drawIcon(gtx, mark, 16, p.OnGreen)
 			t.Pop()
 			fx.Pop()
 		}
 		name.at(gtx, textX, y+(rowH-name.size.Y)/2)
 		count.at(gtx, w-count.size.X, y+(rowH-count.size.Y)/2)
-		for j := len(o.Faces) - 1; j >= 0; j-- {
+		for j := len(faces) - 1; j >= 0; j-- {
 			// The newest on top, at the right.
 			x := w - count.size.X - gtx.Dp(6) - face - j*face*2/3
 			fy := y + (rowH-face)/2
 			fillCircle(gtx, image.Pt(x+face/2, fy+face/2), face/2+max(1, gtx.Dp(1)), cols.bg)
 			t := op.Offset(image.Pt(x, fy)).Push(gtx.Ops)
-			u.avatar(gtx, o.Faces[j], "", false, 20)
+			u.avatar(gtx, faces[j], "", false, 20)
 			t.Pop()
 		}
 		y += rowH + gtx.Dp(8)
@@ -324,7 +404,7 @@ func (u *UI) layoutPollCard(gtx C, m *model.Message, maxW, metaH int, cols bubbl
 		bar := image.Rect(textX, y, w, y+barH)
 		fillRRect(gtx, bar, barH/2, track)
 		var share float32
-		if poll.Voters > 0 {
+		if poll.Voters > 0 && shows {
 			share = float32(o.Votes) / float32(poll.Voters)
 		}
 		if sv := u.follows.step(gtx, "bar:"+key, share, pollBarDur); sv > 0.001 {
@@ -332,6 +412,23 @@ func (u *UI) layoutPollCard(gtx C, m *model.Message, maxW, metaH int, cols bubbl
 			fillRRect(gtx, image.Rect(bar.Min.X, bar.Min.Y, bar.Min.X+fw, bar.Max.Y), barH/2, p.Green)
 		}
 		y += barH + gtx.Dp(16)
+	}
+	if canAdd {
+		// Add option, under the options.
+		row := record(lg, func(gtx C) D {
+			return clickable(gtx, addBtn, func(gtx C) D {
+				gtx.Constraints.Min.X = w
+				return layout.Inset{Top: 4, Bottom: 4}.Layout(gtx, func(gtx C) D {
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx C) D { return centerIn(gtx, box, iconW(icAdd, 20, p.Green)) }),
+						layout.Rigid(layout.Spacer{Width: 12}.Layout),
+						layout.Rigid(u.label(15, "Add option", p.Green, labelOpts{weight: font.Medium, maxLines: 1}).Layout),
+					)
+				})
+			})
+		})
+		row.at(gtx, 0, y-gtx.Dp(8))
+		y += row.size.Y
 	}
 	y -= gtx.Dp(10)
 	return D{Size: image.Pt(w, y+metaH)}
@@ -609,4 +706,16 @@ func pollVoters(votes []model.Vote, i int) []model.Vote {
 		}
 	}
 	return out
+}
+
+// locationRequestText is what a location request says. Only phones can
+// answer one, with a live location.
+func locationRequestText(m *model.Message) string {
+	switch {
+	case m.RequestCanceled:
+		return "Location request cancelled"
+	case m.FromMe:
+		return "You requested a location"
+	}
+	return "Requested your location. Share it from your phone."
 }

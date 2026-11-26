@@ -25,12 +25,18 @@ import (
 // the window can't be captured while one is shown. Replay view once
 // (Ethically gray features) opens them as often as you like and lets
 // screenshots through.
+//
+// Zaps (Message.Zap, WhatsApp's Instants) are drawn the same way, with a
+// bolt for the badge: they come here with their media, open until a day
+// after they were sent, and their sender can open their own again.
 
 // viewOnceLabel is what a view once message's bubble and previews say.
 func viewOnceLabel(m *model.Message) string {
 	switch {
 	case m.Opened:
 		return "Opened"
+	case m.Zap:
+		return "Zap"
 	case m.Media == model.MediaImage:
 		return "Photo"
 	case m.Media == model.MediaVideo:
@@ -47,6 +53,12 @@ func (u *UI) canOpenViewOnce(m *model.Message) bool {
 	if m.OnPhone || m.Media == model.MediaNone && m.Text == "" {
 		return false
 	}
+	if m.Zap && m.FromMe {
+		return true // a Zap's sender keeps it
+	}
+	if m.ZapExpired(u.now()) && !u.viewOnceReplay {
+		return false
+	}
 	return u.viewOnceReplay || !m.Opened && !m.FromMe
 }
 
@@ -60,8 +72,13 @@ func (u *UI) openViewOnce(m *model.Message) {
 	case m.OnPhone || m.Media == model.MediaNone && m.Text == "":
 		u.toast("For added privacy, WhatsApp sends view once messages only to your phone. Open it there.")
 		return
+	case !u.canOpenViewOnce(m) && !m.Opened && m.ZapExpired(u.now()):
+		u.toast("This Zap expired. Zaps can be opened for 24 hours.")
+		return
 	case !u.canOpenViewOnce(m):
-		if m.FromMe {
+		if m.Zap {
+			u.toast("You opened this Zap already.")
+		} else if m.FromMe {
 			u.toast("For added privacy, you can't open view once messages you send.")
 		} else {
 			u.toast("You opened this view once message already.")
@@ -85,6 +102,9 @@ func (u *UI) openViewOnce(m *model.Message) {
 // viewOnceText is a view once bubble's text: its label, or how far its
 // voice message has played.
 func (u *UI) viewOnceText(gtx C, m *model.Message) string {
+	if !m.Opened && !m.FromMe && m.ZapExpired(gtx.Now) {
+		return "Expired"
+	}
 	if m.Media == model.MediaVoice && u.voice.key == fileKey(m) {
 		_, pos, playing, loading := u.voiceProgress(m)
 		switch {
@@ -99,6 +119,15 @@ func (u *UI) viewOnceText(gtx C, m *model.Message) string {
 		}
 	}
 	return viewOnceLabel(m)
+}
+
+// viewOnceBadge is m's badge, size dp square: the view once ring, or a
+// Zap's bolt.
+func (u *UI) viewOnceBadge(gtx C, m *model.Message, size unit.Dp, col color.NRGBA) D {
+	if m.Zap {
+		return centerIn(gtx, gtx.Dp(size), iconW(icZap, size*4/5, col))
+	}
+	return u.viewOnceRingIcon(gtx, size, col, true)
 }
 
 // viewOnceMark is the view once badge as an icon, size dp square.
@@ -151,7 +180,7 @@ func (u *UI) layoutViewOnceCard(gtx C, m *model.Message, w int, metaSize image.P
 	})
 	top := (h - metaSize.Y/2 - rowH) / 2 // the middle, a little above the meta
 	t := op.Offset(image.Pt(pad-gtx.Dp(3), top+(rowH-ring)/2)).Push(gtx.Ops)
-	u.viewOnceRingIcon(gtx, 24, mark, true)
+	u.viewOnceBadge(gtx, m, 24, mark)
 	t.Pop()
 	label.at(gtx, pad-gtx.Dp(3)+ring+gap, top+(rowH-label.size.Y)/2)
 	return D{Size: card.Size()}

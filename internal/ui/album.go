@@ -42,9 +42,9 @@ type albumCaption struct {
 }
 
 // albumFile reports whether a picked file goes in an album with the
-// others sent with it: photos and videos, unless they're view once.
+// others sent with it: photos and videos, unless they're view once or Zaps.
 func albumFile(f *attachFile) bool {
-	return (f.Media == model.MediaImage || f.Media == model.MediaVideo) && !f.ViewOnce
+	return (f.Media == model.MediaImage || f.Media == model.MediaVideo) && !f.ViewOnce && !f.Zap
 }
 
 // openAlbum opens an album for the photos and videos among files, when

@@ -39,7 +39,8 @@ func (s *msgStore) gallery(ctx context.Context, q model.GalleryQuery) ([]rawMsg,
 		where += ` AND chat = ?`
 		args = append(args, q.ChatID)
 	} else {
-		where += ` AND chat NOT LIKE '%@newsletter'` // channels aren't chats
+		// Channels aren't chats, and locked chats show only in Locked chats.
+		where += ` AND chat NOT LIKE '%@newsletter' AND chat NOT IN (SELECT jid FROM wz_chats WHERE locked != 0)`
 	}
 	order := `ts DESC, rowid DESC`
 	if q.Oldest {

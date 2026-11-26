@@ -47,6 +47,9 @@ func (b *Backend) ManageGroup(r model.GroupRequest) {
 		switch r.Action {
 		case model.GroupAdd, model.GroupRemove, model.GroupPromote, model.GroupDemote:
 			ev.Members, err = b.changeMembers(ctx, cli, jid, r)
+			if err == nil && r.Action == model.GroupAdd && r.ShareHistory {
+				b.shareWithAdded(cli, jid, ev.Members)
+			}
 		case model.GroupAnnounce:
 			err = cli.SetGroupAnnounce(ctx, jid, r.On)
 		case model.GroupLock:

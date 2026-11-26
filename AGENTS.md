@@ -416,6 +416,19 @@ Gotchas already found in the pinned version (v0.10.x):
   menu (right click, a 450 ms hold or Shift+F10; the send view's too) and
   Ctrl+Shift+Enter open Schedule message (`internal/ui/scheduled.go`). The /schedule jobs of earlier versions go to
   WhatsApp once online (`auto.migrate`), or from here when too soon for it.
+- Zaps (WhatsApp first called them Instants) are camera photos and videos that open once,
+  like view once, but come to linked devices with their media: an `instantImageMessage`
+  (field 135) or an `instantVideoMessage` (field 140, missing from hypermeow's protobufs, so
+  `instantVideo` reads it from the unknown fields). They're stored as `KindViewOnce` with
+  `Message.Zap` (`internal/wa/zaps.go`), open for a day after they're sent
+  (`model.ZapLifetime`, WhatsApp Web's `WAWebInstantsExpiry`), and their sender can open
+  their own again. Opening one sends a played receipt; one played on another of your
+  devices (your played or played-self receipt) is opened here too (`openedElsewhere`).
+  The send view's bolt (hidden while `zapSending` is false: phones without Zaps dropped
+  them silently, no delivery receipt) sends a photo or video as one (`Attachment.Zap`): it goes with
+  `mediatype="instant_image"` or `"instant_video"` (hypermeow's patch), and a video's copy
+  in the unknown fields is set again after the upload (`setInstantVideo`). WhatsApp takes
+  them from its camera only; the app sends any photo or video.
 - Any other `events.UndecryptableMessage` (unless its sender marked it `decrypt-fail="hide"`)
   is stored as a `KindWaiting` placeholder, "Waiting for this message". hypermeow sends a
   retry receipt, and the decrypted copy that comes back under the same ID replaces it in
@@ -476,6 +489,37 @@ Gotchas already found in the pinned version (v0.10.x):
   from the sharer's side: fromMe is the sharer (`localizeKeys`, every key in them).
   `onHistoryBundle` (`internal/wa/grouphistory.go`) downloads one for you once and stores
   its messages as history; a bundle's chip shows to those it's for, a notice's to the rest.
+  Adding people can share the group's newest 100 messages from the last 14 days with them
+  (Add member's Share recent messages, `GroupRequest.ShareHistory`, `grouphistorysend.go`):
+  the bundle goes to the group with `SendRequestExtra.GroupRecipients` (hypermeow's patch),
+  encrypted to their devices and yours alone, as WhatsApp Web does. Like Zaps, phones
+  without the feature may drop it silently.
+- Chat lock: a chat locked on the phone is a `lockChatAction` (regular_low, `["lock", jid]`;
+  history sync's `Conversation.locked`), kept in `wz_chats.locked`; the settings are one
+  `chatLockSettings` action (`["setting_chatLock"]`): whether the Locked chats row is
+  hidden, and the secret code as a PBKDF2-HMAC-SHA512 hash with its salt and iterations,
+  kept in `wz_meta` (`internal/wa/chatlock.go`, `WAWebChatLockCrypto`). Locked chats leave
+  the chat list, its search, the Media panel, the chips' and rail's counts, the forward
+  picker and the watch's API, and notify as "New message" alone; they show in Locked chats
+  (`internal/ui/chatlock.go`), which opens with the secret code (checked on a goroutine:
+  the key derivation is slow) and locks again when left. When the phone hides the row,
+  typing the code in the chat list's search opens them. Without a secret code they don't
+  open here, as on WhatsApp Web.
+- Polls: a quiz (`pollType` QUIZ, its `correctAnswer`), an end time, hidden voters and
+  `allowAddOption` are read from any poll version (`pollContent`). A quiz's counts and
+  right answer show once you answered (an answer is final), an ended poll takes no votes,
+  and hidden voters show only counts. An option added later is a `secretEncryptedMessage`
+  (`POLL_ADD_OPTION`, the "Poll Add Option" use case) holding a `pollAddOptionMessage`, or
+  that message itself in history sync; kept in `wz_poll_options` and appended when the poll
+  is read (`internal/wa/polladd.go`): by its sender, or anyone if it allows, before it ends,
+  at most 12 options, no duplicates. The card's Add option sends one.
+- A location request (`requestLocationMessage`) is a message with `Message.LocationRequest`;
+  only phones answer one. Its sender's `requestLocationUpdateMessage` (CANCEL) marks it
+  cancelled in its `opened` column (`internal/wa/locrequest.go`).
+- A status's song is an interactive annotation of its picture or video
+  (`embeddedContent.embeddedMusic`), or a text status's `musicMetadata`: its artist and title
+  are kept in `wz_status.music` and shown under the viewer's time (`statusmusic.go`). The
+  song plays from Meta's music service, which linked devices don't reach.
 - After sleep the connection is dead, but the kernel keeps the socket for minutes and
   hypermeow's keepalive runs on the monotonic clock, which stood still: it took three
   minutes awake to reconnect. `watchSleep` (`internal/wa/backend.go`) sees the wall
@@ -761,7 +805,9 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    the Performance settings (switches for animations, smooth scrolling and
                    GIF/sticker autoplay, full-resolution photo previews, and an Advanced page of memory and CPU knobs with
                    live memory numbers; app prefs kept in the package's `perf`) in perf.go;
-                   view once messages (opened once, screenshots blocked) in viewonce.go; posting your own status
+                   view once messages and Zaps (opened once, screenshots blocked) in viewonce.go;
+                   Locked chats (Chat lock: the page, its row, the secret code's dialog) in chatlock.go;
+                   a poll's Add option dialog in polladd.go; posting your own status
                    (its menus, the text composer, photos through the send view) in statuspost.go;
                    Status privacy (the audiences, one chosen; an audience's people; an audience of
                    your own's name and emoji, sliding in over the Status list like New chat) and
@@ -939,7 +985,11 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    wz_pack_stickers) in packs.go; media retry requests (the phone uploading
                    expired stickers again) in reupload.go;
                    a group's messages shared with people added to it (group history
-                   bundles) in grouphistory.go
+                   bundles) in grouphistory.go, and sharing them yourself in grouphistorysend.go;
+                   Chat lock (locked chats and the secret code) in chatlock.go; options added
+                   to polls in polladd.go; location requests in locrequest.go; statuses'
+                   songs in statusmusic.go;
+                   Zaps (instant photos and videos) in zaps.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot); in
                    background.go, what tests of background accounts need (messages kept
                    for the next Start, counted starts and closes)

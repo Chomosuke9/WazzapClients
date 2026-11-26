@@ -360,6 +360,9 @@ func readFile(a model.Attachment, caption string) (*model.Message, upload, error
 	if a.ViewOnce && m.Kind == model.KindImage {
 		m.Kind, m.Album = model.KindViewOnce, ""
 	}
+	if a.Zap && (m.Media == model.MediaImage || m.Media == model.MediaVideo) {
+		m.Kind, m.Album, m.Zap = model.KindViewOnce, "", true
+	}
 	return m, up, nil
 }
 
@@ -492,6 +495,9 @@ func (b *Backend) uploadAndSend(jid types.JID, m *model.Message, up upload, msg 
 		return
 	}
 	uploaded(inner, res)
+	if v, ok := inner.(*waE2E.VideoMessage); ok && m.Zap {
+		setInstantVideo(msg, v) // a copy of it travels in the unknown fields
+	}
 	if m.Album != "" {
 		b.waitAlbum(b.ctx, m.Album) // the transfer's context is over
 	}
@@ -541,6 +547,9 @@ func fileMessage(m *model.Message, up upload, caption string, ci *waE2E.ContextI
 			e.ViewOnce = proto.Bool(true)
 		}
 		msg, inner = &waE2E.Message{ImageMessage: e}, e
+		if m.Zap {
+			msg = &waE2E.Message{InstantImageMessage: e}
+		}
 	case model.MediaVideo:
 		e := &waE2E.VideoMessage{
 			FileLength: size, Mimetype: proto.String(m.FileType), Seconds: proto.Uint32(uint32(m.Duration)), ContextInfo: ci,
@@ -552,6 +561,10 @@ func fileMessage(m *model.Message, up upload, caption string, ci *waE2E.ContextI
 			e.ViewOnce = proto.Bool(true)
 		}
 		msg, inner = &waE2E.Message{VideoMessage: e}, e
+		if m.Zap {
+			msg = &waE2E.Message{}
+			setInstantVideo(msg, e)
+		}
 	case model.MediaGIF:
 		e := &waE2E.VideoMessage{
 			FileLength: size, Mimetype: proto.String(m.FileType), Seconds: proto.Uint32(uint32(m.Duration)),
@@ -590,7 +603,7 @@ func fileMessage(m *model.Message, up upload, caption string, ci *waE2E.ContextI
 	if viewOnce && (msg.ImageMessage != nil || msg.VideoMessage != nil) {
 		msg = &waE2E.Message{ViewOnceMessageV2: &waE2E.FutureProofMessage{Message: msg}}
 	}
-	if ci != nil && len(ci.GroupMentions) > 0 {
+	if ci != nil && len(ci.GroupMentions) > 0 && !m.Zap {
 		msg = &waE2E.Message{GroupMentionedMessage: &waE2E.FutureProofMessage{Message: msg}}
 	}
 	return msg, inner
