@@ -150,3 +150,56 @@ func TestAdminRevoke(t *testing.T) {
 		t.Errorf("kept admin's delete: kind %v revoked %v by %q", r.Kind, r.Revoked, r.revokedBy)
 	}
 }
+
+// TestAdminRevokeOwn checks that your own message deleted by a group admin
+// is kept with Keep deleted messages on, and that the chat list says the
+// admin deleted it, not you.
+func TestAdminRevokeOwn(t *testing.T) {
+	b := testBackend(t)
+	ctx := b.ctx
+	group := types.NewJID("123", types.GroupServer)
+	chat := group.String()
+	if err := b.store.ensureChat(ctx, b.db, chat, true, "Group"); err != nil {
+		t.Fatal(err)
+	}
+	me := types.NewJID("111", types.HiddenUserServer)
+	admin := types.NewJID("777", types.HiddenUserServer)
+	sent := time.Unix(1_700_000_000, 0)
+	send := func(id string) {
+		b.onMessage(&events.Message{Info: types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: group, Sender: me, IsGroup: true, IsFromMe: true},
+			ID:            id, Timestamp: sent,
+		}, Message: &waE2E.Message{Conversation: proto.String("secret " + id)}})
+	}
+	revoke := func(id string) {
+		b.onMessage(&events.Message{Info: types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: group, Sender: admin, IsGroup: true},
+			ID:            "R" + id, Timestamp: sent.Add(time.Minute), Edit: types.EditAttributeAdminRevoke,
+		}, Message: &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+			Key:  &waCommon.MessageKey{ID: proto.String(id), FromMe: proto.Bool(false), Participant: proto.String(me.String())},
+			Type: waE2E.ProtocolMessage_REVOKE.Enum(),
+		}}})
+	}
+	last := func() *model.Message {
+		t.Helper()
+		rc, ok := b.store.chat(ctx, chat)
+		if !ok || rc.last == nil {
+			t.Fatal("no last message")
+		}
+		return b.resolveChat(ctx, rc).Last
+	}
+
+	send("M1")
+	revoke("M1")
+	if m := last(); m.Kind != model.KindDeleted || m.DeletedBy == "" ||
+		m.DeletedNote() != "This message was deleted by admin "+m.DeletedBy {
+		t.Errorf("chat list: kind %v, shows %q", m.Kind, m.DeletedNote())
+	}
+
+	b.SetPref(model.PrefKeepDeleted, "on")
+	send("M2")
+	revoke("M2")
+	if m := last(); m.Kind != model.KindText || m.Text != "secret M2" || m.Revoked.IsZero() || m.DeletedBy == "" {
+		t.Errorf("kept: kind %v text %q revoked %v by %q", m.Kind, m.Text, m.Revoked, m.DeletedBy)
+	}
+}

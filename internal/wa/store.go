@@ -1056,6 +1056,7 @@ type rawChat struct {
 var chatQuery = fmt.Sprintf(`
 	SELECT c.jid, c.name, c.is_group, c.pinned, c.muted_until, c.archived, c.unread, c.last_ts, c.favorite,
 		c.mentioned, c.general, c.ephemeral, c.not_member, c.locked, m.id, m.sender_jid, m.sender_push, m.from_me, m.ts, m.kind, m.media, m.text, m.receipt,
+		m.revoked, m.revoked_by,
 		CASE WHEN m.media IN (%d, %d, %d, %d) OR instr(m.text, '@') > 0 OR m.kind = %d THEN m.raw_payload END,
 		CASE WHEN instr(m.text, '@') > 0 THEN m.edit_payload END
 	FROM wz_chats c
@@ -1072,12 +1073,14 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 		ephemeral                      int64
 		pinned, mutedUntil, lastTS     int64
 		mID, mSender, mPush, mText     sql.NullString
+		mRevokedBy                     sql.NullString
 		mFromMe, mTS, mKind, mMedia    sql.NullInt64
-		mReceipt                       sql.NullInt64
+		mReceipt, mRevoked             sql.NullInt64
 		mRaw, mEdit                    []byte
 	)
 	err := sc.Scan(&c.ID, &c.Name, &isGroup, &pinned, &mutedUntil, &archived, &unread, &lastTS, &fav,
-		&mentioned, &general, &ephemeral, &notMember, &locked, &mID, &mSender, &mPush, &mFromMe, &mTS, &mKind, &mMedia, &mText, &mReceipt, &mRaw, &mEdit)
+		&mentioned, &general, &ephemeral, &notMember, &locked, &mID, &mSender, &mPush, &mFromMe, &mTS, &mKind, &mMedia, &mText, &mReceipt,
+		&mRevoked, &mRevokedBy, &mRaw, &mEdit)
 	if err != nil {
 		return rawChat{}, err
 	}
@@ -1106,7 +1109,11 @@ func scanChat(sc scanner, now time.Time) (rawChat, error) {
 			Time: time.Unix(mTS.Int64, 0), Kind: model.Kind(mKind.Int64), Media: model.Media(mMedia.Int64),
 			Text: mText.String, Receipt: model.Receipt(mReceipt.Int64),
 		}
-		last := rawMsg{Message: m, senderJID: mSender.String, senderPush: mPush.String}
+		if mRevoked.Int64 != 0 {
+			m.Revoked = time.UnixMilli(mRevoked.Int64) // kept with model.PrefKeepDeleted
+		}
+		// Who deleted it, so the list says "deleted by admin", not "You deleted".
+		last := rawMsg{Message: m, senderJID: mSender.String, senderPush: mPush.String, revokedBy: mRevokedBy.String}
 		last.fill(mRaw, mEdit)
 		last.quote = nil // not shown in the list
 		c.Last = m
