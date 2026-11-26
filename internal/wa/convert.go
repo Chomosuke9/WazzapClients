@@ -439,6 +439,15 @@ func (b *Backend) parse(ctx context.Context, evt *events.Message) (p parsed, ok 
 		}
 		return p, p.target != ""
 	}
+	if hb := m.GetMessageHistoryBundle(); hb != nil {
+		// A group's messages shared with you (grouphistory.go).
+		p.msg, ok = b.historyShared(ctx, evt, chat, hb.GetMessageHistoryMetadata(), true)
+		return p, ok
+	}
+	if hn := m.GetMessageHistoryNotice(); hn != nil {
+		p.msg, ok = b.historyShared(ctx, evt, chat, hn.GetMessageHistoryMetadata(), false)
+		return p, ok
+	}
 	if cr := m.GetConditionalRevealMessage(); cr != nil {
 		// A scheduled message: shown once its key comes (schedule.go).
 		return b.parseScheduled(ctx, evt, chat, cr)

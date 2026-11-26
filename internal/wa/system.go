@@ -60,7 +60,8 @@ var shownStubs = map[stubType]bool{
 	waWeb.WebMessageInfo_CALL_MISSED_GROUP_VOICE:             true,
 	waWeb.WebMessageInfo_CALL_MISSED_GROUP_VIDEO:             true,
 	waWeb.WebMessageInfo_PINNED_MESSAGE_IN_CHAT:              true,
-	stubChatTheme: true,
+	stubChatTheme:     true,
+	stubHistoryShared: true,
 }
 
 // systemMsg makes a system message of chat: stub t with params, made by
@@ -483,6 +484,8 @@ func (b *Backend) systemText(ctx context.Context, r rawMsg, t stubType, params [
 			return by("reset the chat theme", "The chat theme was reset"), 0
 		}
 		return by("changed the chat theme", "The chat theme was changed"), 0
+	case stubHistoryShared:
+		return historySharedText(actor, params, object), 0
 	}
 	return "", 0
 }

@@ -3,7 +3,6 @@
 package wa
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -1207,6 +1206,9 @@ func (b *Backend) onMessage(e *events.Message) {
 		return
 	}
 	b.apply(&e.Info, p)
+	if hb := e.Message.GetMessageHistoryBundle(); hb != nil {
+		b.onHistoryBundle(e, hb)
+	}
 }
 
 // dropWaiting removes the "Waiting for this message" placeholder of a
@@ -1512,21 +1514,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 	cli := b.client()
 	data := e.Data
 
-	type convData struct {
-		jid     types.JID
-		isGroup bool
-		name    string
-		meta    chatMeta
-		msgs    []storedMsg
-		edits   []parsed
-		// receipts are who got your messages and when.
-		receipts []personReceipt
-		// votes are the votes in polls and answers to events.
-		votes []historyVote
-		// reactions are those history sync lists on the messages they react to.
-		reactions []historyReaction
-	}
-	var convs []convData
+	var convs []historyConv
 	var statuses []storedStatus
 	// Phones don't always keep to the limit linking asked for.
 	var cutoff time.Time
@@ -1538,9 +1526,13 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		if err != nil {
 			continue
 		}
+		msgs := make([]*waWeb.WebMessageInfo, 0, len(conv.GetMessages()))
+		for _, hm := range conv.GetMessages() {
+			msgs = append(msgs, hm.GetMessage())
+		}
 		if isStatus(raw) {
-			for _, hm := range conv.GetMessages() {
-				if evt, err := cli.ParseWebMessage(raw, hm.GetMessage()); err == nil {
+			for _, w := range msgs {
+				if evt, err := cli.ParseWebMessage(raw, w); err == nil {
 					if st, ok := b.parseStatus(ctx, evt); ok && st.revoke == "" {
 						statuses = append(statuses, st)
 					}
@@ -1555,7 +1547,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		if skipChat(jid) {
 			continue
 		}
-		cd := convData{jid: jid, isGroup: jid.Server == types.GroupServer}
+		cd := historyConv{jid: jid, isGroup: jid.Server == types.GroupServer}
 		if conv.LimitSharing != nil {
 			b.setLimitSharing(ctx, jid.String(), conv.GetLimitSharing(), conv.GetLimitSharingSettingTimestamp())
 		}
@@ -1579,7 +1571,7 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 		if unread == 0 && conv.GetMarkedAsUnread() {
 			unread = -1
 		}
-		cd.meta = chatMeta{
+		cd.meta = &chatMeta{
 			pinned:     int64(conv.GetPinned()),
 			mutedUntil: mute,
 			archived:   conv.GetArchived(),
@@ -1588,142 +1580,11 @@ func (b *Backend) onHistory(e *events.HistorySync) {
 			lastTS:     int64(max(conv.GetConversationTimestamp(), conv.GetLastMsgTimestamp())),
 			ephemeral:  conv.GetEphemeralExpiration(),
 		}
-		for _, hm := range conv.GetMessages() {
-			if int64(hm.GetMessage().GetMessageTimestamp()) < cutoff.Unix() {
-				continue
-			}
-			if hm.GetMessage().GetMessageStubType() != 0 {
-				if m, ok := b.historyStub(ctx, jid, hm.GetMessage()); ok {
-					cd.msgs = append(cd.msgs, m)
-				}
-				continue
-			}
-			evt, err := cli.ParseWebMessage(raw, hm.GetMessage())
-			if err != nil {
-				continue
-			}
-			if isGroupStatus(evt) {
-				if st, ok := b.parseStatus(ctx, evt); ok && st.revoke == "" {
-					statuses = append(statuses, st)
-				}
-				continue
-			}
-			b.noteTheme(ctx, jid.String(), evt)
-			p, ok := b.parse(ctx, evt)
-			if !ok {
-				continue
-			}
-			p.msg.ChatID = jid.String()
-			if p.msg.FromMe {
-				for _, ur := range hm.GetMessage().GetUserReceipt() {
-					who, err := types.ParseJID(ur.GetUserJID())
-					if err != nil {
-						continue
-					}
-					cd.receipts = append(cd.receipts, personReceipt{
-						chat: p.msg.ChatID, id: p.msg.ID, who: b.canonical(ctx, who).String(),
-						delivered: ur.GetReceiptTimestamp(), read: ur.GetReadTimestamp(), played: ur.GetPlayedTimestamp(),
-					})
-				}
-			}
-			if p.target != "" {
-				cd.edits = append(cd.edits, p)
-				continue
-			}
-			if pin, ok := historyPin(hm.GetMessage(), p.msg.ID); ok {
-				cd.edits = append(cd.edits, pin)
-			}
-			// A message kept in a disappearing chat says so itself.
-			p.msg.Kept = hm.GetMessage().GetKeepInChat().GetKeepType() == waE2E.KeepType_KEEP_FOR_ALL
-			if p.msg.Poll != nil || p.msg.Event != nil {
-				for _, v := range b.historyVotes(ctx, raw, hm.GetMessage()) {
-					cd.votes = append(cd.votes, historyVote{id: p.msg.ID, vote: v})
-				}
-			}
-			for _, r := range hm.GetMessage().GetReactions() {
-				who, ok := b.voterOfKey(ctx, jid, r.GetKey())
-				if ok && r.GetText() != "" {
-					cd.reactions = append(cd.reactions, historyReaction{id: p.msg.ID,
-						reaction: reaction{who: who, ts: r.GetSenderTimestampMS(), emoji: r.GetText()}})
-				}
-			}
-			cd.msgs = append(cd.msgs, p.msg)
-		}
+		statuses = append(statuses, b.historyMessages(ctx, cli, raw, &cd, msgs, cutoff)...)
 		convs = append(convs, cd)
 	}
-
-	tx, err := b.db.BeginTx(ctx, nil)
-	if err != nil {
-		b.log.Errorf("history sync: begin: %v", err)
+	if !b.storeHistory(ctx, convs, statuses) {
 		return
-	}
-	for _, st := range statuses {
-		if err := b.store.putStatus(ctx, tx, st); err != nil {
-			b.log.Warnf("history sync: status %s: %v", st.id, err)
-		}
-	}
-	for _, cd := range convs {
-		jid := cd.jid.String()
-		if err := b.store.ensureChat(ctx, tx, jid, cd.isGroup, cd.name); err != nil {
-			b.log.Errorf("history sync: chat %s: %v", jid, err)
-			continue
-		}
-		_ = b.store.setMeta(ctx, tx, jid, cd.meta)
-		for _, m := range cd.msgs {
-			if err := b.store.putMessage(ctx, tx, m); err != nil {
-				b.log.Warnf("history sync: message %s: %v", m.ID, err)
-			}
-		}
-		for _, r := range cd.receipts {
-			if err := b.store.putReceipt(ctx, tx, r); err != nil {
-				b.log.Warnf("history sync: receipt of %s: %v", r.id, err)
-			}
-		}
-		for _, v := range cd.votes {
-			if err := b.store.putVote(ctx, tx, jid, v.id, v.vote); err != nil {
-				b.log.Warnf("history sync: vote on %s: %v", v.id, err)
-			}
-		}
-		for _, r := range cd.reactions {
-			if err := b.store.putReaction(ctx, tx, jid, r.id, r.reaction); err != nil {
-				b.log.Warnf("history sync: reaction to %s: %v", r.id, err)
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		b.log.Errorf("history sync: commit: %v", err)
-		return
-	}
-	for _, cd := range convs {
-		chat := cd.jid.String()
-		var pins []parsed
-		for _, p := range cd.edits {
-			switch {
-			case p.revoke:
-				b.revoke(ctx, chat, p)
-			case p.edited:
-				_ = b.store.editText(ctx, chat, p.target, p.edit, p.editTime, p.msg.rawPayload)
-			case p.pin != 0:
-				pins = append(pins, p)
-			case p.keep != 0:
-				_ = b.store.setMessageFlag(ctx, chat, p.target, "kept", p.keep > 0)
-			case p.vote != nil:
-				_ = b.store.putVote(ctx, b.db, chat, p.target, *p.vote)
-			case p.event != nil:
-				_ = b.store.editEvent(ctx, chat, p.target, p.event, p.msg.rawPayload)
-			case p.reaction != nil:
-				_ = b.store.putReaction(ctx, b.db, chat, p.target, *p.reaction)
-			case p.sticker != nil:
-				_ = b.store.putStickerReact(ctx, b.db, chat, p.target, *p.sticker)
-			case p.comment != nil:
-				_ = b.store.putComment(ctx, b.db, chat, p.target, *p.comment)
-			}
-		}
-		// In the order they were made: history lists the newest first.
-		slices.SortStableFunc(pins, func(a, b parsed) int { return cmp.Compare(a.pinAt, b.pinAt) })
-		for _, p := range pins {
-			_ = b.store.setPin(ctx, b.db, chat, b.albumTarget(ctx, chat, p.target), p.pin > 0, p.pinAt, p.pinUntil)
-		}
 	}
 	b.onRecentStickers(data.GetRecentStickers())
 	sounds := false

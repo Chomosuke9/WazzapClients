@@ -468,6 +468,14 @@ Gotchas already found in the pinned version (v0.10.x):
   your own account too, into LIDs. Reactions to statuses (your likes from the phone, others'
   likes of yours, shown in Viewed by) are kept in `wz_reactions` under status@broadcast.
   Status messages the app doesn't show are logged with their fields.
+- A member adding people can share the group's recent messages with them: their phone
+  uploads a file and sends the group a `messageHistoryBundle` naming who it's for
+  (`historyReceivers`), and the others a `messageHistoryNotice`. The file (mms type
+  `group-history`, "WhatsApp Document Keys") is a zlib or gzip compressed
+  `waGroupHistory.GroupHistory` of history sync's WebMessageInfos, whose keys are written
+  from the sharer's side: fromMe is the sharer (`localizeKeys`, every key in them).
+  `onHistoryBundle` (`internal/wa/grouphistory.go`) downloads one for you once and stores
+  its messages as history; a bundle's chip shows to those it's for, a notice's to the rest.
 - After sleep the connection is dead, but the kernel keeps the socket for minutes and
   hypermeow's keepalive runs on the monotonic clock, which stood still: it took three
   minutes awake to reconnect. `watchSleep` (`internal/wa/backend.go`) sees the wall
@@ -929,7 +937,9 @@ internal/wa/       hypermeow backend: pairing, events, SQLite message store, nam
                    snippets (wz_snippets, their media copied to snippet-media/) in snippets.go
                    and snippetmedia.go; sticker packs (wz_sticker_packs, their stickers in
                    wz_pack_stickers) in packs.go; media retry requests (the phone uploading
-                   expired stickers again) in reupload.go
+                   expired stickers again) in reupload.go;
+                   a group's messages shared with people added to it (group history
+                   bundles) in grouphistory.go
 internal/mock/     demo Backend with fake chats (used by -demo and cmd/screenshot); in
                    background.go, what tests of background accounts need (messages kept
                    for the next Start, counted starts and closes)
