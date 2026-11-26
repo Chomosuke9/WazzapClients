@@ -16,6 +16,12 @@
 // public half is publicKey. A checksum from the same release only proves
 // the download wasn't damaged; the signature proves the release came from
 // whoever holds the key, not just anyone who can publish on the repository.
+//
+// GitHub's API answers 60 requests an hour from an address without a
+// login, and everyone behind the same public address (a carrier's NAT)
+// shares them: they were often gone. When the API refuses, Check reads the
+// latest release from github.com's own redirects instead (checkWeb), which
+// don't count, and works out the files' addresses from their names.
 package update
 
 import (
@@ -31,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strconv"
@@ -125,13 +132,18 @@ func get(ctx context.Context, url, version string) (*http.Response, error) {
 	return resp, nil
 }
 
-// apiURL is the latest release's API address and patchesURL the patch
-// release's (variables for tests). The latest release leaves out drafts
-// and prereleases.
+// apiURL is the latest release's API address, patchesURL the patch
+// release's and webURL the releases' page, which checkWeb reads (variables
+// for tests). The latest release leaves out drafts and prereleases.
 var (
 	apiURL     = "https://api.github.com/repos/" + Repo + "/releases/latest"
 	patchesURL = "https://api.github.com/repos/" + Repo + "/releases/tags/" + PatchTag
+	webURL     = "https://github.com/" + Repo + "/releases"
 )
+
+// errLimited is getRelease's error when the API refuses (403 or 429): its
+// requests without a login have run out for this address.
+var errLimited = errors.New("GitHub's API rate limit")
 
 // ghRelease is what Check reads of a release from GitHub's API.
 type ghRelease struct {
@@ -161,6 +173,9 @@ func getRelease(ctx context.Context, url, current string) (*ghRelease, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("GitHub: %s: %w", resp.Status, errLimited)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub: %s", resp.Status)
 	}
@@ -179,6 +194,9 @@ func Check(ctx context.Context, current string) (*Release, error) {
 		return nil, ErrDevBuild
 	}
 	rel, err := getRelease(ctx, apiURL, current)
+	if errors.Is(err, errLimited) {
+		return checkWeb(ctx, cur, current)
+	}
 	if err != nil || rel == nil { // nil: nothing published yet
 		return nil, err
 	}
@@ -208,6 +226,84 @@ func Check(ctx context.Context, current string) (*Release, error) {
 				}
 			}
 		}
+	}
+	return r, nil
+}
+
+// noRedirect is a client that hands a redirect back instead of following it.
+var noRedirect = &http.Client{
+	Timeout:       time.Minute,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+func head(ctx context.Context, c *http.Client, url, current string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "WazzapClients/"+current)
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body.Close()
+	return resp, nil
+}
+
+// checkWeb is Check without the API. github.com sends <webURL>/latest on to
+// the latest release's page, <webURL>/tag/<tag> (to the releases' list when
+// there's none), and a file to <webURL>/download/<tag>/<name>. A HEAD
+// request for a file says whether it's there and how big it is.
+func checkWeb(ctx context.Context, cur version, current string) (*Release, error) {
+	resp, err := head(ctx, noRedirect, webURL+"/latest", current)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusMovedPermanently {
+		return nil, fmt.Errorf("GitHub: %s", resp.Status)
+	}
+	page, err := resp.Location()
+	if err != nil {
+		return nil, err
+	}
+	_, esc, ok := strings.Cut(page.EscapedPath(), "/releases/tag/")
+	if !ok {
+		return nil, nil // nothing published yet
+	}
+	tag, err := url.PathUnescape(esc)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := parseVersion(tag)
+	if !ok || !newer(v, cur) {
+		return nil, nil
+	}
+	dl := func(tag, name string) asset {
+		return asset{name: name, url: webURL + "/download/" + url.PathEscape(tag) + "/" + url.PathEscape(name)}
+	}
+	r := &Release{
+		Version: tag,
+		Page:    page.String(),
+		sums:    dl(tag, sumsName),
+		sig:     dl(tag, sigName),
+	}
+	exe := dl(tag, AssetName())
+	resp, err = head(ctx, client, exe.url, current)
+	switch {
+	case err != nil:
+		return nil, err
+	case resp.StatusCode == http.StatusNotFound:
+		return r, nil // no build for this system: Download says so
+	case resp.StatusCode != http.StatusOK:
+		return nil, fmt.Errorf("GitHub: %s", resp.Status)
+	}
+	exe.size = max(resp.ContentLength, 0)
+	r.exe = exe
+	// As in Check, a patch that can't be found leaves the whole executable.
+	p := dl(PatchTag, patchName(current, tag))
+	if resp, err := head(ctx, client, p.url, current); err == nil && resp.StatusCode == http.StatusOK {
+		p.size = max(resp.ContentLength, 0)
+		r.patch = p
 	}
 	return r, nil
 }

@@ -660,6 +660,12 @@ Gotchas already found in the pinned version (v0.10.x):
   results' slugs end in "--…", which Recent and Items leave off: compare with
   `klipy.BaseSlug`, and send KLIPY the slug as it came.
 
+- GitHub's API gives 60 requests an hour to an address without a login, shared by
+  everyone behind it (a carrier's NAT used them all within 20 minutes of each reset).
+  When it answers 403 or 429, `update.Check` reads the latest release from github.com's
+  redirects (`checkWeb`: `releases/latest` goes to `releases/tag/<tag>`) and HEADs the
+  files by name, which don't count. Downloads never used the API.
+
 If a doc and the source disagree, trust the source for the pinned version. If you bump a
 dependency, re-read the changelog and fix any deprecations in the same change.
 
