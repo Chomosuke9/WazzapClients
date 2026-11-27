@@ -20,45 +20,38 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 		return stripMarks(m.Text), nil
 	}
 	text := r.Text
+	sm := readMentions(r.mentions, r.Text)
 	var refs []model.MentionRef
-	var people []string // mentioned, with no "@<user>" in the text
-	custom := -1        // the index in refs of the first custom mention
-	for _, s := range strings.Split(r.mentions, ",") {
-		switch {
-		case s == "":
-		case s == mentionAll:
-			refs = append(refs, model.MentionRef{Name: "all", ID: "@all"})
-		case strings.HasPrefix(s, groupMentionPrefix):
-			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
-			text = strings.ReplaceAll(text, "@"+jid, "@"+subject)
-			switch {
-			case !model.IsGroupNameJID(jid, m.ChatID):
-			case strings.EqualFold(subject, "admin"):
-				refs = append(refs, model.MentionRef{Name: subject, ID: "@admin"})
-			default:
-				// The people go to the first: the message doesn't say whose
-				// they are, and all of them are notified anyway.
-				if custom < 0 {
-					custom = len(refs)
-				}
-				refs = append(refs, model.MentionRef{Name: subject, ID: "@custom"})
-			}
-		default:
-			j, err := types.ParseJID(s)
-			if err != nil || j.User == "" {
-				continue
-			}
-			if !strings.Contains(text, "@"+j.User) {
-				people = append(people, j.ToNonAD().String())
-				continue
-			}
-			name := b.senderName(ctx, j, "")
-			text = strings.ReplaceAll(text, "@"+j.User, "@"+name)
-			refs = append(refs, model.MentionRef{Name: name, ID: j.ToNonAD().String()})
-		}
+	if sm.all {
+		refs = append(refs, model.MentionRef{Name: "all", ID: "@all"})
 	}
-	if custom >= 0 {
-		refs[custom].People = people
+	first := true // the first custom mention, which gets the people when unsure
+	for _, g := range sm.groups {
+		text = strings.ReplaceAll(text, "@"+g.jid, "@"+g.subject)
+		ref := model.MentionRef{Name: g.subject, ID: "@custom", People: g.people, Unsure: g.unsure}
+		switch {
+		case !model.IsGroupNameJID(g.jid, m.ChatID):
+			continue
+		case strings.EqualFold(g.subject, "admin"):
+			ref.ID = "@admin"
+		case g.unsure && !first:
+			// The people go to the first: the message doesn't say whose
+			// they are, and all of them are notified anyway.
+			ref.People = nil
+		}
+		if ref.ID == "@custom" {
+			first = false
+		}
+		refs = append(refs, ref)
+	}
+	for _, s := range sm.people {
+		j, err := types.ParseJID(s)
+		if err != nil || j.User == "" || !strings.Contains(text, "@"+j.User) {
+			continue
+		}
+		name := b.senderName(ctx, j, "")
+		text = strings.ReplaceAll(text, "@"+j.User, "@"+name)
+		refs = append(refs, model.MentionRef{Name: name, ID: j.ToNonAD().String()})
 	}
 	return text, refs
 }

@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -237,41 +238,107 @@ func groupMention(jid, subject string) string {
 	return groupMentionPrefix + jid + ":" + strings.ReplaceAll(subject, ",", " ")
 }
 
-// replaceMentions turns "@123456" into "@Name" for every mentioned JID.
-func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions string) string {
-	// A group mentioning itself with no one mentioned is a snippet's
-	// {mention} (see Draft.MentionChat), not @admin.
-	people, me := false, false
+// storedMentions is a message's stored mention list, read.
+type storedMentions struct {
+	all    bool     // "@all"
+	people []string // everyone it mentions, once each
+	groups []storedGroup
+}
+
+// storedGroup is a group mention (@admin, a custom mention, a snippet's
+// {mention}): the text says "@<jid>", shown as "@<subject>".
+type storedGroup struct {
+	jid, subject string
+	people       []string // whom it notifies
+	// unsure means the message doesn't say whose its people are (see
+	// model.SplitMentions): each group mention then has everyone the
+	// text doesn't name.
+	unsure bool
+}
+
+// readMentions reads a stored mention list (mentionsOf's) of a message
+// whose stored text is text.
+func readMentions(mentions, text string) storedMentions {
+	var sm storedMentions
+	var jids []string
 	for _, s := range strings.Split(mentions, ",") {
-		if s != "" && s != mentionAll && !strings.HasPrefix(s, groupMentionPrefix) {
-			people = true
-			if j, err := types.ParseJID(s); err == nil && b.isMe(j.ToNonAD()) {
-				me = true
+		switch {
+		case s == "":
+		case s == mentionAll:
+			sm.all = true
+		case strings.HasPrefix(s, groupMentionPrefix):
+			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
+			sm.groups = append(sm.groups, storedGroup{jid: jid, subject: subject})
+		default:
+			jids = append(jids, s)
+		}
+	}
+	add := func(l []string) {
+		for _, j := range l {
+			if !slices.Contains(sm.people, j) {
+				sm.people = append(sm.people, j)
 			}
 		}
 	}
-	for _, s := range strings.Split(mentions, ",") {
-		switch {
-		case s == mentionAll:
-			text = strings.ReplaceAll(text, "@all", markedMention(model.MentionNotifies, "all"))
-			continue
-		case strings.HasPrefix(s, groupMentionPrefix):
-			jid, subject, _ := strings.Cut(s[len(groupMentionPrefix):], ":")
-			m := mention(subject)
-			switch {
-			case !model.IsGroupNameJID(jid, chatID):
-			case strings.EqualFold(subject, "admin"):
-				// A group mentioning itself is "@admin" (see Send).
-				m = markedMention(model.MentionAdmins, subject)
-			case people && me:
-				// A custom mention: the name of the people mentioned.
-				m = markedMention(model.MentionNotifies, subject)
-			case people:
-				m = markedMention(model.MentionGroup, subject)
-			}
-			text = strings.ReplaceAll(text, "@"+jid, m)
-			continue
+	direct, groups, ok := model.SplitMentions(jids, len(sm.groups))
+	add(direct)
+	if ok {
+		for i := range sm.groups {
+			sm.groups[i].people = groups[i]
+			add(groups[i])
 		}
+		return sm
+	}
+	// Whoever the text doesn't name as "@<user>" is the group mentions'.
+	var rest []string
+	for _, j := range sm.people {
+		if user, _, _ := strings.Cut(j, "@"); user == "" || !strings.Contains(text, "@"+user) {
+			rest = append(rest, j)
+		}
+	}
+	for i := range sm.groups {
+		sm.groups[i].people, sm.groups[i].unsure = rest, len(sm.groups) > 1
+	}
+	return sm
+}
+
+// meAmong reports whether one of jids is you.
+func (b *Backend) meAmong(jids []string) bool {
+	for _, s := range jids {
+		if j, err := types.ParseJID(s); err == nil && b.isMe(j.ToNonAD()) {
+			return true
+		}
+	}
+	return false
+}
+
+// replaceMentions turns "@123456" into "@Name" for every mentioned JID.
+func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions string) string {
+	sm := readMentions(mentions, text)
+	if sm.all {
+		text = strings.ReplaceAll(text, "@all", markedMention(model.MentionNotifies, "all"))
+	}
+	// Group mentions first: a person's "@<user>" can start a group's JID.
+	for _, g := range sm.groups {
+		m := mention(g.subject)
+		switch {
+		case !model.IsGroupNameJID(g.jid, chatID):
+		case strings.EqualFold(g.subject, "admin"):
+			// A group mentioning itself is "@admin" (see Send).
+			m = markedMention(model.MentionAdmins, g.subject)
+		case len(g.people) == 0:
+			// A group mentioning itself with no one in it is a snippet's
+			// {mention} (see Draft.MentionChat).
+		case b.meAmong(g.people):
+			// A custom mention of you: the name of the people mentioned.
+			// The group mark after the first tells the UI it has people.
+			m = "\u2068" + string(model.MentionNotifies) + string(model.MentionGroup) + "@" + g.subject + "\u2069"
+		default:
+			m = markedMention(model.MentionGroup, g.subject)
+		}
+		text = strings.ReplaceAll(text, "@"+g.jid, m)
+	}
+	for _, s := range sm.people {
 		j, err := types.ParseJID(s)
 		if err != nil || j.User == "" || !strings.Contains(text, "@"+j.User) {
 			continue // @admin and custom mentions don't name their people

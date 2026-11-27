@@ -593,8 +593,12 @@ type Transcript struct {
 // and ID is who it notifies (a JID, or "@all", "@admin" or "@custom").
 type MentionRef struct {
 	Name, ID string
-	// People are whom a "@custom" mention notifies.
+	// People are whom a "@custom" or "@admin" mention notifies.
 	People []string
+	// Unsure means the message doesn't say whose People are (it has more
+	// than one group mention and no MentionSeparator): they're everyone it
+	// notifies that its text doesn't name.
+	Unsure bool
 }
 
 // Chat is a one-to-one or group conversation. Messages are not part of it:
@@ -709,6 +713,12 @@ type Draft struct {
 	// when the group's own JID already shows another: Text shows the i-th
 	// as "@" + GroupNameJID(chat, i+1), and Mentions lists whom they notify.
 	GroupNames []string
+	// GroupPeople are whom each of those names notifies, in their order:
+	// the chat's own JID's (MentionAdmins or MentionChat) first, then each
+	// of GroupNames'. Mentions lists them all too. With two names or more,
+	// or a name beside someone mentioned by name, the message says whose
+	// they are (JoinMentions).
+	GroupPeople [][]string
 	// Link is the preview of a link in Text to send with it, or nil, and
 	// LinkThumb its picture (a small JPEG).
 	Link      *LinkPreview
@@ -800,6 +810,54 @@ func IsGroupNameJID(jid, chat string) bool {
 		}
 	}
 	return false
+}
+
+// MentionSeparator splits a message's mentioned JIDs into the people of
+// each group mention (@admin, custom mentions): WhatsApp's protobuf lists
+// whom a message notifies, not whose name notifies them. It's a LID no
+// account has, so it notifies no one.
+const MentionSeparator = "0@lid"
+
+// JoinMentions lists a message's mentioned JIDs so that they say whose they
+// are: the people it names itself (direct), then for each group mention in
+// the order of the context's GroupMentions a MentionSeparator and its
+// people. Someone in two of them is listed under both.
+func JoinMentions(direct []string, groups [][]string) []string {
+	out := slices.Clone(direct)
+	for _, g := range groups {
+		out = append(out, MentionSeparator)
+		out = append(out, g...)
+	}
+	return out
+}
+
+// SplitMentions reads mentioned JIDs that JoinMentions listed for a message
+// with n group mentions. ok is false when they don't say whose they are
+// (another client's, or a message with no group mention): direct are then
+// all of them. A separator never appears in direct or in the groups.
+func SplitMentions(jids []string, n int) (direct []string, groups [][]string, ok bool) {
+	seps := 0
+	for _, j := range jids {
+		if j == MentionSeparator {
+			seps++
+		}
+	}
+	if n == 0 || seps != n {
+		return slices.DeleteFunc(slices.Clone(jids), func(j string) bool { return j == MentionSeparator }), nil, false
+	}
+	g := -1
+	for _, j := range jids {
+		switch {
+		case j == MentionSeparator:
+			groups = append(groups, nil)
+			g++
+		case g < 0:
+			direct = append(direct, j)
+		default:
+			groups[g] = append(groups[g], j)
+		}
+	}
+	return direct, groups, true
 }
 
 // LinkImage is a link preview's big picture: a JPEG, W x H.

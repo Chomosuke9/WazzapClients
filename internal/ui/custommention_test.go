@@ -185,17 +185,57 @@ func TestCustomMentionTwoInOneMessage(t *testing.T) {
 }
 
 // Who gets a pill: you when you're one of its people, through the backend's
-// mark, and no one else, admin or not.
+// mark, and no one else, admin or not. A group mention opens its people,
+// a pill of yours or "@all" nothing.
 func TestCustomMentionPill(t *testing.T) {
 	st := customTest(t)
 	for _, c := range []struct {
-		kind rune
-		pill bool
-	}{{model.MentionNotifies, true}, {model.MentionGroup, false}} {
-		_, deco := st.u.richSpans("⁨"+string(c.kind)+"@Tim⁩", 15, st.u.pal.Text, false, pillMe|pillAdmin)
-		if len(deco) != 1 || (deco[0]&decoPill != 0) != c.pill || deco[0]&decoMention != 0 {
-			t.Errorf("mark %U: deco %v", c.kind, deco)
+		marks       string
+		pill, opens bool
+	}{
+		{string(model.MentionNotifies), true, false},
+		{string(model.MentionNotifies) + string(model.MentionGroup), true, true},
+		{string(model.MentionGroup), false, true},
+		{string(model.MentionAdmins), false, true},
+	} {
+		_, deco := st.u.richSpans("⁨"+c.marks+"@Tim⁩", 15, st.u.pal.Text, false, pillMe)
+		if len(deco) != 1 || (deco[0]&decoPill != 0) != c.pill || (deco[0]&decoMention != 0) != c.opens {
+			t.Errorf("marks %q: deco %v", c.marks, deco)
 		}
+	}
+}
+
+// Clicking a group mention in a message lists its people in the group's
+// info panel, each mention its own when the message says so.
+func TestMentionPeoplePanel(t *testing.T) {
+	st := customTest(t)
+	others, _ := membersOf(t, st.u, "work")
+	refs := []mentionRef{
+		{name: "Tim frontend", jid: mentionCustomID, people: others[:2]},
+		{name: "Tim backend", jid: mentionCustomID, people: others[1:3]},
+	}
+	d := st.u.draftWith("@Tim frontend @Tim backend", refs, "work")
+	if len(d.GroupPeople) != 2 || !slices.Equal(d.GroupPeople[0], others[:2]) || !slices.Equal(d.GroupPeople[1], others[1:3]) {
+		t.Fatalf("draft %+v", d)
+	}
+	m := st.u.backend.Send("work", d)
+	st.u.openMention(m, "@Tim backend")
+	if !st.u.info.open || st.u.info.chatID != "work" || st.u.info.sub != infoMentioned {
+		t.Fatalf("panel %v %q %q", st.u.info.open, st.u.info.chatID, st.u.info.sub)
+	}
+	if mp := st.u.info.mention; mp.name != "Tim backend" || mp.unsure || !slices.Equal(mp.people, others[1:3]) {
+		t.Fatalf("people %+v", mp)
+	}
+	st.frame()
+	for _, id := range others[1:3] {
+		if !st.drawn(st.u.btn("mentioned:" + id)) {
+			t.Errorf("%s not listed", id)
+		}
+	}
+	// A person opens their contact info.
+	st.u.openContact(others[1], "x")
+	if st.u.info.sub != "" || st.u.info.chatID != others[1] {
+		t.Fatalf("contact: %q %q", st.u.info.sub, st.u.info.chatID)
 	}
 }
 

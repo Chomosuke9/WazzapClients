@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"image/color"
 	"slices"
 	"strconv"
 	"strings"
@@ -267,6 +268,95 @@ func (u *UI) customMentionPage(gtx C, c *model.Chat, info *model.ChatInfo) []lay
 			l.MaxLines = 0
 			return l.Layout(gtx)
 		})
+	})
+}
+
+// mentionPeople is a group mention clicked in a message: its name and the
+// people the message says it notifies.
+type mentionPeople struct {
+	name   string
+	people []string
+	// unsure means the message doesn't say whose its people are
+	// (model.MentionRef.Unsure): they're everyone its group mentions notify.
+	unsure bool
+}
+
+// openMentionPeople shows the people of a message's group mention r in
+// the group's info panel. refs are all the message's mentions.
+func (u *UI) openMentionPeople(chat string, r model.MentionRef, refs []model.MentionRef) {
+	mp := mentionPeople{name: r.Name, people: r.People, unsure: r.Unsure}
+	if r.Unsure {
+		// The first custom mention got them (EditText); show them on each.
+		mp.people = nil
+		for _, o := range refs {
+			if o.ID == mentionAdminID || o.ID == mentionCustomID {
+				for _, id := range o.People {
+					if !slices.Contains(mp.people, id) {
+						mp.people = append(mp.people, id)
+					}
+				}
+			}
+		}
+	}
+	u.openInfo(chat)
+	u.info.mention = mp
+	u.openInfoSub(infoMentioned)
+}
+
+// mentionPeopleRows lists the people of the group mention clicked
+// (u.info.mention), as the group's member list shows them. Those no longer
+// in the group are listed too: the message still notified them.
+func (u *UI) mentionPeopleRows(gtx C, info *model.ChatInfo) []layout.Widget {
+	p := u.pal
+	mp := &u.info.mention
+	n := len(mp.people)
+	head := strconv.Itoa(n) + " people"
+	switch {
+	case n == 0:
+		head = "No one"
+	case n == 1:
+		head = "1 person"
+	}
+	rows := []layout.Widget{u.infoSection(head, false)}
+	for _, id := range mp.people {
+		m, in := model.Member{ID: id, Name: u.contactName(id)}, false
+		if i := slices.IndexFunc(info.Members, func(x model.Member) bool { return x.ID == id }); i >= 0 {
+			m, in = info.Members[i], true
+		}
+		if id == u.meID {
+			m.Me = true
+		}
+		title, sub := memberTitle(m), memberSub(m)
+		if m.Me {
+			title = "You"
+		}
+		if !in {
+			sub = "Not in this group"
+		}
+		b := u.btn("mentioned:" + id)
+		if b.Clicked(gtx) && !m.Me {
+			u.openContact(id, title)
+		}
+		rows = append(rows, func(gtx C) D {
+			g := infoGeom
+			g.iconCenter = infoPadX - g.hoverLeft + 25.5
+			g.textLeft = 75.4
+			g.height, g.subHeight = 76, 76
+			return u.layoutListItem(gtx, b, listItem{title: title, sub: sub,
+				glyph: func(gtx C, _ color.NRGBA) D { return u.memberAvatar(gtx, m) }}, g)
+		})
+	}
+	var note string
+	switch {
+	case mp.unsure:
+		note = "This message has more than one group mention and doesn't say who is in which, so everyone they notified is listed."
+	case n == 0:
+		note = "@" + mp.name + " didn't notify anyone."
+	default:
+		return rows
+	}
+	return append(rows, func(gtx C) D {
+		return layout.Inset{Left: infoPadX, Right: 24, Top: 16, Bottom: 24}.Layout(gtx, u.infoPara(note, p.TextSecondary, 14))
 	})
 }
 

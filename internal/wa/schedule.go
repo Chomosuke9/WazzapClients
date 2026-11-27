@@ -79,14 +79,15 @@ CREATE TABLE IF NOT EXISTS wz_reveal_keys (
 
 // schedDraft is a model.Draft as wz_scheduled keeps it.
 type schedDraft struct {
-	Text          string   `json:"text"`
-	Shown         string   `json:"shown,omitempty"`
-	Mentions      []string `json:"mentions,omitempty"`
-	MentionAll    bool     `json:"all,omitempty"`
-	MentionAdmins bool     `json:"admins,omitempty"`
-	MentionChat   string   `json:"named,omitempty"`
-	GroupNames    []string `json:"names,omitempty"`
-	Reply         string   `json:"reply,omitempty"`
+	Text          string     `json:"text"`
+	Shown         string     `json:"shown,omitempty"`
+	Mentions      []string   `json:"mentions,omitempty"`
+	MentionAll    bool       `json:"all,omitempty"`
+	MentionAdmins bool       `json:"admins,omitempty"`
+	MentionChat   string     `json:"named,omitempty"`
+	GroupNames    []string   `json:"names,omitempty"`
+	GroupPeople   [][]string `json:"groupPeople,omitempty"`
+	Reply         string     `json:"reply,omitempty"`
 	// ReplyWhole is set when it replies to Reply's whole album.
 	ReplyWhole *model.AlbumSize `json:"replyWhole,omitempty"`
 	ViewOnce   bool             `json:"viewOnce,omitempty"`
@@ -191,7 +192,7 @@ func (b *Backend) scheduleCheck(chatID string, at time.Time) (types.JID, *whatsm
 
 func newSchedDraft(d model.Draft, shown string) schedDraft {
 	sd := schedDraft{Text: d.Text, Shown: shown, Mentions: d.Mentions, MentionAll: d.MentionAll,
-		MentionAdmins: d.MentionAdmins, MentionChat: d.MentionChat, GroupNames: d.GroupNames, ViewOnce: d.ViewOnce}
+		MentionAdmins: d.MentionAdmins, MentionChat: d.MentionChat, GroupNames: d.GroupNames, GroupPeople: d.GroupPeople, ViewOnce: d.ViewOnce}
 	if d.Reply != nil {
 		sd.Reply, sd.ReplyWhole = d.Reply.ID, d.Reply.Whole
 	}
@@ -348,7 +349,7 @@ func (b *Backend) Scheduled(chatID string) []*model.Scheduled {
 		if draft != "" && json.Unmarshal([]byte(draft), &sd) == nil {
 			s.Draft = model.Draft{Text: sd.Text, Mentions: sd.Mentions, MentionAll: sd.MentionAll,
 				MentionAdmins: sd.MentionAdmins, MentionChat: sd.MentionChat, GroupNames: sd.GroupNames,
-				ViewOnce: sd.ViewOnce}
+				GroupPeople: sd.GroupPeople, ViewOnce: sd.ViewOnce}
 			if sd.Reply != "" {
 				s.Draft.Reply = &model.Message{ID: sd.Reply, ChatID: s.ChatID, Whole: sd.ReplyWhole}
 			}

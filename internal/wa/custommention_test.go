@@ -317,3 +317,99 @@ func TestGroupMentionsUnchanged(t *testing.T) {
 		t.Errorf("another group: %q", other)
 	}
 }
+
+// Two group mentions or more say whose their people are, in the mentioned
+// JIDs (model.JoinMentions): each reads back with its own, someone in two
+// under both, and the one you're in is the one marked as yours.
+func TestGroupMentionPeopleApart(t *testing.T) {
+	b := testBackend(t)
+	me := types.NewJID("111", types.HiddenUserServer)
+	dev := &store.Device{}
+	b.cli = whatsmeow.NewClient(dev, waLog.Noop)
+	const chat = "120363012345678901@g.us"
+	second := model.GroupNameJID(chat, 1)
+	front, back := []string{"456@lid", "789@lid"}, []string{"789@lid", me.String()}
+	// 222 is named some other way (a person's mention needs contacts here).
+	m := b.Send(chat, model.Draft{Text: "@" + chat + " @" + second,
+		MentionChat: "Tim frontend", GroupNames: []string{"Tim backend"},
+		Mentions: []string{"222@lid", "456@lid", "789@lid", me.String()}, GroupPeople: [][]string{front, back}})
+	if m == nil {
+		t.Fatal("not sent")
+	}
+	var raw []byte
+	_ = b.db.QueryRow(`SELECT raw_payload FROM wz_messages WHERE chat = ? AND id = ?`, chat, m.ID).Scan(&raw)
+	var sent waE2E.Message
+	if err := proto.Unmarshal(raw, &sent); err != nil {
+		t.Fatal(err)
+	}
+	sep := model.MentionSeparator
+	want := []string{"222@lid", sep, "456@lid", "789@lid", sep, "789@lid", me.String()}
+	if got := describe(&sent).ctx.GetMentionedJID(); !slices.Equal(got, want) {
+		t.Fatalf("mentioned %v, want %v", got, want)
+	}
+
+	r, _ := b.store.message(b.ctx, chat, m.ID)
+	shown := b.replaceMentions(b.ctx, chat, r.Text, r.mentions)
+	g, n := string(model.MentionGroup), string(model.MentionNotifies)
+	if shown != "⁨"+g+"@Tim frontend⁩ ⁨"+g+"@Tim backend⁩" {
+		t.Fatalf("shown %q", shown)
+	}
+	// Once you're known, the one you're in notifies you.
+	dev.ID, dev.LID = &types.JID{User: "6281", Server: types.DefaultUserServer}, me
+	shown = b.replaceMentions(b.ctx, chat, "@"+chat+" @"+second, r.mentions)
+	if shown != "⁨"+g+"@Tim frontend⁩ ⁨"+n+g+"@Tim backend⁩" {
+		t.Fatalf("shown to you %q", shown)
+	}
+	dev.ID = nil
+
+	_, refs := b.EditText(m)
+	byName := map[string]model.MentionRef{}
+	for _, r := range refs {
+		byName[r.Name] = r
+	}
+	if r := byName["Tim frontend"]; r.ID != "@custom" || r.Unsure || !slices.Equal(r.People, front) {
+		t.Errorf("Tim frontend: %+v", r)
+	}
+	if r := byName["Tim backend"]; r.ID != "@custom" || r.Unsure || !slices.Equal(r.People, back) {
+		t.Errorf("Tim backend: %+v", r)
+	}
+
+	// A phone's message with two names says nothing of whose: the people
+	// the text doesn't name go to both, marked unsure.
+	sm := readMentions("222@lid,456@lid,789@lid,"+groupMention(chat, "A")+","+groupMention(second, "B"), "@222 @"+chat+" @"+second)
+	if len(sm.groups) != 2 || !sm.groups[0].unsure || !slices.Equal(sm.groups[1].people, []string{"456@lid", "789@lid"}) {
+		t.Errorf("unsure: %+v", sm)
+	}
+	// With one name, they're its own.
+	sm = readMentions("456@lid,"+groupMention(chat, "admin"), "@"+chat)
+	if sm.groups[0].unsure || !slices.Equal(sm.groups[0].people, []string{"456@lid"}) {
+		t.Errorf("one: %+v", sm)
+	}
+}
+
+// One name mixed with someone mentioned by name says whose its people are
+// too: otherwise a person both named and in it would be read as named only.
+// One name alone goes as before, with no separator.
+func TestGroupMentionMixedWithNamed(t *testing.T) {
+	b := testBackend(t)
+	const chat = "120363012345678901@g.us"
+	front := []string{"789@lid", "456@lid"}
+	d := model.Draft{Text: "@789 hi @" + chat, MentionChat: "Tim frontend",
+		Mentions: []string{"789@lid", "456@lid"}, GroupPeople: [][]string{front}}
+	ci := b.draftContext(chat, d, &model.Message{ChatID: chat})
+	want := []string{model.MentionSeparator, "789@lid", "456@lid"}
+	if got := ci.GetMentionedJID(); !slices.Equal(got, want) {
+		t.Fatalf("mentioned %v, want %v", got, want)
+	}
+	sm := readMentions(strings.Join(mentionsOf(ci), ","), d.Text)
+	if len(sm.groups) != 1 || sm.groups[0].unsure || !slices.Equal(sm.groups[0].people, front) ||
+		!slices.Contains(sm.people, "789@lid") {
+		t.Fatalf("read %+v", sm)
+	}
+
+	d.Text = "hi @" + chat
+	ci = b.draftContext(chat, d, &model.Message{ChatID: chat})
+	if got := ci.GetMentionedJID(); slices.Contains(got, model.MentionSeparator) {
+		t.Fatalf("alone: %v", got)
+	}
+}

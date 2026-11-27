@@ -2497,9 +2497,9 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 		case "transcriptsettings":
 			u.ShowPage("transcripts")
 		}
-	case "mentions", "custommention", "newmention", "custompick":
-		// Custom mentions: a group's page, one being edited, a new one, and
-		// the mention picker offering them.
+	case "mentions", "custommention", "newmention", "custompick", "mentionpeople":
+		// Custom mentions: a group's page, one being edited, a new one, the
+		// mention picker offering them, and a message's mention clicked.
 		u.demoCustomMentions()
 		switch name {
 		case "mentions":
@@ -2514,6 +2514,16 @@ func (u *UI) ShowOverlay(name string, x, y int) {
 			u.openCustomMention(u.selected.ID, nil)
 			u.dialog.listName.SetText("admin")
 			u.dialog.anim.snap(true)
+		case "mentionpeople":
+			chat := u.selected.ID
+			var refs []mentionRef
+			for _, cm := range u.customMentionsOf(chat) {
+				refs = append(refs, mentionRef{name: cm.Name, jid: mentionCustomID, people: cm.Members})
+			}
+			m := u.backend.Send(chat, u.draftWith("@Tim frontend and @Tim backend, standup in 5", refs, chat))
+			u.applyEvents()
+			u.openMention(m, "@Tim frontend")
+			u.info.anim.snap(true)
 		case "custompick":
 			ed := &u.conv.composer
 			ed.SetText("Hi @t")

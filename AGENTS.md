@@ -1270,7 +1270,7 @@ go run ./cmd/screenshot -compare info.png -crop 0,0,795,1597 -win 2560,1600 -rig
 # the Chat theme panel's pages theme, themebubble, themewall, themecolor, and accent (the App theme color Red);
 # channels: channelinfo (-ochat techdaily@newsletter, or wazzapnews@newsletter for one of your own, bola@newsletter for a
 # suggestion's preview; convmenu and msgmenu work there too), channelnew (Create channel), channeladd (the ⊕ menu);
-# custom mentions: mentions (a group's page), custommention, newmention (its name's error), custompick (the picker offering them);
+# custom mentions: mentions (a group's page), custommention, newmention (its name's error), custompick (the picker offering them), mentionpeople (a message's custom mention clicked: its people);
 # privatemention (the picker in a private chat: -ochat rina); voice messages' transcripts: transcripts (in each of their states: -ochat work), transcriptwhy,
 # transcriptlang (a chat's language), transcriptinfo (its row in the chat's info), transcriptsettings;
 # a group's info being edited: groupname, groupdesc, groupphoto (its picture's menu); descmore (a long description cut with Read more); statusmore, statuscaption, statuswhole (a long text status and caption, and the caption shown whole); picview (the chat's picture, big); the list column listwide, listnarrow, listhidden; the send view: tray, sendedit, sendcrop, sendfilter, senddoc, sendslash (the command picker over the caption), with

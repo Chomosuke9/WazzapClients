@@ -11,6 +11,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -256,10 +257,30 @@ func (b *Backend) draftContext(chatID string, d model.Draft, m *model.Message) *
 		ci.GroupMentions = append(ci.GroupMentions, &waE2E.GroupMention{
 			GroupJID: proto.String(model.GroupNameJID(chatID, i+1)), GroupSubject: proto.String(name)})
 	}
+	if n := len(ci.GroupMentions); n > 0 && len(d.GroupPeople) == n && (n > 1 || namesPeople(d)) {
+		// Say whose the people are, which the protobuf doesn't: those the
+		// text names, then each name's (model.JoinMentions). A lone name's
+		// people are otherwise those the text doesn't name, which leaves
+		// out anyone both named and in it.
+		var in []string
+		for _, g := range d.GroupPeople {
+			in = append(in, g...)
+		}
+		direct := slices.DeleteFunc(slices.Clone(d.Mentions), func(j string) bool { return slices.Contains(in, j) })
+		ci.MentionedJID = model.JoinMentions(direct, d.GroupPeople)
+	}
 	if r := d.Reply; r != nil {
 		m.Quote = b.quote(chatID, r, ci)
 	}
 	return ci
+}
+
+// namesPeople reports whether d's text mentions someone by name ("@<user>").
+func namesPeople(d model.Draft) bool {
+	return slices.ContainsFunc(d.Mentions, func(j string) bool {
+		user, _, _ := strings.Cut(j, "@")
+		return user != "" && strings.Contains(d.Text, "@"+user)
+	})
 }
 
 // maxLocalCopy is the largest sent file kept as a local copy, so it opens

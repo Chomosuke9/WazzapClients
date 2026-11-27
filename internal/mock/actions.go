@@ -60,8 +60,33 @@ func (b *Backend) Send(chatID string, d model.Draft) *model.Message {
 		m.Kind = model.KindViewOnce
 	}
 	b.add(m)
+	b.keepGroupPeople(m, d)
 	cp := *m
 	return &cp
+}
+
+// keepGroupPeople keeps whom the group mentions of d, sent as m, notify,
+// for EditText.
+func (b *Backend) keepGroupPeople(m *model.Message, d model.Draft) {
+	var names []string
+	switch {
+	case d.MentionAdmins:
+		names = append(names, "admin")
+	case d.MentionChat != "":
+		names = append(names, d.MentionChat)
+	}
+	names = append(names, d.GroupNames...)
+	if len(names) != len(d.GroupPeople) {
+		return
+	}
+	if b.groupPeople == nil {
+		b.groupPeople = map[string]map[string][]string{}
+	}
+	byName := map[string][]string{}
+	for i, name := range names {
+		byName[name] = d.GroupPeople[i]
+	}
+	b.groupPeople[m.ChatID+"/"+m.ID] = byName
 }
 
 // Receive delivers a message from who in chat, as if it just arrived.
@@ -527,6 +552,7 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 		sb.WriteString(name)
 		name = strings.TrimPrefix(name, "@")
 		id := "@" + name
+		var people []string
 		if strings.ContainsRune(raw, model.MentionGroup) {
 			id = "@custom"
 		} else if info := b.Info(m.ChatID); info != nil && name != "all" && name != "admin" {
@@ -536,7 +562,10 @@ func (b *Backend) EditText(m *model.Message) (string, []model.MentionRef) {
 				}
 			}
 		}
-		refs = append(refs, model.MentionRef{Name: name, ID: id})
+		if id == "@custom" || id == "@admin" {
+			people = b.groupPeople[m.ChatID+"/"+m.ID][name]
+		}
+		refs = append(refs, model.MentionRef{Name: name, ID: id, People: people})
 		rest = rest[j+len("⁩"):]
 	}
 	return sb.String(), refs
@@ -554,6 +583,7 @@ func (b *Backend) Edit(m *model.Message, d model.Draft) {
 		k := x.ChatID + "/" + x.ID
 		b.versions[k] = append(b.versions[k], model.Version{Text: x.Text, Time: since})
 		x.Text, x.Edited = b.showMentions(m.ChatID, d), b.now()
+		b.keepGroupPeople(x, d)
 	})
 	if c := b.chat(m.ChatID); c != nil && c.Last != nil && c.Last.ID == m.ID {
 		b.emitChat(c.ID)

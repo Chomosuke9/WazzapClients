@@ -51,6 +51,9 @@ type Backend struct {
 	schedFiles map[string]model.Attachment // the files of scheduled messages, by ID
 	// versions are the earlier texts of edited messages, by chat and ID.
 	versions map[string][]model.Version
+	// groupPeople are whom the group mentions of sent messages notify, by
+	// chat and ID, then by the mention's name (model.Draft.GroupPeople).
+	groupPeople map[string]map[string][]string
 	// pics makes Avatar draw profile pictures (the demo has them, the
 	// reference data doesn't); avatars caches them by ID.
 	pics    bool

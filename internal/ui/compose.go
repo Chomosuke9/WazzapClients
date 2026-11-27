@@ -75,14 +75,21 @@ func (u *UI) openDirect(id, name string) {
 }
 
 // openMention shows the contact info of the person m mentions as mention
-// ("@Name", as shown), like clicking a mention in WhatsApp.
+// ("@Name", as shown), like clicking a mention in WhatsApp, or the people
+// of a group mention (@admin, a custom mention: mentionPeopleRows).
 func (u *UI) openMention(m *model.Message, mention string) {
+	// A pill's name is padded and held together with NBSPs.
+	norm := func(s string) string { return strings.ReplaceAll(strings.Trim(s, "\u00a0"), "\u00a0", " ") }
+	mention = norm(mention)
 	_, refs := u.backend.EditText(m)
 	for _, r := range refs {
-		if displayText("@"+r.Name) != mention {
+		if norm(displayText("@"+r.Name)) != mention {
 			continue
 		}
-		if !strings.HasPrefix(r.ID, "@") && r.ID != u.meID {
+		switch {
+		case r.ID == mentionAdminID || r.ID == mentionCustomID:
+			u.openMentionPeople(m.ChatID, r, refs)
+		case !strings.HasPrefix(r.ID, "@") && r.ID != u.meID:
 			u.openContact(r.ID, r.Name)
 		}
 		return
@@ -286,21 +293,26 @@ func (u *UI) draftWith(txt string, mentions []mentionRef, chat string) model.Dra
 			continue
 		case mentionAdminID:
 			d.MentionAdmins = nameChat(at, mr.name)
+			var admins []string
 			if info := u.chatMembers(chat); info != nil {
 				for _, m := range info.Members {
 					if m.Admin && !m.Me {
 						addJID(m.ID)
+						admins = append(admins, m.ID)
 					}
 				}
 			}
+			d.GroupPeople = append(d.GroupPeople, admins)
 			continue
 		case mentionCustomID:
 			if nameChat(at, mr.name) {
 				d.MentionChat = mr.name
 			}
-			for _, id := range u.customMentionPeople(chat, mr.people) {
+			people := u.customMentionPeople(chat, mr.people)
+			for _, id := range people {
 				addJID(id)
 			}
+			d.GroupPeople = append(d.GroupPeople, people)
 			continue
 		}
 		user := mr.jid

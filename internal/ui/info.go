@@ -50,6 +50,7 @@ type infoState struct {
 	gallery galleryState // the Media, links and docs page (infomedia.go)
 	changes []model.MemberChange
 	admins  map[string]bool // Edit group admins: who'd be made an admin or dismissed
+	mention mentionPeople   // the people of a group mention clicked in a message
 	// edit is a group's name or description being edited, and its
 	// picture being picked (groupedit.go).
 	edit groupEdit
@@ -198,7 +199,11 @@ func (u *UI) layoutInfo(gtx C) D {
 			case isChannelID(c.ID):
 				title = "Channel info"
 			}
-			if u.info.sub != "" {
+			switch u.info.sub {
+			case "":
+			case infoMentioned:
+				title = "@" + u.info.mention.name
+			default:
 				title = infoSubTitle(u.info.sub)
 			}
 			return vcenter(gtx, gtx.Dp(64), func(gtx C) D {

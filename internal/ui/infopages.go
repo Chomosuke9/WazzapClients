@@ -20,7 +20,8 @@ import (
 // Pages that open inside the info panel, with a back arrow: a chat's
 // starred messages, its media (infomedia.go), its disappearing messages timer,
 // Restricted chat, a group's permissions and admins, its member changes and
-// its custom mentions (custommention.go).
+// its custom mentions and the people of a group mention in a message
+// (custommention.go).
 
 const (
 	infoStarred     = "starred"
@@ -31,6 +32,7 @@ const (
 	infoAdmins      = "admins" // Edit group admins, opened from Group permissions
 	infoChanges     = "changes"
 	infoMentions    = "mentions"
+	infoMentioned   = "mentioned"   // whom a message's @admin or custom mention notifies
 	infoTranscripts = "transcripts" // the chat's transcript language (transcripts.go)
 )
 
@@ -109,6 +111,8 @@ func (u *UI) infoSubRows(gtx C, c *model.Chat, info *model.ChatInfo) []layout.Wi
 		return u.changeRows()
 	case infoMentions:
 		return u.customMentionPage(gtx, c, info)
+	case infoMentioned:
+		return u.mentionPeopleRows(gtx, info)
 	case infoTranscripts:
 		return u.transcriptLangRows(gtx, c)
 	}

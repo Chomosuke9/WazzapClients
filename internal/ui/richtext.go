@@ -199,6 +199,12 @@ func (pf pillFor) pilled(mention string) bool {
 	return false
 }
 
+// groupMentionMark reports whether a mention, as marked, is "@admin" or a
+// custom mention with people, which open the list of their people.
+func groupMentionMark(mention string) bool {
+	return strings.ContainsRune(mention, model.MentionAdmins) || strings.ContainsRune(mention, model.MentionGroup)
+}
+
 // mentionMarks are the invisible marks around and inside a mention.
 var mentionMarks = strings.NewReplacer("⁨", "", "⁩", "", string(model.MentionNotifies), "", string(model.MentionAdmins), "", string(model.MentionGroup), "")
 
@@ -276,20 +282,22 @@ func (u *UI) richSpans(text string, size unit.Sp, col color.NRGBA, italic bool, 
 			mf := f
 			mf.Weight = max(mf.Weight, font.Medium)
 			name := rest[:j]
+			prev := cur
 			if pills.pilled(name) {
 				// NBSPs pad the name inside its pill, and keep it on one line.
-				prev := cur
 				cur |= decoPill
+				if groupMentionMark(name) {
+					cur |= decoMention
+				}
 				add("\u00a0"+strings.ReplaceAll(mentionMarks.Replace(name), " ", "\u00a0")+"\u00a0", mf, p.Green)
-				cur = prev
 			} else {
-				prev := cur
-				if r, _ := utf8.DecodeRuneInString(name); r != model.MentionNotifies && r != model.MentionAdmins && r != model.MentionGroup {
+				// People and group mentions open (who's in them), "@all" and you don't.
+				if r, _ := utf8.DecodeRuneInString(name); r != model.MentionNotifies || groupMentionMark(name) {
 					cur |= decoMention
 				}
 				add(mentionMarks.Replace(name), mf, link)
-				cur = prev
 			}
+			cur = prev
 			if j < len(rest) {
 				rest = rest[j+len(string(mentionEnd)):]
 			} else {
