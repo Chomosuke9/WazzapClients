@@ -20,6 +20,12 @@ type listSearchState struct {
 	msgs     []*model.Message // found messages, newest first
 	contacts []*model.Contact // read when a search starts
 	rows     []findRow        // the list's rows, a buffer reused every frame
+
+	// The contacts whose name or number matches matchQ, worked out once
+	// per query: matching every contact every frame made typing lag.
+	matchQ  string
+	matched []*model.Contact
+	hasChat map[string]bool // IDs of u.chats, refilled every frame
 }
 
 // listSearchLimit is how many messages the chat list's search lists.
@@ -62,8 +68,9 @@ func (u *UI) runListSearch(q string) {
 	}
 	f.ran = q
 	u.sidebar.list.Position = layout.Position{}
+	f.matchQ, f.matched = "", f.matched[:0] // the contacts may have changed
 	if q == "" {
-		f.got, f.msgs, f.contacts = "", nil, nil
+		f.got, f.msgs, f.contacts, f.matched = "", nil, nil, nil
 		return
 	}
 	u.backend.SearchMessages("", q, listSearchLimit)
@@ -89,16 +96,22 @@ func (u *UI) findRows(q string) []findRow {
 		}
 	}
 	if u.sidebar.filter == filterAll {
-		lq := strings.ToLower(q)
-		digits := phoneDigits(q)
-		start := len(rows)
-		for _, c := range f.contacts {
-			if u.chatByID(c.ID) != nil {
-				continue // listed under Chats if it matches
+		if f.matchQ != q {
+			f.matchQ, f.matched = q, matchContacts(f.contacts, q, f.matched[:0])
+		}
+		if len(f.matched) > 0 {
+			if f.hasChat == nil {
+				f.hasChat = make(map[string]bool, len(u.chats))
 			}
-			if !strings.Contains(strings.ToLower(c.Name), lq) &&
-				(digits == "" || !strings.Contains(phoneDigits(c.Phone), digits)) {
-				continue
+			clear(f.hasChat)
+			for _, c := range u.chats {
+				f.hasChat[c.ID] = true
+			}
+		}
+		start := len(rows)
+		for _, c := range f.matched {
+			if f.hasChat[c.ID] {
+				continue // listed under Chats if it matches
 			}
 			if len(rows) == start {
 				rows = append(rows, findRow{heading: "Contacts"})
@@ -114,6 +127,20 @@ func (u *UI) findRows(q string) []findRow {
 	}
 	f.rows = rows
 	return rows
+}
+
+// matchContacts appends to out the contacts whose name contains q, or
+// whose number contains q's digits.
+func matchContacts(contacts []*model.Contact, q string, out []*model.Contact) []*model.Contact {
+	lq := strings.ToLower(q)
+	digits := phoneDigits(q)
+	for _, c := range contacts {
+		if strings.Contains(strings.ToLower(c.Name), lq) ||
+			digits != "" && strings.Contains(phoneDigits(c.Phone), digits) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // layoutFindList draws the search's results in place of the chat list.
