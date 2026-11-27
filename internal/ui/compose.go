@@ -333,10 +333,18 @@ type mentionState struct {
 }
 
 // mentionsHere reports whether the composer of c offers mentions: in a group,
-// or in a private chat with Extended mentions on. Not in your own chat,
-// where there's no one else to mention.
+// or in a private chat (your own too) with Extended mentions on.
 func (u *UI) mentionsHere(c *model.Chat) bool {
-	return c.IsGroup || u.extendedMentions && !c.Self && !isChannelID(c.ID)
+	return c.IsGroup || u.extendedMentions && !isChannelID(c.ID)
+}
+
+// mentionMe is you, as a member a mention can name, or false before the
+// backend has said who you are.
+func (u *UI) mentionMe() (model.Member, bool) {
+	if u.meID == "" {
+		return model.Member{}, false
+	}
+	return model.Member{ID: u.meID, Name: u.meName(), Me: true}, true
 }
 
 // mentionTarget is the person a private chat is with, as a member.
@@ -353,10 +361,17 @@ func (u *UI) mentionTarget(c *model.Chat) model.Member {
 }
 
 // mentionMembers is who c's mentions can name: a group's members, or the
-// other person of a private chat.
+// other person of a private chat and you.
 func (u *UI) mentionMembers(c *model.Chat) []model.Member {
 	if !c.IsGroup {
-		return []model.Member{u.mentionTarget(c)}
+		var out []model.Member
+		if !c.Self {
+			out = append(out, u.mentionTarget(c))
+		}
+		if me, ok := u.mentionMe(); ok {
+			out = append(out, me)
+		}
+		return out
 	}
 	if info := u.chatMembers(c.ID); info != nil {
 		return info.Members
@@ -365,7 +380,7 @@ func (u *UI) mentionMembers(c *model.Chat) []model.Member {
 }
 
 // mentionCandidates is what the picker offers in c for query: in a private
-// chat, only the other person.
+// chat, the other person and then you (in your own chat, you alone).
 func (u *UI) mentionCandidates(c *model.Chat, query string) []model.Member {
 	if c.IsGroup {
 		if info := u.chatMembers(c.ID); info != nil {
@@ -373,11 +388,17 @@ func (u *UI) mentionCandidates(c *model.Chat, query string) []model.Member {
 		}
 		return nil
 	}
-	m := u.mentionTarget(c)
-	if memberTitle(m) == "" || query != "" && memberScore(m, query) == 0 {
-		return nil
+	var out []model.Member
+	if !c.Self {
+		m := u.mentionTarget(c)
+		if memberTitle(m) != "" && (query == "" || memberScore(m, query) != 0) {
+			out = append(out, m)
+		}
 	}
-	return []model.Member{m}
+	if me, ok := u.mentionMe(); ok && (query == "" || personScore(query, "", me.Name, me.Name) != 0) {
+		out = append(out, me)
+	}
+	return out
 }
 
 // mentionQuery returns the mention being typed, or nil.

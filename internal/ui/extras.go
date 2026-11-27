@@ -18,7 +18,7 @@ import (
 // Preferences of the extra features (Backend.Pref keys), on when "on".
 const (
 	prefSlash            = "slash_commands" // slash.go
-	prefExtendedMentions = "admin_mention"  // "@admin" and custom mentions (custommention.go), and mentioning the other person in a private chat (compose.go)
+	prefExtendedMentions = "admin_mention"  // "@admin" and custom mentions (custommention.go), and mentioning the other person, or yourself, in a private chat (compose.go)
 	prefRawPhotos        = "raw_photos"     // Raw quality for photos
 	prefEditHistory      = "edit_history"   // the earlier texts of edited messages (edit.go)
 )
@@ -150,7 +150,7 @@ func (u *UI) extrasSettings() []settingsSection {
 		}, note: "Commands run on this computer, from your account. Group commands work in groups you administer."},
 		{title: "Mentions", rows: []settingRow{
 			u.extraToggle(prefExtendedMentions, "Extended mentions",
-				"Type @admin in a group to mention its admins, or a custom mention, like @Tim frontend, for people you pick. In a private chat, type @ to mention the person you're talking to",
+				"Type @admin in a group to mention its admins, or a custom mention, like @Tim frontend, for people you pick. In a private chat, type @ to mention the person you're talking to, or yourself",
 				&u.extendedMentions, nil),
 		}, note: "Make custom mentions from a group's ⋮ menu or its info. They're kept on this computer, for this account."},
 		u.privacyExtras(),

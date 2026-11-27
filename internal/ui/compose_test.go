@@ -107,8 +107,8 @@ func TestEnterAfterMention(t *testing.T) {
 }
 
 // TestPrivateMention checks that a private chat's mention picker, with
-// Extended mentions on, offers the other person and no one else, and that
-// picking them makes a real mention.
+// Extended mentions on, offers the other person and you, and that picking
+// either makes a real mention.
 func TestPrivateMention(t *testing.T) {
 	st := newSlashTest(t, "rina")
 	u := st.u
@@ -127,8 +127,8 @@ func TestPrivateMention(t *testing.T) {
 
 	st.typeText("@")
 	ms := u.mentionQuery()
-	if ms == nil || len(ms.members) != 1 || ms.members[0].ID != "rina" {
-		t.Fatalf("@ offered %+v, want only Rina", ms)
+	if ms == nil || len(ms.members) != 2 || ms.members[0].ID != "rina" || !ms.members[1].Me {
+		t.Fatalf("@ offered %+v, want Rina, then you", ms)
 	}
 	st.typeText("@all")
 	if ms := u.mentionQuery(); ms != nil {
@@ -143,6 +143,19 @@ func TestPrivateMention(t *testing.T) {
 		t.Fatalf("draft %q mentions %v", d.Text, d.Mentions)
 	}
 
+	// Yourself.
+	st.typeText("@myse")
+	if ms := u.mentionQuery(); ms == nil || len(ms.members) != 1 || !ms.members[0].Me {
+		t.Fatalf("@myse offered %+v, want you", ms)
+	}
+	st.press(key.NameReturn)
+	if st.text() != "@"+u.meName()+" " {
+		t.Fatalf("picked %q", st.text())
+	}
+	if d := u.draftFrom(trimSpace(st.text())); len(d.Mentions) != 1 || d.Mentions[0] != u.meID {
+		t.Fatalf("draft %q mentions %v", d.Text, d.Mentions)
+	}
+
 	// Someone you haven't saved goes by their push name.
 	m := u.mentionTarget(&model.Chat{ID: "6281@s.whatsapp.net", Name: "+62 811"})
 	if memberTitle(m) != "+62 811" {
@@ -154,11 +167,16 @@ func TestPrivateMention(t *testing.T) {
 		t.Errorf("push name: %+v", m)
 	}
 
-	// Not your own chat or a channel, and groups as ever.
-	for _, c := range []model.Chat{{ID: "me@lid", Self: true}, {ID: "x@newsletter"}} {
-		if u.mentionsHere(&c) {
-			t.Errorf("mentions in %+v", c)
-		}
+	// In your own chat, you alone; not in a channel; groups as ever.
+	self := &model.Chat{ID: "me@lid", Self: true}
+	if !u.mentionsHere(self) {
+		t.Error("no mentions in your own chat")
+	}
+	if hits := u.mentionCandidates(self, ""); len(hits) != 1 || !hits[0].Me {
+		t.Errorf("your own chat offered %+v", hits)
+	}
+	if u.mentionsHere(&model.Chat{ID: "x@newsletter"}) {
+		t.Error("mentions in a channel")
 	}
 	u.extendedMentions = false
 	if u.mentionsHere(&model.Chat{ID: "rina"}) || !u.mentionsHere(&model.Chat{ID: "work", IsGroup: true}) {

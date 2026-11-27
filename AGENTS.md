@@ -800,7 +800,7 @@ internal/ui/       Gio UI: login/QR, nav rail, pages (chats, status, channels, c
                    and /catch's payload dialog) in snippets.go; and
                    the Extra features settings page in extras.go (the app's own features,
                    such as slash commands, Extended mentions (one switch for @admin, custom mentions, @Tim frontend: people you
-                   pick in a group, named and mentioned like @admin, in custommention.go, and mentions in private chats, of the other person only), the Privacy mode toggle, Block screen
+                   pick in a group, named and mentioned like @admin, in custommention.go, and mentions in private chats and your own chat, of the other person and yourself), the Privacy mode toggle, Block screen
                    recording and Raw photos: each off until turned on), and
                    its Ethically gray features page (Edit history, Keep deleted messages, Replay view
                    once, and commands marked Gray, like /ghost, each with a switch of its own);
