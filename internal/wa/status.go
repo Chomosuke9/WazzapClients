@@ -53,6 +53,9 @@ func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedS
 		}
 		return storedStatus{}, false
 	}
+	if statusCopy(evt) {
+		return storedStatus{}, false
+	}
 	c := describe(m)
 	if c.text == "" && c.media == model.MediaNone {
 		return storedStatus{}, false
@@ -85,6 +88,20 @@ func (b *Backend) parseStatus(ctx context.Context, evt *events.Message) (storedS
 		s.viewed = st == waWeb.WebMessageInfo_READ || st == waWeb.WebMessageInfo_PLAYED
 	}
 	return s, true
+}
+
+// statusCopy reports whether a status update is another file of one posted
+// just before it, which its messageContextInfo points back to (copies.go). A
+// video with a song comes again that way, seconds later and without the
+// song's annotation. Phones show one update, so the copy is dropped; it
+// showed as a second update, without the song.
+func statusCopy(evt *events.Message) bool {
+	raw := evt.RawMessage
+	if raw == nil {
+		raw = evt.Message
+	}
+	id := first(copyOf(raw), copyOf(unwrap(evt.Message)))
+	return id != "" && id != evt.Info.ID
 }
 
 func (s *msgStore) putStatus(ctx context.Context, x execer, st storedStatus) error {
@@ -277,7 +294,7 @@ func (b *Backend) onStatus(e *events.Message) {
 	}
 	st, ok := b.parseStatus(b.ctx, e)
 	if !ok {
-		if m := unwrap(e.Message); m != nil && m.GetProtocolMessage() == nil {
+		if m := unwrap(e.Message); m != nil && m.GetProtocolMessage() == nil && !statusCopy(e) {
 			b.log.Infof("status message %s from %s not shown: %s", e.Info.ID, e.Info.Sender, fieldNames(m))
 		}
 		return
