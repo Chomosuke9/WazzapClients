@@ -1620,7 +1620,10 @@ func (u *UI) quoteTexts(q *model.Quote) (name, txt string) {
 		name += quoteStatus
 	}
 	txt = q.Text
-	if q.Media != model.MediaNone {
+	switch {
+	case q.ViewOnce:
+		txt = viewOnceLabel(&model.Message{Kind: model.KindViewOnce, Media: q.Media})
+	case q.Media != model.MediaNone:
 		txt = mediaLabel(&model.Message{Media: q.Media, Text: q.Text, Round: q.Round})
 	}
 	return name, txt

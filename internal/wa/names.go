@@ -356,15 +356,20 @@ func (b *Backend) replaceMentions(ctx context.Context, chatID, text, mentions st
 // JID>" (@admin, custom mentions, a snippet's {mention}).
 var groupTokenRe = regexp.MustCompile(`@[\d-]+@g\.us`)
 
+// leftMentionRe finds what may be a mention not shown by name yet: a person's
+// "@<user>" or a group's token.
+var leftMentionRe = regexp.MustCompile(`@\d`)
+
 // quoteMentions shows the mentions in the text of a quote in chat, by the
 // quoted message's own mentions: a reply's are about the reply, and may name
-// the group differently. Clients often quote the text alone, so a group mention
-// left over takes its name from the original, or at worst the group's.
+// the group differently. Clients (this one too) often quote the text alone, so
+// a mention left over, of a person or a group, takes its name from the stored
+// original, and a group's at worst the group's.
 func (b *Backend) quoteMentions(ctx context.Context, chat string, q *rawQuote, text string) string {
 	if q.mentions != "" {
 		text = b.replaceMentions(ctx, chat, text, q.mentions)
 	}
-	if !groupTokenRe.MatchString(text) {
+	if !leftMentionRe.MatchString(text) {
 		return text
 	}
 	if orig, ok := b.store.message(ctx, first(q.remote, chat), q.id); ok {

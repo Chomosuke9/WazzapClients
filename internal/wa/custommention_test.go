@@ -209,11 +209,23 @@ func TestQuotedGroupMention(t *testing.T) {
 	if q := b.quotedMessage(b.ctx, chat, custom).GetConversation(); q != "Hi @Tim frontend" {
 		t.Errorf("sent quote: %q", q)
 	}
-	// People stay as they are: other clients read "@<user>" themselves.
+	// People stay "@<user>", with whom it names, so that other clients show
+	// their names: a LID's digits mean nothing to anyone.
 	b.onMessage(snippetEvent("person", &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("Hi @456"),
 		ContextInfo: &waE2E.ContextInfo{MentionedJID: []string{"456@lid"}}}}))
-	if q := b.quotedMessage(b.ctx, chat, "person").GetConversation(); q != "Hi @456" {
-		t.Errorf("person: %q", q)
+	if q := b.quotedMessage(b.ctx, chat, "person").GetExtendedTextMessage(); q.GetText() != "Hi @456" ||
+		!slices.Equal(q.GetContextInfo().GetMentionedJID(), []string{"456@lid"}) {
+		t.Errorf("person: %v", q)
+	}
+	// A quote of it, in a reply that carries the text alone (as this app
+	// sends it), shows the person's name from the original's mentions.
+	b.onMessage(snippetEvent("r5", &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("yes"),
+		ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String("person"), Participant: proto.String("456@lid"),
+			QuotedMessage: &waE2E.Message{Conversation: proto.String("Hi @456")}}}}))
+	for _, m := range b.Messages(chat, 20) {
+		if m.ID == "r5" && (m.Quote == nil || !strings.Contains(m.Quote.Text, "\u2068@")) {
+			t.Errorf("quoted person mention: %+v", m.Quote)
+		}
 	}
 }
 

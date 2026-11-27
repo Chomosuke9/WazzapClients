@@ -18,6 +18,7 @@ import (
 	"github.com/polymorfa/hypermeow/proto/waSyncAction"
 	"github.com/polymorfa/hypermeow/types"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 )
@@ -64,18 +65,27 @@ func (b *Backend) connected() *whatsmeow.Client {
 // else is quoted as text.
 func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.Message {
 	if chatID == statusChat {
-		return b.store.statusMessage(ctx, id)
+		m := b.store.statusMessage(ctx, id)
+		setQuoteContext(m, nil)
+		return m
 	}
 	r, ok := b.store.message(ctx, chatID, id)
 	if !ok {
 		return &waE2E.Message{Conversation: proto.String("")}
 	}
+	if r.Kind == model.KindViewOnce {
+		// Never its media or text: whoever sees the reply would see them.
+		return viewOnceQuote(r.Media)
+	}
+	qc := quoteContext(r.Text, r.mentions)
 	if media, blob, err := b.store.mediaBlob(ctx, chatID, id); err == nil && len(blob) > 0 {
 		if m := mediaMessage(media, blob); m != nil {
 			if r.Round {
 				asVideoNote(m)
 			}
-			nameCaption(m, r.mentions)
+			// The caption shown, an edit's included, with its mentions.
+			setCaption(m, namedGroupMentions(r.Text, r.mentions))
+			setQuoteContext(m, qc)
 			return wrapSound(m)
 		}
 	}
@@ -88,7 +98,101 @@ func (b *Backend) quotedMessage(ctx context.Context, chatID, id string) *waE2E.M
 			}
 		}
 	}
-	return &waE2E.Message{Conversation: proto.String(namedGroupMentions(r.Text, r.mentions))}
+	if r.Kind == model.KindUnsupported {
+		// What this app can't show, other clients may: quote it as it came.
+		if pm, err := b.rawMessage(chatID, id); err == nil {
+			if pm = unwrap(pm); pm != nil && hasContent(pm) {
+				pm = proto.Clone(pm).(*waE2E.Message)
+				setQuoteContext(pm, nil)
+				return pm
+			}
+		}
+	}
+	text := namedGroupMentions(r.Text, r.mentions)
+	if qc == nil {
+		return &waE2E.Message{Conversation: proto.String(text)}
+	}
+	return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text), ContextInfo: qc}}
+}
+
+// quoteContext is what a quoted message keeps of its context: the people
+// its text names as "@<user>", so that every client shows their names. Its
+// own quote, forwarding and the rest are about it, not the reply. A group
+// mention is written as its name (namedGroupMentions), so none is kept.
+func quoteContext(text, mentions string) *waE2E.ContextInfo {
+	var people []string
+	for _, s := range readMentions(mentions, text).people {
+		if j, err := types.ParseJID(s); err == nil && j.User != "" && strings.Contains(text, "@"+j.User) {
+			people = append(people, s)
+		}
+	}
+	if len(people) == 0 {
+		return nil
+	}
+	return &waE2E.ContextInfo{MentionedJID: people}
+}
+
+// setQuoteContext gives the content m carries the context ci, or none when
+// nil, and drops m's messageContextInfo (its secret, among others).
+func setQuoteContext(m *waE2E.Message, ci *waE2E.ContextInfo) {
+	m.MessageContextInfo = nil
+	ciName := (&waE2E.ContextInfo{}).ProtoReflect().Descriptor().FullName()
+	m.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		if fd.Kind() != protoreflect.MessageKind || fd.IsList() || fd.IsMap() {
+			return true
+		}
+		sub := v.Message()
+		f := sub.Descriptor().Fields().ByName("contextInfo")
+		if f == nil || f.Message() == nil || f.Message().FullName() != ciName {
+			return true
+		}
+		if ci == nil {
+			sub.Clear(f)
+		} else {
+			sub.Set(f, protoreflect.ValueOfMessage(proto.Clone(ci).ProtoReflect()))
+		}
+		return true
+	})
+}
+
+// setCaption sets the caption of the photo, video or document in m, when
+// it has one or text isn't empty.
+func setCaption(m *waE2E.Message, text string) {
+	set := func(caption **string) {
+		if *caption != nil || text != "" {
+			*caption = proto.String(text)
+		}
+	}
+	if c := m.GetImageMessage(); c != nil {
+		set(&c.Caption)
+	}
+	if c := m.GetVideoMessage(); c != nil {
+		set(&c.Caption)
+	}
+	if c := m.GetPtvMessage(); c != nil && c.Caption != nil {
+		set(&c.Caption)
+	}
+	if c := m.GetDocumentMessage(); c != nil {
+		set(&c.Caption)
+	}
+}
+
+// viewOnceQuote is a view once message (or a Zap) quoted as only what it
+// is: no media, thumbnail, caption or text, which it shows once.
+func viewOnceQuote(media model.Media) *waE2E.Message {
+	vo := proto.Bool(true)
+	var inner waE2E.Message
+	switch media {
+	case model.MediaImage:
+		inner.ImageMessage = &waE2E.ImageMessage{ViewOnce: vo, Mimetype: proto.String("image/jpeg")}
+	case model.MediaVideo:
+		inner.VideoMessage = &waE2E.VideoMessage{ViewOnce: vo, Mimetype: proto.String("video/mp4")}
+	case model.MediaVoice:
+		inner.AudioMessage = &waE2E.AudioMessage{ViewOnce: vo, PTT: vo, Mimetype: proto.String("audio/ogg; codecs=opus")}
+	default:
+		inner.ExtendedTextMessage = &waE2E.ExtendedTextMessage{ViewOnce: vo, Text: proto.String("")}
+	}
+	return &waE2E.Message{ViewOnceMessageV2: &waE2E.FutureProofMessage{Message: &inner}}
 }
 
 // nameCaption writes the group mentions in a media message's caption as the
@@ -310,6 +414,9 @@ func (b *Backend) quote(chatID string, r *model.Message, ci *waE2E.ContextInfo) 
 	// Store the raw quoted text, not the display text with resolved names.
 	if raw, ok := b.store.message(b.ctx, r.ChatID, r.ID); ok {
 		q.Text = raw.Text
+	}
+	if r.Kind == model.KindViewOnce {
+		q.Text, q.ViewOnce = "", true
 	}
 	return q
 }

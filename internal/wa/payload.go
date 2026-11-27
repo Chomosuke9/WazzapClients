@@ -118,6 +118,7 @@ type rawQuote struct {
 	media  model.Media
 	round  bool
 	album  bool // it's a whole album (album.go): id is the album's
+	once   bool // it's view once, or a Zap: its text isn't shown
 	quoted bool // the payload carries the quoted message
 	// mentions are those of the quoted message, when the payload carries
 	// them, and remote the chat it's in, when another (a private reply).
@@ -146,7 +147,11 @@ func quoteOf(ci *waE2E.ContextInfo) *rawQuote {
 		album = true
 		qc.text, qc.media = model.AlbumSize{Photos: int(a.GetExpectedImageCount()), Videos: int(a.GetExpectedVideoCount())}.Text()
 	}
-	return &rawQuote{album: album, id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, round: qc.round, quoted: q != nil,
+	once := isViewOnce(q) || qc.zap
+	if once {
+		qc.text = ""
+	}
+	return &rawQuote{album: album, once: once, id: id, sender: ci.GetParticipant(), text: qc.text, media: qc.media, round: qc.round, quoted: q != nil,
 		mentions: strings.Join(mentionsOf(qc.ctx), ","), remote: ci.GetRemoteJID()}
 }
 
@@ -158,9 +163,9 @@ func (b *Backend) resolveQuote(ctx context.Context, chat string, q *rawQuote) *m
 		return nil
 	}
 	quote := &model.Quote{ID: q.id, Text: q.text, Media: q.media, Round: q.round, Album: q.album,
-		Status: q.remote == statusChat}
+		ViewOnce: q.once, Status: q.remote == statusChat}
 	sender := q.sender
-	if q.text == "" && q.media == model.MediaNone && q.id != "" {
+	if q.text == "" && (q.media == model.MediaNone || q.once) && q.id != "" {
 		orig, ok := b.store.message(ctx, chat, q.id)
 		switch {
 		case ok:
@@ -172,6 +177,8 @@ func (b *Backend) resolveQuote(ctx context.Context, chat string, q *rawQuote) *m
 				quote.Text = "This message couldn't load"
 			case model.KindWaiting:
 				quote.Text = "Waiting for this message"
+			case model.KindViewOnce:
+				quote.Text, quote.ViewOnce = "", true
 			}
 			if sender == "" {
 				sender = orig.senderJID

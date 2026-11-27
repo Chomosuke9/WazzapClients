@@ -131,6 +131,9 @@ type Quote struct {
 	// Album marks a reply to a whole album: ID is the album's
 	// (Message.Album), which no message has for its own.
 	Album bool
+	// ViewOnce marks a quote of a view once message or a Zap: Text is
+	// empty, since what it shows is shown once.
+	ViewOnce bool
 }
 
 // AlbumSize is how many pictures an album has.
