@@ -160,6 +160,9 @@ func (b *Backend) ScheduleFile(chatID string, a model.Attachment, d model.Draft,
 	return b.schedule(cli, jid, m.ID, sd, at, func(ctx context.Context) (*waE2E.Message, error) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 		defer cancel()
+		if v, ok := inner.(*waE2E.VideoMessage); ok && videoStill(m, &up) {
+			setStill(v, m, up)
+		}
 		res, err := up.push(ctx, cli, m.Media, false)
 		if err != nil {
 			return nil, err

@@ -3,6 +3,7 @@ package wa
 import (
 	"encoding/binary"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -93,5 +94,37 @@ func TestGIFMessage(t *testing.T) {
 	}
 	if c := describe(msg); c.media != model.MediaGIF || c.kind != model.KindImage {
 		t.Errorf("reads back as %v %v", c.kind, c.media)
+	}
+}
+
+// A video goes with a preview of its first frame and its size, or a phone
+// that hasn't downloaded it shows a gray box of any size.
+func TestVideoStill(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("no ffmpeg to make a video")
+	}
+	path := filepath.Join(t.TempDir(), "clip.mp4")
+	out, err := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30:duration=1",
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", path).CombinedOutput()
+	if err != nil {
+		t.Skipf("ffmpeg can't make a video: %v\n%s", err, out)
+	}
+	m, up, err := readFile(model.Attachment{Path: path, Media: model.MediaVideo}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !videoStill(m, &up) {
+		t.Skip("no video decoder here")
+	}
+	msg, _ := fileMessage(m, up, "", nil, false)
+	v := msg.GetVideoMessage()
+	if len(v.GetJPEGThumbnail()) == 0 {
+		t.Error("no thumbnail")
+	}
+	if v.GetWidth() != 640 || v.GetHeight() != 360 {
+		t.Errorf("size %dx%d, want 640x360", v.GetWidth(), v.GetHeight())
+	}
+	if videoStill(m, &up) {
+		t.Error("made a second still")
 	}
 }

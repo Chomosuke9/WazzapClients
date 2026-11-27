@@ -228,6 +228,10 @@ Gotchas already found in the pinned version (v0.10.x):
 - A video note is a `ptvMessage`, the same protobuf as a `videoMessage`, so its stored
   blob doesn't say which it was. It keeps `media` = `MediaVideo`, `Message.Round` is read
   from the payload, and `asVideoNote` turns the blob back when it's forwarded or quoted.
+- A video you send goes with a JPEG of its first frame and its size (`videoStill`,
+  `internal/wa/files.go`, through `video.Still`, on the upload's goroutine): without them
+  phones that haven't downloaded it showed a gray box of any size. GStreamer's first
+  (prerolled) frame comes at the video's own size, so `Still` waits for a scaled one.
 - Videos use the OS's decoder, never a bundled codec (`internal/video`). The Windows
   backend calls COM through `syscall.SyscallN` without cgo: convert pointers to
   `uintptr` inside the `SyscallN` argument list, and read `double` results from `r2`

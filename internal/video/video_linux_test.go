@@ -184,3 +184,26 @@ func TestMuteStaysHere(t *testing.T) {
 		t.Skip("the sound went to no PulseAudio or PipeWire stream")
 	}
 }
+
+func TestStill(t *testing.T) {
+	// Stored 320x240, shown turned a quarter: the still and size are as shown.
+	plain := media(t, "plain.mp4", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=30:duration=1",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest")
+	path := media(t, "clip.mp4", "-display_rotation", "90", "-i", plain, "-c", "copy")
+	start := time.Now()
+	img, size, err := Still(path, image.Pt(160, 160), 10*time.Second)
+	if errors.Is(err, ErrUnsupported) {
+		t.Skip("no GStreamer here")
+	}
+	if err != nil {
+		t.Skipf("can't play here (missing GStreamer plugins?): %v", err)
+	}
+	t.Logf("still in %v", time.Since(start))
+	if size != image.Pt(240, 320) {
+		t.Errorf("size %v, want 240x320", size)
+	}
+	if b := img.Rect.Size(); b.X > 160 || b.Y > 160 || b.X >= b.Y {
+		t.Errorf("still is %v, want at most 160x160 and taller than wide", b)
+	}
+}

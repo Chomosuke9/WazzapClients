@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"mime"
 	"os"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/chomosuke9/wazzapclients/internal/model"
 	"github.com/chomosuke9/wazzapclients/internal/photo"
+	"github.com/chomosuke9/wazzapclients/internal/video"
 )
 
 // fileInfo is what a document or audio message says about its file.
@@ -387,6 +389,44 @@ func readFile(a model.Attachment, caption string) (*model.Message, upload, error
 	return m, up, nil
 }
 
+// videoStill makes a video's preview, m.Thumb, from its first frame, and
+// reads its size into up, unless m has one. It reports whether it made
+// one. Without them a video nobody downloaded yet shows as a gray box of
+// any size. It plays the video through the OS's decoder, so it runs on a
+// goroutine, never the UI's.
+func videoStill(m *model.Message, up *upload) bool {
+	if m.Media != model.MediaVideo || len(m.Thumb) > 0 || up.path == "" {
+		return false
+	}
+	img, size, err := video.Still(up.path, image.Pt(stillSide, stillSide), 5*time.Second)
+	if err != nil || img == nil {
+		return false
+	}
+	// WhatsApp's own thumbnails are about 100 px on the long side.
+	thumb, w, h, err := photo.Fit(img, 100)
+	if err != nil {
+		return false
+	}
+	if size.X <= 0 || size.Y <= 0 {
+		size = image.Pt(w, h) // the shape at least
+	}
+	m.Thumb, up.w, up.h = thumb, size.X, size.Y
+	return true
+}
+
+// stillSide is the largest frame videoStill decodes, in pixels.
+const stillSide = 320
+
+// setStill puts a video's preview and size in its message.
+func setStill(e *waE2E.VideoMessage, m *model.Message, up upload) {
+	if len(m.Thumb) > 0 {
+		e.JPEGThumbnail = m.Thumb
+	}
+	if up.w > 0 && up.h > 0 {
+		e.Width, e.Height = proto.Uint32(uint32(up.w)), proto.Uint32(uint32(up.h))
+	}
+}
+
 // keepSent keeps a copy of a file you send, msg, so your own media shows
 // (and opens) without a download.
 func (b *Backend) keepSent(m *model.Message, up upload, msg *waE2E.Message) {
@@ -500,6 +540,12 @@ func (b *Backend) uploadAndSend(jid types.JID, m *model.Message, up upload, msg 
 		fail(errors.New("not logged in"))
 		return
 	}
+	if v, ok := inner.(*waE2E.VideoMessage); ok && videoStill(m, &up) {
+		setStill(v, m, up)
+		if err := b.store.setRawPayload(b.ctx, m.ChatID, m.ID, msg); err == nil {
+			b.emitMessage(m.ChatID, m.ID)
+		}
+	}
 	t := b.beginTransfer(m.ChatID, m.ID, true)
 	ctx, cancel := context.WithTimeout(t.context(b.ctx), 30*time.Minute)
 	defer cancel()
@@ -575,6 +621,7 @@ func fileMessage(m *model.Message, up upload, caption string, ci *waE2E.ContextI
 		e := &waE2E.VideoMessage{
 			FileLength: size, Mimetype: proto.String(m.FileType), Seconds: proto.Uint32(uint32(m.Duration)), ContextInfo: ci,
 		}
+		setStill(e, m, up)
 		if caption != "" {
 			e.Caption = proto.String(caption)
 		}

@@ -209,3 +209,46 @@ func (p *Player) publish(b *image.RGBA) {
 		p.notify()
 	}
 }
+
+// Still returns a picture of path's first frame, at most max in size, and
+// the video's size as shown. It plays the video muted until a frame comes,
+// giving up after timeout.
+func Still(path string, max image.Point, timeout time.Duration) (*image.RGBA, image.Point, error) {
+	wake := make(chan struct{}, 1)
+	p := &Player{cmds: make(chan command, 16), done: make(chan struct{}), ready: -1, shown: -1, want: max}
+	p.notify = func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+	// Muted before it starts: the first command is read before any sound.
+	p.cmds <- command{kind: cmdMute, on: true}
+	if err := start(p, path); err != nil {
+		return nil, image.Point{}, err
+	}
+	defer p.Close()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	for {
+		st := p.Status()
+		if st.Err != nil {
+			return nil, image.Point{}, st.Err
+		}
+		// The first frame can come at the video's own size, before the
+		// player scales them (GStreamer's preroll): take the next.
+		if img, _ := p.Frame(); img != nil && (fits(img.Rect.Size(), max) || st.Ended) {
+			cp := image.NewRGBA(img.Rect)
+			copy(cp.Pix, img.Pix)
+			return cp, st.Size, nil
+		}
+		select {
+		case <-wake:
+		case <-t.C:
+			return nil, image.Point{}, errors.New("video: no frame in time")
+		}
+	}
+}
+
+// fits reports whether a frame of size sz is no bigger than max.
+func fits(sz, max image.Point) bool { return sz.X <= max.X && sz.Y <= max.Y }

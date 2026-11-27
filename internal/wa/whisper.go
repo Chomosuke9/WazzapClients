@@ -109,6 +109,7 @@ func (b *Backend) sendWhisper(w model.Whisper, parts []whisperPart) error {
 			}
 			continue
 		}
+		videoStill(p.m, &p.up)
 		p.msg, p.inner = fileMessage(p.m, p.up, p.text, ci, p.file.ViewOnce)
 		uctx, cancel := context.WithTimeout(b.ctx, 30*time.Minute)
 		res, err := p.up.push(uctx, cli, p.m.Media, false)
